@@ -13,7 +13,7 @@ authors      = [ "NotAShelf <raf@notashelf.dev" ]
 edition      = "2024"
 license      = "MPL-2.0"
 repository   = "https://gitub.com/feel-co/fc"
-rust-version = "1.95.0"                           # nightly
+rust-version = "1.95.0"
 version      = "0.2.0-dev"
 
 [workspace.dependencies]
@@ -38,6 +38,7 @@ git2 = "0.20.4"
 hex = "0.4.3"
 hmac = "0.12.1"
 humantime-serde = "1.1.1"
+ldap3 = { version = "0.12.1", default-features = false, features = [ "tls-rustls", "tls-rustls-ring" ] }
 lettre = { version = "0.11.19", default-features = false, features = [
   "tokio1-rustls-tls",
   "smtp-transport",
