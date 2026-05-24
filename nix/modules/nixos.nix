@@ -649,23 +649,23 @@ in {
       ];
     };
 
-    services.fc-ci.settings = mkDefault {
-      database.url = "postgresql:///fc?host=/run/postgresql";
-      server.host = "127.0.0.1";
-      server.port = 3000;
+    services.fc-ci.settings = {
+      database.url = mkDefault "postgresql:///fc?host=/run/postgresql";
+      server.host = mkDefault "127.0.0.1";
+      server.port = mkDefault 3000;
 
       gc = {
-        gc_roots_dir = "/nix/var/nix/gcroots/per-user/fc/fc-roots";
-        enabled = true;
-        max_age_days = 30;
-        cleanup_interval = 3600;
+        gc_roots_dir = mkDefault "/nix/var/nix/gcroots/per-user/fc/fc-roots";
+        enabled = mkDefault true;
+        max_age_days = mkDefault 30;
+        cleanup_interval = mkDefault 3600;
       };
 
-      logs.log_dir = "/var/lib/fc/logs";
-      cache.enabled = true;
-      evaluator.restrict_eval = true;
-      evaluator.allow_ifd = false;
-      signing.enabled = false;
+      logs.log_dir = mkDefault "/var/lib/fc/logs";
+      cache.enabled = mkDefault true;
+      evaluator.restrict_eval = mkDefault true;
+      evaluator.allow_ifd = mkDefault false;
+      signing.enabled = mkDefault false;
     };
 
     systemd = {
