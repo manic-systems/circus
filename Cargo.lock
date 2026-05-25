@@ -834,7 +834,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fc-common"
-version = "0.2.0-dev"
+version = "0.3.0-dev"
 dependencies = [
  "anyhow",
  "argon2",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "fc-evaluator"
-version = "0.2.0-dev"
+version = "0.3.0-dev"
 dependencies = [
  "anyhow",
  "chrono",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "fc-migrate-cli"
-version = "0.2.0-dev"
+version = "0.3.0-dev"
 dependencies = [
  "anyhow",
  "clap",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "fc-queue-runner"
-version = "0.2.0-dev"
+version = "0.3.0-dev"
 dependencies = [
  "anyhow",
  "chrono",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "fc-server"
-version = "0.2.0-dev"
+version = "0.3.0-dev"
 dependencies = [
  "anyhow",
  "askama",

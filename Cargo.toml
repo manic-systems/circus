@@ -14,7 +14,7 @@ edition      = "2024"
 license      = "MPL-2.0"
 repository   = "https://gitub.com/feel-co/fc"
 rust-version = "1.95.0"
-version      = "0.2.0-dev"
+version      = "0.3.0-dev"
 
 [workspace.dependencies]
 # Components
