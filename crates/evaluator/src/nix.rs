@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, time::Duration};
 
-use fc_common::{
+use circus_common::{
   CiError,
   config::EvaluatorConfig,
   error::Result,
@@ -119,7 +119,7 @@ pub async fn evaluate(
   inputs: &[JobsetInput],
 ) -> Result<EvalResult> {
   // Validate nix expression before constructing any commands
-  fc_common::validate::validate_nix_expression(nix_expression)
+  circus_common::validate::validate_nix_expression(nix_expression)
     .map_err(|e| CiError::NixEval(format!("Invalid nix expression: {e}")))?;
 
   if flake_mode {

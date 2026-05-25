@@ -1,4 +1,4 @@
-//! Configuration management for FC CI
+//! Configuration management for circus
 
 use std::{path::PathBuf, time::Duration};
 
@@ -577,7 +577,7 @@ impl Default for TracingConfig {
 impl Default for DatabaseConfig {
   fn default() -> Self {
     Self {
-      url:             "postgresql://fc_ci:password@localhost/fc_ci"
+      url:             "postgresql://circus:password@localhost/circus"
         .to_string(),
       max_connections: 20,
       min_connections: 5,
@@ -654,7 +654,7 @@ impl Default for EvaluatorConfig {
       git_timeout:          600,
       nix_timeout:          1800,
       max_concurrent_evals: 4,
-      work_dir:             PathBuf::from("/tmp/fc-evaluator"),
+      work_dir:             PathBuf::from("/tmp/circus-evaluator"),
       restrict_eval:        true,
       allow_ifd:            false,
       strict_errors:        false,
@@ -668,7 +668,7 @@ impl Default for QueueRunnerConfig {
       workers:             4,
       poll_interval:       5,
       build_timeout:       3600,
-      work_dir:            PathBuf::from("/tmp/fc-queue-runner"),
+      work_dir:            PathBuf::from("/tmp/circus-queue-runner"),
       strict_errors:       false,
       failed_paths_cache:  true,
       failed_paths_ttl:    86400,
@@ -684,7 +684,7 @@ impl Default for GcConfig {
   fn default() -> Self {
     Self {
       gc_roots_dir:     PathBuf::from(
-        "/nix/var/nix/gcroots/per-user/fc/fc-roots",
+        "/nix/var/nix/gcroots/per-user/circus/circus-roots",
       ),
       enabled:          true,
       max_age_days:     30,
@@ -696,7 +696,7 @@ impl Default for GcConfig {
 impl Default for LogConfig {
   fn default() -> Self {
     Self {
-      log_dir:  PathBuf::from("/var/lib/fc/logs"),
+      log_dir:  PathBuf::from("/var/lib/circus/logs"),
       compress: false,
     }
   }
@@ -775,19 +775,19 @@ impl Config {
       settings.add_source(config_crate::Config::try_from(&Self::default())?);
 
     // Load from config file if it exists
-    if let Ok(config_path) = std::env::var("FC_CONFIG_FILE") {
+    if let Ok(config_path) = std::env::var("CIRCUS_CONFIG_FILE") {
       if std::path::Path::new(&config_path).exists() {
         settings =
           settings.add_source(config_crate::File::with_name(&config_path));
       }
-    } else if std::path::Path::new("fc.toml").exists() {
+    } else if std::path::Path::new("circus.toml").exists() {
       settings = settings
         .add_source(config_crate::File::with_name("fc").required(false));
     }
 
-    // Load from environment variables with FC_ prefix (highest priority)
+    // Load from environment variables with CIRCUS_ prefix (highest priority)
     settings = settings.add_source(
-      config_crate::Environment::with_prefix("FC")
+      config_crate::Environment::with_prefix("circus")
         .separator("__")
         .try_parsing(true),
     );
@@ -961,7 +961,7 @@ mod tests {
 
             [[api_keys]]
             name = "admin-key"
-            key = "fc_secret_key_123"
+            key = "circus_secret_key_123"
             role = "admin"
         "#;
     let config: DeclarativeConfig = toml::from_str(toml_str).unwrap();
@@ -1001,7 +1001,7 @@ mod tests {
       }],
       api_keys:        vec![DeclarativeApiKey {
         name: "test-key".to_string(),
-        key:  "fc_test".to_string(),
+        key:  "circus_test".to_string(),
         role: "admin".to_string(),
       }],
       users:           vec![],
@@ -1033,7 +1033,7 @@ mod tests {
     let toml_str = r#"
             [[api_keys]]
             name = "default-key"
-            key = "fc_test_123"
+            key = "circus_test_123"
         "#;
     let config: DeclarativeConfig = toml::from_str(toml_str).unwrap();
     assert_eq!(config.api_keys[0].role, "read-only");
@@ -1043,20 +1043,23 @@ mod tests {
   fn test_environment_override() {
     // Test environment variable parsing directly
     unsafe {
-      env::set_var("FC_DATABASE__URL", "postgresql://test:test@localhost/test");
-      env::set_var("FC_SERVER__PORT", "8080");
+      env::set_var(
+        "CIRCUS_DATABASE__URL",
+        "postgresql://test:test@localhost/test",
+      );
+      env::set_var("CIRCUS_SERVER__PORT", "8080");
     }
 
     // Test that environment variables are being read correctly
-    let db_url = std::env::var("FC_DATABASE__URL").unwrap();
-    let server_port = std::env::var("FC_SERVER__PORT").unwrap();
+    let db_url = std::env::var("CIRCUS_DATABASE__URL").unwrap();
+    let server_port = std::env::var("CIRCUS_SERVER__PORT").unwrap();
 
     assert_eq!(db_url, "postgresql://test:test@localhost/test");
     assert_eq!(server_port, "8080");
 
     unsafe {
-      env::remove_var("FC_DATABASE__URL");
-      env::remove_var("FC_SERVER__PORT");
+      env::remove_var("CIRCUS_DATABASE__URL");
+      env::remove_var("CIRCUS_SERVER__PORT");
     }
   }
 

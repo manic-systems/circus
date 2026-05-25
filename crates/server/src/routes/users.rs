@@ -7,7 +7,7 @@ use axum::{
   http::StatusCode,
   routing::get,
 };
-use fc_common::{
+use circus_common::{
   models::{CreateStarredJob, CreateUser, PaginationParams, UpdateUser, User},
   repo::{self},
 };
@@ -177,10 +177,10 @@ async fn get_current_user(
 
   // Fall back to API key
   let api_key = extensions
-    .get::<fc_common::models::ApiKey>()
+    .get::<circus_common::models::ApiKey>()
     .cloned()
     .ok_or_else(|| {
-      ApiError(fc_common::error::CiError::Unauthorized(
+      ApiError(circus_common::error::CiError::Unauthorized(
         "Not authenticated".to_string(),
       ))
     })?;
@@ -211,7 +211,7 @@ async fn update_current_user(
   Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
   let user = extensions.get::<User>().cloned().ok_or_else(|| {
-    ApiError(fc_common::error::CiError::Unauthorized(
+    ApiError(circus_common::error::CiError::Unauthorized(
       "User authentication required".to_string(),
     ))
   })?;
@@ -250,22 +250,22 @@ async fn change_password(
   Json(req): Json<ChangePasswordRequest>,
 ) -> Result<StatusCode, ApiError> {
   let user = extensions.get::<User>().cloned().ok_or_else(|| {
-    ApiError(fc_common::error::CiError::Unauthorized(
+    ApiError(circus_common::error::CiError::Unauthorized(
       "User authentication required".to_string(),
     ))
   })?;
 
   // Verify current password (OAuth users don't have passwords)
   let hash = user.password_hash.ok_or_else(|| {
-    ApiError(fc_common::error::CiError::Unauthorized(
+    ApiError(circus_common::error::CiError::Unauthorized(
       "OAuth user - use OAuth login".to_string(),
     ))
   })?;
 
-  if !repo::users::verify_password(&req.current_password, &hash)
-    .map_err(|e| ApiError(fc_common::error::CiError::Internal(e.to_string())))?
-  {
-    return Err(ApiError(fc_common::error::CiError::Unauthorized(
+  if !repo::users::verify_password(&req.current_password, &hash).map_err(
+    |e| ApiError(circus_common::error::CiError::Internal(e.to_string())),
+  )? {
+    return Err(ApiError(circus_common::error::CiError::Unauthorized(
       "Current password is incorrect".to_string(),
     )));
   }
@@ -291,7 +291,7 @@ async fn list_starred_jobs(
   Query(params): Query<PaginationParams>,
 ) -> Result<Json<Vec<StarredJobResponse>>, ApiError> {
   let user = extensions.get::<User>().cloned().ok_or_else(|| {
-    ApiError(fc_common::error::CiError::Unauthorized(
+    ApiError(circus_common::error::CiError::Unauthorized(
       "User authentication required".to_string(),
     ))
   })?;
@@ -327,7 +327,7 @@ async fn create_starred_job(
   Json(req): Json<CreateStarredJobRequest>,
 ) -> Result<Json<StarredJobResponse>, ApiError> {
   let user = extensions.get::<User>().cloned().ok_or_else(|| {
-    ApiError(fc_common::error::CiError::Unauthorized(
+    ApiError(circus_common::error::CiError::Unauthorized(
       "User authentication required".to_string(),
     ))
   })?;
@@ -364,7 +364,7 @@ async fn delete_starred_job(
   Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
   let _user = extensions.get::<User>().cloned().ok_or_else(|| {
-    ApiError(fc_common::error::CiError::Unauthorized(
+    ApiError(circus_common::error::CiError::Unauthorized(
       "User authentication required".to_string(),
     ))
   })?;

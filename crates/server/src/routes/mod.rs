@@ -30,8 +30,8 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
+use circus_common::config::ServerConfig;
 use dashmap::DashMap;
-use fc_common::config::ServerConfig;
 use tower_http::{
   cors::{AllowOrigin, CorsLayer},
   limit::RequestBodyLimitLayer,
@@ -57,7 +57,7 @@ static STYLE_CSS: &str = include_str!("../../static/style.css");
 ///    mode
 #[must_use]
 pub fn cookie_security_flags(
-  config: &fc_common::config::ServerConfig,
+  config: &circus_common::config::ServerConfig,
 ) -> String {
   let is_localhost = config.host == "127.0.0.1"
     || config.host == "localhost"

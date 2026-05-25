@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use dashmap::DashMap;
-use fc_common::{
+use circus_common::{
   alerts::AlertManager,
   config::{
     AlertConfig,
@@ -24,6 +23,7 @@ use fc_common::{
   },
   repo,
 };
+use dashmap::DashMap;
 use sqlx::PgPool;
 use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -225,7 +225,7 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
 async fn get_project_for_build(
   pool: &PgPool,
   build: &Build,
-) -> Option<(fc_common::models::Project, String)> {
+) -> Option<(circus_common::models::Project, String)> {
   let eval = repo::evaluations::get(pool, build.evaluation_id)
     .await
     .ok()?;
@@ -241,7 +241,7 @@ async fn dispatch_build_finished_notification(
 ) {
   if let Some((project, commit_hash)) = get_project_for_build(pool, build).await
   {
-    fc_common::notifications::dispatch_build_finished(
+    circus_common::notifications::dispatch_build_finished(
       Some(pool),
       build,
       &project,
@@ -299,7 +299,7 @@ async fn sign_outputs(
 async fn push_to_cache(
   output_paths: &[String],
   store_uri: &str,
-  s3_config: Option<&fc_common::config::S3CacheConfig>,
+  s3_config: Option<&circus_common::config::S3CacheConfig>,
   semaphore: Arc<Semaphore>,
   max_retries: u32,
 ) -> Vec<String> {
@@ -372,7 +372,7 @@ async fn push_to_cache(
 /// <s3://bucket?region=us-east-1&endpoint=https://minio.example.com>
 fn build_s3_store_uri(
   base_uri: &str,
-  config: Option<&fc_common::config::S3CacheConfig>,
+  config: Option<&circus_common::config::S3CacheConfig>,
 ) -> String {
   let Some(cfg) = config else {
     return base_uri.to_string();
@@ -416,7 +416,7 @@ async fn try_remote_build(
   work_dir: &std::path::Path,
   timeout: Duration,
   live_log_path: Option<&std::path::Path>,
-  strategy: &fc_common::config::BuilderSchedulingStrategy,
+  strategy: &circus_common::config::BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
   psi_cache: &crate::psi::PsiCache,
@@ -570,7 +570,7 @@ async fn run_build(
   cache_upload_config: &CacheUploadConfig,
   alert_manager: &Option<AlertManager>,
   upload_semaphore: Arc<Semaphore>,
-  scheduling_strategy: fc_common::config::BuilderSchedulingStrategy,
+  scheduling_strategy: circus_common::config::BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
   psi_cache: Arc<crate::psi::PsiCache>,
@@ -588,7 +588,7 @@ async fn run_build(
   if let Some((project, commit_hash)) =
     get_project_for_build(pool, &claimed_build).await
   {
-    fc_common::notifications::dispatch_build_started(
+    circus_common::notifications::dispatch_build_started(
       pool,
       &claimed_build,
       &project,
@@ -993,7 +993,7 @@ async fn run_build(
 
 #[cfg(test)]
 mod tests {
-  use fc_common::config::S3CacheConfig;
+  use circus_common::config::S3CacheConfig;
 
   use super::*;
 

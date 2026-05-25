@@ -7,7 +7,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
-use fc_common::{config::GitHubOAuthConfig, models::UserType, repo};
+use circus_common::{config::GitHubOAuthConfig, models::UserType, repo};
 use oauth2::{
   AuthUrl,
   AuthorizationCode,
@@ -119,7 +119,7 @@ async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
   };
 
   let cookie = format!(
-    "fc_oauth_state={}; {}; Path=/; Max-Age=600",
+    "circus_oauth_state={}; {}; Path=/; Max-Age=600",
     csrf_token.secret(),
     security_flags
   );
@@ -139,7 +139,7 @@ async fn github_callback(
   Query(params): Query<OAuthCallbackParams>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Some(config) = &state.config.oauth.github else {
-    return Err(ApiError(fc_common::CiError::NotFound(
+    return Err(ApiError(circus_common::CiError::NotFound(
       "GitHub OAuth not configured".to_string(),
     )));
   };
@@ -151,12 +151,12 @@ async fn github_callback(
     .and_then(|cookies| {
       cookies.split(';').find_map(|c| {
         let c = c.trim();
-        c.strip_prefix("fc_oauth_state=")
+        c.strip_prefix("circus_oauth_state=")
       })
     });
 
   if stored_state != Some(&params.state) {
-    return Err(ApiError(fc_common::CiError::Unauthorized(
+    return Err(ApiError(circus_common::CiError::Unauthorized(
       "Invalid OAuth state".to_string(),
     )));
   }
@@ -168,7 +168,7 @@ async fn github_callback(
     .redirect(oauth2::reqwest::redirect::Policy::none())
     .build()
     .map_err(|e| {
-      ApiError(fc_common::CiError::Internal(format!(
+      ApiError(circus_common::CiError::Internal(format!(
         "Failed to create HTTP client: {e}"
       )))
     })?;
@@ -179,7 +179,7 @@ async fn github_callback(
     .request_async(&http_client)
     .await
     .map_err(|e| {
-      ApiError(fc_common::CiError::Internal(format!(
+      ApiError(circus_common::CiError::Internal(format!(
         "Token exchange failed: {e}"
       )))
     })?;
@@ -191,18 +191,18 @@ async fn github_callback(
     .http_client
     .get("https://api.github.com/user")
     .header("Authorization", format!("Bearer {access_token}"))
-    .header("User-Agent", "FC-CI")
+    .header("User-Agent", "circus")
     .header("Accept", "application/vnd.github+json")
     .send()
     .await
     .map_err(|e| {
-      ApiError(fc_common::CiError::Internal(format!(
+      ApiError(circus_common::CiError::Internal(format!(
         "GitHub API request failed: {e}"
       )))
     })?;
 
   if !user_response.status().is_success() {
-    return Err(ApiError(fc_common::CiError::Internal(format!(
+    return Err(ApiError(circus_common::CiError::Internal(format!(
       "GitHub API returned status: {}",
       user_response.status()
     ))));
@@ -210,7 +210,7 @@ async fn github_callback(
 
   let user_info: GitHubUserResponse =
     user_response.json().await.map_err(|e| {
-      ApiError(fc_common::CiError::Internal(format!(
+      ApiError(circus_common::CiError::Internal(format!(
         "Failed to parse GitHub user: {e}"
       )))
     })?;
@@ -220,18 +220,18 @@ async fn github_callback(
     .http_client
     .get("https://api.github.com/user/emails")
     .header("Authorization", format!("Bearer {access_token}"))
-    .header("User-Agent", "FC-CI")
+    .header("User-Agent", "circus")
     .header("Accept", "application/vnd.github+json")
     .send()
     .await
     .map_err(|e| {
-      ApiError(fc_common::CiError::Internal(format!(
+      ApiError(circus_common::CiError::Internal(format!(
         "GitHub emails API failed: {e}"
       )))
     })?;
 
   if !emails_response.status().is_success() {
-    return Err(ApiError(fc_common::CiError::Internal(format!(
+    return Err(ApiError(circus_common::CiError::Internal(format!(
       "GitHub emails API returned status: {}",
       emails_response.status()
     ))));
@@ -239,7 +239,7 @@ async fn github_callback(
 
   let emails: Vec<GitHubEmailResponse> =
     emails_response.json().await.map_err(|e| {
-      ApiError(fc_common::CiError::Internal(format!(
+      ApiError(circus_common::CiError::Internal(format!(
         "Failed to parse GitHub emails: {e}"
       )))
     })?;
@@ -284,9 +284,9 @@ async fn github_callback(
   };
 
   let clear_state =
-    format!("fc_oauth_state=; {security_flags}; Path=/; Max-Age=0");
+    format!("circus_oauth_state=; {security_flags}; Path=/; Max-Age=0");
   let session_cookie = format!(
-    "fc_user_session={}; {}; Path=/; Max-Age={}",
+    "circus_user_session={}; {}; Path=/; Max-Age={}",
     session.0,
     security_flags,
     7 * 24 * 60 * 60 // 7 days
@@ -505,11 +505,11 @@ mod tests {
   fn test_cookie_parsing() {
     // Simulate parsing cookies to find OAuth state
     let cookie_header =
-      "other_cookie=value; fc_oauth_state=abc123; another=xyz";
+      "other_cookie=value; circus_oauth_state=abc123; another=xyz";
 
     let stored_state = cookie_header.split(';').find_map(|c| {
       let c = c.trim();
-      c.strip_prefix("fc_oauth_state=")
+      c.strip_prefix("circus_oauth_state=")
     });
 
     assert_eq!(stored_state, Some("abc123"));
@@ -521,7 +521,7 @@ mod tests {
 
     let stored_state = cookie_header.split(';').find_map(|c| {
       let c = c.trim();
-      c.strip_prefix("fc_oauth_state=")
+      c.strip_prefix("circus_oauth_state=")
     });
 
     assert!(stored_state.is_none());
@@ -534,11 +534,11 @@ mod tests {
     let max_age = 7 * 24 * 60 * 60;
 
     let cookie = format!(
-      "fc_user_session={session_token}; HttpOnly; SameSite=Lax; Path=/; \
+      "circus_user_session={session_token}; HttpOnly; SameSite=Lax; Path=/; \
        Max-Age={max_age}{secure_flag}"
     );
 
-    assert!(cookie.contains("fc_user_session=test-session-token"));
+    assert!(cookie.contains("circus_user_session=test-session-token"));
     assert!(cookie.contains("HttpOnly"));
     assert!(cookie.contains("SameSite=Lax"));
     assert!(cookie.contains("Path=/"));

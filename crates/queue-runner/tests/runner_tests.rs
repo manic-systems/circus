@@ -8,7 +8,7 @@
 fn test_parse_nix_log_start() {
   let line =
     r#"@nix {"action":"start","derivation":"/nix/store/abc-hello.drv"}"#;
-  let result = fc_queue_runner::builder::parse_nix_log_line(line);
+  let result = circus_queue_runner::builder::parse_nix_log_line(line);
   assert!(result.is_some());
   let (action, drv) = result.unwrap();
   assert_eq!(action, "start");
@@ -19,7 +19,7 @@ fn test_parse_nix_log_start() {
 fn test_parse_nix_log_stop() {
   let line =
     r#"@nix {"action":"stop","derivation":"/nix/store/abc-hello.drv"}"#;
-  let result = fc_queue_runner::builder::parse_nix_log_line(line);
+  let result = circus_queue_runner::builder::parse_nix_log_line(line);
   assert!(result.is_some());
   let (action, drv) = result.unwrap();
   assert_eq!(action, "stop");
@@ -29,34 +29,34 @@ fn test_parse_nix_log_stop() {
 #[test]
 fn test_parse_nix_log_unknown_action() {
   let line = r#"@nix {"action":"msg","msg":"building..."}"#;
-  let result = fc_queue_runner::builder::parse_nix_log_line(line);
+  let result = circus_queue_runner::builder::parse_nix_log_line(line);
   assert!(result.is_none());
 }
 
 #[test]
 fn test_parse_nix_log_not_nix_prefix() {
   let line = "building '/nix/store/abc-hello.drv'...";
-  let result = fc_queue_runner::builder::parse_nix_log_line(line);
+  let result = circus_queue_runner::builder::parse_nix_log_line(line);
   assert!(result.is_none());
 }
 
 #[test]
 fn test_parse_nix_log_invalid_json() {
   let line = "@nix {invalid json}";
-  let result = fc_queue_runner::builder::parse_nix_log_line(line);
+  let result = circus_queue_runner::builder::parse_nix_log_line(line);
   assert!(result.is_none());
 }
 
 #[test]
 fn test_parse_nix_log_no_derivation_field() {
   let line = r#"@nix {"action":"start","type":"build"}"#;
-  let result = fc_queue_runner::builder::parse_nix_log_line(line);
+  let result = circus_queue_runner::builder::parse_nix_log_line(line);
   assert!(result.is_none());
 }
 
 #[test]
 fn test_parse_nix_log_empty_line() {
-  let result = fc_queue_runner::builder::parse_nix_log_line("");
+  let result = circus_queue_runner::builder::parse_nix_log_line("");
   assert!(result.is_none());
 }
 
@@ -77,26 +77,27 @@ async fn test_worker_pool_drain_stops_dispatch() {
     .expect("failed to connect");
 
   let hot_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-    fc_common::config::HotConfig {
+    circus_common::config::HotConfig {
       poll_interval:        std::time::Duration::from_secs(1),
       build_timeout:        std::time::Duration::from_mins(1),
-      notifications_config: fc_common::config::NotificationsConfig::default(),
+      notifications_config: circus_common::config::NotificationsConfig::default(
+      ),
       failed_paths_ttl:     0,
       scheduling_strategy:
-        fc_common::config::BuilderSchedulingStrategy::default(),
+        circus_common::config::BuilderSchedulingStrategy::default(),
       psi_threshold:        None,
       psi_check_timeout:    std::time::Duration::from_secs(5),
     },
   ));
-  let worker_pool = fc_queue_runner::worker::WorkerPool::new(
+  let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
     2,
     std::env::temp_dir(),
     hot_config,
-    fc_common::config::LogConfig::default(),
-    fc_common::config::GcConfig::default(),
-    fc_common::config::SigningConfig::default(),
-    fc_common::config::CacheUploadConfig::default(),
+    circus_common::config::LogConfig::default(),
+    circus_common::config::GcConfig::default(),
+    circus_common::config::SigningConfig::default(),
+    circus_common::config::CacheUploadConfig::default(),
     None,
   );
 
@@ -117,7 +118,7 @@ async fn test_active_builds_registry_cancellation() {
   use dashmap::DashMap;
   use tokio_util::sync::CancellationToken;
 
-  let active_builds: fc_queue_runner::worker::ActiveBuilds =
+  let active_builds: circus_queue_runner::worker::ActiveBuilds =
     Arc::new(DashMap::new());
 
   let id1 = uuid::Uuid::new_v4();
@@ -196,26 +197,27 @@ async fn test_worker_pool_active_builds_cancel() {
     .expect("failed to connect");
 
   let hot_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-    fc_common::config::HotConfig {
+    circus_common::config::HotConfig {
       poll_interval:        std::time::Duration::from_secs(1),
       build_timeout:        std::time::Duration::from_mins(1),
-      notifications_config: fc_common::config::NotificationsConfig::default(),
+      notifications_config: circus_common::config::NotificationsConfig::default(
+      ),
       failed_paths_ttl:     0,
       scheduling_strategy:
-        fc_common::config::BuilderSchedulingStrategy::default(),
+        circus_common::config::BuilderSchedulingStrategy::default(),
       psi_threshold:        None,
       psi_check_timeout:    std::time::Duration::from_secs(5),
     },
   ));
-  let worker_pool = fc_queue_runner::worker::WorkerPool::new(
+  let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
     2,
     std::env::temp_dir(),
     hot_config,
-    fc_common::config::LogConfig::default(),
-    fc_common::config::GcConfig::default(),
-    fc_common::config::SigningConfig::default(),
-    fc_common::config::CacheUploadConfig::default(),
+    circus_common::config::LogConfig::default(),
+    circus_common::config::GcConfig::default(),
+    circus_common::config::SigningConfig::default(),
+    circus_common::config::CacheUploadConfig::default(),
     None,
   );
 
@@ -261,9 +263,9 @@ async fn test_fair_share_scheduling() {
     .expect("migration failed");
 
   // Create two projects with different scheduling shares
-  let project_hi = fc_common::repo::projects::create(
+  let project_hi = circus_common::repo::projects::create(
     &pool,
-    fc_common::models::CreateProject {
+    circus_common::models::CreateProject {
       name:           format!("fair-hi-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
@@ -272,9 +274,9 @@ async fn test_fair_share_scheduling() {
   .await
   .expect("create project hi");
 
-  let project_lo = fc_common::repo::projects::create(
+  let project_lo = circus_common::repo::projects::create(
     &pool,
-    fc_common::models::CreateProject {
+    circus_common::models::CreateProject {
       name:           format!("fair-lo-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
@@ -284,8 +286,9 @@ async fn test_fair_share_scheduling() {
   .expect("create project lo");
 
   // High-share jobset (200 shares) and low-share jobset (100 shares)
-  let jobset_hi =
-    fc_common::repo::jobsets::create(&pool, fc_common::models::CreateJobset {
+  let jobset_hi = circus_common::repo::jobsets::create(
+    &pool,
+    circus_common::models::CreateJobset {
       project_id:        project_hi.id,
       name:              "main".to_string(),
       nix_expression:    "packages".to_string(),
@@ -296,12 +299,14 @@ async fn test_fair_share_scheduling() {
       scheduling_shares: Some(200),
       state:             None,
       keep_nr:           None,
-    })
-    .await
-    .expect("create jobset hi");
+    },
+  )
+  .await
+  .expect("create jobset hi");
 
-  let jobset_lo =
-    fc_common::repo::jobsets::create(&pool, fc_common::models::CreateJobset {
+  let jobset_lo = circus_common::repo::jobsets::create(
+    &pool,
+    circus_common::models::CreateJobset {
       project_id:        project_lo.id,
       name:              "main".to_string(),
       nix_expression:    "packages".to_string(),
@@ -312,13 +317,14 @@ async fn test_fair_share_scheduling() {
       scheduling_shares: Some(100),
       state:             None,
       keep_nr:           None,
-    })
-    .await
-    .expect("create jobset lo");
+    },
+  )
+  .await
+  .expect("create jobset lo");
 
-  let eval_hi = fc_common::repo::evaluations::create(
+  let eval_hi = circus_common::repo::evaluations::create(
     &pool,
-    fc_common::models::CreateEvaluation {
+    circus_common::models::CreateEvaluation {
       jobset_id:      jobset_hi.id,
       commit_hash:    format!("hi{}", uuid::Uuid::new_v4().simple()),
       pr_number:      None,
@@ -330,9 +336,9 @@ async fn test_fair_share_scheduling() {
   .await
   .expect("create eval hi");
 
-  let eval_lo = fc_common::repo::evaluations::create(
+  let eval_lo = circus_common::repo::evaluations::create(
     &pool,
-    fc_common::models::CreateEvaluation {
+    circus_common::models::CreateEvaluation {
       jobset_id:      jobset_lo.id,
       commit_hash:    format!("lo{}", uuid::Uuid::new_v4().simple()),
       pr_number:      None,
@@ -354,57 +360,69 @@ async fn test_fair_share_scheduling() {
   let drv_lo_2 =
     format!("/nix/store/{}-lo2.drv", uuid::Uuid::new_v4().simple());
 
-  fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
-    evaluation_id: eval_hi.id,
-    job_name:      "hi-build-1".to_string(),
-    drv_path:      drv_hi_1,
-    system:        Some("x86_64-linux".to_string()),
-    outputs:       None,
-    is_aggregate:  None,
-    constituents:  None,
-  })
+  circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
+      evaluation_id: eval_hi.id,
+      job_name:      "hi-build-1".to_string(),
+      drv_path:      drv_hi_1,
+      system:        Some("x86_64-linux".to_string()),
+      outputs:       None,
+      is_aggregate:  None,
+      constituents:  None,
+    },
+  )
   .await
   .expect("create hi build 1");
 
-  fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
-    evaluation_id: eval_hi.id,
-    job_name:      "hi-build-2".to_string(),
-    drv_path:      drv_hi_2,
-    system:        Some("x86_64-linux".to_string()),
-    outputs:       None,
-    is_aggregate:  None,
-    constituents:  None,
-  })
+  circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
+      evaluation_id: eval_hi.id,
+      job_name:      "hi-build-2".to_string(),
+      drv_path:      drv_hi_2,
+      system:        Some("x86_64-linux".to_string()),
+      outputs:       None,
+      is_aggregate:  None,
+      constituents:  None,
+    },
+  )
   .await
   .expect("create hi build 2");
 
-  fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
-    evaluation_id: eval_lo.id,
-    job_name:      "lo-build-1".to_string(),
-    drv_path:      drv_lo_1,
-    system:        Some("x86_64-linux".to_string()),
-    outputs:       None,
-    is_aggregate:  None,
-    constituents:  None,
-  })
+  circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
+      evaluation_id: eval_lo.id,
+      job_name:      "lo-build-1".to_string(),
+      drv_path:      drv_lo_1,
+      system:        Some("x86_64-linux".to_string()),
+      outputs:       None,
+      is_aggregate:  None,
+      constituents:  None,
+    },
+  )
   .await
   .expect("create lo build 1");
 
-  fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
-    evaluation_id: eval_lo.id,
-    job_name:      "lo-build-2".to_string(),
-    drv_path:      drv_lo_2,
-    system:        Some("x86_64-linux".to_string()),
-    outputs:       None,
-    is_aggregate:  None,
-    constituents:  None,
-  })
+  circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
+      evaluation_id: eval_lo.id,
+      job_name:      "lo-build-2".to_string(),
+      drv_path:      drv_lo_2,
+      system:        Some("x86_64-linux".to_string()),
+      outputs:       None,
+      is_aggregate:  None,
+      constituents:  None,
+    },
+  )
   .await
   .expect("create lo build 2");
 
   // With no running builds, hi-share jobset (200) should come first due to
   // higher share fraction (200/300 > 100/300)
-  let pending = fc_common::repo::builds::list_pending(&pool, 10, 4)
+  let pending = circus_common::repo::builds::list_pending(&pool, 10, 4)
     .await
     .expect("list pending cold start");
   assert!(
@@ -430,14 +448,14 @@ async fn test_fair_share_scheduling() {
     .collect();
 
   for &id in &hi_build_ids {
-    fc_common::repo::builds::start(&pool, id)
+    circus_common::repo::builds::start(&pool, id)
       .await
       .expect("start hi build");
   }
 
   // Re-query: lo-share jobset should now be prioritized because it is
   // underserved (0 running vs its fair share)
-  let pending2 = fc_common::repo::builds::list_pending(&pool, 10, 4)
+  let pending2 = circus_common::repo::builds::list_pending(&pool, 10, 4)
     .await
     .expect("list pending after running");
 
@@ -452,8 +470,8 @@ async fn test_fair_share_scheduling() {
   );
 
   // Clean up
-  let _ = fc_common::repo::projects::delete(&pool, project_hi.id).await;
-  let _ = fc_common::repo::projects::delete(&pool, project_lo.id).await;
+  let _ = circus_common::repo::projects::delete(&pool, project_hi.id).await;
+  let _ = circus_common::repo::projects::delete(&pool, project_lo.id).await;
 }
 
 // Database-dependent tests
@@ -477,9 +495,9 @@ async fn test_atomic_build_claiming() {
     .expect("migration failed");
 
   // Create a project -> jobset -> evaluation -> build chain
-  let project = fc_common::repo::projects::create(
+  let project = circus_common::repo::projects::create(
     &pool,
-    fc_common::models::CreateProject {
+    circus_common::models::CreateProject {
       name:           format!("runner-test-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
@@ -488,8 +506,9 @@ async fn test_atomic_build_claiming() {
   .await
   .expect("create project");
 
-  let jobset =
-    fc_common::repo::jobsets::create(&pool, fc_common::models::CreateJobset {
+  let jobset = circus_common::repo::jobsets::create(
+    &pool,
+    circus_common::models::CreateJobset {
       project_id:        project.id,
       name:              "main".to_string(),
       nix_expression:    "packages".to_string(),
@@ -500,13 +519,14 @@ async fn test_atomic_build_claiming() {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
-    })
-    .await
-    .expect("create jobset");
+    },
+  )
+  .await
+  .expect("create jobset");
 
-  let eval = fc_common::repo::evaluations::create(
+  let eval = circus_common::repo::evaluations::create(
     &pool,
-    fc_common::models::CreateEvaluation {
+    circus_common::models::CreateEvaluation {
       jobset_id:      jobset.id,
       commit_hash:    "abcdef1234567890abcdef1234567890abcdef12".to_string(),
       pr_number:      None,
@@ -518,8 +538,9 @@ async fn test_atomic_build_claiming() {
   .await
   .expect("create eval");
 
-  let build =
-    fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
+  let build = circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
       evaluation_id: eval.id,
       job_name:      "test-build".to_string(),
       drv_path:      "/nix/store/test-runner-test.drv".to_string(),
@@ -527,26 +548,27 @@ async fn test_atomic_build_claiming() {
       outputs:       None,
       is_aggregate:  None,
       constituents:  None,
-    })
-    .await
-    .expect("create build");
+    },
+  )
+  .await
+  .expect("create build");
 
-  assert_eq!(build.status, fc_common::models::BuildStatus::Pending);
+  assert_eq!(build.status, circus_common::models::BuildStatus::Pending);
 
   // First claim should succeed
-  let claimed = fc_common::repo::builds::start(&pool, build.id)
+  let claimed = circus_common::repo::builds::start(&pool, build.id)
     .await
     .expect("start build");
   assert!(claimed.is_some());
 
   // Second claim should return None (already claimed)
-  let claimed2 = fc_common::repo::builds::start(&pool, build.id)
+  let claimed2 = circus_common::repo::builds::start(&pool, build.id)
     .await
     .expect("start build again");
   assert!(claimed2.is_none());
 
   // Clean up
-  let _ = fc_common::repo::projects::delete(&pool, project.id).await;
+  let _ = circus_common::repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -567,9 +589,9 @@ async fn test_orphan_build_reset() {
     .await
     .expect("migration failed");
 
-  let project = fc_common::repo::projects::create(
+  let project = circus_common::repo::projects::create(
     &pool,
-    fc_common::models::CreateProject {
+    circus_common::models::CreateProject {
       name:           format!("orphan-test-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
@@ -578,8 +600,9 @@ async fn test_orphan_build_reset() {
   .await
   .expect("create project");
 
-  let jobset =
-    fc_common::repo::jobsets::create(&pool, fc_common::models::CreateJobset {
+  let jobset = circus_common::repo::jobsets::create(
+    &pool,
+    circus_common::models::CreateJobset {
       project_id:        project.id,
       name:              "main".to_string(),
       nix_expression:    "packages".to_string(),
@@ -590,13 +613,14 @@ async fn test_orphan_build_reset() {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
-    })
-    .await
-    .expect("create jobset");
+    },
+  )
+  .await
+  .expect("create jobset");
 
-  let eval = fc_common::repo::evaluations::create(
+  let eval = circus_common::repo::evaluations::create(
     &pool,
-    fc_common::models::CreateEvaluation {
+    circus_common::models::CreateEvaluation {
       jobset_id:      jobset.id,
       commit_hash:    "1234567890abcdef1234567890abcdef12345678".to_string(),
       pr_number:      None,
@@ -609,8 +633,9 @@ async fn test_orphan_build_reset() {
   .expect("create eval");
 
   // Create a build and mark it running
-  let build =
-    fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
+  let build = circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
       evaluation_id: eval.id,
       job_name:      "orphan-build".to_string(),
       drv_path:      "/nix/store/test-orphan.drv".to_string(),
@@ -618,11 +643,12 @@ async fn test_orphan_build_reset() {
       outputs:       None,
       is_aggregate:  None,
       constituents:  None,
-    })
-    .await
-    .expect("create build");
+    },
+  )
+  .await
+  .expect("create build");
 
-  let _ = fc_common::repo::builds::start(&pool, build.id).await;
+  let _ = circus_common::repo::builds::start(&pool, build.id).await;
 
   // Simulate the build being stuck for a while by manually backdating
   // started_at
@@ -637,19 +663,22 @@ async fn test_orphan_build_reset() {
   .expect("backdate build");
 
   // Reset orphaned builds (older than 5 minutes)
-  let count = fc_common::repo::builds::reset_orphaned(&pool, 300)
+  let count = circus_common::repo::builds::reset_orphaned(&pool, 300)
     .await
     .expect("reset orphaned");
   assert!(count >= 1, "should have reset at least 1 orphaned build");
 
   // Verify build is pending again
-  let reset_build = fc_common::repo::builds::get(&pool, build.id)
+  let reset_build = circus_common::repo::builds::get(&pool, build.id)
     .await
     .expect("get build");
-  assert_eq!(reset_build.status, fc_common::models::BuildStatus::Pending);
+  assert_eq!(
+    reset_build.status,
+    circus_common::models::BuildStatus::Pending
+  );
 
   // Clean up
-  let _ = fc_common::repo::projects::delete(&pool, project.id).await;
+  let _ = circus_common::repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -670,9 +699,9 @@ async fn test_get_cancelled_among() {
     .await
     .expect("migration failed");
 
-  let project = fc_common::repo::projects::create(
+  let project = circus_common::repo::projects::create(
     &pool,
-    fc_common::models::CreateProject {
+    circus_common::models::CreateProject {
       name:           format!("cancel-among-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
@@ -681,8 +710,9 @@ async fn test_get_cancelled_among() {
   .await
   .expect("create project");
 
-  let jobset =
-    fc_common::repo::jobsets::create(&pool, fc_common::models::CreateJobset {
+  let jobset = circus_common::repo::jobsets::create(
+    &pool,
+    circus_common::models::CreateJobset {
       project_id:        project.id,
       name:              "main".to_string(),
       nix_expression:    "packages".to_string(),
@@ -693,13 +723,14 @@ async fn test_get_cancelled_among() {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
-    })
-    .await
-    .expect("create jobset");
+    },
+  )
+  .await
+  .expect("create jobset");
 
-  let eval = fc_common::repo::evaluations::create(
+  let eval = circus_common::repo::evaluations::create(
     &pool,
-    fc_common::models::CreateEvaluation {
+    circus_common::models::CreateEvaluation {
       jobset_id:      jobset.id,
       commit_hash:    "aabbccdd1234567890aabbccdd1234567890aabb".to_string(),
       pr_number:      None,
@@ -712,8 +743,9 @@ async fn test_get_cancelled_among() {
   .expect("create eval");
 
   // Create a pending build
-  let build_pending =
-    fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
+  let build_pending = circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
       evaluation_id: eval.id,
       job_name:      "pending-job".to_string(),
       drv_path:      format!("/nix/store/{}-pending.drv", uuid::Uuid::new_v4()),
@@ -721,13 +753,15 @@ async fn test_get_cancelled_among() {
       outputs:       None,
       is_aggregate:  None,
       constituents:  None,
-    })
-    .await
-    .expect("create pending build");
+    },
+  )
+  .await
+  .expect("create pending build");
 
   // Create a running build
-  let build_running =
-    fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
+  let build_running = circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
       evaluation_id: eval.id,
       job_name:      "running-job".to_string(),
       drv_path:      format!("/nix/store/{}-running.drv", uuid::Uuid::new_v4()),
@@ -735,16 +769,18 @@ async fn test_get_cancelled_among() {
       outputs:       None,
       is_aggregate:  None,
       constituents:  None,
-    })
-    .await
-    .expect("create running build");
-  fc_common::repo::builds::start(&pool, build_running.id)
+    },
+  )
+  .await
+  .expect("create running build");
+  circus_common::repo::builds::start(&pool, build_running.id)
     .await
     .expect("start running build");
 
   // Create a cancelled build (start then cancel)
-  let build_cancelled =
-    fc_common::repo::builds::create(&pool, fc_common::models::CreateBuild {
+  let build_cancelled = circus_common::repo::builds::create(
+    &pool,
+    circus_common::models::CreateBuild {
       evaluation_id: eval.id,
       job_name:      "cancelled-job".to_string(),
       drv_path:      format!(
@@ -755,39 +791,42 @@ async fn test_get_cancelled_among() {
       outputs:       None,
       is_aggregate:  None,
       constituents:  None,
-    })
-    .await
-    .expect("create cancelled build");
-  fc_common::repo::builds::start(&pool, build_cancelled.id)
+    },
+  )
+  .await
+  .expect("create cancelled build");
+  circus_common::repo::builds::start(&pool, build_cancelled.id)
     .await
     .expect("start cancelled build");
-  fc_common::repo::builds::cancel(&pool, build_cancelled.id)
+  circus_common::repo::builds::cancel(&pool, build_cancelled.id)
     .await
     .expect("cancel build");
 
   // Query for cancelled among all three
   let all_ids = vec![build_pending.id, build_running.id, build_cancelled.id];
-  let cancelled = fc_common::repo::builds::get_cancelled_among(&pool, &all_ids)
-    .await
-    .expect("get cancelled among");
+  let cancelled =
+    circus_common::repo::builds::get_cancelled_among(&pool, &all_ids)
+      .await
+      .expect("get cancelled among");
   assert_eq!(cancelled.len(), 1);
   assert_eq!(cancelled[0], build_cancelled.id);
 
   // Empty input returns empty
-  let empty = fc_common::repo::builds::get_cancelled_among(&pool, &[])
+  let empty = circus_common::repo::builds::get_cancelled_among(&pool, &[])
     .await
     .expect("empty query");
   assert!(empty.is_empty());
 
   // Query with only non-cancelled builds returns empty
-  let none_cancelled = fc_common::repo::builds::get_cancelled_among(&pool, &[
-    build_pending.id,
-    build_running.id,
-  ])
-  .await
-  .expect("no cancelled");
+  let none_cancelled =
+    circus_common::repo::builds::get_cancelled_among(&pool, &[
+      build_pending.id,
+      build_running.id,
+    ])
+    .await
+    .expect("no cancelled");
   assert!(none_cancelled.is_empty());
 
   // Clean up
-  let _ = fc_common::repo::projects::delete(&pool, project.id).await;
+  let _ = circus_common::repo::projects::delete(&pool, project.id).await;
 }

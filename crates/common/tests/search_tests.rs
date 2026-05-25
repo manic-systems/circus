@@ -1,7 +1,7 @@
 //! Integration tests for advanced search functionality
 //! Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL` connection string.
 
-use fc_common::{BuildStatus, models::*, repo, repo::search::*};
+use circus_common::{BuildStatus, models::*, repo, repo::search::*};
 use uuid::Uuid;
 
 async fn get_pool() -> Option<sqlx::PgPool> {

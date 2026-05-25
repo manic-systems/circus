@@ -1,4 +1,4 @@
-//! Tracing initialization helper for all FC daemons.
+//! Tracing initialization helper for all circus daemons.
 
 use tracing_subscriber::{EnvFilter, fmt};
 

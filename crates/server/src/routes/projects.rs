@@ -5,7 +5,7 @@ use axum::{
   http::Extensions,
   routing::{delete, get, post},
 };
-use fc_common::{
+use circus_common::{
   CreateJobset,
   CreateProject,
   Jobset,
@@ -33,10 +33,10 @@ async fn list_projects(
 ) -> Result<Json<PaginatedResponse<Project>>, ApiError> {
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let items = fc_common::repo::projects::list(&state.pool, limit, offset)
+  let items = circus_common::repo::projects::list(&state.pool, limit, offset)
     .await
     .map_err(ApiError)?;
-  let total = fc_common::repo::projects::count(&state.pool)
+  let total = circus_common::repo::projects::count(&state.pool)
     .await
     .map_err(ApiError)?;
   Ok(Json(PaginatedResponse {
@@ -54,20 +54,22 @@ async fn create_project(
 ) -> Result<Json<Project>, ApiError> {
   RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
     ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      fc_common::CiError::Forbidden("Insufficient permissions".to_string())
+      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
     } else {
-      fc_common::CiError::Unauthorized("Authentication required".to_string())
+      circus_common::CiError::Unauthorized(
+        "Authentication required".to_string(),
+      )
     })
   })?;
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  fc_common::validate::validate_url_scheme(
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  circus_common::validate::validate_url_scheme(
     &input.repository_url,
     &state.config.server.allowed_url_schemes,
   )
-  .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  let project = fc_common::repo::projects::create(&state.pool, input)
+  .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  let project = circus_common::repo::projects::create(&state.pool, input)
     .await
     .map_err(ApiError)?;
   Ok(Json(project))
@@ -77,7 +79,7 @@ async fn get_project(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Project>, ApiError> {
-  let project = fc_common::repo::projects::get(&state.pool, id)
+  let project = circus_common::repo::projects::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(project))
@@ -91,15 +93,15 @@ async fn update_project(
 ) -> Result<Json<Project>, ApiError> {
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   if let Some(ref url) = input.repository_url {
-    fc_common::validate::validate_url_scheme(
+    circus_common::validate::validate_url_scheme(
       url,
       &state.config.server.allowed_url_schemes,
     )
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   }
-  let project = fc_common::repo::projects::update(&state.pool, id, input)
+  let project = circus_common::repo::projects::update(&state.pool, id, input)
     .await
     .map_err(ApiError)?;
   Ok(Json(project))
@@ -110,7 +112,7 @@ async fn delete_project(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  fc_common::repo::projects::delete(&state.pool, id)
+  circus_common::repo::projects::delete(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(serde_json::json!({ "deleted": true })))
@@ -123,11 +125,15 @@ async fn list_project_jobsets(
 ) -> Result<Json<PaginatedResponse<Jobset>>, ApiError> {
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let items =
-    fc_common::repo::jobsets::list_for_project(&state.pool, id, limit, offset)
-      .await
-      .map_err(ApiError)?;
-  let total = fc_common::repo::jobsets::count_for_project(&state.pool, id)
+  let items = circus_common::repo::jobsets::list_for_project(
+    &state.pool,
+    id,
+    limit,
+    offset,
+  )
+  .await
+  .map_err(ApiError)?;
+  let total = circus_common::repo::jobsets::count_for_project(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(PaginatedResponse {
@@ -147,7 +153,7 @@ struct CreateJobsetBody {
   check_interval:    Option<i32>,
   branch:            Option<String>,
   scheduling_shares: Option<i32>,
-  state:             Option<fc_common::models::JobsetState>,
+  state:             Option<circus_common::models::JobsetState>,
 }
 
 async fn create_project_jobset(
@@ -158,9 +164,11 @@ async fn create_project_jobset(
 ) -> Result<Json<Jobset>, ApiError> {
   RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
     ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      fc_common::CiError::Forbidden("Insufficient permissions".to_string())
+      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
     } else {
-      fc_common::CiError::Unauthorized("Authentication required".to_string())
+      circus_common::CiError::Unauthorized(
+        "Authentication required".to_string(),
+      )
     })
   })?;
   let input = CreateJobset {
@@ -177,8 +185,8 @@ async fn create_project_jobset(
   };
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  let jobset = fc_common::repo::jobsets::create(&state.pool, input)
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  let jobset = circus_common::repo::jobsets::create(&state.pool, input)
     .await
     .map_err(ApiError)?;
   Ok(Json(jobset))
@@ -230,9 +238,11 @@ async fn setup_project(
 ) -> Result<Json<SetupProjectResponse>, ApiError> {
   RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
     ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      fc_common::CiError::Forbidden("Insufficient permissions".to_string())
+      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
     } else {
-      fc_common::CiError::Unauthorized("Authentication required".to_string())
+      circus_common::CiError::Unauthorized(
+        "Authentication required".to_string(),
+      )
     })
   })?;
 
@@ -243,16 +253,17 @@ async fn setup_project(
   };
   create_project
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  fc_common::validate::validate_url_scheme(
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  circus_common::validate::validate_url_scheme(
     &create_project.repository_url,
     &state.config.server.allowed_url_schemes,
   )
-  .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
+  .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
 
-  let project = fc_common::repo::projects::create(&state.pool, create_project)
-    .await
-    .map_err(ApiError)?;
+  let project =
+    circus_common::repo::projects::create(&state.pool, create_project)
+      .await
+      .map_err(ApiError)?;
 
   let mut jobsets = Vec::new();
   for js_input in body.jobsets {
@@ -270,8 +281,8 @@ async fn setup_project(
     };
     input
       .validate()
-      .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-    let jobset = fc_common::repo::jobsets::create(&state.pool, input)
+      .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+    let jobset = circus_common::repo::jobsets::create(&state.pool, input)
       .await
       .map_err(ApiError)?;
     jobsets.push(jobset);
@@ -293,7 +304,7 @@ async fn list_project_webhooks(
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<WebhookConfig>>, ApiError> {
   let configs =
-    fc_common::repo::webhook_configs::list_for_project(&state.pool, id)
+    circus_common::repo::webhook_configs::list_for_project(&state.pool, id)
       .await
       .map_err(ApiError)?;
   Ok(Json(configs))
@@ -307,16 +318,18 @@ async fn create_project_webhook(
 ) -> Result<Json<WebhookConfig>, ApiError> {
   RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
     ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      fc_common::CiError::Forbidden("Insufficient permissions".to_string())
+      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
     } else {
-      fc_common::CiError::Unauthorized("Authentication required".to_string())
+      circus_common::CiError::Unauthorized(
+        "Authentication required".to_string(),
+      )
     })
   })?;
 
   // Validate forge type
   let valid_forges = ["github", "gitlab", "gitea", "forgejo"];
   if !valid_forges.contains(&body.forge_type.as_str()) {
-    return Err(ApiError(fc_common::CiError::Validation(format!(
+    return Err(ApiError(circus_common::CiError::Validation(format!(
       "Invalid forge_type '{}'. Must be one of: {}",
       body.forge_type,
       valid_forges.join(", ")
@@ -332,7 +345,7 @@ async fn create_project_webhook(
   // For webhook configs, we store the secret directly (used for token
   // comparison) GitHub/Gitea use HMAC verification, GitLab uses direct token
   // comparison
-  let config = fc_common::repo::webhook_configs::create(
+  let config = circus_common::repo::webhook_configs::create(
     &state.pool,
     input,
     body.secret.as_deref(),
@@ -356,17 +369,17 @@ async fn delete_project_webhook(
 ) -> Result<Json<serde_json::Value>, ApiError> {
   // Verify the webhook belongs to the project
   let config =
-    fc_common::repo::webhook_configs::get(&state.pool, params.webhook_id)
+    circus_common::repo::webhook_configs::get(&state.pool, params.webhook_id)
       .await
       .map_err(ApiError)?;
 
   if config.project_id != params.id {
-    return Err(ApiError(fc_common::CiError::NotFound(
+    return Err(ApiError(circus_common::CiError::NotFound(
       "Webhook not found for this project".to_string(),
     )));
   }
 
-  fc_common::repo::webhook_configs::delete(&state.pool, params.webhook_id)
+  circus_common::repo::webhook_configs::delete(&state.pool, params.webhook_id)
     .await
     .map_err(ApiError)?;
 

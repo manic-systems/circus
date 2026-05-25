@@ -1,12 +1,12 @@
-# FC CI Configuration File
-# This file contains default configuration for all FC CI components
+# Configuration File for Circus CI system
+# This file contains default configuration for all circus components
 [database]
 connect_timeout = 30
 idle_timeout    = 600
 max_connections = 20
 max_lifetime    = 1800
 min_connections = 5
-url             = "postgresql://fc_ci:password@localhost/fc_ci"
+url             = "postgresql://circus:password@localhost/circus"
 
 [server]
 allowed_origins = [  ]
@@ -26,10 +26,10 @@ git_timeout   = 600
 nix_timeout   = 1800
 poll_interval = 60
 restrict_eval = true
-work_dir      = "/tmp/fc-evaluator"
+work_dir      = "/tmp/circus-evaluator"
 
 [queue_runner]
 build_timeout = 3600
 poll_interval = 5
-work_dir      = "/tmp/fc-queue-runner"
+work_dir      = "/tmp/circus-queue-runner"
 workers       = 4

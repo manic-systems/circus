@@ -1,6 +1,6 @@
 # Database Migrations
 
-This directory contains SQL migrations for the FC database.
+This directory contains SQL migrations for the circus database.
 
 ## Migration Files
 
@@ -10,16 +10,16 @@ This directory contains SQL migrations for the FC database.
 
 ## Running Migrations
 
-The easiest way to run migrations is to use the vendored CLI, `fc-migrate`.
+The easiest way to run migrations is to use the vendored CLI, `circus-migrate`.
 Packagers should vendor this crate if possible.
 
 ```bash
 # Run all pending migrations
-fc-migrate up postgresql://user:password@localhost/fc_ci
+circus-migrate up postgresql://user:password@localhost/circus
 
 # Validate current schema
-fc-migrate validate postgresql://user:password@localhost/fc_ci
+circus-migrate validate postgresql://user:password@localhost/circus
 
 # Create a new migration
-fc-migrate create migration_name
+circus-migrate create migration_name
 ```

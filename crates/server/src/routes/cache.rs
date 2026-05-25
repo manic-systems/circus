@@ -42,7 +42,7 @@ async fn find_store_path(
   .bind(&like_pattern)
   .fetch_optional(pool)
   .await
-  .map_err(|e| ApiError(fc_common::CiError::Database(e)))?;
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
 
   if path.is_some() {
     return Ok(path);
@@ -55,7 +55,7 @@ async fn find_store_path(
   .bind(&like_pattern)
   .fetch_optional(pool)
   .await
-  .map_err(|e| ApiError(fc_common::CiError::Database(e)))
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
 }
 
 /// Serve `NARInfo` for a store path hash.
@@ -73,12 +73,12 @@ async fn narinfo(
   // Strip .narinfo suffix if present
   let hash = hash.strip_suffix(".narinfo").unwrap_or(&hash);
 
-  if !fc_common::validate::is_valid_nix_hash(hash) {
+  if !circus_common::validate::is_valid_nix_hash(hash) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
   let store_path = match find_store_path(&state.pool, hash).await? {
-    Some(p) if fc_common::validate::is_valid_store_path(&p) => p,
+    Some(p) if circus_common::validate::is_valid_store_path(&p) => p,
     _ => return Ok(StatusCode::NOT_FOUND.into_response()),
   };
 
@@ -237,13 +237,13 @@ fn pipe_through_compressor(
     .stderr(std::process::Stdio::null())
     .spawn()
     .map_err(|_| {
-      ApiError(fc_common::CiError::Build(
+      ApiError(circus_common::CiError::Build(
         "Failed to start nix store dump-path".to_string(),
       ))
     })?;
 
   let nix_stdout = nix_child.stdout.take().ok_or_else(|| {
-    ApiError(fc_common::CiError::Build(
+    ApiError(circus_common::CiError::Build(
       "nix store dump-path produced no stdout".to_string(),
     ))
   })?;
@@ -256,13 +256,13 @@ fn pipe_through_compressor(
     .kill_on_drop(true)
     .spawn()
     .map_err(|_| {
-      ApiError(fc_common::CiError::Build(format!(
+      ApiError(circus_common::CiError::Build(format!(
         "Failed to start {compressor}"
       )))
     })?;
 
   comp_child.stdout.take().ok_or_else(|| {
-    ApiError(fc_common::CiError::Build(format!(
+    ApiError(circus_common::CiError::Build(format!(
       "{compressor} produced no stdout"
     )))
   })
@@ -295,12 +295,12 @@ async fn serve_nar_combined(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !fc_common::validate::is_valid_nix_hash(stripped) {
+  if !circus_common::validate::is_valid_nix_hash(stripped) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
   let store_path = match find_store_path(&state.pool, stripped).await? {
-    Some(p) if fc_common::validate::is_valid_store_path(&p) => p,
+    Some(p) if circus_common::validate::is_valid_store_path(&p) => p,
     _ => return Ok(StatusCode::NOT_FOUND.into_response()),
   };
 
@@ -315,12 +315,12 @@ async fn serve_nar_combined(
       .kill_on_drop(true)
       .spawn()
       .map_err(|_| {
-        ApiError(fc_common::CiError::Build(
+        ApiError(circus_common::CiError::Build(
           "Failed to start nix store dump-path".to_string(),
         ))
       })?;
     let stdout = child.stdout.take().ok_or_else(|| {
-      ApiError(fc_common::CiError::Build(
+      ApiError(circus_common::CiError::Build(
         "nix store dump-path produced no stdout".to_string(),
       ))
     })?;

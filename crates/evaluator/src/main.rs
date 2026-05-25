@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use circus_common::{Config, Database};
 use clap::Parser;
-use fc_common::{Config, Database};
 
 #[derive(Parser)]
-#[command(name = "fc-evaluator")]
+#[command(name = "circus-evaluator")]
 #[command(about = "CI Evaluator - Git polling and Nix evaluation")]
 struct Cli {
   #[arg(short, long)]
@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
   let _cli = Cli::parse();
 
   let config = Config::load()?;
-  fc_common::init_tracing(&config.tracing);
+  circus_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Evaluator");
   tracing::info!("Configuration loaded");
@@ -33,14 +33,14 @@ async fn main() -> anyhow::Result<()> {
   let notifications_config = config.notifications;
 
   let wakeup = Arc::new(tokio::sync::Notify::new());
-  let listener_handle = fc_common::pg_notify::spawn_listener(
+  let listener_handle = circus_common::pg_notify::spawn_listener(
     db.pool(),
-    &[fc_common::pg_notify::CHANNEL_JOBSETS_CHANGED],
+    &[circus_common::pg_notify::CHANNEL_JOBSETS_CHANGED],
     wakeup.clone(),
   );
 
   tokio::select! {
-      result = fc_evaluator::eval_loop::run(pool, eval_config, notifications_config, wakeup) => {
+      result = circus_evaluator::eval_loop::run(pool, eval_config, notifications_config, wakeup) => {
           if let Err(e) = result {
               tracing::error!("Evaluator loop failed: {e}");
           }

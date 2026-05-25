@@ -5,9 +5,9 @@
   ...
 }: let
   inherit (lib.modules) mkDefault;
-  fc-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+  circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
 in {
-  # Common machine configuration for all FC integration tests
+  # Common machine configuration for all circus integration tests
   config = {
     ## VM hardware
     virtualisation = {
@@ -44,13 +44,13 @@ in {
     # the host machine.
     networking.firewall.allowedTCPPorts = [3000];
 
-    services.fc-ci = {
+    services.circus = {
       enable = true;
 
-      package = mkDefault fc-packages.fc-server;
-      evaluatorPackage = mkDefault fc-packages.fc-evaluator;
-      queueRunnerPackage = mkDefault fc-packages.fc-queue-runner;
-      migratePackage = mkDefault fc-packages.fc-migrate-cli;
+      package = mkDefault circus-packages.circus-server;
+      evaluatorPackage = mkDefault circus-packages.circus-evaluator;
+      queueRunnerPackage = mkDefault circus-packages.circus-queue-runner;
+      migratePackage = mkDefault circus-packages.circus-migrate-cli;
 
       server.enable = true;
       evaluator.enable = true;
@@ -67,7 +67,7 @@ in {
         };
 
         gc.enabled = false;
-        logs.log_dir = "/var/lib/fc/logs";
+        logs.log_dir = "/var/lib/circus/logs";
         cache.enabled = true;
         signing.enabled = false;
 
@@ -80,14 +80,14 @@ in {
 
         evaluator = {
           poll_interval = 5;
-          work_dir = "/var/lib/fc/evaluator";
+          work_dir = "/var/lib/circus/evaluator";
           nix_timeout = 60;
           strict_errors = true;
         };
 
         queue_runner = {
           poll_interval = 3;
-          work_dir = "/var/lib/fc/queue-runner";
+          work_dir = "/var/lib/circus/queue-runner";
           strict_errors = true;
         };
       };

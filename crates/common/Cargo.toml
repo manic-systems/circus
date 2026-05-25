@@ -1,8 +1,7 @@
 [package]
-name                 = "fc-common"
+name                 = "circus-common"
 version.workspace    = true
 edition.workspace    = true
-authors.workspace    = true
 license.workspace    = true
 repository.workspace = true
 

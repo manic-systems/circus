@@ -2,7 +2,7 @@
   pkgs,
   self,
 }: let
-  fc-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+  circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
 
   # Password files for testing passwordFile option
   # Passwords must be at least 12 characters with at least one uppercase letter
@@ -11,22 +11,22 @@
   disabledPasswordFile = pkgs.writeText "disabled-password" "DisabledPass123!";
 in
   pkgs.testers.nixosTest {
-    name = "fc-declarative";
+    name = "circus-declarative";
 
     nodes.machine = {
-      imports = [self.nixosModules.fc-ci];
+      imports = [self.nixosModules.circus];
       _module.args.self = self;
 
       programs.git.enable = true;
       security.sudo.enable = true;
       environment.systemPackages = with pkgs; [nix nix-eval-jobs zstd curl jq openssl];
 
-      services.fc-ci = {
+      services.circus = {
         enable = true;
-        package = fc-packages.fc-server;
-        evaluatorPackage = fc-packages.fc-evaluator;
-        queueRunnerPackage = fc-packages.fc-queue-runner;
-        migratePackage = fc-packages.fc-migrate-cli;
+        package = circus-packages.circus-server;
+        evaluatorPackage = circus-packages.circus-evaluator;
+        queueRunnerPackage = circus-packages.circus-queue-runner;
+        migratePackage = circus-packages.circus-migrate-cli;
 
         server.enable = true;
         evaluator.enable = true;
@@ -40,7 +40,7 @@ in
             cors_permissive = false;
           };
           gc.enabled = false;
-          logs.log_dir = "/var/lib/fc/logs";
+          logs.log_dir = "/var/lib/circus/logs";
           cache.enabled = true;
           signing.enabled = false;
         };
@@ -139,45 +139,45 @@ in
     testScript = ''
       machine.start()
       machine.wait_for_unit("postgresql.service")
-      machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
-      machine.wait_for_unit("fc-server.service")
+      machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+      machine.wait_for_unit("circus-server.service")
       machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
       # DECLARATIVE USERS
       with subtest("Declarative users are created in database"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM users WHERE username LIKE 'decl-%'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM users WHERE username LIKE 'decl-%'\""
           )
           count = int(result.strip())
           assert count == 4, f"Expected 4 declarative users, got {count}"
 
       with subtest("Declarative admin user has admin role"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT role FROM users WHERE username = 'decl-admin'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT role FROM users WHERE username = 'decl-admin'\""
           )
           assert result.strip() == "admin", f"Expected admin role, got '{result.strip()}'"
 
       with subtest("Declarative regular users have read-only role"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT role FROM users WHERE username = 'decl-user'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT role FROM users WHERE username = 'decl-user'\""
           )
           assert result.strip() == "read-only", f"Expected read-only role, got '{result.strip()}'"
 
       with subtest("Declarative disabled user is disabled"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT enabled FROM users WHERE username = 'decl-disabled'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT enabled FROM users WHERE username = 'decl-disabled'\""
           )
           assert result.strip() == "f", f"Expected disabled (f), got '{result.strip()}'"
 
       with subtest("Declarative enabled users are enabled"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT enabled FROM users WHERE username = 'decl-admin'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT enabled FROM users WHERE username = 'decl-admin'\""
           )
           assert result.strip() == "t", f"Expected enabled (t), got '{result.strip()}'"
 
       with subtest("Declarative users have password hashes set"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
           )
           # Argon2 hashes start with $argon2
           assert result.strip().startswith("$argon2"), f"Expected argon2 hash, got '{result.strip()[:20]}...'"
@@ -185,13 +185,13 @@ in
       with subtest("User with passwordFile has correct password hash"):
           # The password in the file is 'SecretAdmin123!'
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
           )
           assert len(result.strip()) > 50, "Password hash should be substantial length"
 
       with subtest("User with inline password has correct password hash"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT password_hash FROM users WHERE username = 'decl-user'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-user'\""
           )
           assert result.strip().startswith("$argon2"), f"Expected argon2 hash for inline password user, got '{result.strip()[:20]}...'"
 
@@ -253,7 +253,7 @@ in
       # DECLARATIVE API KEYS
       with subtest("Declarative API keys are created"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM api_keys WHERE name LIKE 'decl-%'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM api_keys WHERE name LIKE 'decl-%'\""
           )
           count = int(result.strip())
           assert count == 2, f"Expected 2 declarative API keys, got {count}"
@@ -363,28 +363,28 @@ in
 
       with subtest("Disabled jobset is not in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'disabled-jobset'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'disabled-jobset'\""
           )
           count = int(result.strip())
           assert count == 0, f"Disabled jobset should not be in active_jobsets, got {count}"
 
       with subtest("Enabled jobsets are in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'enabled-jobset'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'enabled-jobset'\""
           )
           count = int(result.strip())
           assert count == 1, f"Enabled jobset should be in active_jobsets, got {count}"
 
       with subtest("One-shot jobset is in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneshot-jobset'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneshot-jobset'\""
           )
           count = int(result.strip())
           assert count == 1, f"One-shot jobset should be in active_jobsets, got {count}"
 
       with subtest("One-at-a-time jobset is in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneatatime-jobset'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneatatime-jobset'\""
           )
           count = int(result.strip())
           assert count == 1, f"One-at-a-time jobset should be in active_jobsets, got {count}"
@@ -401,7 +401,7 @@ in
       # IDEMPOTENCY
       with subtest("Bootstrap is idempotent - no duplicate users"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM users WHERE username = 'decl-admin'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM users WHERE username = 'decl-admin'\""
           )
           count = int(result.strip())
           assert count == 1, f"Expected exactly 1 decl-admin user, got {count}"
@@ -415,7 +415,7 @@ in
 
       with subtest("Bootstrap is idempotent - no duplicate API keys"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -t -c \"SELECT COUNT(*) FROM api_keys WHERE name = 'decl-admin-key'\""
+              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM api_keys WHERE name = 'decl-admin-key'\""
           )
           count = int(result.strip())
           assert count == 1, f"Expected exactly 1 decl-admin-key, got {count}"

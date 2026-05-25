@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use fc_common::{
+use circus_common::{
   config::HotConfig,
   models::{Build, BuildStatus, JobsetState},
   repo,
@@ -16,7 +16,7 @@ use crate::worker::WorkerPool;
 async fn get_project_for_build(
   pool: &PgPool,
   build: &Build,
-) -> Option<(fc_common::models::Project, String)> {
+) -> Option<(circus_common::models::Project, String)> {
   let eval = repo::evaluations::get(pool, build.evaluation_id)
     .await
     .ok()?;
@@ -111,7 +111,7 @@ pub async fn run(
                   && let Some((project, commit_hash)) =
                     get_project_for_build(&pool, &updated_build).await
                 {
-                  fc_common::notifications::dispatch_build_finished(
+                  circus_common::notifications::dispatch_build_finished(
                     Some(&pool),
                     &updated_build,
                     &project,

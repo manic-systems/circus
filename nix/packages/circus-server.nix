@@ -6,6 +6,6 @@
 craneLib.buildPackage (commonArgs
   // {
     inherit cargoArtifacts;
-    pname = "fc-server";
-    cargoExtraArgs = "--package fc-server";
+    pname = "circus-server";
+    cargoExtraArgs = "--package circus-server";
   })

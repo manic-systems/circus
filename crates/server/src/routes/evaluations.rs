@@ -7,7 +7,7 @@ use axum::{
   http::Extensions,
   routing::{get, post},
 };
-use fc_common::{
+use circus_common::{
   CreateEvaluation,
   Evaluation,
   PaginatedResponse,
@@ -37,7 +37,7 @@ async fn list_evaluations(
   };
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let items = fc_common::repo::evaluations::list_filtered(
+  let items = circus_common::repo::evaluations::list_filtered(
     &state.pool,
     params.jobset_id,
     params.status.as_deref(),
@@ -46,7 +46,7 @@ async fn list_evaluations(
   )
   .await
   .map_err(ApiError)?;
-  let total = fc_common::repo::evaluations::count_filtered(
+  let total = circus_common::repo::evaluations::count_filtered(
     &state.pool,
     params.jobset_id,
     params.status.as_deref(),
@@ -65,7 +65,7 @@ async fn get_evaluation(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Evaluation>, ApiError> {
-  let evaluation = fc_common::repo::evaluations::get(&state.pool, id)
+  let evaluation = circus_common::repo::evaluations::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(evaluation))
@@ -78,15 +78,17 @@ async fn trigger_evaluation(
 ) -> Result<Json<Evaluation>, ApiError> {
   RequireRoles::check(&extensions, &["eval-jobset"]).map_err(|s| {
     ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      fc_common::CiError::Forbidden("Insufficient permissions".to_string())
+      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
     } else {
-      fc_common::CiError::Unauthorized("Authentication required".to_string())
+      circus_common::CiError::Unauthorized(
+        "Authentication required".to_string(),
+      )
     })
   })?;
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  let evaluation = fc_common::repo::evaluations::create(&state.pool, input)
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  let evaluation = circus_common::repo::evaluations::create(&state.pool, input)
     .await
     .map_err(ApiError)?;
   Ok(Json(evaluation))
@@ -131,27 +133,27 @@ async fn compare_evaluations(
   Query(params): Query<CompareParams>,
 ) -> Result<Json<EvalComparison>, ApiError> {
   // Verify both evaluations exist
-  let _from_eval = fc_common::repo::evaluations::get(&state.pool, id)
+  let _from_eval = circus_common::repo::evaluations::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
-  let _to_eval = fc_common::repo::evaluations::get(&state.pool, params.to)
+  let _to_eval = circus_common::repo::evaluations::get(&state.pool, params.to)
     .await
     .map_err(ApiError)?;
 
   let from_builds =
-    fc_common::repo::builds::list_for_evaluation(&state.pool, id)
+    circus_common::repo::builds::list_for_evaluation(&state.pool, id)
       .await
       .map_err(ApiError)?;
   let to_builds =
-    fc_common::repo::builds::list_for_evaluation(&state.pool, params.to)
+    circus_common::repo::builds::list_for_evaluation(&state.pool, params.to)
       .await
       .map_err(ApiError)?;
 
-  let from_map: HashMap<&str, &fc_common::Build> = from_builds
+  let from_map: HashMap<&str, &circus_common::Build> = from_builds
     .iter()
     .map(|b| (b.job_name.as_str(), b))
     .collect();
-  let to_map: HashMap<&str, &fc_common::Build> =
+  let to_map: HashMap<&str, &circus_common::Build> =
     to_builds.iter().map(|b| (b.job_name.as_str(), b)).collect();
 
   let mut new_jobs = Vec::new();

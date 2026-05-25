@@ -9,7 +9,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::{get, post},
 };
-use fc_common::{
+use circus_common::{
   Validate,
   models::{BuildStatus, Channel, CreateChannel},
 };
@@ -20,7 +20,7 @@ use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
 async fn list_channels(
   State(state): State<AppState>,
 ) -> Result<Json<Vec<Channel>>, ApiError> {
-  let channels = fc_common::repo::channels::list_all(&state.pool)
+  let channels = circus_common::repo::channels::list_all(&state.pool)
     .await
     .map_err(ApiError)?;
   Ok(Json(channels))
@@ -31,7 +31,7 @@ async fn list_project_channels(
   Path(project_id): Path<Uuid>,
 ) -> Result<Json<Vec<Channel>>, ApiError> {
   let channels =
-    fc_common::repo::channels::list_for_project(&state.pool, project_id)
+    circus_common::repo::channels::list_for_project(&state.pool, project_id)
       .await
       .map_err(ApiError)?;
   Ok(Json(channels))
@@ -41,7 +41,7 @@ async fn get_channel(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Channel>, ApiError> {
-  let channel = fc_common::repo::channels::get(&state.pool, id)
+  let channel = circus_common::repo::channels::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(channel))
@@ -54,17 +54,17 @@ async fn create_channel(
 ) -> Result<Json<Channel>, ApiError> {
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let jobset_id = input.jobset_id;
-  let channel = fc_common::repo::channels::create(&state.pool, input)
+  let channel = circus_common::repo::channels::create(&state.pool, input)
     .await
     .map_err(ApiError)?;
 
   // Catch-up: if the jobset already has a completed evaluation, promote now
   if let Ok(Some(eval)) =
-    fc_common::repo::evaluations::get_latest(&state.pool, jobset_id).await
-    && eval.status == fc_common::models::EvaluationStatus::Completed
-    && let Err(e) = fc_common::repo::channels::auto_promote_if_complete(
+    circus_common::repo::evaluations::get_latest(&state.pool, jobset_id).await
+    && eval.status == circus_common::models::EvaluationStatus::Completed
+    && let Err(e) = circus_common::repo::channels::auto_promote_if_complete(
       &state.pool,
       jobset_id,
       eval.id,
@@ -75,7 +75,7 @@ async fn create_channel(
   }
 
   // Re-fetch to include any promotion
-  let channel = fc_common::repo::channels::get(&state.pool, channel.id)
+  let channel = circus_common::repo::channels::get(&state.pool, channel.id)
     .await
     .map_err(ApiError)?;
   Ok(Json(channel))
@@ -86,7 +86,7 @@ async fn delete_channel(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  fc_common::repo::channels::delete(&state.pool, id)
+  circus_common::repo::channels::delete(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(serde_json::json!({"deleted": true})))
@@ -98,7 +98,7 @@ async fn promote_channel(
   Path((channel_id, eval_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Channel>, ApiError> {
   let channel =
-    fc_common::repo::channels::promote(&state.pool, channel_id, eval_id)
+    circus_common::repo::channels::promote(&state.pool, channel_id, eval_id)
       .await
       .map_err(ApiError)?;
   Ok(Json(channel))
@@ -111,20 +111,22 @@ async fn nixexprs_tarball(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-  let channel = fc_common::repo::channels::get(&state.pool, id)
+  let channel = circus_common::repo::channels::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
 
   let evaluation_id = channel.current_evaluation_id.ok_or_else(|| {
-    ApiError(fc_common::CiError::NotFound(
+    ApiError(circus_common::CiError::NotFound(
       "Channel has no current evaluation".to_string(),
     ))
   })?;
 
-  let builds =
-    fc_common::repo::builds::list_for_evaluation(&state.pool, evaluation_id)
-      .await
-      .map_err(ApiError)?;
+  let builds = circus_common::repo::builds::list_for_evaluation(
+    &state.pool,
+    evaluation_id,
+  )
+  .await
+  .map_err(ApiError)?;
 
   let succeeded: Vec<_> = builds
     .iter()
@@ -132,7 +134,7 @@ async fn nixexprs_tarball(
     .collect();
 
   if succeeded.is_empty() {
-    return Err(ApiError(fc_common::CiError::NotFound(
+    return Err(ApiError(circus_common::CiError::NotFound(
       "No succeeded builds in current evaluation".to_string(),
     )));
   }
@@ -201,9 +203,11 @@ async fn nixexprs_tarball(
     })
     .await
     .map_err(|e| {
-      ApiError(fc_common::CiError::Build(format!("Task join error: {e}")))
+      ApiError(circus_common::CiError::Build(format!(
+        "Task join error: {e}"
+      )))
     })?
-    .map_err(|e| ApiError(fc_common::CiError::Build(e)))?;
+    .map_err(|e| ApiError(circus_common::CiError::Build(e)))?;
 
   Ok(
     (

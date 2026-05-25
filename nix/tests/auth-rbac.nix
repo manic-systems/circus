@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-auth-rbac";
+  name = "circus-auth-rbac";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
     _module.args.self = self;
@@ -21,10 +21,10 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.wait_for_unit("postgresql.service")
 
-    # Ensure PostgreSQL is actually ready to accept connections before fc-server starts
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
 
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -34,7 +34,7 @@ pkgs.testers.nixosTest {
     api_token = "fc_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -80,7 +80,7 @@ pkgs.testers.nixosTest {
     ro_token = "fc_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
     )
     ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
@@ -257,7 +257,7 @@ pkgs.testers.nixosTest {
         assert result.strip() == "0", f"Expected 0, got {result.strip()}"
         # Verify projects table is intact
         count = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -t -c 'SELECT COUNT(*) FROM projects'"
+            "sudo -u circus psql -U circus -d circus -t -c 'SELECT COUNT(*) FROM projects'"
         )
         assert int(count.strip()) > 0, "Projects table seems damaged"
 

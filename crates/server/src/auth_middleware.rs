@@ -4,14 +4,14 @@ use axum::{
   middleware::Next,
   response::Response,
 };
-use fc_common::models::{ApiKey, User};
+use circus_common::models::{ApiKey, User};
 use sha2::{Digest, Sha256};
 
 use crate::state::AppState;
 
 /// Extract and validate an API key from the Authorization header or session
-/// cookie. Keys use the format: `Bearer fc_xxxx`. Session cookies use
-/// `fc_session=<id>` for API keys or `fc_user_session=<id>` for users.
+/// cookie. Keys use the format: `Bearer circus_xxxx`. Session cookies use
+/// `circus_session=<id>` for API keys or `circus_user_session=<id>` for users.
 /// Write endpoints (POST/PUT/DELETE/PATCH) require a valid key.
 /// Read endpoints (GET/HEAD/OPTIONS) try to extract optionally (for
 /// dashboard admin UI).
@@ -47,14 +47,14 @@ pub async fn require_api_key(
     let key_hash = hex::encode(hasher.finalize());
 
     if let Ok(Some(api_key)) =
-      fc_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
+      circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
     {
       // Update last used timestamp asynchronously
       let pool = state.pool.clone();
       let key_id = api_key.id;
       tokio::spawn(async move {
         if let Err(e) =
-          fc_common::repo::api_keys::touch_last_used(&pool, key_id).await
+          circus_common::repo::api_keys::touch_last_used(&pool, key_id).await
         {
           tracing::warn!(error = %e, "Failed to update API key last_used timestamp");
         }
@@ -76,8 +76,8 @@ pub async fn require_api_key(
     .get("cookie")
     .and_then(|v| v.to_str().ok())
   {
-    // Try user session first (new fc_user_session cookie)
-    if let Some(session_id) = parse_cookie(cookie_header, "fc_user_session")
+    // Try user session first (new circus_user_session cookie)
+    if let Some(session_id) = parse_cookie(cookie_header, "circus_user_session")
       && let Some(session) = state.sessions.get(&session_id)
     {
       // Check session expiry (24 hours)
@@ -96,8 +96,8 @@ pub async fn require_api_key(
       state.sessions.remove(&session_id);
     }
 
-    // Try legacy API key session (fc_session cookie)
-    if let Some(session_id) = parse_cookie(cookie_header, "fc_session")
+    // Try legacy API key session (circus_session cookie)
+    if let Some(session_id) = parse_cookie(cookie_header, "circus_session")
       && let Some(session) = state.sessions.get(&session_id)
     {
       // Check session expiry (24 hours)
@@ -209,8 +209,8 @@ impl RequireRoles {
 }
 
 /// Session extraction middleware for dashboard routes.
-/// Reads `fc_user_session` or `fc_session` cookie, or Bearer token (API key),
-/// and inserts User/ApiKey into extensions if valid.
+/// Reads `circus_user_session` or `circus_session` cookie, or Bearer token (API
+/// key), and inserts User/ApiKey into extensions if valid.
 pub async fn extract_session(
   State(state): State<AppState>,
   mut request: Request,
@@ -232,14 +232,14 @@ pub async fn extract_session(
     let key_hash = hex::encode(hasher.finalize());
 
     if let Ok(Some(api_key)) =
-      fc_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
+      circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
     {
       // Update last used timestamp asynchronously
       let pool = state.pool.clone();
       let key_id = api_key.id;
       tokio::spawn(async move {
         if let Err(e) =
-          fc_common::repo::api_keys::touch_last_used(&pool, key_id).await
+          circus_common::repo::api_keys::touch_last_used(&pool, key_id).await
         {
           tracing::warn!(error = %e, "Failed to update API key last_used timestamp");
         }
@@ -258,7 +258,8 @@ pub async fn extract_session(
 
   if let Some(cookie_header) = cookie_header {
     // Try user session first
-    if let Some(session_id) = parse_cookie(&cookie_header, "fc_user_session")
+    if let Some(session_id) =
+      parse_cookie(&cookie_header, "circus_user_session")
       && let Some(session) = state.sessions.get(&session_id)
     {
       // Check session expiry
@@ -280,7 +281,7 @@ pub async fn extract_session(
     }
 
     // Try legacy API key session
-    if let Some(session_id) = parse_cookie(&cookie_header, "fc_session")
+    if let Some(session_id) = parse_cookie(&cookie_header, "circus_session")
       && let Some(session) = state.sessions.get(&session_id)
     {
       // Check session expiry

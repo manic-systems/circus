@@ -5,8 +5,8 @@ use tracing::info;
 use tracing_subscriber::fmt::init;
 
 #[derive(Parser)]
-#[command(name = "fc-migrate")]
-#[command(about = "Database migration utility for FC CI")]
+#[command(name = "circus-migrate")]
+#[command(about = "Database migration utility for circus")]
 pub struct Cli {
   #[command(subcommand)]
   pub command: Commands,

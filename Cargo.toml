@@ -9,19 +9,18 @@ members = [
 resolver = "3"
 
 [workspace.package]
-authors      = [ "NotAShelf <raf@notashelf.dev" ]
 edition      = "2024"
 license      = "MPL-2.0"
-repository   = "https://gitub.com/feel-co/fc"
+repository   = "https://github.com/notashelf/circus"
 rust-version = "1.95.0"
 version      = "0.3.0-dev"
 
 [workspace.dependencies]
 # Components
-fc-common       = { path = "./crates/common" }
-fc-evaluator    = { path = "./crates/evaluator" }
-fc-queue-runner = { path = "./crates/queue-runner" }
-fc-server       = { path = "./crates/server" }
+circus-common       = { path = "./crates/common", version = "0.3.0-dev" }
+circus-evaluator    = { path = "./crates/evaluator", version = "0.3.0-dev" }
+circus-queue-runner = { path = "./crates/queue-runner", version = "0.3.0-dev" }
+circus-server       = { path = "./crates/server", version = "0.3.0-dev" }
 
 anyhow = "1.0.101"
 argon2 = "0.5.3"

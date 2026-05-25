@@ -7,10 +7,10 @@ use sqlx::PgPool;
 use tokio::{sync::Notify, task::JoinHandle};
 
 /// Channel emitted on `builds` INSERT or status UPDATE.
-pub const CHANNEL_BUILDS_CHANGED: &str = "fc_builds_changed";
+pub const CHANNEL_BUILDS_CHANGED: &str = "circus_builds_changed";
 
 /// Channel emitted on `jobsets` INSERT, UPDATE (relevant fields), or DELETE.
-pub const CHANNEL_JOBSETS_CHANGED: &str = "fc_jobsets_changed";
+pub const CHANNEL_JOBSETS_CHANGED: &str = "circus_jobsets_changed";
 
 /// Spawns a background task that listens on the given PG channels and calls
 /// `wakeup.notify_waiters()` on each notification. Reconnects with 5s backoff
@@ -72,7 +72,7 @@ mod tests {
   #[test]
   fn channel_names_match_migration_triggers() {
     // These must match the pg_notify() calls in migration 015
-    assert_eq!(CHANNEL_BUILDS_CHANGED, "fc_builds_changed");
-    assert_eq!(CHANNEL_JOBSETS_CHANGED, "fc_jobsets_changed");
+    assert_eq!(CHANNEL_BUILDS_CHANGED, "circus_builds_changed");
+    assert_eq!(CHANNEL_JOBSETS_CHANGED, "circus_jobsets_changed");
   }
 }

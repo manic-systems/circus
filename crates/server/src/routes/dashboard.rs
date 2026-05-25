@@ -7,7 +7,7 @@ use axum::{
   response::{Html, IntoResponse, Redirect, Response},
   routing::get,
 };
-use fc_common::models::{
+use circus_common::models::{
   ApiKey,
   Build,
   BuildProduct,
@@ -457,34 +457,39 @@ async fn home(
   State(state): State<AppState>,
   extensions: Extensions,
 ) -> Html<String> {
-  let build_stats = fc_common::repo::builds::get_stats(&state.pool)
+  let build_stats = circus_common::repo::builds::get_stats(&state.pool)
     .await
     .unwrap_or_default();
-  let builds = fc_common::repo::builds::list_recent(&state.pool, 10)
+  let builds = circus_common::repo::builds::list_recent(&state.pool, 10)
     .await
     .unwrap_or_default();
-  let evals =
-    fc_common::repo::evaluations::list_filtered(&state.pool, None, None, 5, 0)
-      .await
-      .unwrap_or_default();
+  let evals = circus_common::repo::evaluations::list_filtered(
+    &state.pool,
+    None,
+    None,
+    5,
+    0,
+  )
+  .await
+  .unwrap_or_default();
 
   // Fetch project summaries
-  let all_projects = fc_common::repo::projects::list(&state.pool, 10, 0)
+  let all_projects = circus_common::repo::projects::list(&state.pool, 10, 0)
     .await
     .unwrap_or_default();
   let mut project_summaries = Vec::new();
   for p in &all_projects {
     let jobset_count =
-      fc_common::repo::jobsets::count_for_project(&state.pool, p.id)
+      circus_common::repo::jobsets::count_for_project(&state.pool, p.id)
         .await
         .unwrap_or(0);
     let jobsets =
-      fc_common::repo::jobsets::list_for_project(&state.pool, p.id, 100, 0)
+      circus_common::repo::jobsets::list_for_project(&state.pool, p.id, 100, 0)
         .await
         .unwrap_or_default();
     let mut last_eval: Option<Evaluation> = None;
     for js in &jobsets {
-      let js_evals = fc_common::repo::evaluations::list_filtered(
+      let js_evals = circus_common::repo::evaluations::list_filtered(
         &state.pool,
         Some(js.id),
         None,
@@ -550,10 +555,10 @@ async fn projects_page(
 ) -> Html<String> {
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = fc_common::repo::projects::list(&state.pool, limit, offset)
+  let items = circus_common::repo::projects::list(&state.pool, limit, offset)
     .await
     .unwrap_or_default();
-  let total = fc_common::repo::projects::count(&state.pool)
+  let total = circus_common::repo::projects::count(&state.pool)
     .await
     .unwrap_or(0);
 
@@ -583,19 +588,19 @@ async fn project_page(
   Path(id): Path<Uuid>,
   extensions: Extensions,
 ) -> Html<String> {
-  let Ok(project) = fc_common::repo::projects::get(&state.pool, id).await
+  let Ok(project) = circus_common::repo::projects::get(&state.pool, id).await
   else {
     return Html("Project not found".to_string());
   };
   let jobsets =
-    fc_common::repo::jobsets::list_for_project(&state.pool, id, 100, 0)
+    circus_common::repo::jobsets::list_for_project(&state.pool, id, 100, 0)
       .await
       .unwrap_or_default();
 
   // Get evaluations for this project's jobsets
   let mut evals = Vec::new();
   for js in &jobsets {
-    let mut js_evals = fc_common::repo::evaluations::list_filtered(
+    let mut js_evals = circus_common::repo::evaluations::list_filtered(
       &state.pool,
       Some(js.id),
       None,
@@ -627,16 +632,17 @@ async fn jobset_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Html<String> {
-  let Ok(jobset) = fc_common::repo::jobsets::get(&state.pool, id).await else {
+  let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
+  else {
     return Html("Jobset not found".to_string());
   };
   let Ok(project) =
-    fc_common::repo::projects::get(&state.pool, jobset.project_id).await
+    circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
     return Html("Project not found".to_string());
   };
 
-  let evals = fc_common::repo::evaluations::list_filtered(
+  let evals = circus_common::repo::evaluations::list_filtered(
     &state.pool,
     Some(id),
     None,
@@ -654,7 +660,7 @@ async fn jobset_page(
     } else {
       e.commit_hash.clone()
     };
-    let succeeded = fc_common::repo::builds::count_filtered(
+    let succeeded = circus_common::repo::builds::count_filtered(
       &state.pool,
       Some(e.id),
       Some("completed"),
@@ -663,7 +669,7 @@ async fn jobset_page(
     )
     .await
     .unwrap_or(0);
-    let failed = fc_common::repo::builds::count_filtered(
+    let failed = circus_common::repo::builds::count_filtered(
       &state.pool,
       Some(e.id),
       Some("failed"),
@@ -672,7 +678,7 @@ async fn jobset_page(
     )
     .await
     .unwrap_or(0);
-    let pending = fc_common::repo::builds::count_filtered(
+    let pending = circus_common::repo::builds::count_filtered(
       &state.pool,
       Some(e.id),
       Some("pending"),
@@ -712,7 +718,7 @@ async fn evaluations_page(
 ) -> Html<String> {
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = fc_common::repo::evaluations::list_filtered(
+  let items = circus_common::repo::evaluations::list_filtered(
     &state.pool,
     None,
     None,
@@ -722,7 +728,7 @@ async fn evaluations_page(
   .await
   .unwrap_or_default();
   let total =
-    fc_common::repo::evaluations::count_filtered(&state.pool, None, None)
+    circus_common::repo::evaluations::count_filtered(&state.pool, None, None)
       .await
       .unwrap_or(0);
 
@@ -730,10 +736,10 @@ async fn evaluations_page(
   let mut enriched = Vec::new();
   for e in &items {
     let (jname, pname) =
-      match fc_common::repo::jobsets::get(&state.pool, e.jobset_id).await {
+      match circus_common::repo::jobsets::get(&state.pool, e.jobset_id).await {
         Ok(js) => {
           let pname =
-            fc_common::repo::projects::get(&state.pool, js.project_id)
+            circus_common::repo::projects::get(&state.pool, js.project_id)
               .await
               .map_or_else(|_| "-".to_string(), |p| p.name);
           (js.name, pname)
@@ -766,23 +772,23 @@ async fn evaluation_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Html<String> {
-  let Ok(eval) = fc_common::repo::evaluations::get(&state.pool, id).await
+  let Ok(eval) = circus_common::repo::evaluations::get(&state.pool, id).await
   else {
     return Html("Evaluation not found".to_string());
   };
 
   let Ok(jobset) =
-    fc_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
+    circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
   else {
     return Html("Jobset not found".to_string());
   };
   let Ok(project) =
-    fc_common::repo::projects::get(&state.pool, jobset.project_id).await
+    circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
     return Html("Project not found".to_string());
   };
 
-  let builds = fc_common::repo::builds::list_filtered(
+  let builds = circus_common::repo::builds::list_filtered(
     &state.pool,
     Some(id),
     None,
@@ -794,7 +800,7 @@ async fn evaluation_page(
   .await
   .unwrap_or_default();
 
-  let succeeded = fc_common::repo::builds::count_filtered(
+  let succeeded = circus_common::repo::builds::count_filtered(
     &state.pool,
     Some(id),
     Some("completed"),
@@ -803,7 +809,7 @@ async fn evaluation_page(
   )
   .await
   .unwrap_or(0);
-  let failed = fc_common::repo::builds::count_filtered(
+  let failed = circus_common::repo::builds::count_filtered(
     &state.pool,
     Some(id),
     Some("failed"),
@@ -812,7 +818,7 @@ async fn evaluation_page(
   )
   .await
   .unwrap_or(0);
-  let running = fc_common::repo::builds::count_filtered(
+  let running = circus_common::repo::builds::count_filtered(
     &state.pool,
     Some(id),
     Some("running"),
@@ -821,7 +827,7 @@ async fn evaluation_page(
   )
   .await
   .unwrap_or(0);
-  let pending = fc_common::repo::builds::count_filtered(
+  let pending = circus_common::repo::builds::count_filtered(
     &state.pool,
     Some(id),
     Some("pending"),
@@ -865,7 +871,7 @@ async fn builds_page(
 ) -> Html<String> {
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = fc_common::repo::builds::list_filtered(
+  let items = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
     params.status.as_deref(),
@@ -876,7 +882,7 @@ async fn builds_page(
   )
   .await
   .unwrap_or_default();
-  let total = fc_common::repo::builds::count_filtered(
+  let total = circus_common::repo::builds::count_filtered(
     &state.pool,
     None,
     params.status.as_deref(),
@@ -912,22 +918,24 @@ async fn build_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Html<String> {
-  let Ok(build) = fc_common::repo::builds::get(&state.pool, id).await else {
+  let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
+  else {
     return Html("Build not found".to_string());
   };
 
   let Ok(eval) =
-    fc_common::repo::evaluations::get(&state.pool, build.evaluation_id).await
+    circus_common::repo::evaluations::get(&state.pool, build.evaluation_id)
+      .await
   else {
     return Html("Evaluation not found".to_string());
   };
   let Ok(jobset) =
-    fc_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
+    circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
   else {
     return Html("Jobset not found".to_string());
   };
   let Ok(project) =
-    fc_common::repo::projects::get(&state.pool, jobset.project_id).await
+    circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
     return Html("Project not found".to_string());
   };
@@ -938,11 +946,11 @@ async fn build_page(
     eval.commit_hash.clone()
   };
 
-  let steps = fc_common::repo::build_steps::list_for_build(&state.pool, id)
+  let steps = circus_common::repo::build_steps::list_for_build(&state.pool, id)
     .await
     .unwrap_or_default();
   let products =
-    fc_common::repo::build_products::list_for_build(&state.pool, id)
+    circus_common::repo::build_products::list_for_build(&state.pool, id)
       .await
       .unwrap_or_default();
 
@@ -965,7 +973,7 @@ async fn build_page(
 }
 
 async fn queue_page(State(state): State<AppState>) -> Html<String> {
-  let running = fc_common::repo::builds::list_filtered(
+  let running = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
     Some("running"),
@@ -976,7 +984,7 @@ async fn queue_page(State(state): State<AppState>) -> Html<String> {
   )
   .await
   .unwrap_or_default();
-  let pending = fc_common::repo::builds::list_filtered(
+  let pending = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
     Some("pending"),
@@ -989,7 +997,7 @@ async fn queue_page(State(state): State<AppState>) -> Html<String> {
   .unwrap_or_default();
 
   // Build builder ID -> name map
-  let builders = fc_common::repo::remote_builders::list(&state.pool)
+  let builders = circus_common::repo::remote_builders::list(&state.pool)
     .await
     .unwrap_or_default();
   let builder_map: std::collections::HashMap<Uuid, String> =
@@ -1068,7 +1076,7 @@ fn format_elapsed(secs: i64) -> String {
 }
 
 async fn channels_page(State(state): State<AppState>) -> Html<String> {
-  let channels = fc_common::repo::channels::list_all(&state.pool)
+  let channels = circus_common::repo::channels::list_all(&state.pool)
     .await
     .unwrap_or_default();
 
@@ -1098,10 +1106,10 @@ async fn admin_page(
     .fetch_one(pool)
     .await
     .unwrap_or((0,));
-  let build_stats = fc_common::repo::builds::get_stats(pool)
+  let build_stats = circus_common::repo::builds::get_stats(pool)
     .await
     .unwrap_or_default();
-  let builders_count = fc_common::repo::remote_builders::count(pool)
+  let builders_count = circus_common::repo::remote_builders::count(pool)
     .await
     .unwrap_or(0);
   let channels: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM channels")
@@ -1120,12 +1128,12 @@ async fn admin_page(
     remote_builders:   builders_count,
     channels_count:    channels.0,
   };
-  let raw_builders = fc_common::repo::remote_builders::list(pool)
+  let raw_builders = circus_common::repo::remote_builders::list(pool)
     .await
     .unwrap_or_default();
 
   // Get running builds to calculate builder load
-  let running_builds = fc_common::repo::builds::list_filtered(
+  let running_builds = circus_common::repo::builds::list_filtered(
     pool,
     None,
     Some("running"),
@@ -1171,7 +1179,7 @@ async fn admin_page(
     .collect();
 
   // Fetch API keys for admin view
-  let keys = fc_common::repo::api_keys::list(pool)
+  let keys = circus_common::repo::api_keys::list(pool)
     .await
     .unwrap_or_default();
   let api_keys: Vec<ApiKeyView> = keys
@@ -1244,13 +1252,13 @@ async fn login_action(
   if let (Some(username), Some(password)) =
     (form.username.as_ref(), form.password.as_ref())
   {
-    let creds = fc_common::models::LoginCredentials {
+    let creds = circus_common::models::LoginCredentials {
       username: username.clone(),
       password: password.clone(),
     };
 
     if let Ok(user) =
-      fc_common::repo::users::authenticate(&state.pool, &creds).await
+      circus_common::repo::users::authenticate(&state.pool, &creds).await
     {
       let session_id = Uuid::new_v4().to_string();
       state
@@ -1264,7 +1272,8 @@ async fn login_action(
       let security_flags =
         crate::routes::cookie_security_flags(&state.config.server);
       let cookie = format!(
-        "fc_user_session={session_id}; {security_flags}; Path=/; Max-Age=86400"
+        "circus_user_session={session_id}; {security_flags}; Path=/; \
+         Max-Age=86400"
       );
       return (
         [(axum::http::header::SET_COOKIE, cookie)],
@@ -1307,7 +1316,7 @@ async fn login_action(
     let key_hash = hex::encode(hasher.finalize());
 
     if let Ok(Some(api_key)) =
-      fc_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
+      circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
     {
       let session_id = Uuid::new_v4().to_string();
       state
@@ -1321,7 +1330,7 @@ async fn login_action(
       let security_flags =
         crate::routes::cookie_security_flags(&state.config.server);
       let cookie = format!(
-        "fc_session={session_id}; {security_flags}; Path=/; Max-Age=86400"
+        "circus_session={session_id}; {security_flags}; Path=/; Max-Age=86400"
       );
       (
         [(axum::http::header::SET_COOKIE, cookie)],
@@ -1368,7 +1377,7 @@ async fn logout_action(
     if let Some(session_id) = cookie_header.split(';').find_map(|pair| {
       let pair = pair.trim();
       let (k, v) = pair.split_once('=')?;
-      if k.trim() == "fc_user_session" {
+      if k.trim() == "circus_user_session" {
         Some(v.trim().to_string())
       } else {
         None
@@ -1381,7 +1390,7 @@ async fn logout_action(
     if let Some(session_id) = cookie_header.split(';').find_map(|pair| {
       let pair = pair.trim();
       let (k, v) = pair.split_once('=')?;
-      if k.trim() == "fc_session" {
+      if k.trim() == "circus_session" {
         Some(v.trim().to_string())
       } else {
         None
@@ -1393,8 +1402,8 @@ async fn logout_action(
 
   // Clear both cookies
   let cookies = [
-    "fc_user_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
-    "fc_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+    "circus_user_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+    "circus_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
   ];
   (
     [
@@ -1419,10 +1428,10 @@ async fn users_page(
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
 
-  let users_list = fc_common::repo::users::list(&state.pool, limit, offset)
+  let users_list = circus_common::repo::users::list(&state.pool, limit, offset)
     .await
     .unwrap_or_default();
-  let total = fc_common::repo::users::count(&state.pool)
+  let total = circus_common::repo::users::count(&state.pool)
     .await
     .unwrap_or(0);
 
@@ -1430,10 +1439,10 @@ async fn users_page(
     .into_iter()
     .map(|u| {
       let user_type = match u.user_type {
-        fc_common::models::UserType::Local => "Local",
-        fc_common::models::UserType::Github => "GitHub",
-        fc_common::models::UserType::Google => "Google",
-        fc_common::models::UserType::Ldap => "LDAP",
+        circus_common::models::UserType::Local => "Local",
+        circus_common::models::UserType::Github => "GitHub",
+        circus_common::models::UserType::Google => "Google",
+        circus_common::models::UserType::Ldap => "LDAP",
       };
       UserView {
         id:            u.id,
@@ -1477,26 +1486,30 @@ async fn starred_page(
   extensions: Extensions,
 ) -> Html<String> {
   // Check if user is logged in via session
-  let user = extensions.get::<fc_common::models::User>().cloned();
+  let user = extensions.get::<circus_common::models::User>().cloned();
   let is_logged_in = user.is_some();
 
   let starred_jobs = if let Some(ref u) = user {
-    let starred =
-      fc_common::repo::starred_jobs::list_for_user(&state.pool, u.id, 100, 0)
-        .await
-        .unwrap_or_default();
+    let starred = circus_common::repo::starred_jobs::list_for_user(
+      &state.pool,
+      u.id,
+      100,
+      0,
+    )
+    .await
+    .unwrap_or_default();
 
     let mut views = Vec::new();
     for s in starred {
       // Get project name
       let project_name =
-        fc_common::repo::projects::get(&state.pool, s.project_id)
+        circus_common::repo::projects::get(&state.pool, s.project_id)
           .await
           .map_or_else(|_| "-".to_string(), |p| p.name);
 
       // Get jobset name
       let jobset_name = if let Some(js_id) = s.jobset_id {
-        fc_common::repo::jobsets::get(&state.pool, js_id)
+        circus_common::repo::jobsets::get(&state.pool, js_id)
           .await
           .map_or_else(|_| "-".to_string(), |j| j.name)
       } else {
@@ -1507,7 +1520,7 @@ async fn starred_page(
       let (status_text, status_class, latest_build_id) =
         if let Some(js_id) = s.jobset_id {
           // Get latest evaluation for this jobset to find relevant builds
-          let evals = fc_common::repo::evaluations::list_filtered(
+          let evals = circus_common::repo::evaluations::list_filtered(
             &state.pool,
             Some(js_id),
             None,
@@ -1518,7 +1531,7 @@ async fn starred_page(
           .unwrap_or_default();
 
           let builds = if let Some(eval) = evals.first() {
-            fc_common::repo::builds::list_filtered(
+            circus_common::repo::builds::list_filtered(
               &state.pool,
               Some(eval.id),
               None,
@@ -1637,10 +1650,10 @@ async fn notifications_page(
   Path(project_id): Path<Uuid>,
   extensions: Extensions,
 ) -> Result<Html<String>, Response> {
-  let project = fc_common::repo::projects::get(&state.pool, project_id)
+  let project = circus_common::repo::projects::get(&state.pool, project_id)
     .await
     .map_err(|_| Redirect::to("/projects").into_response())?;
-  let configs = fc_common::repo::notification_configs::list_for_project(
+  let configs = circus_common::repo::notification_configs::list_for_project(
     &state.pool,
     project_id,
   )
@@ -1708,12 +1721,12 @@ async fn notifications_create(
         )
           .into_response()
       })?;
-    fc_common::validate::validate_webhook_url(url_str).map_err(|e| {
+    circus_common::validate::validate_webhook_url(url_str).map_err(|e| {
       (StatusCode::BAD_REQUEST, format!("Invalid URL: {e}")).into_response()
     })?;
   }
 
-  fc_common::repo::notification_configs::create(
+  circus_common::repo::notification_configs::create(
     &state.pool,
     CreateNotificationConfig {
       project_id,
@@ -1741,7 +1754,7 @@ async fn notifications_delete(
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
   check_csrf(&extensions, &form.csrf_token)?;
-  fc_common::repo::notification_configs::delete_for_project(
+  circus_common::repo::notification_configs::delete_for_project(
     &state.pool,
     project_id,
     config_id,

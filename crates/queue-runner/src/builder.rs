@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use fc_common::{CiError, error::Result};
+use circus_common::{CiError, error::Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 const MAX_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB

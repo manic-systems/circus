@@ -1,8 +1,7 @@
 [package]
-name                 = "fc-queue-runner"
+name                 = "circus-queue-runner"
 version.workspace    = true
 edition.workspace    = true
-authors.workspace    = true
 license.workspace    = true
 repository.workspace = true
 
@@ -24,7 +23,7 @@ urlencoding.workspace        = true
 uuid.workspace               = true
 
 # Our crates
-fc-common.workspace = true
+circus-common.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,4 +1,4 @@
-//! Role constants and validation for FC
+//! Role constants and validation for circus
 
 /// Global role - full system access
 pub const ROLE_ADMIN: &str = "admin";

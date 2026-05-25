@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-service-startup";
+  name = "circus-service-startup";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
     _module.args.self = self;
@@ -18,29 +18,29 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("postgresql.service")
 
     # Ensure PostgreSQL is actually ready to accept connections
-    # before fc-server starts. Not actually implied by the wait_for_unit
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    # before circus-server starts. Not actually implied by the wait_for_unit
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
 
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Verify all three services start
-    with subtest("fc-evaluator.service starts without crash"):
-        machine.wait_for_unit("fc-evaluator.service", timeout=30)
-        result = machine.succeed("journalctl -u fc-evaluator --no-pager -n 20 2>&1")
+    with subtest("circus-evaluator.service starts without crash"):
+        machine.wait_for_unit("circus-evaluator.service", timeout=30)
+        result = machine.succeed("journalctl -u circus-evaluator --no-pager -n 20 2>&1")
         assert "binary not found" not in result.lower(), f"Evaluator has 'binary not found' error: {result}"
         assert "No such file" not in result, f"Evaluator has 'No such file' error: {result}"
 
-    with subtest("fc-queue-runner.service starts without crash"):
-        machine.wait_for_unit("fc-queue-runner.service", timeout=30)
-        result = machine.succeed("journalctl -u fc-queue-runner --no-pager -n 20 2>&1")
+    with subtest("circus-queue-runner.service starts without crash"):
+        machine.wait_for_unit("circus-queue-runner.service", timeout=30)
+        result = machine.succeed("journalctl -u circus-queue-runner --no-pager -n 20 2>&1")
         assert "binary not found" not in result.lower(), f"Queue runner has 'binary not found' error: {result}"
         assert "No such file" not in result, f"Queue runner has 'No such file' error: {result}"
 
-    with subtest("All three FC services are active"):
-        for svc in ["fc-server", "fc-evaluator", "fc-queue-runner"]:
+    with subtest("All three circus services are active"):
+        for svc in ["circus-server", "circus-evaluator", "circus-queue-runner"]:
             result = machine.succeed(f"systemctl is-active {svc}")
             assert result.strip() == "active", f"Expected {svc} to be active, got '{result.strip()}'"
 
