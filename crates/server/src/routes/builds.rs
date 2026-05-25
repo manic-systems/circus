@@ -299,6 +299,25 @@ async fn download_build_product(
   }
 }
 
+async fn list_build_constituents(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+) -> Result<Json<Vec<Build>>, ApiError> {
+  let build = fc_common::repo::builds::get(&state.pool, id)
+    .await
+    .map_err(ApiError)?;
+  if !build.is_aggregate {
+    return Err(ApiError(fc_common::CiError::Validation(
+      "Build is not an aggregate build".into(),
+    )));
+  }
+  let constituents =
+    fc_common::repo::builds::list_constituents(&state.pool, id)
+      .await
+      .map_err(ApiError)?;
+  Ok(Json(constituents))
+}
+
 async fn set_keep_flag(
   _auth: crate::auth_middleware::RequireAdmin,
   State(state): State<AppState>,
@@ -334,4 +353,5 @@ pub fn router() -> Router<AppState> {
       get(download_build_product),
     )
     .route("/projects/{id}/builds", get(list_project_builds))
+    .route("/builds/{id}/constituents", get(list_build_constituents))
 }

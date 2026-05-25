@@ -277,6 +277,7 @@ async fn test_e2e_project_eval_build_flow() {
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     http_client: reqwest::Client::new(),
+    csrf_secret: std::sync::Arc::new([0u8; 32]),
   };
   let app = fc_server::routes::router(state, &server_config);
 

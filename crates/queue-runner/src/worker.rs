@@ -7,6 +7,7 @@ use fc_common::{
     AlertConfig,
     CacheUploadConfig,
     GcConfig,
+    HotConfig,
     LogConfig,
     NotificationsConfig,
     SigningConfig,
@@ -24,26 +25,27 @@ use fc_common::{
   repo,
 };
 use sqlx::PgPool;
-use tokio::sync::Semaphore;
+use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub type ActiveBuilds = Arc<DashMap<Uuid, CancellationToken>>;
 
 pub struct WorkerPool {
-  semaphore:            Arc<Semaphore>,
-  worker_count:         usize,
-  pool:                 PgPool,
-  work_dir:             Arc<PathBuf>,
-  build_timeout:        Duration,
-  log_config:           Arc<LogConfig>,
-  gc_config:            Arc<GcConfig>,
-  notifications_config: Arc<NotificationsConfig>,
-  signing_config:       Arc<SigningConfig>,
-  cache_upload_config:  Arc<CacheUploadConfig>,
-  alert_manager:        Arc<Option<AlertManager>>,
-  drain_token:          CancellationToken,
-  active_builds:        ActiveBuilds,
+  semaphore:           Arc<Semaphore>,
+  upload_semaphore:    Arc<Semaphore>,
+  worker_count:        usize,
+  pool:                PgPool,
+  work_dir:            Arc<PathBuf>,
+  hot_config:          Arc<RwLock<HotConfig>>,
+  log_config:          Arc<LogConfig>,
+  gc_config:           Arc<GcConfig>,
+  signing_config:      Arc<SigningConfig>,
+  cache_upload_config: Arc<CacheUploadConfig>,
+  alert_manager:       Arc<Option<AlertManager>>,
+  psi_cache:           Arc<crate::psi::PsiCache>,
+  drain_token:         CancellationToken,
+  active_builds:       ActiveBuilds,
 }
 
 impl WorkerPool {
@@ -53,27 +55,28 @@ impl WorkerPool {
     db_pool: PgPool,
     workers: usize,
     work_dir: PathBuf,
-    build_timeout: Duration,
+    hot_config: Arc<RwLock<HotConfig>>,
     log_config: LogConfig,
     gc_config: GcConfig,
-    notifications_config: NotificationsConfig,
     signing_config: SigningConfig,
     cache_upload_config: CacheUploadConfig,
     alert_config: Option<AlertConfig>,
   ) -> Self {
     let alert_manager = alert_config.map(AlertManager::new);
+    let upload_concurrency = cache_upload_config.upload_concurrency.max(1);
     Self {
       semaphore: Arc::new(Semaphore::new(workers)),
+      upload_semaphore: Arc::new(Semaphore::new(upload_concurrency)),
       worker_count: workers,
       pool: db_pool,
       work_dir: Arc::new(work_dir),
-      build_timeout,
+      hot_config,
       log_config: Arc::new(log_config),
       gc_config: Arc::new(gc_config),
-      notifications_config: Arc::new(notifications_config),
       signing_config: Arc::new(signing_config),
       cache_upload_config: Arc::new(cache_upload_config),
       alert_manager: Arc::new(alert_manager),
+      psi_cache: crate::psi::PsiCache::new(),
       drain_token: CancellationToken::new(),
       active_builds: Arc::new(DashMap::new()),
     }
@@ -89,8 +92,9 @@ impl WorkerPool {
   pub async fn wait_for_drain(&self) {
     // Acquire all permits = all workers idle
     let workers = self.worker_count;
+    let build_timeout = self.hot_config.read().await.build_timeout;
     let _ = tokio::time::timeout(
-      Duration::from_secs(self.build_timeout.as_secs() + 60),
+      Duration::from_secs(build_timeout.as_secs() + 60),
       async {
         for _ in 0..workers {
           if let Ok(permit) = self.semaphore.acquire().await {
@@ -120,15 +124,16 @@ impl WorkerPool {
     }
 
     let semaphore = self.semaphore.clone();
+    let upload_semaphore = self.upload_semaphore.clone();
     let pool = self.pool.clone();
     let work_dir = self.work_dir.clone();
-    let timeout = self.build_timeout;
+    let hot_config = self.hot_config.clone();
     let log_config = self.log_config.clone();
     let gc_config = self.gc_config.clone();
-    let notifications_config = self.notifications_config.clone();
     let signing_config = self.signing_config.clone();
     let cache_upload_config = self.cache_upload_config.clone();
     let alert_manager = self.alert_manager.clone();
+    let psi_cache = self.psi_cache.clone();
     let active_builds = self.active_builds.clone();
     let cancel_token = CancellationToken::new();
     let build_id = build.id;
@@ -139,6 +144,23 @@ impl WorkerPool {
       let result = async {
         let Ok(_permit) = semaphore.acquire().await else {
           return;
+        };
+
+        let (
+          timeout,
+          notifications_config,
+          scheduling_strategy,
+          psi_threshold,
+          psi_check_timeout,
+        ) = {
+          let hot = hot_config.read().await;
+          (
+            hot.build_timeout,
+            hot.notifications_config.clone(),
+            hot.scheduling_strategy.clone(),
+            hot.psi_threshold,
+            hot.psi_check_timeout,
+          )
         };
 
         if let Err(e) = run_build(
@@ -152,6 +174,11 @@ impl WorkerPool {
           &signing_config,
           &cache_upload_config,
           &alert_manager,
+          upload_semaphore.clone(),
+          scheduling_strategy,
+          psi_threshold,
+          psi_check_timeout,
+          psi_cache.clone(),
         )
         .await
         {
@@ -207,6 +234,24 @@ async fn get_project_for_build(
   Some((project, eval.commit_hash))
 }
 
+async fn dispatch_build_finished_notification(
+  pool: &PgPool,
+  build: &Build,
+  notifications_config: &NotificationsConfig,
+) {
+  if let Some((project, commit_hash)) = get_project_for_build(pool, build).await
+  {
+    fc_common::notifications::dispatch_build_finished(
+      Some(pool),
+      build,
+      &project,
+      &commit_hash,
+      notifications_config,
+    )
+    .await;
+  }
+}
+
 /// Sign nix store outputs using the configured signing key.
 async fn sign_outputs(
   output_paths: &[String],
@@ -248,42 +293,78 @@ async fn sign_outputs(
   true
 }
 
-/// Push output paths to an external binary cache via `nix copy`.
-/// Supports S3 URIs with proper credential handling.
+/// Push output paths to an external binary cache via `nix copy`. Returns
+/// the list of paths that exhausted their retry budget. An empty Vec
+/// means every path made it.
 async fn push_to_cache(
   output_paths: &[String],
   store_uri: &str,
   s3_config: Option<&fc_common::config::S3CacheConfig>,
-) {
-  // Build the full store URI with S3 options if applicable
+  semaphore: Arc<Semaphore>,
+  max_retries: u32,
+) -> Vec<String> {
   let full_store_uri = if store_uri.starts_with("s3://") {
     build_s3_store_uri(store_uri, s3_config)
   } else {
     store_uri.to_string()
   };
 
+  let mut failed = Vec::new();
   for path in output_paths {
-    let result = tokio::process::Command::new("nix")
-      .args(["copy", "--to", &full_store_uri, path])
-      .output()
-      .await;
-    match result {
-      Ok(o) if o.status.success() => {
-        tracing::debug!(
-          output = path,
-          store = store_uri,
-          "Pushed to binary cache"
-        );
-      },
-      Ok(o) => {
-        let stderr = String::from_utf8_lossy(&o.stderr);
-        tracing::warn!(output = path, "Failed to push to cache: {stderr}");
-      },
-      Err(e) => {
-        tracing::warn!(output = path, "Failed to run nix copy: {e}");
-      },
+    let _permit = semaphore.acquire().await;
+    let mut success = false;
+    for attempt in 0..=max_retries {
+      let result = tokio::process::Command::new("nix")
+        .args(["copy", "--to", &full_store_uri, path])
+        .kill_on_drop(true)
+        .output()
+        .await;
+      match result {
+        Ok(o) if o.status.success() => {
+          tracing::debug!(
+            output = path,
+            store = store_uri,
+            "Pushed to binary cache"
+          );
+          success = true;
+          break;
+        },
+        Ok(o) => {
+          let stderr = String::from_utf8_lossy(&o.stderr);
+          if attempt < max_retries {
+            tracing::warn!(
+              output = path,
+              attempt = attempt + 1,
+              max_retries,
+              "Push to cache failed, retrying: {stderr}"
+            );
+            tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+          } else {
+            tracing::error!(
+              output = path,
+              "Failed to push to cache after {max_retries} retries: {stderr}"
+            );
+          }
+        },
+        Err(e) => {
+          if attempt < max_retries {
+            tracing::warn!(
+              output = path,
+              attempt = attempt + 1,
+              "nix copy error, retrying: {e}"
+            );
+            tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+          } else {
+            tracing::error!(output = path, "nix copy permanently failed: {e}");
+          }
+        },
+      }
+    }
+    if !success {
+      failed.push(path.clone());
     }
   }
+  failed
 }
 
 /// Build S3 store URI with configuration options.
@@ -328,20 +409,42 @@ fn build_s3_store_uri(
 
 /// Try to run the build on a remote builder if one is available for the build's
 /// system.
+#[allow(clippy::too_many_arguments)]
 async fn try_remote_build(
   pool: &PgPool,
   build: &Build,
   work_dir: &std::path::Path,
   timeout: Duration,
   live_log_path: Option<&std::path::Path>,
+  strategy: &fc_common::config::BuilderSchedulingStrategy,
+  psi_threshold: Option<f64>,
+  psi_check_timeout: Duration,
+  psi_cache: &crate::psi::PsiCache,
 ) -> Option<crate::builder::BuildResult> {
   let system = build.system.as_deref()?;
 
-  let builders = repo::remote_builders::find_for_system(pool, system)
+  let builders = repo::remote_builders::find_for_system(pool, system, strategy)
     .await
     .ok()?;
 
   for builder in &builders {
+    if let Some(threshold) = psi_threshold
+      && let Some(snap) =
+        crate::psi::read_cached(psi_cache, &builder.ssh_uri, psi_check_timeout)
+          .await
+      && snap.exceeds(threshold)
+    {
+      tracing::debug!(
+        build_id = %build.id,
+        builder = %builder.name,
+        cpu_avg10 = snap.cpu_avg10,
+        memory_avg10 = snap.memory_avg10,
+        io_avg10 = snap.io_avg10,
+        threshold,
+        "PSI: builder overloaded, skipping"
+      );
+      continue;
+    }
     tracing::info!(
         build_id = %build.id,
         builder = %builder.name,
@@ -453,7 +556,7 @@ async fn collect_metrics_and_alert(
   }
 }
 
-#[tracing::instrument(skip(pool, build, work_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config), fields(build_id = %build.id, job = %build.job_name))]
+#[tracing::instrument(skip(pool, build, work_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
 #[allow(clippy::too_many_arguments)]
 async fn run_build(
   pool: &PgPool,
@@ -466,6 +569,11 @@ async fn run_build(
   signing_config: &SigningConfig,
   cache_upload_config: &CacheUploadConfig,
   alert_manager: &Option<AlertManager>,
+  upload_semaphore: Arc<Semaphore>,
+  scheduling_strategy: fc_common::config::BuilderSchedulingStrategy,
+  psi_threshold: Option<f64>,
+  psi_check_timeout: Duration,
+  psi_cache: Arc<crate::psi::PsiCache>,
 ) -> anyhow::Result<()> {
   // Atomically claim the build
   let claimed = repo::builds::start(pool, build.id).await?;
@@ -510,8 +618,18 @@ async fn run_build(
 
   // Try remote build first, then fall back to local
   let result = if build.system.is_some() {
-    match try_remote_build(pool, build, work_dir, timeout, Some(&live_log_path))
-      .await
+    match try_remote_build(
+      pool,
+      build,
+      work_dir,
+      timeout,
+      Some(&live_log_path),
+      &scheduling_strategy,
+      psi_threshold,
+      psi_check_timeout,
+      &psi_cache,
+    )
+    .await
     {
       Some(r) => Ok(r),
       None => {
@@ -589,8 +707,9 @@ async fn run_build(
 
       if build_result.success {
         // Build a reverse lookup map: path -> output_name
-        // The outputs JSON is a HashMap<String, String> where keys are output names
-        // and values are store paths. We need to match paths to names correctly.
+        // The outputs JSON is a HashMap<String, String> where keys are output
+        // names and values are store paths. We need to match paths to
+        // names correctly.
         let path_to_name: std::collections::HashMap<String, String> = build
           .outputs
           .as_ref()
@@ -607,10 +726,8 @@ async fn run_build(
 
         // Store build outputs in normalized table
         for (i, output_path) in build_result.output_paths.iter().enumerate() {
-          let output_name = path_to_name
-            .get(output_path)
-            .cloned()
-            .unwrap_or_else(|| {
+          let output_name =
+            path_to_name.get(output_path).cloned().unwrap_or_else(|| {
               if i == 0 {
                 "out".to_string()
               } else {
@@ -636,10 +753,8 @@ async fn run_build(
 
         // Register GC roots and create build products for each output
         for (i, output_path) in build_result.output_paths.iter().enumerate() {
-          let output_name = path_to_name
-            .get(output_path)
-            .cloned()
-            .unwrap_or_else(|| {
+          let output_name =
+            path_to_name.get(output_path).cloned().unwrap_or_else(|| {
               if i == 0 {
                 build.job_name.clone()
               } else {
@@ -707,15 +822,46 @@ async fn run_build(
         }
 
         // Push to external binary cache if configured
+        let mut upload_failed_paths: Vec<String> = Vec::new();
         if cache_upload_config.enabled
           && let Some(ref store_uri) = cache_upload_config.store_uri
         {
-          push_to_cache(
+          upload_failed_paths = push_to_cache(
             &build_result.output_paths,
             store_uri,
             cache_upload_config.s3.as_ref(),
+            upload_semaphore.clone(),
+            cache_upload_config.upload_max_retries,
           )
           .await;
+        }
+
+        if !upload_failed_paths.is_empty()
+          && cache_upload_config.fail_build_on_upload_error
+        {
+          let msg = format!(
+            "Cache upload failed for {} path(s): {}",
+            upload_failed_paths.len(),
+            upload_failed_paths.join(", "),
+          );
+          tracing::error!(build_id = %build.id, "{msg}");
+          repo::builds::complete(
+            pool,
+            build.id,
+            BuildStatus::Failed,
+            log_path.as_deref(),
+            None,
+            Some(&msg),
+          )
+          .await?;
+          let updated_build = repo::builds::get(pool, build.id).await?;
+          dispatch_build_finished_notification(
+            pool,
+            &updated_build,
+            notifications_config,
+          )
+          .await;
+          return Ok(());
         }
 
         let primary_output = build_result
@@ -824,18 +970,12 @@ async fn run_build(
   // Dispatch notifications after build completion
   let updated_build = repo::builds::get(pool, build.id).await?;
   if updated_build.status.is_finished() {
-    if let Some((project, commit_hash)) =
-      get_project_for_build(pool, build).await
-    {
-      fc_common::notifications::dispatch_build_finished(
-        Some(pool),
-        &updated_build,
-        &project,
-        &commit_hash,
-        notifications_config,
-      )
-      .await;
-    }
+    dispatch_build_finished_notification(
+      pool,
+      &updated_build,
+      notifications_config,
+    )
+    .await;
 
     // Auto-promote channels if all builds in the evaluation are done
     if updated_build.status.is_success()

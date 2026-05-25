@@ -449,6 +449,7 @@ pub async fn upsert_oauth_user(
     UserType::Local => "local",
     UserType::Github => "github",
     UserType::Google => "google",
+    UserType::Ldap => "ldap",
   };
 
   sqlx::query_as::<_, User>(

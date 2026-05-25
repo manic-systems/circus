@@ -513,6 +513,25 @@ pub async fn set_builder(
   Ok(())
 }
 
+/// List constituent builds of an aggregate build.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_constituents(
+  pool: &PgPool,
+  build_id: Uuid,
+) -> Result<Vec<Build>> {
+  sqlx::query_as::<_, Build>(
+    "SELECT b.* FROM builds b JOIN build_dependencies bd ON b.id = \
+     bd.dependency_build_id WHERE bd.build_id = $1 ORDER BY b.created_at",
+  )
+  .bind(build_id)
+  .fetch_all(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
 /// Delete a build by ID.
 ///
 /// # Errors

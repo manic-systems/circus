@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace             = true
 askama.workspace             = true
+ldap3.workspace              = true
 async-stream.workspace       = true
 axum.workspace               = true
 axum-extra.workspace         = true

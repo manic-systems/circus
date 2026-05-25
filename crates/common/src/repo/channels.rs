@@ -78,6 +78,24 @@ pub async fn list_all(pool: &PgPool) -> Result<Vec<Channel>> {
     .map_err(CiError::Database)
 }
 
+/// Look up a channel by name. Names are unique within a project, but channel
+/// manifest URLs are typically resolved by name only; the newest match wins
+/// when multiple projects share the same channel name.
+///
+/// # Errors
+///
+/// Returns error if the database query fails or no channel matches.
+pub async fn get_by_name(pool: &PgPool, name: &str) -> Result<Channel> {
+  sqlx::query_as::<_, Channel>(
+    "SELECT * FROM channels WHERE name = $1 ORDER BY created_at DESC, id DESC \
+     LIMIT 1",
+  )
+  .bind(name)
+  .fetch_optional(pool)
+  .await?
+  .ok_or_else(|| CiError::NotFound(format!("Channel '{name}' not found")))
+}
+
 /// Promote an evaluation to a channel (set it as the current evaluation).
 ///
 /// # Errors

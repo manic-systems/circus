@@ -3,14 +3,17 @@ pub mod auth;
 pub mod badges;
 pub mod builds;
 pub mod cache;
+pub mod channel_manifests;
 pub mod channels;
 pub mod dashboard;
 pub mod evaluations;
 pub mod health;
 pub mod jobsets;
+pub mod ldap;
 pub mod logs;
 pub mod metrics;
 pub mod oauth;
+pub mod openapi;
 pub mod projects;
 pub mod search;
 pub mod users;
@@ -185,7 +188,6 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
                 .merge(auth::router())
                 .merge(users::router())
                 .merge(search::router())
-                .merge(badges::router())
                 .merge(channels::router())
                 .merge(admin::router())
                 .route_layer(middleware::from_fn_with_state(
@@ -194,12 +196,17 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
                 )),
         )
         .merge(health::router())
+        .merge(badges::router())
         .merge(cache::router())
+        .merge(channel_manifests::router())
+        .merge(openapi::router())
         .merge(metrics::router())
         // Webhooks use their own HMAC auth, outside the API key gate
         .merge(webhooks::router())
         // OAuth routes use their own auth mechanism
         .merge(oauth::router())
+        // LDAP login (no API key, uses bind to authenticate)
+        .merge(ldap::router())
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer)
         .layer(RequestBodyLimitLayer::new(config.max_body_size))

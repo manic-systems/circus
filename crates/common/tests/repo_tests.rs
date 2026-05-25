@@ -825,14 +825,9 @@ async fn test_build_outputs_crud() {
   let project = create_test_project(&pool, "test-project").await;
   let jobset = create_test_jobset(&pool, project.id).await;
   let eval = create_test_eval(&pool, jobset.id).await;
-  let build = create_test_build(
-    &pool,
-    eval.id,
-    "test-job",
-    "/nix/store/test.drv",
-    None,
-  )
-  .await;
+  let build =
+    create_test_build(&pool, eval.id, "test-job", "/nix/store/test.drv", None)
+      .await;
 
   // Create outputs
   let _out1 = repo::build_outputs::create(
@@ -882,14 +877,9 @@ async fn test_build_outputs_cascade_delete() {
   let project = create_test_project(&pool, "test-project").await;
   let jobset = create_test_jobset(&pool, project.id).await;
   let eval = create_test_eval(&pool, jobset.id).await;
-  let build = create_test_build(
-    &pool,
-    eval.id,
-    "test-job",
-    "/nix/store/test.drv",
-    None,
-  )
-  .await;
+  let build =
+    create_test_build(&pool, eval.id, "test-job", "/nix/store/test.drv", None)
+      .await;
 
   repo::build_outputs::create(&pool, build.id, "out", Some("/nix/store/abc"))
     .await

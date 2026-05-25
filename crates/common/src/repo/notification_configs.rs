@@ -57,16 +57,23 @@ pub async fn list_for_project(
   .map_err(CiError::Database)
 }
 
-/// Delete a notification config.
+/// Delete a notification config for a project.
 ///
 /// # Errors
 ///
 /// Returns error if database delete fails or config not found.
-pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM notification_configs WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
+pub async fn delete_for_project(
+  pool: &PgPool,
+  project_id: Uuid,
+  id: Uuid,
+) -> Result<()> {
+  let result = sqlx::query(
+    "DELETE FROM notification_configs WHERE project_id = $1 AND id = $2",
+  )
+  .bind(project_id)
+  .bind(id)
+  .execute(pool)
+  .await?;
   if result.rows_affected() == 0 {
     return Err(CiError::NotFound(format!(
       "Notification config {id} not found"

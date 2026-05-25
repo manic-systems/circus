@@ -1,5 +1,6 @@
-use fc_common::notifications::*;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use fc_common::notifications::*;
 
 #[test]
 fn test_rate_limit_extraction() {
@@ -32,13 +33,13 @@ fn test_sleep_duration_calculation() {
     .as_secs();
 
   let state = RateLimitState {
-    limit: 5000,
+    limit:     5000,
     remaining: 500,
-    reset_at: now + 3600,
+    reset_at:  now + 3600,
   };
 
   let delay = calculate_delay(&state, now);
-  assert!(delay >= 6 && delay <= 7);
+  assert!((6..=7).contains(&delay));
 }
 
 #[test]
@@ -49,9 +50,9 @@ fn test_sleep_duration_minimum() {
     .as_secs();
 
   let state = RateLimitState {
-    limit: 5000,
+    limit:     5000,
     remaining: 4999,
-    reset_at: now + 10000,
+    reset_at:  now + 10000,
   };
 
   let delay = calculate_delay(&state, now);

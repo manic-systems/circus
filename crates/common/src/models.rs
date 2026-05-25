@@ -433,6 +433,7 @@ pub struct RemoteBuilder {
   pub consecutive_failures: i32,
   pub disabled_until:       Option<DateTime<Utc>>,
   pub last_failure:         Option<DateTime<Utc>>,
+  pub cpu_cores:            Option<i32>,
 }
 
 /// Parameters for creating or updating a remote builder.
@@ -474,6 +475,7 @@ pub enum UserType {
   Local,
   Github,
   Google,
+  Ldap,
 }
 
 /// Starred job for personalized dashboard

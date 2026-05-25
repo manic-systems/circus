@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::DeclarativeRemoteBuilder,
+  config::{BuilderSchedulingStrategy, DeclarativeRemoteBuilder},
   error::{CiError, Result},
   models::{CreateRemoteBuilder, RemoteBuilder},
 };
@@ -91,6 +91,7 @@ pub async fn list_enabled(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
 
 /// Find a suitable builder for the given system.
 /// Excludes builders that are temporarily disabled due to consecutive failures.
+/// The ordering is determined by the `strategy` parameter.
 ///
 /// # Errors
 ///
@@ -98,16 +99,34 @@ pub async fn list_enabled(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
 pub async fn find_for_system(
   pool: &PgPool,
   system: &str,
+  strategy: &BuilderSchedulingStrategy,
 ) -> Result<Vec<RemoteBuilder>> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "SELECT * FROM remote_builders WHERE enabled = true AND $1 = ANY(systems) \
-     AND (disabled_until IS NULL OR disabled_until < NOW()) ORDER BY \
-     speed_factor DESC",
-  )
-  .bind(system)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
+  let query = match strategy {
+    BuilderSchedulingStrategy::SpeedFactorOnly => {
+      "SELECT * FROM remote_builders WHERE enabled = true AND $1 = \
+       ANY(systems) AND (disabled_until IS NULL OR disabled_until < NOW()) \
+       ORDER BY speed_factor DESC"
+    },
+    BuilderSchedulingStrategy::CpuCoreCountWithSpeedFactor => {
+      "SELECT * FROM remote_builders WHERE enabled = true AND $1 = \
+       ANY(systems) AND (disabled_until IS NULL OR disabled_until < NOW()) \
+       ORDER BY COALESCE(cpu_cores, 1) * speed_factor DESC"
+    },
+    BuilderSchedulingStrategy::Dynamic => {
+      "SELECT r.* FROM remote_builders r LEFT JOIN (SELECT builder_id, \
+       COUNT(*) AS cnt FROM builds WHERE status = 'running' GROUP BY \
+       builder_id) active ON active.builder_id = r.id WHERE r.enabled = true \
+       AND $1 = ANY(r.systems) AND (r.disabled_until IS NULL OR \
+       r.disabled_until < NOW()) ORDER BY (r.max_jobs - COALESCE(active.cnt, \
+       0)) * r.speed_factor DESC"
+    },
+  };
+
+  sqlx::query_as::<_, RemoteBuilder>(query)
+    .bind(system)
+    .fetch_all(pool)
+    .await
+    .map_err(CiError::Database)
 }
 
 /// Record a build failure for a remote builder.
