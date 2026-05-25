@@ -1,7 +1,6 @@
 //! Configuration management for FC CI
 
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use config as config_crate;
 use serde::{Deserialize, Serialize};
@@ -54,6 +53,8 @@ pub struct ServerConfig {
   /// Force Secure flag on session cookies (enable when behind HTTPS reverse
   /// proxy)
   pub force_secure_cookies: bool,
+  /// LDAP authentication configuration.
+  pub ldap:                 Option<LdapConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +98,18 @@ pub struct QueueRunnerConfig {
   #[serde(default)]
   #[serde(with = "humantime_serde")]
   pub unsupported_timeout: Option<Duration>,
+
+  /// Builder selection strategy (default: speed_factor_only).
+  #[serde(default)]
+  pub scheduling_strategy: BuilderSchedulingStrategy,
+
+  /// Skip builders whose PSI avg10 exceeds this threshold (0.0–100.0).
+  /// `None` disables PSI checking.
+  pub psi_threshold: Option<f64>,
+
+  /// Timeout in seconds for SSH PSI checks (default 5).
+  #[serde(default = "default_psi_check_timeout")]
+  pub psi_check_timeout: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +162,8 @@ pub struct NotificationsConfig {
   pub gitlab_token:        Option<String>,
   pub email:               Option<EmailConfig>,
   pub alerts:              Option<AlertConfig>,
+  /// Slack incoming webhook notification.
+  pub slack:               Option<SlackNotificationConfig>,
   /// Enable notification retry queue (persistent, with exponential backoff)
   #[serde(default = "default_true")]
   pub enable_retry_queue:  bool,
@@ -181,6 +196,40 @@ impl Default for AlertConfig {
   }
 }
 
+/// Slack incoming webhook notification configuration.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SlackNotificationConfig {
+  pub webhook_url:     String,
+  /// Only send notifications for failed builds (default false).
+  #[serde(default)]
+  pub on_failure_only: bool,
+}
+
+impl std::fmt::Debug for SlackNotificationConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("SlackNotificationConfig")
+      .field("webhook_url", &"[REDACTED]")
+      .field("on_failure_only", &self.on_failure_only)
+      .finish()
+  }
+}
+
+/// LDAP authentication configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LdapConfig {
+  /// LDAP server URL, e.g. "ldap://host:389" or "ldaps://host:636".
+  pub url:              String,
+  /// Bind DN template with `{username}` placeholder.
+  pub bind_dn_template: String,
+  /// Base DN for user searches.
+  pub base_dn:          String,
+  /// Path to a custom CA certificate for TLS verification.
+  pub tls_ca_cert:      Option<PathBuf>,
+  /// Whether LDAP auth is enabled (default true).
+  #[serde(default = "default_true")]
+  pub enabled:          bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EmailConfig {
   pub smtp_host:       String,
@@ -193,10 +242,48 @@ pub struct EmailConfig {
   pub on_failure_only: bool,
 }
 
+/// NAR compression algorithm served by the binary cache.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NarCompression {
+  #[default]
+  Zstd,
+  Bzip2,
+  Xz,
+  None,
+}
+
+impl NarCompression {
+  #[must_use]
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::Zstd => "zstd",
+      Self::Bzip2 => "bzip2",
+      Self::Xz => "xz",
+      Self::None => "none",
+    }
+  }
+
+  #[must_use]
+  pub fn file_extension(&self) -> &'static str {
+    match self {
+      Self::Zstd => ".nar.zst",
+      Self::Bzip2 => ".nar.bz2",
+      Self::Xz => ".nar.xz",
+      Self::None => ".nar",
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfig {
   pub enabled:         bool,
   pub secret_key_file: Option<PathBuf>,
+  /// NAR compression algorithm (default: zstd)
+  #[serde(default)]
+  pub compression:     NarCompression,
+  /// Public URL of this binary cache (for channel manifest endpoints)
+  pub cache_url:       Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,10 +298,30 @@ pub struct SigningConfig {
 #[serde(default)]
 #[derive(Default)]
 pub struct CacheUploadConfig {
-  pub enabled:   bool,
-  pub store_uri: Option<String>,
+  pub enabled:                    bool,
+  pub store_uri:                  Option<String>,
   /// S3-specific configuration (used when `store_uri` starts with s3://)
-  pub s3:        Option<S3CacheConfig>,
+  pub s3:                         Option<S3CacheConfig>,
+  /// Number of concurrent `nix copy` invocations for multi-output builds
+  /// (default 4)
+  #[serde(default = "default_upload_concurrency")]
+  pub upload_concurrency:         usize,
+  /// Maximum retry attempts per path before giving up (default 3)
+  #[serde(default = "default_upload_retries")]
+  pub upload_max_retries:         u32,
+  /// If true, mark the build as failed when the cache upload exhausts its
+  /// retry budget. If false (the default), log the error and let the build
+  /// succeed; the operator can re-push out of band.
+  #[serde(default)]
+  pub fail_build_on_upload_error: bool,
+}
+
+const fn default_upload_concurrency() -> usize {
+  4
+}
+
+const fn default_upload_retries() -> u32 {
+  3
 }
 
 /// S3-specific cache configuration.
@@ -342,6 +449,10 @@ pub struct DeclarativeProjectMember {
   /// Role: member, maintainer, or admin
   #[serde(default = "default_member_role")]
   pub role:     String,
+}
+
+const fn default_psi_check_timeout() -> u64 {
+  5
 }
 
 fn default_member_role() -> String {
@@ -531,6 +642,7 @@ impl Default for ServerConfig {
         "ssh".into(),
       ],
       force_secure_cookies: false,
+      ldap:                 None,
     }
   }
 }
@@ -561,6 +673,9 @@ impl Default for QueueRunnerConfig {
       failed_paths_cache:  true,
       failed_paths_ttl:    86400,
       unsupported_timeout: None,
+      scheduling_strategy: BuilderSchedulingStrategy::SpeedFactorOnly,
+      psi_threshold:       None,
+      psi_check_timeout:   5,
     }
   }
 }
@@ -592,6 +707,56 @@ impl Default for CacheConfig {
     Self {
       enabled:         true,
       secret_key_file: None,
+      compression:     NarCompression::Zstd,
+      cache_url:       None,
+    }
+  }
+}
+
+/// Builder scheduling strategy for `find_for_system()`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuilderSchedulingStrategy {
+  /// Order by `speed_factor DESC` only (default, legacy behaviour).
+  #[default]
+  SpeedFactorOnly,
+  /// Order by `cpu_cores * speed_factor DESC` (higher core×speed wins).
+  CpuCoreCountWithSpeedFactor,
+  /// Weighted by available slots: `(max_jobs - active) * speed_factor DESC`.
+  Dynamic,
+}
+
+/// Fields that can be updated at runtime via SIGHUP without a restart.
+/// Fields that require restart (e.g. `workers`, database pool) are excluded.
+#[derive(Debug, Clone)]
+pub struct HotConfig {
+  pub poll_interval:        std::time::Duration,
+  pub build_timeout:        std::time::Duration,
+  pub notifications_config: NotificationsConfig,
+  pub failed_paths_ttl:     u64,
+  pub scheduling_strategy:  BuilderSchedulingStrategy,
+  pub psi_threshold:        Option<f64>,
+  pub psi_check_timeout:    std::time::Duration,
+}
+
+impl HotConfig {
+  /// Construct a `HotConfig` snapshot from a loaded `Config`.
+  #[must_use]
+  pub fn from_config(config: &Config) -> Self {
+    Self {
+      poll_interval:        std::time::Duration::from_secs(
+        config.queue_runner.poll_interval,
+      ),
+      build_timeout:        std::time::Duration::from_secs(
+        config.queue_runner.build_timeout,
+      ),
+      notifications_config: config.notifications.clone(),
+      failed_paths_ttl:     config.queue_runner.failed_paths_ttl,
+      scheduling_strategy:  config.queue_runner.scheduling_strategy.clone(),
+      psi_threshold:        config.queue_runner.psi_threshold,
+      psi_check_timeout:    std::time::Duration::from_secs(
+        config.queue_runner.psi_check_timeout,
+      ),
     }
   }
 }
@@ -684,6 +849,39 @@ impl Config {
       return Err(anyhow::anyhow!(
         "Queue runner workers must be greater than 0"
       ));
+    }
+    if let Some(t) = self.queue_runner.psi_threshold
+      && !(0.0..=100.0).contains(&t)
+    {
+      return Err(anyhow::anyhow!(
+        "queue_runner.psi_threshold must be in [0.0, 100.0], got {t}"
+      ));
+    }
+    if self.queue_runner.psi_check_timeout == 0 {
+      return Err(anyhow::anyhow!(
+        "queue_runner.psi_check_timeout must be greater than 0 seconds"
+      ));
+    }
+
+    // Validate LDAP settings
+    if let Some(ldap) = self.server.ldap.as_ref() {
+      if ldap.url.is_empty() {
+        return Err(anyhow::anyhow!("server.ldap.url cannot be empty"));
+      }
+      if ldap.base_dn.is_empty() {
+        return Err(anyhow::anyhow!("server.ldap.base_dn cannot be empty"));
+      }
+      if ldap.bind_dn_template.is_empty() {
+        return Err(anyhow::anyhow!(
+          "server.ldap.bind_dn_template cannot be empty"
+        ));
+      }
+      if !ldap.bind_dn_template.contains("{username}") {
+        return Err(anyhow::anyhow!(
+          "server.ldap.bind_dn_template must contain the literal \
+           '{{username}}' placeholder"
+        ));
+      }
     }
 
     // Validate GC config
@@ -926,17 +1124,17 @@ unsupported_timeout = "2h 30m"
 
 #[cfg(test)]
 mod humantime_option_test {
-    use super::*;
-    
-    #[test]
-    fn test_option_humantime_missing() {
-        let toml = r#"
+  use super::*;
+
+  #[test]
+  fn test_option_humantime_missing() {
+    let toml = r#"
 workers = 4
 poll_interval = 5
 build_timeout = 3600
 work_dir = "/tmp/fc"
         "#;
-        let config: QueueRunnerConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.unsupported_timeout, None);
-    }
+    let config: QueueRunnerConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.unsupported_timeout, None);
+  }
 }
