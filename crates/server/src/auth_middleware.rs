@@ -269,6 +269,10 @@ pub async fn extract_session(
         if let Some(ref api_key) = session.api_key {
           request.extensions_mut().insert(api_key.clone());
         }
+        let token = state.csrf_token_for(&session_id);
+        request
+          .extensions_mut()
+          .insert(crate::state::CsrfToken(token));
       } else {
         drop(session);
         state.sessions.remove(&session_id);
@@ -284,6 +288,10 @@ pub async fn extract_session(
         if let Some(ref api_key) = session.api_key {
           request.extensions_mut().insert(api_key.clone());
         }
+        let token = state.csrf_token_for(&session_id);
+        request
+          .extensions_mut()
+          .insert(crate::state::CsrfToken(token));
       } else {
         drop(session);
         state.sessions.remove(&session_id);

@@ -72,7 +72,32 @@ pub struct AppState {
   pub config:      Config,
   pub sessions:    Arc<DashMap<String, SessionData>>,
   pub http_client: reqwest::Client,
+  /// Per-process key used to derive CSRF tokens from session IDs via HMAC.
+  /// Regenerated on every restart, which invalidates outstanding tokens; the
+  /// dashboard re-issues them on the next page render so this is benign.
+  pub csrf_secret: Arc<[u8; 32]>,
 }
+
+impl AppState {
+  /// Compute the CSRF token bound to a given session ID. Same input always
+  /// produces the same output for the lifetime of the process; comparing
+  /// with [`subtle::ConstantTimeEq`] avoids timing leaks.
+  #[must_use]
+  pub fn csrf_token_for(&self, session_id: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(self.csrf_secret.as_ref())
+      .expect("HMAC-SHA256 accepts any key length");
+    mac.update(session_id.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+  }
+}
+
+/// Marker placed in request extensions so dashboard handlers can render
+/// the CSRF token in templates and validate it on POSTs without re-deriving
+/// it from the session cookie themselves.
+#[derive(Clone, Debug)]
+pub struct CsrfToken(pub String);
 
 impl AppState {
   /// Spawn a background task that periodically evicts expired sessions.

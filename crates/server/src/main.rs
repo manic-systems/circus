@@ -60,11 +60,18 @@ async fn main() -> anyhow::Result<()> {
   // Bootstrap declarative projects, jobsets, and API keys from config
   fc_common::bootstrap::run(db.pool(), &config.declarative).await?;
 
+  // Per-process CSRF secret. Concatenating two v4 UUIDs gives 32 bytes of
+  // entropy from the system CSPRNG with no extra dependency.
+  let mut csrf_secret = [0u8; 32];
+  csrf_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+  csrf_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+
   let state = AppState {
     pool:        db.pool().clone(),
     config:      config.clone(),
     sessions:    std::sync::Arc::new(dashmap::DashMap::new()),
     http_client: reqwest::Client::new(),
+    csrf_secret: std::sync::Arc::new(csrf_secret),
   };
 
   // Start background session cleanup to prevent memory leaks
