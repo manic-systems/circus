@@ -14,9 +14,11 @@ use fc_common::models::{
   BuildStatus,
   BuildStep,
   Channel,
+  CreateNotificationConfig,
   Evaluation,
   EvaluationStatus,
   Jobset,
+  NotificationConfig,
   Project,
   SystemStatus,
 };
@@ -1431,6 +1433,7 @@ async fn users_page(
         fc_common::models::UserType::Local => "Local",
         fc_common::models::UserType::Github => "GitHub",
         fc_common::models::UserType::Google => "Google",
+        fc_common::models::UserType::Ldap => "LDAP",
       };
       UserView {
         id:            u.id,
@@ -1583,6 +1586,175 @@ async fn metrics_page(extensions: Extensions) -> Html<String> {
   )
 }
 
+#[derive(Template)]
+#[template(path = "notifications.html")]
+struct NotificationsTemplate {
+  project:    Project,
+  configs:    Vec<NotificationConfig>,
+  is_admin:   bool,
+  auth_name:  String,
+  csrf_token: String,
+}
+
+fn csrf_from(extensions: &Extensions) -> String {
+  extensions
+    .get::<crate::state::CsrfToken>()
+    .map(|t| t.0.clone())
+    .unwrap_or_default()
+}
+
+#[allow(clippy::result_large_err)]
+fn check_csrf(
+  extensions: &Extensions,
+  submitted: &str,
+) -> Result<(), Response> {
+  use subtle::ConstantTimeEq;
+  let expected = csrf_from(extensions);
+  if expected.is_empty()
+    || expected.as_bytes().ct_eq(submitted.as_bytes()).unwrap_u8() != 1
+  {
+    return Err(
+      (StatusCode::FORBIDDEN, "Invalid or missing CSRF token").into_response(),
+    );
+  }
+  Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct NotificationCreateForm {
+  pub notification_type: String,
+  pub config:            String,
+  pub csrf_token:        String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CsrfOnlyForm {
+  pub csrf_token: String,
+}
+
+async fn notifications_page(
+  State(state): State<AppState>,
+  Path(project_id): Path<Uuid>,
+  extensions: Extensions,
+) -> Result<Html<String>, Response> {
+  let project = fc_common::repo::projects::get(&state.pool, project_id)
+    .await
+    .map_err(|_| Redirect::to("/projects").into_response())?;
+  let configs = fc_common::repo::notification_configs::list_for_project(
+    &state.pool,
+    project_id,
+  )
+  .await
+  .unwrap_or_default();
+  let tmpl = NotificationsTemplate {
+    project,
+    configs,
+    is_admin: is_admin(&extensions),
+    auth_name: auth_name(&extensions),
+    csrf_token: csrf_from(&extensions),
+  };
+  Ok(Html(
+    tmpl
+      .render()
+      .unwrap_or_else(|e| format!("Template error: {e}")),
+  ))
+}
+
+async fn notifications_create(
+  State(state): State<AppState>,
+  Path(project_id): Path<Uuid>,
+  extensions: Extensions,
+  Form(form): Form<NotificationCreateForm>,
+) -> Result<Redirect, Response> {
+  if !is_admin(&extensions) {
+    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+  }
+  check_csrf(&extensions, &form.csrf_token)?;
+  let parsed: serde_json::Value = serde_json::from_str(form.config.trim())
+    .map_err(|e| {
+      (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response()
+    })?;
+  if !parsed.is_object() {
+    return Err(
+      (StatusCode::BAD_REQUEST, "Config must be a JSON object").into_response(),
+    );
+  }
+  let allowed_types = [
+    "webhook",
+    "github_status",
+    "gitea_status",
+    "gitlab_status",
+    "email",
+    "slack",
+  ];
+  if !allowed_types.contains(&form.notification_type.as_str()) {
+    return Err(
+      (StatusCode::BAD_REQUEST, "Unknown notification type").into_response(),
+    );
+  }
+
+  // SSRF guard: outbound webhooks must point at public HTTP(S) hosts.
+  let url_field = match form.notification_type.as_str() {
+    "webhook" => Some("url"),
+    "slack" => Some("webhook_url"),
+    _ => None,
+  };
+  if let Some(field) = url_field {
+    let url_str =
+      parsed.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
+        (
+          StatusCode::BAD_REQUEST,
+          format!("Missing '{field}' in config"),
+        )
+          .into_response()
+      })?;
+    fc_common::validate::validate_webhook_url(url_str).map_err(|e| {
+      (StatusCode::BAD_REQUEST, format!("Invalid URL: {e}")).into_response()
+    })?;
+  }
+
+  fc_common::repo::notification_configs::create(
+    &state.pool,
+    CreateNotificationConfig {
+      project_id,
+      notification_type: form.notification_type,
+      config: parsed,
+    },
+  )
+  .await
+  .map_err(|e| {
+    (StatusCode::BAD_REQUEST, format!("Create failed: {e}")).into_response()
+  })?;
+
+  Ok(Redirect::to(&format!(
+    "/project/{project_id}/notifications"
+  )))
+}
+
+async fn notifications_delete(
+  State(state): State<AppState>,
+  Path((project_id, config_id)): Path<(Uuid, Uuid)>,
+  extensions: Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Result<Redirect, Response> {
+  if !is_admin(&extensions) {
+    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+  }
+  check_csrf(&extensions, &form.csrf_token)?;
+  fc_common::repo::notification_configs::delete_for_project(
+    &state.pool,
+    project_id,
+    config_id,
+  )
+  .await
+  .map_err(|e| {
+    (StatusCode::NOT_FOUND, format!("Delete failed: {e}")).into_response()
+  })?;
+  Ok(Redirect::to(&format!(
+    "/project/{project_id}/notifications"
+  )))
+}
+
 pub fn router() -> Router<AppState> {
   Router::new()
     .route("/login", get(login_page).post(login_action))
@@ -1591,6 +1763,14 @@ pub fn router() -> Router<AppState> {
     .route("/projects", get(projects_page))
     .route("/projects/new", get(project_setup_page))
     .route("/project/{id}", get(project_page))
+    .route(
+      "/project/{id}/notifications",
+      get(notifications_page).post(notifications_create),
+    )
+    .route(
+      "/project/{id}/notifications/{config_id}/delete",
+      axum::routing::post(notifications_delete),
+    )
     .route("/jobset/{id}", get(jobset_page))
     .route("/evaluations", get(evaluations_page))
     .route("/evaluation/{id}", get(evaluation_page))
