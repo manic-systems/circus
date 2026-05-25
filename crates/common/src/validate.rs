@@ -143,6 +143,37 @@ fn validate_repository_url(url: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// SSRF guard for outbound webhook URLs (Slack, generic webhooks, ...).
+/// Rejects schemes other than http/https, internal hostnames, and cloud
+/// metadata endpoints.
+///
+/// # Errors
+///
+/// Returns the reason string if the URL is rejected.
+pub fn validate_webhook_url(url: &str) -> Result<(), String> {
+  if url.is_empty() {
+    return Err("URL cannot be empty".to_string());
+  }
+  if url.len() > 2048 {
+    return Err("URL must be at most 2048 characters".to_string());
+  }
+  let Some((scheme, _rest)) = url.split_once("://") else {
+    return Err("URL must include a scheme".to_string());
+  };
+  match scheme.to_ascii_lowercase().as_str() {
+    "http" | "https" => {},
+    other => return Err(format!("URL scheme '{other}' is not allowed")),
+  }
+  if let Some(host) = extract_host_from_url(url)
+    && is_internal_host(&host)
+  {
+    return Err(
+      "URL must not target internal or metadata addresses".to_string(),
+    );
+  }
+  Ok(())
+}
+
 /// Validate that a URL uses one of the allowed schemes.
 /// Logs a warning when insecure schemes (`file`, `http`) are used.
 ///

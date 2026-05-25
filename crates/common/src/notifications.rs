@@ -28,17 +28,36 @@ pub struct RateLimitState {
   pub reset_at:  u64,
 }
 
-#[must_use] 
+#[must_use]
 pub fn extract_rate_limit_from_headers(
   headers: &reqwest::header::HeaderMap,
 ) -> Option<RateLimitState> {
-  let limit = headers.get("X-RateLimit-Limit")?.to_str().ok()?.parse().ok()?;
-  let remaining = headers.get("X-RateLimit-Remaining")?.to_str().ok()?.parse().ok()?;
-  let reset_at = headers.get("X-RateLimit-Reset")?.to_str().ok()?.parse().ok()?;
-  Some(RateLimitState { limit, remaining, reset_at })
+  let limit = headers
+    .get("X-RateLimit-Limit")?
+    .to_str()
+    .ok()?
+    .parse()
+    .ok()?;
+  let remaining = headers
+    .get("X-RateLimit-Remaining")?
+    .to_str()
+    .ok()?
+    .parse()
+    .ok()?;
+  let reset_at = headers
+    .get("X-RateLimit-Reset")?
+    .to_str()
+    .ok()?
+    .parse()
+    .ok()?;
+  Some(RateLimitState {
+    limit,
+    remaining,
+    reset_at,
+  })
 }
 
-#[must_use] 
+#[must_use]
 pub fn calculate_delay(state: &RateLimitState, now: u64) -> u64 {
   let seconds_until_reset = state.reset_at.saturating_sub(now).max(1);
   let consumed = state.limit.saturating_sub(state.remaining);
@@ -176,8 +195,30 @@ async fn enqueue_notifications(
     }
   }
 
-  // 5. Email notification
+  // 5. Slack notification
   let is_failure = !build.status.is_success();
+  if let Some(ref slack_config) = config.slack
+    && (!slack_config.on_failure_only || is_failure)
+  {
+    let payload = serde_json::json!({
+      "type": "slack",
+      "webhook_url": slack_config.webhook_url,
+      "build_id": build.id,
+      "build_status": build.status,
+      "build_job": build.job_name,
+      "project_name": project.name,
+      "commit_hash": commit_hash,
+    });
+
+    if let Err(e) =
+      repo::notification_tasks::create(pool, "slack", payload, max_attempts)
+        .await
+    {
+      error!(build_id = %build.id, "Failed to enqueue Slack notification: {e}");
+    }
+  }
+
+  // 6. Email notification
   if let Some(ref email_config) = config.email
     && (!email_config.on_failure_only || is_failure)
   {
@@ -1007,6 +1048,48 @@ pub async fn process_notification_task(
         return Err(format!("GitLab API returned {status}: {text}"));
       }
 
+      Ok(())
+    },
+    "slack" => {
+      let webhook_url = payload["webhook_url"]
+        .as_str()
+        .ok_or("Missing webhook_url in slack payload")?;
+      let job = payload["build_job"].as_str().unwrap_or("(unknown)");
+      let project = payload["project_name"].as_str().unwrap_or("(unknown)");
+      let commit = payload["commit_hash"].as_str().unwrap_or("");
+      let status = payload["build_status"].as_str().unwrap_or("unknown");
+
+      let body = serde_json::json!({
+        "text": format!("CI: {job} - {status}"),
+        "blocks": [{
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": format!(
+              "*{job}* - *{status}*\nProject: {project} | Commit: `{commit}`"
+            ),
+          },
+        }],
+      });
+
+      let resp = http_client()
+        .post(webhook_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Slack webhook request failed: {e}"))?;
+
+      if resp.status().as_u16() == 429 {
+        let retry = resp
+          .headers()
+          .get("retry-after")
+          .and_then(|v| v.to_str().ok())
+          .unwrap_or("60");
+        return Err(format!("Slack rate limited; retry-after={retry}"));
+      }
+      if !resp.status().is_success() {
+        return Err(format!("Slack returned status: {}", resp.status()));
+      }
       Ok(())
     },
     "email" => {
