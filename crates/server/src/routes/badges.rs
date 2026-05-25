@@ -195,6 +195,8 @@ fn shield_svg(subject: &str, status: &str, color: &str) -> String {
 pub fn router() -> Router<AppState> {
   Router::new()
     .route("/job/{project}/{jobset}/{job}/shield", get(build_badge))
+    // Hydra-compatible alias
+    .route("/job/{project}/{jobset}/{job}/badge", get(build_badge))
     .route("/job/{project}/{jobset}/{job}/latest", get(latest_build))
 }
 
