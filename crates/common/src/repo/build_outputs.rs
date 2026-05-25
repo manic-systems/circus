@@ -29,11 +29,12 @@ pub async fn create(
   .await
   .map_err(|e| {
     if let sqlx::Error::Database(db_err) = &e
-      && db_err.is_unique_violation() {
-        return CiError::Conflict(format!(
-          "Build output with name '{name}' already exists for build {build}"
-        ));
-      }
+      && db_err.is_unique_violation()
+    {
+      return CiError::Conflict(format!(
+        "Build output with name '{name}' already exists for build {build}"
+      ));
+    }
     CiError::Database(e)
   })
 }
@@ -80,12 +81,11 @@ pub async fn find_by_path(
 ///
 /// Returns error if database query fails.
 pub async fn delete_for_build(pool: &PgPool, build: Uuid) -> Result<u64> {
-  let result =
-    sqlx::query("DELETE FROM build_outputs WHERE build = $1")
-      .bind(build)
-      .execute(pool)
-      .await
-      .map_err(CiError::Database)?;
+  let result = sqlx::query("DELETE FROM build_outputs WHERE build = $1")
+    .bind(build)
+    .execute(pool)
+    .await
+    .map_err(CiError::Database)?;
 
   Ok(result.rows_affected())
 }
