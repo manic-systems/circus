@@ -76,14 +76,25 @@ async fn test_worker_pool_drain_stops_dispatch() {
     .await
     .expect("failed to connect");
 
+  let hot_config = std::sync::Arc::new(tokio::sync::RwLock::new(
+    fc_common::config::HotConfig {
+      poll_interval:        std::time::Duration::from_secs(1),
+      build_timeout:        std::time::Duration::from_mins(1),
+      notifications_config: fc_common::config::NotificationsConfig::default(),
+      failed_paths_ttl:     0,
+      scheduling_strategy:
+        fc_common::config::BuilderSchedulingStrategy::default(),
+      psi_threshold:        None,
+      psi_check_timeout:    std::time::Duration::from_secs(5),
+    },
+  ));
   let worker_pool = fc_queue_runner::worker::WorkerPool::new(
     pool,
     2,
     std::env::temp_dir(),
-    std::time::Duration::from_mins(1),
+    hot_config,
     fc_common::config::LogConfig::default(),
     fc_common::config::GcConfig::default(),
-    fc_common::config::NotificationsConfig::default(),
     fc_common::config::SigningConfig::default(),
     fc_common::config::CacheUploadConfig::default(),
     None,
@@ -184,14 +195,25 @@ async fn test_worker_pool_active_builds_cancel() {
     .await
     .expect("failed to connect");
 
+  let hot_config = std::sync::Arc::new(tokio::sync::RwLock::new(
+    fc_common::config::HotConfig {
+      poll_interval:        std::time::Duration::from_secs(1),
+      build_timeout:        std::time::Duration::from_mins(1),
+      notifications_config: fc_common::config::NotificationsConfig::default(),
+      failed_paths_ttl:     0,
+      scheduling_strategy:
+        fc_common::config::BuilderSchedulingStrategy::default(),
+      psi_threshold:        None,
+      psi_check_timeout:    std::time::Duration::from_secs(5),
+    },
+  ));
   let worker_pool = fc_queue_runner::worker::WorkerPool::new(
     pool,
     2,
     std::env::temp_dir(),
-    std::time::Duration::from_mins(1),
+    hot_config,
     fc_common::config::LogConfig::default(),
     fc_common::config::GcConfig::default(),
-    fc_common::config::NotificationsConfig::default(),
     fc_common::config::SigningConfig::default(),
     fc_common::config::CacheUploadConfig::default(),
     None,

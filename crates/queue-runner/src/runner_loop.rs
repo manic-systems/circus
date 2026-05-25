@@ -1,11 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use fc_common::{
+  config::HotConfig,
   models::{Build, BuildStatus, JobsetState},
   repo,
 };
 use sqlx::PgPool;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, RwLock};
 
 use crate::worker::WorkerPool;
 
@@ -33,11 +34,10 @@ async fn get_project_for_build(
 pub async fn run(
   pool: PgPool,
   worker_pool: Arc<WorkerPool>,
-  poll_interval: Duration,
+  hot_config: Arc<RwLock<HotConfig>>,
   wakeup: Arc<Notify>,
   strict_errors: bool,
   failed_paths_cache: bool,
-  notifications_config: fc_common::config::NotificationsConfig,
   unsupported_timeout: Option<Duration>,
 ) -> anyhow::Result<()> {
   // Reset orphaned builds from previous crashes (older than 5 minutes)
@@ -52,6 +52,23 @@ pub async fn run(
   }
 
   loop {
+    let (
+      poll_interval,
+      notifications_config,
+      scheduling_strategy,
+      _psi_threshold,
+      _psi_check_timeout,
+    ) = {
+      let hot = hot_config.read().await;
+      (
+        hot.poll_interval,
+        hot.notifications_config.clone(),
+        hot.scheduling_strategy.clone(),
+        hot.psi_threshold,
+        hot.psi_check_timeout,
+      )
+    };
+
     let wc = worker_pool.worker_count() as i32;
     match repo::builds::list_pending(&pool, 10, wc).await {
       Ok(builds) => {
@@ -210,48 +227,55 @@ pub async fn run(
 
           // Unsupported system timeout: abort builds with no available builders
           if let Some(timeout) = unsupported_timeout
-            && let Some(system) = &build.system {
-              match repo::remote_builders::find_for_system(&pool, system).await {
-                Ok(builders) if builders.is_empty() => {
-                  let timeout_at = build.created_at + timeout;
-                  if chrono::Utc::now() > timeout_at {
-                    tracing::info!(
-                      build_id = %build.id,
-                      system = %system,
-                      timeout = ?timeout,
-                      "Aborting build: no builder available for system type"
-                    );
-
-                    if let Err(e) = repo::builds::start(&pool, build.id).await {
-                      tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
-                    }
-
-                    if let Err(e) = repo::builds::complete(
-                      &pool,
-                      build.id,
-                      BuildStatus::UnsupportedSystem,
-                      None,
-                      None,
-                      Some("No builder available for system type"),
-                    )
-                    .await
-                    {
-                      tracing::warn!(build_id = %build.id, "Failed to complete unsupported build: {e}");
-                    }
-
-                    continue;
-                  }
-                },
-                Ok(_) => {}, // Builders available, proceed normally
-                Err(e) => {
-                  tracing::error!(
+            && let Some(system) = &build.system
+          {
+            match repo::remote_builders::find_for_system(
+              &pool,
+              system,
+              &scheduling_strategy,
+            )
+            .await
+            {
+              Ok(builders) if builders.is_empty() => {
+                let timeout_at = build.created_at + timeout;
+                if chrono::Utc::now() > timeout_at {
+                  tracing::info!(
                     build_id = %build.id,
-                    "Failed to check builders for unsupported system: {e}"
+                    system = %system,
+                    timeout = ?timeout,
+                    "Aborting build: no builder available for system type"
                   );
+
+                  if let Err(e) = repo::builds::start(&pool, build.id).await {
+                    tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
+                  }
+
+                  if let Err(e) = repo::builds::complete(
+                    &pool,
+                    build.id,
+                    BuildStatus::UnsupportedSystem,
+                    None,
+                    None,
+                    Some("No builder available for system type"),
+                  )
+                  .await
+                  {
+                    tracing::warn!(build_id = %build.id, "Failed to complete unsupported build: {e}");
+                  }
+
                   continue;
-                },
-              }
+                }
+              },
+              Ok(_) => {}, // Builders available, proceed normally
+              Err(e) => {
+                tracing::error!(
+                  build_id = %build.id,
+                  "Failed to check builders for unsupported system: {e}"
+                );
+                continue;
+              },
             }
+          }
 
           // One-at-a-time scheduling: check if jobset allows concurrent builds
           // First, get the evaluation to find the jobset

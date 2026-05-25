@@ -2,12 +2,13 @@ use std::{sync::Arc, time::Duration};
 
 use clap::Parser;
 use fc_common::{
-  config::{Config, GcConfig},
+  config::{Config, GcConfig, HotConfig},
   database::Database,
   gc_roots,
   repo,
 };
 use fc_queue_runner::worker::{ActiveBuilds, WorkerPool};
+use tokio::sync::RwLock;
 
 #[derive(Parser)]
 #[command(name = "fc-queue-runner")]
@@ -25,22 +26,22 @@ async fn main() -> anyhow::Result<()> {
   fc_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Queue Runner");
+
+  let hot_config = Arc::new(RwLock::new(HotConfig::from_config(&config)));
+
   let log_config = config.logs;
   let gc_config = config.gc;
   let gc_config_for_loop = gc_config.clone();
-  let notifications_config = config.notifications;
   let signing_config = config.signing;
   let cache_upload_config = config.cache_upload;
   let qr_config = config.queue_runner;
 
   let workers = cli.workers.unwrap_or(qr_config.workers);
-  let poll_interval = Duration::from_secs(qr_config.poll_interval);
-  let build_timeout = Duration::from_secs(qr_config.build_timeout);
   let strict_errors = qr_config.strict_errors;
   let failed_paths_cache = qr_config.failed_paths_cache;
-  let failed_paths_ttl = qr_config.failed_paths_ttl;
   let work_dir = qr_config.work_dir;
   let unsupported_timeout = qr_config.unsupported_timeout;
+  let alert_config = config.notifications.alerts.clone();
 
   // Ensure the work directory exists
   tokio::fs::create_dir_all(&work_dir).await?;
@@ -54,22 +55,24 @@ async fn main() -> anyhow::Result<()> {
     db.pool().clone(),
     workers,
     work_dir.clone(),
-    build_timeout,
+    hot_config.clone(),
     log_config,
     gc_config,
-    notifications_config.clone(),
     signing_config,
     cache_upload_config,
-    notifications_config.alerts.clone(),
+    alert_config,
   ));
 
-  tracing::info!(
-      workers = workers,
-      poll_interval = ?poll_interval,
-      build_timeout = ?build_timeout,
-      work_dir = %work_dir.display(),
-      "Queue runner configured"
-  );
+  {
+    let hot = hot_config.read().await;
+    tracing::info!(
+        workers = workers,
+        poll_interval = ?hot.poll_interval,
+        build_timeout = ?hot.build_timeout,
+        work_dir = %work_dir.display(),
+        "Queue runner configured"
+    );
+  }
 
   let worker_pool_for_drain = worker_pool.clone();
 
@@ -83,15 +86,16 @@ async fn main() -> anyhow::Result<()> {
   let active_builds = worker_pool.active_builds().clone();
 
   tokio::select! {
-      result = fc_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, poll_interval, wakeup, strict_errors, failed_paths_cache, notifications_config.clone(), unsupported_timeout) => {
+      result = fc_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, hot_config.clone(), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
           if let Err(e) = result {
               tracing::error!("Runner loop failed: {e}");
           }
       }
       () = gc_loop(gc_config_for_loop, db.pool().clone()) => {}
-      () = failed_paths_cleanup_loop(db.pool().clone(), failed_paths_ttl, failed_paths_cache) => {}
+      () = failed_paths_cleanup_loop(db.pool().clone(), hot_config.clone(), failed_paths_cache) => {}
       () = cancel_checker_loop(db.pool().clone(), active_builds) => {}
-      () = notification_retry_loop(db.pool().clone(), notifications_config.clone()) => {}
+      () = notification_retry_loop(db.pool().clone(), hot_config.clone()) => {}
+      () = sighup_loop(hot_config.clone()) => {}
       () = shutdown_signal() => {
           tracing::info!("Shutdown signal received, draining in-flight builds...");
           worker_pool_for_drain.drain();
@@ -169,7 +173,7 @@ async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
 
 async fn failed_paths_cleanup_loop(
   pool: sqlx::PgPool,
-  ttl: u64,
+  hot_config: Arc<RwLock<HotConfig>>,
   enabled: bool,
 ) {
   if !enabled {
@@ -179,6 +183,7 @@ async fn failed_paths_cleanup_loop(
   let interval = std::time::Duration::from_hours(1);
   loop {
     tokio::time::sleep(interval).await;
+    let ttl = hot_config.read().await.failed_paths_ttl;
     match fc_common::repo::failed_paths_cache::cleanup_expired(&pool, ttl).await
     {
       Ok(count) if count > 0 => {
@@ -220,17 +225,58 @@ async fn cancel_checker_loop(pool: sqlx::PgPool, active_builds: ActiveBuilds) {
   }
 }
 
+async fn sighup_loop(hot_config: Arc<RwLock<HotConfig>>) {
+  #[cfg(unix)]
+  {
+    use tokio::signal::unix::SignalKind;
+    let mut sighup = match tokio::signal::unix::signal(SignalKind::hangup()) {
+      Ok(s) => s,
+      Err(e) => {
+        tracing::warn!("Failed to install SIGHUP handler: {e}");
+        return std::future::pending().await;
+      },
+    };
+    loop {
+      sighup.recv().await;
+      tracing::info!("SIGHUP received, reloading configuration");
+      match Config::load() {
+        Ok(new_config) => {
+          let new_hot = HotConfig::from_config(&new_config);
+          tracing::info!(
+            poll_interval = ?new_hot.poll_interval,
+            build_timeout = ?new_hot.build_timeout,
+            "Hot config reloaded (workers and database settings require restart)"
+          );
+          *hot_config.write().await = new_hot;
+        },
+        Err(e) => {
+          tracing::error!("Failed to reload config on SIGHUP: {e}");
+        },
+      }
+    }
+  }
+  #[cfg(not(unix))]
+  std::future::pending().await
+}
+
 async fn notification_retry_loop(
   pool: sqlx::PgPool,
-  config: fc_common::config::NotificationsConfig,
+  hot_config: Arc<RwLock<HotConfig>>,
 ) {
-  if !config.enable_retry_queue {
+  let (enable_retry_queue, poll_interval, retention_days) = {
+    let hot = hot_config.read().await;
+    (
+      hot.notifications_config.enable_retry_queue,
+      std::time::Duration::from_secs(
+        hot.notifications_config.retry_poll_interval,
+      ),
+      hot.notifications_config.retention_days,
+    )
+  };
+
+  if !enable_retry_queue {
     return std::future::pending().await;
   }
-
-  let poll_interval =
-    std::time::Duration::from_secs(config.retry_poll_interval);
-  let retention_days = config.retention_days;
 
   let cleanup_pool = pool.clone();
   tokio::spawn(async move {
