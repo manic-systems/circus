@@ -133,10 +133,14 @@ async fn narinfo(
 
   let file_hash = nar_hash;
 
+  let compression = &state.config.cache.compression;
+  let nar_url = format!("nar/{hash}{}", compression.file_extension());
+  let compression_str = compression.as_str();
+
   let refs_joined = refs.join(" ");
   let mut narinfo_text = format!(
-    "StorePath: {store_path}\nURL: nar/{hash}.nar.zst\nCompression: \
-     zstd\nFileHash: {file_hash}\nFileSize: {nar_size}\nNarHash: \
+    "StorePath: {store_path}\nURL: {nar_url}\nCompression: \
+     {compression_str}\nFileHash: {file_hash}\nFileSize: {nar_size}\nNarHash: \
      {nar_hash}\nNarSize: {nar_size}\nReferences: {refs_joined}\n",
   );
 
@@ -220,35 +224,15 @@ async fn sign_narinfo(narinfo: &str, key_file: &std::path::Path) -> String {
 }
 
 /// Serve a compressed NAR file for a store path.
-/// GET /nix-cache/nar/{hash}.nar.zst
-async fn serve_nar_zst(
-  State(state): State<AppState>,
-  Path(hash): Path<String>,
-) -> Result<Response, ApiError> {
-  if !state.config.cache.enabled {
-    return Ok(StatusCode::NOT_FOUND.into_response());
-  }
-
-  let hash = hash
-    .strip_suffix(".nar.zst")
-    .or_else(|| hash.strip_suffix(".nar"))
-    .unwrap_or(&hash);
-
-  if !fc_common::validate::is_valid_nix_hash(hash) {
-    return Ok(StatusCode::NOT_FOUND.into_response());
-  }
-
-  let store_path = match find_store_path(&state.pool, hash).await? {
-    Some(p) if fc_common::validate::is_valid_store_path(&p) => p,
-    _ => return Ok(StatusCode::NOT_FOUND.into_response()),
-  };
-
-  // Use two piped processes instead of sh -c to prevent command injection.
-  // nix uses std::process (sync) for piping stdout to zstd stdin.
-  // zstd uses tokio::process with kill_on_drop(true) to ensure cleanup
-  // if the client disconnects.
+/// Pipe `nix store dump-path` through an external compressor binary.
+/// Both processes are killed on drop so client disconnects are propagated.
+fn pipe_through_compressor(
+  store_path: &str,
+  compressor: &str,
+  args: &[&str],
+) -> Result<tokio::process::ChildStdout, ApiError> {
   let mut nix_child = std::process::Command::new("nix")
-    .args(["store", "dump-path", &store_path])
+    .args(["store", "dump-path", store_path])
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::null())
     .spawn()
@@ -258,39 +242,36 @@ async fn serve_nar_zst(
       ))
     })?;
 
-  let Some(nix_stdout) = nix_child.stdout.take() else {
-    return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-  };
+  let nix_stdout = nix_child.stdout.take().ok_or_else(|| {
+    ApiError(fc_common::CiError::Build(
+      "nix store dump-path produced no stdout".to_string(),
+    ))
+  })?;
 
-  let mut zstd_child = Command::new("zstd")
-    .arg("-c")
+  let mut comp_child = Command::new(compressor)
+    .args(args)
     .stdin(nix_stdout)
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::null())
     .kill_on_drop(true)
     .spawn()
     .map_err(|_| {
-      ApiError(fc_common::CiError::Build(
-        "Failed to start zstd compression".to_string(),
-      ))
+      ApiError(fc_common::CiError::Build(format!(
+        "Failed to start {compressor}"
+      )))
     })?;
 
-  let Some(zstd_stdout) = zstd_child.stdout.take() else {
-    return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-  };
-
-  let stream = tokio_util::io::ReaderStream::new(zstd_stdout);
-  let body = Body::from_stream(stream);
-
-  Ok(
-    (StatusCode::OK, [("content-type", "application/zstd")], body)
-      .into_response(),
-  )
+  comp_child.stdout.take().ok_or_else(|| {
+    ApiError(fc_common::CiError::Build(format!(
+      "{compressor} produced no stdout"
+    )))
+  })
 }
 
-/// Serve an uncompressed NAR file for a store path (legacy).
-/// GET /nix-cache/nar/{hash}.nar
-async fn serve_nar(
+/// Serve a NAR file with the requested compression algorithm.
+/// Routes for all `.nar`, `.nar.zst`, `.nar.bz2`, `.nar.xz` suffixes funnel
+/// here.
+async fn serve_nar_combined(
   State(state): State<AppState>,
   Path(hash): Path<String>,
 ) -> Result<Response, ApiError> {
@@ -298,59 +279,55 @@ async fn serve_nar(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let hash = hash.strip_suffix(".nar").unwrap_or(&hash);
+  let (stripped, content_type, compressor): (
+    &str,
+    &'static str,
+    Option<(&'static str, &'static [&'static str])>,
+  ) = if let Some(s) = hash.strip_suffix(".nar.zst") {
+    (s, "application/zstd", Some(("zstd", &["-c"])))
+  } else if let Some(s) = hash.strip_suffix(".nar.bz2") {
+    (s, "application/x-bzip2", Some(("bzip2", &["-c"])))
+  } else if let Some(s) = hash.strip_suffix(".nar.xz") {
+    (s, "application/x-xz", Some(("xz", &["-c"])))
+  } else if let Some(s) = hash.strip_suffix(".nar") {
+    (s, "application/x-nix-nar", None)
+  } else {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  };
 
-  if !fc_common::validate::is_valid_nix_hash(hash) {
+  if !fc_common::validate::is_valid_nix_hash(stripped) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let store_path = match find_store_path(&state.pool, hash).await? {
+  let store_path = match find_store_path(&state.pool, stripped).await? {
     Some(p) if fc_common::validate::is_valid_store_path(&p) => p,
     _ => return Ok(StatusCode::NOT_FOUND.into_response()),
   };
 
-  let child = Command::new("nix")
-    .args(["store", "dump-path", &store_path])
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .kill_on_drop(true)
-    .spawn();
-
-  let Ok(mut child) = child else {
-    return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-  };
-
-  let Some(stdout) = child.stdout.take() else {
-    return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-  };
-
-  let stream = tokio_util::io::ReaderStream::new(stdout);
-  let body = Body::from_stream(stream);
-
-  Ok(
-    (
-      StatusCode::OK,
-      [("content-type", "application/x-nix-nar")],
-      body,
-    )
-      .into_response(),
-  )
-}
-
-/// Dispatches to zstd or plain based on suffix.
-/// GET /nix-cache/nar/{hash} where hash includes .nar.zst or .nar suffix
-async fn serve_nar_combined(
-  state: State<AppState>,
-  path: Path<String>,
-) -> Result<Response, ApiError> {
-  let hash_raw = path.0.clone();
-  if hash_raw.ends_with(".nar.zst") {
-    serve_nar_zst(state, path).await
-  } else if hash_raw.ends_with(".nar") {
-    serve_nar(state, path).await
+  let body = if let Some((bin, args)) = compressor {
+    let stdout = pipe_through_compressor(&store_path, bin, args)?;
+    Body::from_stream(tokio_util::io::ReaderStream::new(stdout))
   } else {
-    Ok(StatusCode::NOT_FOUND.into_response())
-  }
+    let mut child = Command::new("nix")
+      .args(["store", "dump-path", &store_path])
+      .stdout(std::process::Stdio::piped())
+      .stderr(std::process::Stdio::null())
+      .kill_on_drop(true)
+      .spawn()
+      .map_err(|_| {
+        ApiError(fc_common::CiError::Build(
+          "Failed to start nix store dump-path".to_string(),
+        ))
+      })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+      ApiError(fc_common::CiError::Build(
+        "nix store dump-path produced no stdout".to_string(),
+      ))
+    })?;
+    Body::from_stream(tokio_util::io::ReaderStream::new(stdout))
+  };
+
+  Ok((StatusCode::OK, [("content-type", content_type)], body).into_response())
 }
 
 /// Nix binary cache info endpoint.
