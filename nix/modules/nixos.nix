@@ -10,7 +10,7 @@
   inherit (lib.attrsets) recursiveUpdate optionalAttrs mapAttrsToList filterAttrs;
   inherit (lib.lists) optional map;
 
-  cfg = config.services.fc-ci;
+  cfg = config.services.circus;
 
   settingsFormat = pkgs.formats.toml {};
   settingsType = settingsFormat.type;
@@ -115,7 +115,7 @@
     };
   });
 
-  settingsFile = settingsFormat.generate "fc.toml" finalSettings;
+  settingsFile = settingsFormat.generate "circus.toml" finalSettings;
 
   jobsetOpts = {
     options = {
@@ -470,41 +470,41 @@
     };
   };
 in {
-  options.services.fc-ci = {
-    enable = mkEnableOption "FC CI system";
+  options.services.circus = {
+    enable = mkEnableOption "circus system";
 
     # TODO: could we use `mkPackageOption` here?
     # Also for the options below
     package = mkOption {
       type = package;
-      description = "The FC server package.";
+      description = "The circus server package.";
     };
 
     evaluatorPackage = mkOption {
       type = package;
       default = cfg.package;
       defaultText = "cfg.package";
-      description = "The FC evaluator package.";
+      description = "The circus evaluator package.";
     };
 
     queueRunnerPackage = mkOption {
       type = package;
       default = cfg.package;
       defaultText = "cfg.package";
-      description = "The FC queue runner package.";
+      description = "The circus queue runner package.";
     };
 
     migratePackage = mkOption {
       type = package;
-      description = "The FC migration CLI package.";
+      description = "The circus migration CLI package.";
     };
 
     settings = mkOption {
       type = settingsType;
       default = {};
       description = ''
-        FC configuration as a Nix attribute set. Will be converted to TOML
-        and written to {file}`fc.toml`.
+        circus configuration as a Nix attribute set. Will be converted to TOML
+        and written to {file}`circus.toml`.
       '';
     };
 
@@ -550,7 +550,7 @@ in {
           }
           {
             name = "ci-bot";
-            key = "fc_ci_bot_key";
+            key = "circus_bot_key";
             role = "eval-jobset";
           }
         ];
@@ -568,12 +568,12 @@ in {
         example = {
           admin = {
             email = "admin@example.com";
-            passwordFile = "/run/secrets/fc-admin-password";
+            passwordFile = "/run/secrets/circus-admin-password";
             role = "admin";
           };
           readonly = {
             email = "readonly@example.com";
-            passwordFile = "/run/secrets/fc-readonly-password";
+            passwordFile = "/run/secrets/circus-readonly-password";
             role = "read-only";
           };
         };
@@ -607,15 +607,15 @@ in {
     };
 
     server = {
-      enable = mkEnableOption "FC server (REST API)";
+      enable = mkEnableOption "circus server (REST API)";
     };
 
     evaluator = {
-      enable = mkEnableOption "FC evaluator (Git polling and nix evaluation)";
+      enable = mkEnableOption "circus evaluator (Git polling and nix evaluation)";
     };
 
     queueRunner = {
-      enable = mkEnableOption "FC queue runner (build dispatch)";
+      enable = mkEnableOption "circus queue runner (build dispatch)";
     };
   };
 
@@ -629,30 +629,30 @@ in {
       )
       cfg.declarative.users;
 
-    users.users.fc = {
+    users.users.circus = {
       isSystemUser = true;
-      group = "fc";
-      home = "/var/lib/fc";
+      group = "circus";
+      home = "/var/lib/circus";
       createHome = true;
     };
 
-    users.groups.fc = {};
+    users.groups.circus = {};
 
     services.postgresql = mkIf cfg.database.createLocally {
       enable = true;
-      ensureDatabases = ["fc"];
+      ensureDatabases = ["circus"];
       ensureUsers = [
         {
-          name = "fc";
+          name = "circus";
           ensureDBOwnership = true;
         }
       ];
     };
 
-    services.fc-ci.settings = {
-      database.url = mkDefault "postgresql:///fc?host=/run/postgresql";
-      server.host = mkDefault "127.0.0.1";
-      server.port = mkDefault 3000;
+    services.circus.settings = mkDefault {
+      database.url = "postgresql:///fc?host=/run/postgresql";
+      server.host = "127.0.0.1";
+      server.port = 3000;
 
       gc = {
         gc_roots_dir = mkDefault "/nix/var/nix/gcroots/per-user/fc/fc-roots";
@@ -670,13 +670,13 @@ in {
 
     systemd = {
       tmpfiles.rules = [
-        (mkIf cfg.server.enable "d /var/lib/fc/logs 0750 fc fc -")
-        (mkIf cfg.queueRunner.enable "d /nix/var/nix/gcroots/per-user/fc 0755 fc fc -")
+        (mkIf cfg.server.enable "d /var/lib/circus/logs 0750 fc fc -")
+        (mkIf cfg.queueRunner.enable "d /nix/var/nix/gcroots/per-user/circus 0755 fc fc -")
       ];
 
       services = {
-        fc-server = mkIf cfg.server.enable {
-          description = "FC CI Server";
+        circus-server = mkIf cfg.server.enable {
+          description = "circus Server";
           wantedBy = ["multi-user.target"];
           after = ["network.target"] ++ optional cfg.database.createLocally "postgresql.target";
           requires = optional cfg.database.createLocally "postgresql.target";
@@ -684,16 +684,16 @@ in {
           path = with pkgs; [nix zstd];
 
           serviceConfig = {
-            ExecStartPre = "${cfg.migratePackage}/bin/fc-migrate up ${finalSettings.database.url or "postgresql:///fc?host=/run/postgresql"}";
-            ExecStart = "${cfg.package}/bin/fc-server";
+            ExecStartPre = "${cfg.migratePackage}/bin/circus-migrate up ${finalSettings.database.url or "postgresql:///fc?host=/run/postgresql"}";
+            ExecStart = "${cfg.package}/bin/circus-server";
             Restart = "on-failure";
             RestartSec = 5;
-            User = "fc";
-            Group = "fc";
-            StateDirectory = "fc";
-            LogsDirectory = "fc";
-            WorkingDirectory = "/var/lib/fc";
-            ReadWritePaths = ["/var/lib/fc"];
+            User = "circus";
+            Group = "circus";
+            StateDirectory = "circus";
+            LogsDirectory = "circus";
+            WorkingDirectory = "/var/lib/circus";
+            ReadWritePaths = ["/var/lib/circus"];
 
             # Hardening
             ProtectSystem = "strict";
@@ -707,15 +707,15 @@ in {
           };
 
           environment = {
-            FC_CONFIG_FILE = "${settingsFile}";
+            CIRCUS_CONFIG_FILE = "${settingsFile}";
           };
         };
 
-        fc-evaluator = mkIf cfg.evaluator.enable {
-          description = "FC CI Evaluator";
+        circus-evaluator = mkIf cfg.evaluator.enable {
+          description = "circus Evaluator";
           wantedBy = ["multi-user.target"];
-          after = ["network.target" "fc-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
-          requires = ["fc-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
+          after = ["network.target" "circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
+          requires = ["circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
 
           path = with pkgs; [
             nix
@@ -724,14 +724,14 @@ in {
           ];
 
           serviceConfig = {
-            ExecStart = "${cfg.evaluatorPackage}/bin/fc-evaluator";
+            ExecStart = "${cfg.evaluatorPackage}/bin/circus-evaluator";
             Restart = "on-failure";
             RestartSec = 10;
-            User = "fc";
-            Group = "fc";
-            StateDirectory = "fc";
-            WorkingDirectory = "/var/lib/fc";
-            ReadWritePaths = ["/var/lib/fc"];
+            User = "circus";
+            Group = "circus";
+            StateDirectory = "circus";
+            WorkingDirectory = "/var/lib/circus";
+            ReadWritePaths = ["/var/lib/circus"];
 
             # Hardening
             ProtectSystem = "strict";
@@ -745,34 +745,34 @@ in {
           };
 
           environment = {
-            FC_CONFIG_FILE = "${settingsFile}";
-            FC_EVALUATOR__WORK_DIR = "/var/lib/fc/evaluator";
-            FC_EVALUATOR__RESTRICT_EVAL = "true";
+            CIRCUS_CONFIG_FILE = "${settingsFile}";
+            CIRCUS_EVALUATOR__WORK_DIR = "/var/lib/circus/evaluator";
+            CIRCUS_EVALUATOR__RESTRICT_EVAL = "true";
           };
         };
 
-        fc-queue-runner = mkIf cfg.queueRunner.enable {
-          description = "FC CI Queue Runner";
+        circus-queue-runner = mkIf cfg.queueRunner.enable {
+          description = "circus Queue Runner";
           wantedBy = ["multi-user.target"];
-          after = ["network.target" "fc-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
-          requires = ["fc-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
+          after = ["network.target" "circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
+          requires = ["circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
 
           path = with pkgs; [
             nix
           ];
 
           serviceConfig = {
-            ExecStart = "${cfg.queueRunnerPackage}/bin/fc-queue-runner";
+            ExecStart = "${cfg.queueRunnerPackage}/bin/circus-queue-runner";
             Restart = "on-failure";
             RestartSec = 10;
-            User = "fc";
-            Group = "fc";
-            StateDirectory = "fc";
-            LogsDirectory = "fc";
-            WorkingDirectory = "/var/lib/fc";
+            User = "circus";
+            Group = "circus";
+            StateDirectory = "circus";
+            LogsDirectory = "circus";
+            WorkingDirectory = "/var/lib/circus";
             ReadWritePaths = [
-              "/var/lib/fc"
-              "/nix/var/nix/gcroots/per-user/fc"
+              "/var/lib/circus"
+              "/nix/var/nix/gcroots/per-user/circus"
             ];
 
             # Hardening
@@ -787,8 +787,8 @@ in {
           };
 
           environment = {
-            FC_CONFIG_FILE = "${settingsFile}";
-            FC_QUEUE_RUNNER__WORK_DIR = "/var/lib/fc/queue-runner";
+            CIRCUS_CONFIG_FILE = "${settingsFile}";
+            CIRCUS_QUEUE_RUNNER__WORK_DIR = "/var/lib/circus/queue-runner";
           };
         };
       };

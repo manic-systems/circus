@@ -2,7 +2,7 @@ use axum::{
   http::StatusCode,
   response::{IntoResponse, Response},
 };
-use fc_common::CiError;
+use circus_common::CiError;
 use serde_json::json;
 
 pub struct ApiError(pub CiError);
@@ -48,8 +48,8 @@ impl IntoResponse for ApiError {
               "{msg}\n\nDISK SPACE ISSUE DETECTED:\nThe server has run out of \
                disk space. Please free up space:\n- Run `nix-collect-garbage \
                -d` to clean the Nix store\n- Clear the evaluator work \
-               directory: `rm -rf /tmp/fc-evaluator/*`\n- Clear build logs if \
-               configured"
+               directory: `rm -rf /tmp/circus-evaluator/*`\n- Clear build \
+               logs if configured"
             ),
           )
         } else {
@@ -133,7 +133,7 @@ impl IntoResponse for ApiError {
               "IO error: {msg}\n\nDISK SPACE ISSUE DETECTED:\nThe server has \
                run out of disk space. Please free up space:\n- Run \
                `nix-collect-garbage -d` to clean the Nix store\n- Clear the \
-               evaluator work directory: `rm -rf /tmp/fc-evaluator/*`\n- \
+               evaluator work directory: `rm -rf /tmp/circus-evaluator/*`\n- \
                Clear build logs if configured"
             ),
           )

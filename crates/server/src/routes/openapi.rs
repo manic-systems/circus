@@ -21,9 +21,9 @@ fn document() -> Value {
   json!({
     "openapi": "3.1.0",
     "info": {
-      "title":       "FC CI API",
+      "title":       "circus API",
       "version":     env!("CARGO_PKG_VERSION"),
-      "description": "REST API for the FC continuous integration server.",
+      "description": "REST API for the circus continuous integration server.",
       "license":     { "name": "MPL-2.0" }
     },
     "servers": [

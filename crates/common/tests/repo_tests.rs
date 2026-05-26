@@ -1,7 +1,7 @@
 //! Integration tests for repository CRUD operations.
 //! Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL` connection string.
 
-use fc_common::{models::*, repo};
+use circus_common::{models::*, repo};
 
 async fn get_pool() -> Option<sqlx::PgPool> {
   let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
@@ -166,7 +166,7 @@ async fn test_project_unique_constraint() {
   })
   .await;
 
-  assert!(matches!(result, Err(fc_common::CiError::Conflict(_))));
+  assert!(matches!(result, Err(circus_common::CiError::Conflict(_))));
 }
 
 #[tokio::test]
@@ -392,22 +392,22 @@ async fn test_not_found_errors() {
 
   assert!(matches!(
     repo::projects::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 
   assert!(matches!(
     repo::jobsets::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 
   assert!(matches!(
     repo::evaluations::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 
   assert!(matches!(
     repo::builds::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 }
 

@@ -19,13 +19,14 @@ async fn get_build_log(
   Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
   // Verify build exists
-  let _build = fc_common::repo::builds::get(&state.pool, id)
+  let _build = circus_common::repo::builds::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
 
-  let log_storage =
-    fc_common::log_storage::LogStorage::new(state.config.logs.log_dir.clone())
-      .map_err(|e| ApiError(fc_common::CiError::Io(e)))?;
+  let log_storage = circus_common::log_storage::LogStorage::new(
+    state.config.logs.log_dir.clone(),
+  )
+  .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
 
   match log_storage.read_log(&id) {
     Ok(Some(content)) => {
@@ -44,7 +45,7 @@ async fn get_build_log(
           .into_response(),
       )
     },
-    Err(e) => Err(ApiError(fc_common::CiError::Io(e))),
+    Err(e) => Err(ApiError(circus_common::CiError::Io(e))),
   }
 }
 
@@ -55,13 +56,14 @@ async fn stream_build_log(
   Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>,
   ApiError,
 > {
-  let build = fc_common::repo::builds::get(&state.pool, id)
+  let build = circus_common::repo::builds::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
 
-  let log_storage =
-    fc_common::log_storage::LogStorage::new(state.config.logs.log_dir.clone())
-      .map_err(|e| ApiError(fc_common::CiError::Io(e)))?;
+  let log_storage = circus_common::log_storage::LogStorage::new(
+    state.config.logs.log_dir.clone(),
+  )
+  .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
 
   let active_path = log_storage.log_path_for_active(&id);
   let final_path = log_storage.log_path(&id);
@@ -110,9 +112,9 @@ async fn stream_build_log(
                   consecutive_empty += 1;
                   if consecutive_empty > 5 {
                       // Check build status
-                      if let Ok(b) = fc_common::repo::builds::get(&pool, build_id).await
-                          && b.status != fc_common::models::BuildStatus::Running
-                              && b.status != fc_common::models::BuildStatus::Pending {
+                      if let Ok(b) = circus_common::repo::builds::get(&pool, build_id).await
+                          && b.status != circus_common::models::BuildStatus::Running
+                              && b.status != circus_common::models::BuildStatus::Pending {
                               yield Ok(Event::default().event("done").data("Build completed"));
                               return;
                           }

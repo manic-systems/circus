@@ -1,5 +1,5 @@
 use axum::{Json, Router, extract::State, routing::get};
-use fc_common::repo;
+use circus_common::repo;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -44,7 +44,7 @@ async fn create_api_key(
   let role = input.role.unwrap_or_else(|| "read-only".to_string());
 
   // Generate a random API key
-  let key = format!("fc_{}", Uuid::new_v4().to_string().replace('-', ""));
+  let key = format!("circus_{}", Uuid::new_v4().to_string().replace('-', ""));
   let key_hash = hash_api_key(&key);
 
   let api_key =

@@ -1,17 +1,16 @@
 [package]
-name                 = "fc-migrate-cli"
+name                 = "circus-migrate-cli"
 version.workspace    = true
 edition.workspace    = true
-authors.workspace    = true
 license.workspace    = true
 repository.workspace = true
 
 [[bin]]
-name = "fc-migrate"
+name = "circus-migrate"
 path = "src/main.rs"
 
 [dependencies]
-fc-common.workspace = true
+circus-common.workspace = true
 
 anyhow.workspace             = true
 clap.workspace               = true

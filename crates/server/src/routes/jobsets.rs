@@ -4,7 +4,7 @@ use axum::{
   extract::{Path, State},
   routing::get,
 };
-use fc_common::{Jobset, JobsetInput, UpdateJobset, Validate};
+use circus_common::{Jobset, JobsetInput, UpdateJobset, Validate};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -14,7 +14,7 @@ async fn get_jobset(
   State(state): State<AppState>,
   Path((_project_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Jobset>, ApiError> {
-  let jobset = fc_common::repo::jobsets::get(&state.pool, id)
+  let jobset = circus_common::repo::jobsets::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(jobset))
@@ -28,8 +28,8 @@ async fn update_jobset(
 ) -> Result<Json<Jobset>, ApiError> {
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  let jobset = fc_common::repo::jobsets::update(&state.pool, id, input)
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  let jobset = circus_common::repo::jobsets::update(&state.pool, id, input)
     .await
     .map_err(ApiError)?;
   Ok(Json(jobset))
@@ -40,7 +40,7 @@ async fn delete_jobset(
   State(state): State<AppState>,
   Path((_project_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  fc_common::repo::jobsets::delete(&state.pool, id)
+  circus_common::repo::jobsets::delete(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(serde_json::json!({ "deleted": true })))
@@ -53,7 +53,7 @@ async fn list_jobset_inputs(
   Path((_project_id, jobset_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Vec<JobsetInput>>, ApiError> {
   let inputs =
-    fc_common::repo::jobset_inputs::list_for_jobset(&state.pool, jobset_id)
+    circus_common::repo::jobset_inputs::list_for_jobset(&state.pool, jobset_id)
       .await
       .map_err(ApiError)?;
   Ok(Json(inputs))
@@ -73,7 +73,7 @@ async fn create_jobset_input(
   Path((_project_id, jobset_id)): Path<(Uuid, Uuid)>,
   Json(body): Json<CreateJobsetInputRequest>,
 ) -> Result<Json<JobsetInput>, ApiError> {
-  let input = fc_common::repo::jobset_inputs::create(
+  let input = circus_common::repo::jobset_inputs::create(
     &state.pool,
     jobset_id,
     &body.name,
@@ -91,7 +91,7 @@ async fn delete_jobset_input(
   State(state): State<AppState>,
   Path((_project_id, _jobset_id, input_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  fc_common::repo::jobset_inputs::delete(&state.pool, input_id)
+  circus_common::repo::jobset_inputs::delete(&state.pool, input_id)
     .await
     .map_err(ApiError)?;
   Ok(Json(serde_json::json!({ "deleted": true })))

@@ -1,5 +1,5 @@
--- FC database schema.
--- Full schema definition for the FC CI system.
+-- circus database schema.
+-- Full schema definition for the circus system.
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- projects: stores repository configurations
@@ -473,7 +473,7 @@ EXECUTE FUNCTION update_updated_at_column ();
 -- Trigger functions: LISTEN/NOTIFY for event-driven daemon wakeup
 CREATE OR REPLACE FUNCTION notify_builds_changed () RETURNS trigger AS $$
 BEGIN
-    PERFORM pg_notify('fc_builds_changed', json_build_object(
+    PERFORM pg_notify('circus_builds_changed', json_build_object(
         'op', TG_OP,
         'table', TG_TABLE_NAME
     )::text);
@@ -483,7 +483,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION notify_jobsets_changed () RETURNS trigger AS $$
 BEGIN
-    PERFORM pg_notify('fc_jobsets_changed', json_build_object(
+    PERFORM pg_notify('circus_jobsets_changed', json_build_object(
         'op', TG_OP,
         'table', TG_TABLE_NAME
     )::text);

@@ -6,7 +6,7 @@ use axum::{
   http::{HeaderMap, StatusCode},
   routing::post,
 };
-use fc_common::{models::CreateEvaluation, repo};
+use circus_common::{models::CreateEvaluation, repo};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -217,7 +217,7 @@ async fn handle_github_push(
 ) -> Result<(StatusCode, Json<WebhookResponse>), ApiError> {
   let payload: GithubPushPayload =
     serde_json::from_slice(body).map_err(|e| {
-      ApiError(fc_common::CiError::Validation(format!(
+      ApiError(circus_common::CiError::Validation(format!(
         "Invalid payload: {e}"
       )))
     })?;
@@ -255,7 +255,7 @@ async fn handle_github_push(
     .await
     {
       Ok(_) => triggered += 1,
-      Err(fc_common::CiError::Conflict(_)) => {}, // already exists
+      Err(circus_common::CiError::Conflict(_)) => {}, // already exists
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
   }
@@ -278,7 +278,7 @@ async fn handle_github_pull_request(
 ) -> Result<(StatusCode, Json<WebhookResponse>), ApiError> {
   let payload: GithubPullRequestPayload = serde_json::from_slice(body)
     .map_err(|e| {
-      ApiError(fc_common::CiError::Validation(format!(
+      ApiError(circus_common::CiError::Validation(format!(
         "Invalid GitHub PR payload: {e}"
       )))
     })?;
@@ -358,7 +358,7 @@ async fn handle_github_pull_request(
     .await
     {
       Ok(_) => triggered += 1,
-      Err(fc_common::CiError::Conflict(_)) => {},
+      Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
   }
@@ -448,7 +448,7 @@ async fn handle_gitea_push(
 
   let payload: GiteaPushPayload =
     serde_json::from_slice(&body).map_err(|e| {
-      ApiError(fc_common::CiError::Validation(format!(
+      ApiError(circus_common::CiError::Validation(format!(
         "Invalid payload: {e}"
       )))
     })?;
@@ -485,7 +485,7 @@ async fn handle_gitea_push(
     .await
     {
       Ok(_) => triggered += 1,
-      Err(fc_common::CiError::Conflict(_)) => {},
+      Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
   }
@@ -581,7 +581,7 @@ async fn handle_gitlab_push(
 ) -> Result<(StatusCode, Json<WebhookResponse>), ApiError> {
   let payload: GitLabPushPayload =
     serde_json::from_slice(body).map_err(|e| {
-      ApiError(fc_common::CiError::Validation(format!(
+      ApiError(circus_common::CiError::Validation(format!(
         "Invalid GitLab push payload: {e}"
       )))
     })?;
@@ -620,7 +620,7 @@ async fn handle_gitlab_push(
     .await
     {
       Ok(_) => triggered += 1,
-      Err(fc_common::CiError::Conflict(_)) => {},
+      Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
   }
@@ -643,7 +643,7 @@ async fn handle_gitlab_merge_request(
 ) -> Result<(StatusCode, Json<WebhookResponse>), ApiError> {
   let payload: GitLabMergeRequestPayload = serde_json::from_slice(body)
     .map_err(|e| {
-      ApiError(fc_common::CiError::Validation(format!(
+      ApiError(circus_common::CiError::Validation(format!(
         "Invalid GitLab MR payload: {e}"
       )))
     })?;
@@ -720,7 +720,7 @@ async fn handle_gitlab_merge_request(
     .await
     {
       Ok(_) => triggered += 1,
-      Err(fc_common::CiError::Conflict(_)) => {},
+      Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
   }

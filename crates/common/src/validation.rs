@@ -1,4 +1,4 @@
-//! Input validation utilities for FC
+//! Input validation utilities for circus
 
 use std::sync::LazyLock;
 

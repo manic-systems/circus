@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Instant};
 
-use dashmap::DashMap;
-use fc_common::{
+use circus_common::{
   config::Config,
   models::{ApiKey, User},
 };
+use dashmap::DashMap;
 use sqlx::PgPool;
 
 /// Maximum session lifetime before automatic eviction (24 hours).

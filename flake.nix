@@ -18,10 +18,10 @@
     inherit (nixpkgs) lib;
     forAllSystems = lib.genAttrs ["x86_64-linux" "aarch64-linux"];
   in {
-    # NixOS module for feel-ci
+    # NixOS module for circus
     nixosModules = {
-      fc-ci = ./nix/modules/nixos.nix;
-      default = self.nixosModules.fc-ci;
+      circus = ./nix/modules/nixos.nix;
+      default = self.nixosModules.circus;
     };
 
     packages = forAllSystems (system: let
@@ -50,7 +50,7 @@
         };
 
       commonArgs = {
-        pname = "feel-ci";
+        pname = "circus";
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs; [pkg-config];
@@ -61,24 +61,24 @@
     in {
       demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
-      # FC Packages
-      fc-common = pkgs.callPackage ./nix/packages/fc-common.nix {
+      # circus Packages
+      circus-common = pkgs.callPackage ./nix/packages/circus-common.nix {
         inherit craneLib commonArgs cargoArtifacts;
       };
 
-      fc-evaluator = pkgs.callPackage ./nix/packages/fc-evaluator.nix {
+      circus-evaluator = pkgs.callPackage ./nix/packages/circus-evaluator.nix {
         inherit craneLib commonArgs cargoArtifacts;
       };
 
-      fc-migrate-cli = pkgs.callPackage ./nix/packages/fc-migrate-cli.nix {
+      circus-migrate-cli = pkgs.callPackage ./nix/packages/circus-migrate-cli.nix {
         inherit craneLib commonArgs cargoArtifacts;
       };
 
-      fc-queue-runner = pkgs.callPackage ./nix/packages/fc-queue-runner.nix {
+      circus-queue-runner = pkgs.callPackage ./nix/packages/circus-queue-runner.nix {
         inherit craneLib commonArgs cargoArtifacts;
       };
 
-      fc-server = pkgs.callPackage ./nix/packages/fc-server.nix {
+      circus-server = pkgs.callPackage ./nix/packages/circus-server.nix {
         inherit craneLib commonArgs cargoArtifacts;
       };
     });
@@ -112,7 +112,7 @@
     in {
       default = pkgs.mkShell {
         name = "fc-dev";
-        inputsFrom = [self.packages.${system}.fc-server];
+        inputsFrom = [self.packages.${system}.circus-server];
 
         strictDeps = true;
         packages = with pkgs; [

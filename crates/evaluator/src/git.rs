@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use fc_common::error::Result;
+use circus_common::error::Result;
 use git2::Repository;
 
 /// Clone or fetch a repository. Returns (`repo_path`, `commit_hash`).
@@ -47,7 +47,7 @@ pub fn clone_or_fetch(
 
   let remote_ref = format!("refs/remotes/origin/{branch_name}");
   let reference = repo.find_reference(&remote_ref).map_err(|e| {
-    fc_common::error::CiError::NotFound(format!(
+    circus_common::error::CiError::NotFound(format!(
       "Branch '{branch_name}' not found ({remote_ref}): {e}"
     ))
   })?;

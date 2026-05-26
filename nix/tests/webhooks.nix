@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-webhooks";
+  name = "circus-webhooks";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
     _module.args.self = self;
@@ -21,10 +21,10 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.wait_for_unit("postgresql.service")
 
-    # Ensure PostgreSQL is actually ready to accept connections before fc-server starts
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
 
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -33,7 +33,7 @@ pkgs.testers.nixosTest {
     api_token = "fc_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -88,7 +88,7 @@ pkgs.testers.nixosTest {
     with subtest("GitHub push webhook triggers evaluation"):
         # First count evaluations
         count_before = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations\" -t"
         ).strip()
 
         # Send push event (signature would normally be verified but we're testing)
@@ -108,7 +108,7 @@ pkgs.testers.nixosTest {
 
         # Check evaluation was created
         count_after = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations\" -t"
         ).strip()
         assert int(count_after) > int(count_before), \
             f"Expected new evaluation, count before={count_before}, after={count_after}"
@@ -140,7 +140,7 @@ pkgs.testers.nixosTest {
 
     with subtest("GitHub pull_request webhook triggers evaluation with PR metadata"):
         count_before = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
         ).strip()
 
         payload = json.dumps({
@@ -164,14 +164,14 @@ pkgs.testers.nixosTest {
         )
 
         count_after = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
         ).strip()
         assert int(count_after) > int(count_before), \
             f"Expected PR evaluation, count before={count_before}, after={count_after}"
 
         # Verify PR metadata was stored
         pr_data = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT pr_number, pr_head_branch, pr_base_branch FROM evaluations WHERE pr_number = 42\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT pr_number, pr_head_branch, pr_base_branch FROM evaluations WHERE pr_number = 42\" -t"
         ).strip()
         assert "42" in pr_data, f"Expected PR number 42 in {pr_data}"
         assert "feature-branch" in pr_data, f"Expected feature-branch in {pr_data}"
@@ -231,7 +231,7 @@ pkgs.testers.nixosTest {
 
     with subtest("GitLab Push Hook triggers evaluation"):
         count_before = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations\" -t"
         ).strip()
 
         machine.succeed(
@@ -243,7 +243,7 @@ pkgs.testers.nixosTest {
         )
 
         count_after = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations\" -t"
         ).strip()
         assert int(count_after) > int(count_before), \
             "Expected new evaluation from GitLab push"
@@ -260,7 +260,7 @@ pkgs.testers.nixosTest {
 
     with subtest("GitLab Merge Request Hook triggers evaluation with PR metadata"):
         count_before = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
         ).strip()
 
         payload = json.dumps({
@@ -285,7 +285,7 @@ pkgs.testers.nixosTest {
         )
 
         count_after = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations WHERE pr_number IS NOT NULL\" -t"
         ).strip()
         assert int(count_after) > int(count_before), \
             f"Expected MR evaluation, count before={count_before}, after={count_after}"
@@ -342,7 +342,7 @@ pkgs.testers.nixosTest {
 
     with subtest("Gitea push webhook triggers evaluation"):
         count_before = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations\" -t"
         ).strip()
 
         payload = '{"ref":"refs/heads/main","after":"gitea123456789012345678901234567890abcd"}'
@@ -356,7 +356,7 @@ pkgs.testers.nixosTest {
         )
 
         count_after = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT COUNT(*) FROM evaluations\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT COUNT(*) FROM evaluations\" -t"
         ).strip()
         assert int(count_after) > int(count_before), \
             "Expected new evaluation from Gitea push"

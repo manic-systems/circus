@@ -2,7 +2,7 @@
 //! relationships. Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL`
 //! connection string.
 
-use fc_common::{models::*, repo};
+use circus_common::{models::*, repo};
 use uuid::Uuid;
 
 async fn get_pool() -> Option<sqlx::PgPool> {
@@ -126,7 +126,7 @@ async fn test_user_crud() {
 
   // Verify deleted
   let result = repo::users::get(&pool, user.id).await;
-  assert!(matches!(result, Err(fc_common::CiError::NotFound(_))));
+  assert!(matches!(result, Err(circus_common::CiError::NotFound(_))));
 }
 
 #[tokio::test]
@@ -168,7 +168,7 @@ async fn test_user_authentication() {
   .await;
   assert!(matches!(
     wrong_auth,
-    Err(fc_common::CiError::Unauthorized(_))
+    Err(circus_common::CiError::Unauthorized(_))
   ));
 
   // Authenticate with wrong username
@@ -179,7 +179,7 @@ async fn test_user_authentication() {
   .await;
   assert!(matches!(
     wrong_user,
-    Err(fc_common::CiError::Unauthorized(_))
+    Err(circus_common::CiError::Unauthorized(_))
   ));
 
   // Authenticate disabled user
@@ -193,7 +193,7 @@ async fn test_user_authentication() {
   .await;
   assert!(matches!(
     disabled_auth,
-    Err(fc_common::CiError::Unauthorized(_))
+    Err(circus_common::CiError::Unauthorized(_))
   ));
 
   // Cleanup
@@ -202,7 +202,7 @@ async fn test_user_authentication() {
 
 #[tokio::test]
 async fn test_password_hashing() {
-  use fc_common::repo::users::{hash_password, verify_password};
+  use circus_common::repo::users::{hash_password, verify_password};
 
   let password = "test_password_123";
 
@@ -256,7 +256,7 @@ async fn test_user_unique_constraints() {
     role:      None,
   })
   .await;
-  assert!(matches!(result, Err(fc_common::CiError::Conflict(_))));
+  assert!(matches!(result, Err(circus_common::CiError::Conflict(_))));
 
   // Try to create with same email
   let result = repo::users::create(&pool, &CreateUser {
@@ -267,7 +267,7 @@ async fn test_user_unique_constraints() {
     role:      None,
   })
   .await;
-  assert!(matches!(result, Err(fc_common::CiError::Conflict(_))));
+  assert!(matches!(result, Err(circus_common::CiError::Conflict(_))));
 
   // Cleanup
   let user = repo::users::get_by_username(&pool, &username)
@@ -408,7 +408,10 @@ async fn test_starred_jobs_crud() {
       job_name:   "hello-world".to_string(),
     })
     .await;
-  assert!(matches!(duplicate, Err(fc_common::CiError::Conflict(_))));
+  assert!(matches!(
+    duplicate,
+    Err(circus_common::CiError::Conflict(_))
+  ));
 
   // Delete starred job
   repo::starred_jobs::delete(&pool, starred.id)
@@ -587,7 +590,10 @@ async fn test_project_members_crud() {
       role:    "member".to_string(),
     })
     .await;
-  assert!(matches!(duplicate, Err(fc_common::CiError::Conflict(_))));
+  assert!(matches!(
+    duplicate,
+    Err(circus_common::CiError::Conflict(_))
+  ));
 
   // Delete member
   repo::project_members::delete(&pool, member.id)
@@ -596,7 +602,7 @@ async fn test_project_members_crud() {
 
   // Verify deleted
   let result = repo::project_members::get(&pool, member.id).await;
-  assert!(matches!(result, Err(fc_common::CiError::NotFound(_))));
+  assert!(matches!(result, Err(circus_common::CiError::NotFound(_))));
 
   // Cleanup
   repo::projects::delete(&pool, project.id).await.ok();
@@ -806,16 +812,16 @@ async fn test_user_not_found_errors() {
 
   assert!(matches!(
     repo::users::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 
   assert!(matches!(
     repo::starred_jobs::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 
   assert!(matches!(
     repo::project_members::get(&pool, fake_id).await,
-    Err(fc_common::CiError::NotFound(_))
+    Err(circus_common::CiError::NotFound(_))
   ));
 }

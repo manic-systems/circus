@@ -2,7 +2,7 @@
 
 mod notifications_tests;
 
-use fc_common::{
+use circus_common::{
   Database,
   config::{Config, DatabaseConfig},
 };
@@ -12,7 +12,7 @@ async fn test_database_connection_full() -> anyhow::Result<()> {
   // This test requires a running PostgreSQL instance
   // Skip if no database is available
   let config = DatabaseConfig {
-    url:             "postgresql://postgres:password@localhost/fc_ci_test"
+    url:             "postgresql://postgres:password@localhost/circus_test"
       .to_string(),
     max_connections: 5,
     min_connections: 1,

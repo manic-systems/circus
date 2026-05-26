@@ -30,13 +30,13 @@ async fn git_revision(
   State(state): State<AppState>,
   Path(name): Path<String>,
 ) -> Result<Response, ApiError> {
-  let channel = fc_common::repo::channels::get_by_name(&state.pool, &name)
+  let channel = circus_common::repo::channels::get_by_name(&state.pool, &name)
     .await
     .map_err(ApiError)?;
   let Some(eval_id) = channel.current_evaluation_id else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
-  let eval = fc_common::repo::evaluations::get(&state.pool, eval_id)
+  let eval = circus_common::repo::evaluations::get(&state.pool, eval_id)
     .await
     .map_err(ApiError)?;
 
@@ -56,7 +56,7 @@ async fn binary_cache_url(
 ) -> Result<Response, ApiError> {
   // Verify the channel exists; otherwise this endpoint would happily echo
   // the cache URL for any name and pollute clients' channel state.
-  let _ = fc_common::repo::channels::get_by_name(&state.pool, &name)
+  let _ = circus_common::repo::channels::get_by_name(&state.pool, &name)
     .await
     .map_err(ApiError)?;
 
@@ -78,7 +78,7 @@ async fn store_paths(
   State(state): State<AppState>,
   Path(name): Path<String>,
 ) -> Result<Response, ApiError> {
-  let channel = fc_common::repo::channels::get_by_name(&state.pool, &name)
+  let channel = circus_common::repo::channels::get_by_name(&state.pool, &name)
     .await
     .map_err(ApiError)?;
   let Some(eval_id) = channel.current_evaluation_id else {
@@ -86,7 +86,7 @@ async fn store_paths(
   };
 
   let builds =
-    fc_common::repo::builds::list_for_evaluation(&state.pool, eval_id)
+    circus_common::repo::builds::list_for_evaluation(&state.pool, eval_id)
       .await
       .map_err(ApiError)?;
 
@@ -98,8 +98,11 @@ async fn store_paths(
     if let Some(p) = &build.build_output_path {
       paths.push(p.clone());
     }
-    match fc_common::repo::build_products::list_for_build(&state.pool, build.id)
-      .await
+    match circus_common::repo::build_products::list_for_build(
+      &state.pool,
+      build.id,
+    )
+    .await
     {
       Ok(products) => {
         for product in products {
@@ -126,10 +129,12 @@ async fn store_paths(
   })
   .await
   .map_err(|e| {
-    ApiError(fc_common::CiError::Build(format!("xz join error: {e}")))
+    ApiError(circus_common::CiError::Build(format!("xz join error: {e}")))
   })?
   .map_err(|e| {
-    ApiError(fc_common::CiError::Build(format!("xz encode failed: {e}")))
+    ApiError(circus_common::CiError::Build(format!(
+      "xz encode failed: {e}"
+    )))
   })?;
 
   Ok(

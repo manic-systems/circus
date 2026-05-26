@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fc_common::notifications::*;
+use circus_common::notifications::*;
 
 #[test]
 fn test_rate_limit_extraction() {

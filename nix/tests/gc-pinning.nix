@@ -6,18 +6,18 @@
   inherit (lib.modules) mkForce;
 in
   pkgs.testers.nixosTest {
-    name = "fc-gc-pinning";
+    name = "circus-gc-pinning";
 
     nodes.machine = {
       imports = [
-        self.nixosModules.fc-ci
+        self.nixosModules.circus
         ../vm-common.nix
       ];
       _module.args.self = self;
 
-      services.fc-ci.settings.gc = {
+      services.circus.settings.gc = {
         enabled = mkForce true;
-        gc_roots_dir = "/var/lib/fc/gc-roots";
+        gc_roots_dir = "/var/lib/circus/gc-roots";
         cleanup_interval = 9999;
         max_age_days = 1;
       };
@@ -29,21 +29,21 @@ in
 
       machine.start()
       machine.wait_for_unit("postgresql.service")
-      machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
-      machine.wait_for_unit("fc-server.service")
+      machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+      machine.wait_for_unit("circus-server.service")
       machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
       api_token = "fc_testkey123"
       api_hash = hashlib.sha256(api_token.encode()).hexdigest()
       machine.succeed(
-          f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+          f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
       )
       auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
       ro_token = "fc_readonly_key"
       ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
       machine.succeed(
-          f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+          f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
       )
       ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
@@ -68,35 +68,35 @@ in
 
       with subtest("keep_nr persists in database"):
           machine.succeed(
-              "sudo -u fc psql -U fc -d fc -c "
+              "sudo -u circus psql -U circus -d circus -c "
               "\"UPDATE jobsets SET keep_nr = 7 WHERE name = 'default'\""
           )
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -tA -c "
+              "sudo -u circus psql -U circus -d circus -tA -c "
               "\"SELECT keep_nr FROM jobsets WHERE name = 'default'\""
           )
           assert result.strip() == "7", f"Expected keep_nr=7, got {result.strip()}"
 
       with subtest("keep_nr visible in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u fc psql -U fc -d fc -tA -c "
+              "sudo -u circus psql -U circus -d circus -tA -c "
               "\"SELECT keep_nr FROM active_jobsets WHERE name = 'default' LIMIT 1\""
           )
           assert result.strip() == "7", f"Expected keep_nr=7 in view, got {result.strip()}"
 
       # Create evaluation + build for keep flag tests
       jobset_id = machine.succeed(
-          "sudo -u fc psql -U fc -d fc -tA -c "
+          "sudo -u circus psql -U circus -d circus -tA -c "
           f"\"SELECT id FROM jobsets WHERE project_id = '{project_id}' AND name = 'default'\""
       ).strip()
 
       eval_id = machine.succeed(
-          "sudo -u fc psql -U fc -d fc -tA -c "
+          "sudo -u circus psql -U circus -d circus -tA -c "
           f"\"INSERT INTO evaluations (jobset_id, commit_hash, status) VALUES ('{jobset_id}', 'abc123', 'completed') RETURNING id\" | head -1"
       ).strip()
 
       build_id = machine.succeed(
-          "sudo -u fc psql -U fc -d fc -tA -c "
+          "sudo -u circus psql -U circus -d circus -tA -c "
           f"\"INSERT INTO builds (evaluation_id, job_name, drv_path, status, system) "
           f"VALUES ('{eval_id}', 'hello', '/nix/store/fake.drv', 'succeeded', 'x86_64-linux') RETURNING id\" | head -1"
       ).strip()

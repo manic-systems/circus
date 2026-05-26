@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-api-crud";
+  name = "circus-api-crud";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
 
@@ -24,10 +24,10 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.wait_for_unit("postgresql.service")
 
-    # Ensure PostgreSQL is actually ready to accept connections before fc-server starts
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
 
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -37,7 +37,7 @@ pkgs.testers.nixosTest {
     api_token = "fc_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -45,7 +45,7 @@ pkgs.testers.nixosTest {
     ro_token = "fc_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
     )
     ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
@@ -225,7 +225,7 @@ pkgs.testers.nixosTest {
     # Create a build via SQL since builds are normally created by the evaluator
     with subtest("Create test build via SQL"):
         machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \""
+            "sudo -u circus psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', '{test_eval_id}', 'hello', '/nix/store/fake.drv', 'failed', 'x86_64-linux', 5, NOW())"
             "\""
@@ -255,12 +255,12 @@ pkgs.testers.nixosTest {
         assert code.strip() == "403", f"Expected 403 for read-only restart, got {code.strip()}"
 
     # Stop the queue runner so it cannot claim the build before we bump it
-    machine.systemctl("stop fc-queue-runner.service")
+    machine.systemctl("stop circus-queue-runner.service")
 
     # Create a pending build to test bump
     with subtest("Create pending build for bump test"):
         machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \""
+            "sudo -u circus psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('bbbbbbbb-cccc-dddd-eeee-ffffffffffff', '{test_eval_id}', 'world', '/nix/store/fake2.drv', 'pending', 'x86_64-linux', 5, NOW())"
             "\""
@@ -291,7 +291,7 @@ pkgs.testers.nixosTest {
         )
         assert "cancelled" in result.strip().lower(), f"Expected cancelled, got: {result.strip()}"
 
-    machine.systemctl("start fc-queue-runner.service")
+    machine.systemctl("start circus-queue-runner.service")
 
     # Evaluation comparison
     with subtest("Trigger second evaluation for comparison"):
@@ -305,13 +305,13 @@ pkgs.testers.nixosTest {
         second_eval_id = result.strip()
         # Add a build to the second evaluation
         machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \""
+            "sudo -u circus psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa', '{second_eval_id}', 'hello', '/nix/store/changed.drv', 'pending', 'x86_64-linux', 5, NOW())"
             "\""
         )
         machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \""
+            "sudo -u circus psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb', '{second_eval_id}', 'new-pkg', '/nix/store/new.drv', 'pending', 'x86_64-linux', 5, NOW())"
             "\""
@@ -454,7 +454,7 @@ pkgs.testers.nixosTest {
     with subtest("Delete remote builder with admin key"):
         # First clear the builder_id from builds that reference it
         machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c "
+            "sudo -u circus psql -U circus -d circus -c "
             f"\"UPDATE builds SET builder_id = NULL WHERE builder_id = '{builder_id}'\""
         )
         # Now delete the builder
@@ -627,7 +627,7 @@ pkgs.testers.nixosTest {
             "-X POST http://127.0.0.1:3000/login "
             f"-d 'api_key={api_token}'"
         )
-        assert "fc_session=" in result, f"Expected fc_session cookie in response: {result}"
+        assert "circus_session=" in result, f"Expected circus_session cookie in response: {result}"
         assert "HttpOnly" in result, "Expected HttpOnly flag on session cookie"
 
     with subtest("Login with invalid API key shows error"):
@@ -654,11 +654,11 @@ pkgs.testers.nixosTest {
             f"-d 'api_key={api_token}' "
             "| grep -i set-cookie | head -1"
         )
-        match = re.search(r'fc_session=([^;]+)', cookie)
+        match = re.search(r'circus_session=([^;]+)', cookie)
         if match:
             session_val = match.group(1)
             body = machine.succeed(
-                f"curl -sf -H 'Cookie: fc_session={session_val}' http://127.0.0.1:3000/admin"
+                f"curl -sf -H 'Cookie: circus_session={session_val}' http://127.0.0.1:3000/admin"
             )
             # Admin page with session should show API Keys section and admin controls
             assert "API Keys" in body, "Admin page with session should show API Keys section"
@@ -674,7 +674,7 @@ pkgs.testers.nixosTest {
     cp_token = "fc_createprojects_key"
     cp_hash = hashlib.sha256(cp_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('creator', '{cp_hash}', 'create-projects')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('creator', '{cp_hash}', 'create-projects')\""
     )
     cp_header = f"-H 'Authorization: Bearer {cp_token}'"
 

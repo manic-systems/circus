@@ -7,7 +7,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::{get, post, put},
 };
-use fc_common::{
+use circus_common::{
   Build,
   BuildProduct,
   BuildStep,
@@ -27,9 +27,13 @@ fn check_role(
     .map(|_| ())
     .map_err(|s| {
       ApiError(if s == StatusCode::FORBIDDEN {
-        fc_common::CiError::Forbidden("Insufficient permissions".to_string())
+        circus_common::CiError::Forbidden(
+          "Insufficient permissions".to_string(),
+        )
       } else {
-        fc_common::CiError::Unauthorized("Authentication required".to_string())
+        circus_common::CiError::Unauthorized(
+          "Authentication required".to_string(),
+        )
       })
     })
 }
@@ -54,7 +58,7 @@ async fn list_builds(
   };
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let items = fc_common::repo::builds::list_filtered(
+  let items = circus_common::repo::builds::list_filtered(
     &state.pool,
     params.evaluation_id,
     params.status.as_deref(),
@@ -65,7 +69,7 @@ async fn list_builds(
   )
   .await
   .map_err(ApiError)?;
-  let total = fc_common::repo::builds::count_filtered(
+  let total = circus_common::repo::builds::count_filtered(
     &state.pool,
     params.evaluation_id,
     params.status.as_deref(),
@@ -86,7 +90,7 @@ async fn get_build(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
-  let build = fc_common::repo::builds::get(&state.pool, id)
+  let build = circus_common::repo::builds::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(build))
@@ -98,11 +102,11 @@ async fn cancel_build(
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Build>>, ApiError> {
   check_role(&extensions, &["cancel-build"])?;
-  let cancelled = fc_common::repo::builds::cancel_cascade(&state.pool, id)
+  let cancelled = circus_common::repo::builds::cancel_cascade(&state.pool, id)
     .await
     .map_err(ApiError)?;
   if cancelled.is_empty() {
-    return Err(ApiError(fc_common::CiError::NotFound(
+    return Err(ApiError(circus_common::CiError::NotFound(
       "Build not found or not in a cancellable state".to_string(),
     )));
   }
@@ -113,7 +117,7 @@ async fn list_build_steps(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<BuildStep>>, ApiError> {
-  let steps = fc_common::repo::build_steps::list_for_build(&state.pool, id)
+  let steps = circus_common::repo::build_steps::list_for_build(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(steps))
@@ -124,7 +128,7 @@ async fn list_build_products(
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<BuildProduct>>, ApiError> {
   let products =
-    fc_common::repo::build_products::list_for_build(&state.pool, id)
+    circus_common::repo::build_products::list_for_build(&state.pool, id)
       .await
       .map_err(ApiError)?;
   Ok(Json(products))
@@ -132,8 +136,8 @@ async fn list_build_products(
 
 async fn build_stats(
   State(state): State<AppState>,
-) -> Result<Json<fc_common::BuildStats>, ApiError> {
-  let build_stats = fc_common::repo::builds::get_stats(&state.pool)
+) -> Result<Json<circus_common::BuildStats>, ApiError> {
+  let build_stats = circus_common::repo::builds::get_stats(&state.pool)
     .await
     .map_err(ApiError)?;
   Ok(Json(build_stats))
@@ -142,7 +146,7 @@ async fn build_stats(
 async fn recent_builds(
   State(state): State<AppState>,
 ) -> Result<Json<Vec<Build>>, ApiError> {
-  let builds = fc_common::repo::builds::list_recent(&state.pool, 20)
+  let builds = circus_common::repo::builds::list_recent(&state.pool, 20)
     .await
     .map_err(ApiError)?;
   Ok(Json(builds))
@@ -152,7 +156,7 @@ async fn list_project_builds(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Build>>, ApiError> {
-  let builds = fc_common::repo::builds::list_for_project(&state.pool, id)
+  let builds = circus_common::repo::builds::list_for_project(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(builds))
@@ -164,7 +168,7 @@ async fn restart_build(
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
   check_role(&extensions, &["restart-jobs"])?;
-  let build = fc_common::repo::builds::restart(&state.pool, id)
+  let build = circus_common::repo::builds::restart(&state.pool, id)
     .await
     .map_err(ApiError)?;
 
@@ -190,9 +194,9 @@ async fn bump_build(
   .bind(id)
   .fetch_optional(&state.pool)
   .await
-  .map_err(|e| ApiError(fc_common::CiError::Database(e)))?
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?
   .ok_or_else(|| {
-    ApiError(fc_common::CiError::Validation(
+    ApiError(circus_common::CiError::Validation(
       "Build not found or not in pending state".to_string(),
     ))
   })?;
@@ -205,22 +209,23 @@ async fn download_build_product(
   Path((build_id, product_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Response, ApiError> {
   // Verify build exists
-  let _build = fc_common::repo::builds::get(&state.pool, build_id)
+  let _build = circus_common::repo::builds::get(&state.pool, build_id)
     .await
     .map_err(ApiError)?;
 
-  let product = fc_common::repo::build_products::get(&state.pool, product_id)
-    .await
-    .map_err(ApiError)?;
+  let product =
+    circus_common::repo::build_products::get(&state.pool, product_id)
+      .await
+      .map_err(ApiError)?;
 
   if product.build_id != build_id {
-    return Err(ApiError(fc_common::CiError::NotFound(
+    return Err(ApiError(circus_common::CiError::NotFound(
       "Product does not belong to this build".to_string(),
     )));
   }
 
-  if !fc_common::validate::is_valid_store_path(&product.path) {
-    return Err(ApiError(fc_common::CiError::Validation(
+  if !circus_common::validate::is_valid_store_path(&product.path) {
+    return Err(ApiError(circus_common::CiError::Validation(
       "Invalid store path".to_string(),
     )));
   }
@@ -236,14 +241,14 @@ async fn download_build_product(
     let mut child = match child {
       Ok(c) => c,
       Err(e) => {
-        return Err(ApiError(fc_common::CiError::Build(format!(
+        return Err(ApiError(circus_common::CiError::Build(format!(
           "Failed to dump path: {e}"
         ))));
       },
     };
 
     let Some(stdout) = child.stdout.take() else {
-      return Err(ApiError(fc_common::CiError::Build(
+      return Err(ApiError(circus_common::CiError::Build(
         "Failed to capture output".to_string(),
       )));
     };
@@ -271,7 +276,7 @@ async fn download_build_product(
     // Serve file directly
     let file = tokio::fs::File::open(&product.path)
       .await
-      .map_err(|e| ApiError(fc_common::CiError::Io(e)))?;
+      .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
 
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -303,16 +308,16 @@ async fn list_build_constituents(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Build>>, ApiError> {
-  let build = fc_common::repo::builds::get(&state.pool, id)
+  let build = circus_common::repo::builds::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   if !build.is_aggregate {
-    return Err(ApiError(fc_common::CiError::Validation(
+    return Err(ApiError(circus_common::CiError::Validation(
       "Build is not an aggregate build".into(),
     )));
   }
   let constituents =
-    fc_common::repo::builds::list_constituents(&state.pool, id)
+    circus_common::repo::builds::list_constituents(&state.pool, id)
       .await
       .map_err(ApiError)?;
   Ok(Json(constituents))
@@ -323,7 +328,7 @@ async fn set_keep_flag(
   State(state): State<AppState>,
   Path((id, value)): Path<(Uuid, bool)>,
 ) -> Result<Json<Build>, ApiError> {
-  let build = fc_common::repo::builds::set_keep(&state.pool, id, value)
+  let build = circus_common::repo::builds::set_keep(&state.pool, id, value)
     .await
     .map_err(ApiError)?;
 

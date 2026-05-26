@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-features";
+  name = "circus-features";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
     _module.args.self = self;
@@ -21,10 +21,10 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.wait_for_unit("postgresql.service")
 
-    # Ensure PostgreSQL is actually ready to accept connections before fc-server starts
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
 
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -34,7 +34,7 @@ pkgs.testers.nixosTest {
     api_token = "fc_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -42,14 +42,14 @@ pkgs.testers.nixosTest {
     ro_token = "fc_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
     )
     ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
     # Structured logging
     with subtest("Server produces structured log output"):
         # The server should log via tracing with the configured format
-        result = machine.succeed("journalctl -u fc-server --no-pager -n 50 2>&1")
+        result = machine.succeed("journalctl -u circus-server --no-pager -n 50 2>&1")
         # With compact/full format, tracing outputs level and target info
         assert "INFO" in result or "info" in result, \
             "Expected structured log lines with INFO level in journalctl output"
@@ -86,11 +86,11 @@ pkgs.testers.nixosTest {
             f"-d 'api_key={api_token}' "
             "| grep -i set-cookie | head -1"
         )
-        match = re.search(r'fc_session=([^;]+)', cookie)
+        match = re.search(r'circus_session=([^;]+)', cookie)
         if match:
             session_val = match.group(1)
             body = machine.succeed(
-                f"curl -sf -H 'Cookie: fc_session={session_val}' http://127.0.0.1:3000/projects"
+                f"curl -sf -H 'Cookie: circus_session={session_val}' http://127.0.0.1:3000/projects"
             )
             assert '/projects/new' in body, "Projects page should link to /projects/new wizard"
 
@@ -177,7 +177,7 @@ pkgs.testers.nixosTest {
         # Login to get admin view
         if match:
             body = machine.succeed(
-                f"curl -sf -H 'Cookie: fc_session={session_val}' http://127.0.0.1:3000/admin"
+                f"curl -sf -H 'Cookie: circus_session={session_val}' http://127.0.0.1:3000/admin"
             )
             assert "escapeHtml" in body, "Admin page JS should use escapeHtml"
 

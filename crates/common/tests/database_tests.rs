@@ -1,6 +1,6 @@
 //! Database integration tests
 
-use fc_common::{config::DatabaseConfig, *};
+use circus_common::{config::DatabaseConfig, *};
 use sqlx::PgPool;
 
 #[tokio::test]

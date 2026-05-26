@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-e2e";
+  name = "circus-e2e";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
     _module.args.self = self;
@@ -24,10 +24,10 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.wait_for_unit("postgresql.service")
 
-    # Ensure PostgreSQL is actually ready to accept connections before fc-server starts
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
 
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -37,7 +37,7 @@ pkgs.testers.nixosTest {
     api_token = "fc_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -45,13 +45,13 @@ pkgs.testers.nixosTest {
     ro_token = "fc_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
     )
     ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
     with subtest("PostgreSQL LISTEN/NOTIFY triggers are installed"):
         result = machine.succeed(
-            "sudo -u fc psql -U fc -d fc -c \"SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_%_notify'\" -t"
+            "sudo -u circus psql -U circus -d circus -c \"SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_%_notify'\" -t"
         )
         assert "trg_builds_insert_notify" in result, f"Missing trg_builds_insert_notify in: {result}"
         assert "trg_builds_status_notify" in result, f"Missing trg_builds_status_notify in: {result}"
@@ -61,25 +61,25 @@ pkgs.testers.nixosTest {
 
     # Create a test flake inside the VM
     with subtest("Create bare git repo with test flake"):
-        machine.succeed("mkdir -p /var/lib/fc/test-repos")
-        machine.succeed("git init --bare /var/lib/fc/test-repos/test-flake.git")
+        machine.succeed("mkdir -p /var/lib/circus/test-repos")
+        machine.succeed("git init --bare /var/lib/circus/test-repos/test-flake.git")
 
-        # Allow root to push to fc-owned repos (ownership changes after chown below)
-        machine.succeed("git config --global --add safe.directory /var/lib/fc/test-repos/test-flake.git")
+        # Allow root to push to circus-owned repos (ownership changes after chown below)
+        machine.succeed("git config --global --add safe.directory /var/lib/circus/test-repos/test-flake.git")
 
         # Create a working copy, write the flake, commit, push
         machine.succeed("mkdir -p /tmp/test-flake-work")
         machine.succeed("cd /tmp/test-flake-work && git init")
-        machine.succeed("cd /tmp/test-flake-work && git config user.email 'test@fc' && git config user.name 'FC Test'")
+        machine.succeed("cd /tmp/test-flake-work && git config user.email 'test@circus' && git config user.name 'circus Test'")
 
         # Write a minimal flake.nix that builds a simple derivation
         machine.succeed(
             "cat > /tmp/test-flake-work/flake.nix << 'FLAKE'\n"
             "{\n"
-            '  description = "FC CI test flake";\n'
+            '  description = "circus test flake";\n'
             '  outputs = { self, ... }: {\n'
             '    packages.x86_64-linux.hello = derivation {\n'
-            '      name = "fc-test-hello";\n'
+            '      name = "circus-test-hello";\n'
             '      system = "x86_64-linux";\n'
             '      builder = "/bin/sh";\n'
             '      args = [ "-c" "echo hello > $out" ];\n'
@@ -89,11 +89,11 @@ pkgs.testers.nixosTest {
             "FLAKE\n"
         )
         machine.succeed("cd /tmp/test-flake-work && git add -A && git commit -m 'initial flake'")
-        machine.succeed("cd /tmp/test-flake-work && git remote add origin /var/lib/fc/test-repos/test-flake.git")
+        machine.succeed("cd /tmp/test-flake-work && git remote add origin /var/lib/circus/test-repos/test-flake.git")
         machine.succeed("cd /tmp/test-flake-work && git push origin HEAD:refs/heads/master")
 
         # Set ownership for fc user
-        machine.succeed("chown -R fc:fc /var/lib/fc/test-repos")
+        machine.succeed("chown -R fc:fc /var/lib/circus/test-repos")
 
     # Create project + jobset pointing to the local repo via API
     with subtest("Create E2E project and jobset via API"):
@@ -101,7 +101,7 @@ pkgs.testers.nixosTest {
             "curl -sf -X POST http://127.0.0.1:3000/api/v1/projects "
             f"{auth_header} "
             "-H 'Content-Type: application/json' "
-            "-d '{\"name\": \"e2e-test\", \"repository_url\": \"file:///var/lib/fc/test-repos/test-flake.git\"}' "
+            "-d '{\"name\": \"e2e-test\", \"repository_url\": \"file:///var/lib/circus/test-repos/test-flake.git\"}' "
             "| jq -r .id"
         )
         e2e_project_id = result.strip()
@@ -177,10 +177,10 @@ pkgs.testers.nixosTest {
             "cd /tmp/test-flake-work && \\\n"
             "cat > flake.nix << 'FLAKE'\n"
             "{\n"
-            '  description = "FC CI test flake v2";\n'
+            '  description = "circus test flake v2";\n'
             '  outputs = { self, ... }: {\n'
             '    packages.x86_64-linux.hello = derivation {\n'
-            '      name = "fc-test-hello-v2";\n'
+            '      name = "circus-test-hello-v2";\n'
             '      system = "x86_64-linux";\n'
             '      builder = "/bin/sh";\n'
             '      args = [ "-c" "echo hello-v2 > $out" ];\n'
@@ -355,7 +355,7 @@ pkgs.testers.nixosTest {
     with subtest("Build with invalid drv_path fails and retries"):
         # Insert a build with an invalid drv_path via SQL
         machine.succeed(
-            "sudo -u postgres psql -d fc -c \""
+            "sudo -u postgres psql -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, priority, retry_count, max_retries, is_aggregate, signed) "
             f"VALUES (gen_random_uuid(), '{e2e_eval_id}', 'bad-build', '/nix/store/invalid-does-not-exist.drv', 'pending', 0, 0, 3, false, false);\""
         )
@@ -377,7 +377,7 @@ pkgs.testers.nixosTest {
         # Insert a build directly via SQL and verify the queue-runner picks it up
         # reactively (within seconds, not waiting for the full poll interval)
         machine.succeed(
-            f"sudo -u fc psql -U fc -d fc -c \""
+            f"sudo -u circus psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, priority, retry_count, max_retries, is_aggregate, signed) "
             f"VALUES (gen_random_uuid(), '{e2e_eval_id}', 'notify-build', '/nix/store/invalid-notify-test.drv', 'pending', 0, 0, 1, false, false);\""
         )
@@ -415,26 +415,26 @@ pkgs.testers.nixosTest {
         machine.succeed("rm -f /tmp/webhook.json")
 
         # Configure queue-runner to send webhook notifications
-        machine.succeed("mkdir -p /run/systemd/system/fc-queue-runner.service.d")
+        machine.succeed("mkdir -p /run/systemd/system/circus-queue-runner.service.d")
         machine.succeed(
-            "cat > /run/systemd/system/fc-queue-runner.service.d/webhook.conf << 'EOF'\n"
+            "cat > /run/systemd/system/circus-queue-runner.service.d/webhook.conf << 'EOF'\n"
             "[Service]\n"
-            "Environment=FC_NOTIFICATIONS__WEBHOOK_URL=http://127.0.0.1:9998/notify\n"
+            "Environment=CIRCUS_NOTIFICATIONS__WEBHOOK_URL=http://127.0.0.1:9998/notify\n"
             "EOF\n"
         )
         machine.succeed("systemctl daemon-reload")
-        machine.succeed("systemctl restart fc-queue-runner")
-        machine.wait_for_unit("fc-queue-runner.service", timeout=30)
+        machine.succeed("systemctl restart circus-queue-runner")
+        machine.wait_for_unit("circus-queue-runner.service", timeout=30)
 
         # Push a new commit to trigger a fresh evaluation and build
         machine.succeed(
             "cd /tmp/test-flake-work && \\\n"
             "cat > flake.nix << 'FLAKE'\n"
             "{\n"
-            '  description = "FC CI test flake notify";\n'
+            '  description = "circus test flake notify";\n'
             '  outputs = { self, ... }: {\n'
             '    packages.x86_64-linux.notify-test = derivation {\n'
-            '      name = "fc-notify-test";\n'
+            '      name = "circus-notify-test";\n'
             '      system = "x86_64-linux";\n'
             '      builder = "/bin/sh";\n'
             '      args = [ "-c" "echo notify-test > $out" ];\n'
@@ -456,23 +456,23 @@ pkgs.testers.nixosTest {
 
     with subtest("Generate signing key and configure signing"):
         # Generate a Nix signing key
-        machine.succeed("mkdir -p /var/lib/fc/keys")
-        machine.succeed("nix-store --generate-binary-cache-key fc-test /var/lib/fc/keys/signing-key /var/lib/fc/keys/signing-key.pub")
-        machine.succeed("chown -R fc:fc /var/lib/fc/keys")
-        machine.succeed("chmod 600 /var/lib/fc/keys/signing-key")
+        machine.succeed("mkdir -p /var/lib/circus/keys")
+        machine.succeed("nix-store --generate-binary-cache-key circus-test /var/lib/circus/keys/signing-key /var/lib/circus/keys/signing-key.pub")
+        machine.succeed("chown -R fc:fc /var/lib/circus/keys")
+        machine.succeed("chmod 600 /var/lib/circus/keys/signing-key")
 
         # Enable signing via systemd drop-in override
-        machine.succeed("mkdir -p /run/systemd/system/fc-queue-runner.service.d")
+        machine.succeed("mkdir -p /run/systemd/system/circus-queue-runner.service.d")
         machine.succeed(
-            "cat > /run/systemd/system/fc-queue-runner.service.d/signing.conf << 'EOF'\n"
+            "cat > /run/systemd/system/circus-queue-runner.service.d/signing.conf << 'EOF'\n"
             "[Service]\n"
-            "Environment=FC_SIGNING__ENABLED=true\n"
-            "Environment=FC_SIGNING__KEY_FILE=/var/lib/fc/keys/signing-key\n"
+            "Environment=CIRCUS_SIGNING__ENABLED=true\n"
+            "Environment=CIRCUS_SIGNING__KEY_FILE=/var/lib/circus/keys/signing-key\n"
             "EOF\n"
         )
         machine.succeed("systemctl daemon-reload")
-        machine.succeed("systemctl restart fc-queue-runner")
-        machine.wait_for_unit("fc-queue-runner.service", timeout=30)
+        machine.succeed("systemctl restart circus-queue-runner")
+        machine.wait_for_unit("circus-queue-runner.service", timeout=30)
 
     with subtest("Signed builds have valid signatures"):
         # Create a new build to test signing
@@ -480,10 +480,10 @@ pkgs.testers.nixosTest {
             "cd /tmp/test-flake-work && \\\n"
             "cat > flake.nix << 'FLAKE'\n"
             "{\n"
-            '  description = "FC CI test flake signing";\n'
+            '  description = "circus test flake signing";\n'
             '  outputs = { self, ... }: {\n'
             '    packages.x86_64-linux.sign-test = derivation {\n'
-            '      name = "fc-sign-test";\n'
+            '      name = "circus-sign-test";\n'
             '      system = "x86_64-linux";\n'
             '      builder = "/bin/sh";\n'
             '      args = [ "-c" "echo signed-build > $out" ];\n'
@@ -525,33 +525,33 @@ pkgs.testers.nixosTest {
 
     with subtest("GC roots are created for build products"):
         # Enable GC via systemd drop-in override
-        machine.succeed("mkdir -p /run/systemd/system/fc-queue-runner.service.d")
+        machine.succeed("mkdir -p /run/systemd/system/circus-queue-runner.service.d")
         machine.succeed(
-            "cat > /run/systemd/system/fc-queue-runner.service.d/gc.conf << 'EOF'\n"
+            "cat > /run/systemd/system/circus-queue-runner.service.d/gc.conf << 'EOF'\n"
             "[Service]\n"
-            "Environment=FC_GC__ENABLED=true\n"
-            "Environment=FC_GC__GC_ROOTS_DIR=/nix/var/nix/gcroots/per-user/fc\n"
-            "Environment=FC_GC__MAX_AGE_DAYS=30\n"
-            "Environment=FC_GC__CLEANUP_INTERVAL=3600\n"
+            "Environment=CIRCUS_GC__ENABLED=true\n"
+            "Environment=CIRCUS_GC__GC_ROOTS_DIR=/nix/var/nix/gcroots/per-user/circus\n"
+            "Environment=CIRCUS_GC__MAX_AGE_DAYS=30\n"
+            "Environment=CIRCUS_GC__CLEANUP_INTERVAL=3600\n"
             "EOF\n"
         )
         machine.succeed("systemctl daemon-reload")
-        machine.succeed("systemctl restart fc-queue-runner")
-        machine.wait_for_unit("fc-queue-runner.service", timeout=30)
+        machine.succeed("systemctl restart circus-queue-runner")
+        machine.wait_for_unit("circus-queue-runner.service", timeout=30)
 
         # Ensure the gc roots directory exists
-        machine.succeed("mkdir -p /nix/var/nix/gcroots/per-user/fc")
-        machine.succeed("chown -R fc:fc /nix/var/nix/gcroots/per-user/fc")
+        machine.succeed("mkdir -p /nix/var/nix/gcroots/per-user/circus")
+        machine.succeed("chown -R fc:fc /nix/var/nix/gcroots/per-user/circus")
 
         # Create a new build to test GC root creation
         machine.succeed(
             "cd /tmp/test-flake-work && \\\n"
             "cat > flake.nix << 'FLAKE'\n"
             "{\n"
-            '  description = "FC CI test flake gc";\n'
+            '  description = "circus test flake gc";\n'
             '  outputs = { self, ... }: {\n'
             '    packages.x86_64-linux.gc-test = derivation {\n'
-            '      name = "fc-gc-test";\n'
+            '      name = "circus-gc-test";\n'
             '      system = "x86_64-linux";\n'
             '      builder = "/bin/sh";\n'
             '      args = [ "-c" "echo gc-test > $out" ];\n'
@@ -575,10 +575,10 @@ pkgs.testers.nixosTest {
         ).strip()
 
         # Verify GC root symlink was created
-        # The symlink should be in /nix/var/nix/gcroots/per-user/fc/ and point to the build output
+        # The symlink should be in /nix/var/nix/gcroots/per-user/circus/ and point to the build output
         # Wait for GC root to be created (polling with timeout)
         def wait_for_gc_root():
-            gc_roots = machine.succeed("find /nix/var/nix/gcroots/per-user/fc -type l 2>/dev/null || true").strip()
+            gc_roots = machine.succeed("find /nix/var/nix/gcroots/per-user/circus -type l 2>/dev/null || true").strip()
             if not gc_roots:
                 return False
             for root in gc_roots.split('\n'):
@@ -590,7 +590,7 @@ pkgs.testers.nixosTest {
 
         # Poll for GC root creation (give queue-runner time to create it)
         machine.wait_until_succeeds(
-            "test -e /nix/var/nix/gcroots/per-user/fc",
+            "test -e /nix/var/nix/gcroots/per-user/circus",
             timeout=30
         )
 
@@ -605,11 +605,11 @@ pkgs.testers.nixosTest {
         # Verify build output exists and is protected from GC
         machine.succeed(f"test -e {gc_build_output}")
 
-    with subtest("Declarative .fc.toml in repo auto-creates jobset"):
-        # Add .fc.toml to the test repo with a new jobset definition
+    with subtest("Declarative .circus.toml in repo auto-creates jobset"):
+        # Add .circus.toml to the test repo with a new jobset definition
         machine.succeed(
             "cd /tmp/test-flake-work && "
-            "cat > .fc.toml << 'FCTOML'\n"
+            "cat > .circus.toml << 'FCTOML'\n"
             "[[jobsets]]\n"
             'name = "declarative-checks"\n'
             'nix_expression = "checks"\n'
@@ -630,7 +630,7 @@ pkgs.testers.nixosTest {
     with subtest("Webhook endpoint accepts valid GitHub push"):
         # Create a webhook config via SQL (no REST endpoint for creation)
         machine.succeed(
-            "sudo -u postgres psql -d fc -c \""
+            "sudo -u postgres psql -d circus -c \""
             "INSERT INTO webhook_configs (id, project_id, forge_type, secret_hash, enabled) "
             f"VALUES (gen_random_uuid(), '{e2e_project_id}', 'github', 'test-secret', true);\""
         )
@@ -641,7 +641,7 @@ pkgs.testers.nixosTest {
         ).strip())
 
         # Compute HMAC-SHA256 of the payload
-        payload = '{"ref":"refs/heads/main","after":"abcdef1234567890abcdef1234567890abcdef12","repository":{"clone_url":"file:///var/lib/fc/test-repos/test-flake.git"}}'
+        payload = '{"ref":"refs/heads/main","after":"abcdef1234567890abcdef1234567890abcdef12","repository":{"clone_url":"file:///var/lib/circus/test-repos/test-flake.git"}}'
 
         # Generate HMAC with the secret
         hmac_sig = machine.succeed(

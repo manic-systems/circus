@@ -66,7 +66,8 @@ fn escape_prometheus_label(s: &str) -> String {
 async fn prometheus_metrics(State(state): State<AppState>) -> Response {
   use std::fmt::Write;
 
-  let Ok(build_stats) = fc_common::repo::builds::get_stats(&state.pool).await
+  let Ok(build_stats) =
+    circus_common::repo::builds::get_stats(&state.pool).await
   else {
     return StatusCode::INTERNAL_SERVER_ERROR.into_response();
   };
@@ -125,130 +126,135 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
   let mut output = String::with_capacity(2048);
 
   // Build counts by status
-  output.push_str("# HELP fc_builds_total Total number of builds by status\n");
-  output.push_str("# TYPE fc_builds_total gauge\n");
+  output
+    .push_str("# HELP circus_builds_total Total number of builds by status\n");
+  output.push_str("# TYPE circus_builds_total gauge\n");
   let _ = writeln!(
     output,
-    "fc_builds_total{{status=\"succeeded\"}} {}",
+    "circus_builds_total{{status=\"succeeded\"}} {}",
     build_stats.completed_builds.unwrap_or(0)
   );
   let _ = writeln!(
     output,
-    "fc_builds_total{{status=\"failed\"}} {}",
+    "circus_builds_total{{status=\"failed\"}} {}",
     build_stats.failed_builds.unwrap_or(0)
   );
   let _ = writeln!(
     output,
-    "fc_builds_total{{status=\"running\"}} {}",
+    "circus_builds_total{{status=\"running\"}} {}",
     build_stats.running_builds.unwrap_or(0)
   );
   let _ = writeln!(
     output,
-    "fc_builds_total{{status=\"pending\"}} {}",
+    "circus_builds_total{{status=\"pending\"}} {}",
     build_stats.pending_builds.unwrap_or(0)
   );
   let _ = writeln!(
     output,
-    "fc_builds_total{{status=\"all\"}} {}",
+    "circus_builds_total{{status=\"all\"}} {}",
     build_stats.total_builds.unwrap_or(0)
   );
 
   // Build duration stats
   output.push_str(
-    "\n# HELP fc_builds_avg_duration_seconds Average build duration in \
+    "\n# HELP circus_builds_avg_duration_seconds Average build duration in \
      seconds\n",
   );
-  output.push_str("# TYPE fc_builds_avg_duration_seconds gauge\n");
+  output.push_str("# TYPE circus_builds_avg_duration_seconds gauge\n");
   let _ = writeln!(
     output,
-    "fc_builds_avg_duration_seconds {:.2}",
+    "circus_builds_avg_duration_seconds {:.2}",
     build_stats.avg_duration_seconds.unwrap_or(0.0)
   );
 
   output.push_str(
-    "\n# HELP fc_builds_duration_seconds Build duration percentiles\n",
+    "\n# HELP circus_builds_duration_seconds Build duration percentiles\n",
   );
-  output.push_str("# TYPE fc_builds_duration_seconds gauge\n");
+  output.push_str("# TYPE circus_builds_duration_seconds gauge\n");
   if let Some(p50) = duration_p50 {
     let _ = writeln!(
       output,
-      "fc_builds_duration_seconds{{quantile=\"0.5\"}} {p50:.2}"
+      "circus_builds_duration_seconds{{quantile=\"0.5\"}} {p50:.2}"
     );
   }
   if let Some(p95) = duration_p95 {
     let _ = writeln!(
       output,
-      "fc_builds_duration_seconds{{quantile=\"0.95\"}} {p95:.2}"
+      "circus_builds_duration_seconds{{quantile=\"0.95\"}} {p95:.2}"
     );
   }
   if let Some(p99) = duration_p99 {
     let _ = writeln!(
       output,
-      "fc_builds_duration_seconds{{quantile=\"0.99\"}} {p99:.2}"
+      "circus_builds_duration_seconds{{quantile=\"0.99\"}} {p99:.2}"
     );
   }
 
   // Evaluations
-  output
-    .push_str("\n# HELP fc_evaluations_total Total number of evaluations\n");
-  output.push_str("# TYPE fc_evaluations_total gauge\n");
-  let _ = writeln!(output, "fc_evaluations_total {eval_count}");
+  output.push_str(
+    "\n# HELP circus_evaluations_total Total number of evaluations\n",
+  );
+  output.push_str("# TYPE circus_evaluations_total gauge\n");
+  let _ = writeln!(output, "circus_evaluations_total {eval_count}");
 
-  output.push_str("\n# HELP fc_evaluations_by_status Evaluations by status\n");
-  output.push_str("# TYPE fc_evaluations_by_status gauge\n");
+  output
+    .push_str("\n# HELP circus_evaluations_by_status Evaluations by status\n");
+  output.push_str("# TYPE circus_evaluations_by_status gauge\n");
   for (status, count) in &eval_by_status {
     let _ = writeln!(
       output,
-      "fc_evaluations_by_status{{status=\"{status}\"}} {count}"
+      "circus_evaluations_by_status{{status=\"{status}\"}} {count}"
     );
   }
 
   // Queue depth (pending builds)
-  output
-    .push_str("\n# HELP fc_queue_depth Number of pending builds in queue\n");
-  output.push_str("# TYPE fc_queue_depth gauge\n");
+  output.push_str(
+    "\n# HELP circus_queue_depth Number of pending builds in queue\n",
+  );
+  output.push_str("# TYPE circus_queue_depth gauge\n");
   let _ = writeln!(
     output,
-    "fc_queue_depth {}",
+    "circus_queue_depth {}",
     build_stats.pending_builds.unwrap_or(0)
   );
 
   // Infrastructure
-  output.push_str("\n# HELP fc_projects_total Total number of projects\n");
-  output.push_str("# TYPE fc_projects_total gauge\n");
-  let _ = writeln!(output, "fc_projects_total {project_count}");
+  output.push_str("\n# HELP circus_projects_total Total number of projects\n");
+  output.push_str("# TYPE circus_projects_total gauge\n");
+  let _ = writeln!(output, "circus_projects_total {project_count}");
 
-  output.push_str("\n# HELP fc_channels_total Total number of channels\n");
-  output.push_str("# TYPE fc_channels_total gauge\n");
-  let _ = writeln!(output, "fc_channels_total {channel_count}");
+  output.push_str("\n# HELP circus_channels_total Total number of channels\n");
+  output.push_str("# TYPE circus_channels_total gauge\n");
+  let _ = writeln!(output, "circus_channels_total {channel_count}");
 
-  output
-    .push_str("\n# HELP fc_remote_builders_active Active remote builders\n");
-  output.push_str("# TYPE fc_remote_builders_active gauge\n");
-  let _ = writeln!(output, "fc_remote_builders_active {builder_count}");
+  output.push_str(
+    "\n# HELP circus_remote_builders_active Active remote builders\n",
+  );
+  output.push_str("# TYPE circus_remote_builders_active gauge\n");
+  let _ = writeln!(output, "circus_remote_builders_active {builder_count}");
 
   // Per-project build counts
   if !per_project.is_empty() {
     output.push_str(
-      "\n# HELP fc_project_builds_completed Completed builds per project\n",
+      "\n# HELP circus_project_builds_completed Completed builds per project\n",
     );
-    output.push_str("# TYPE fc_project_builds_completed gauge\n");
+    output.push_str("# TYPE circus_project_builds_completed gauge\n");
     for (name, completed, _) in &per_project {
       let escaped = escape_prometheus_label(name);
       let _ = writeln!(
         output,
-        "fc_project_builds_completed{{project=\"{escaped}\"}} {completed}"
+        "circus_project_builds_completed{{project=\"{escaped}\"}} {completed}"
       );
     }
     output.push_str(
-      "\n# HELP fc_project_builds_failed Failed builds per project\n",
+      "\n# HELP circus_project_builds_failed Failed builds per project\n",
     );
-    output.push_str("# TYPE fc_project_builds_failed gauge\n");
+    output.push_str("# TYPE circus_project_builds_failed gauge\n");
     for (name, _, failed) in &per_project {
       let escaped = escape_prometheus_label(name);
       let _ = writeln!(
         output,
-        "fc_project_builds_failed{{project=\"{escaped}\"}} {failed}"
+        "circus_project_builds_failed{{project=\"{escaped}\"}} {failed}"
       );
     }
   }
@@ -266,7 +272,7 @@ async fn build_stats_timeseries(
   State(state): State<AppState>,
   Query(params): Query<TimeseriesQuery>,
 ) -> Response {
-  match fc_common::repo::build_metrics::get_build_stats_timeseries(
+  match circus_common::repo::build_metrics::get_build_stats_timeseries(
     &state.pool,
     params.project_id,
     params.jobset_id,
@@ -299,7 +305,7 @@ async fn duration_percentiles_timeseries(
   State(state): State<AppState>,
   Query(params): Query<TimeseriesQuery>,
 ) -> Response {
-  match fc_common::repo::build_metrics::get_duration_percentiles_timeseries(
+  match circus_common::repo::build_metrics::get_duration_percentiles_timeseries(
     &state.pool,
     params.project_id,
     params.jobset_id,
@@ -332,7 +338,7 @@ async fn system_distribution(
   State(state): State<AppState>,
   Query(params): Query<TimeseriesQuery>,
 ) -> Response {
-  match fc_common::repo::build_metrics::get_system_distribution(
+  match circus_common::repo::build_metrics::get_system_distribution(
     &state.pool,
     params.project_id,
     params.hours,

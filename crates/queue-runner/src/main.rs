@@ -1,17 +1,17 @@
 use std::{sync::Arc, time::Duration};
 
-use clap::Parser;
-use fc_common::{
+use circus_common::{
   config::{Config, GcConfig, HotConfig},
   database::Database,
   gc_roots,
   repo,
 };
-use fc_queue_runner::worker::{ActiveBuilds, WorkerPool};
+use circus_queue_runner::worker::{ActiveBuilds, WorkerPool};
+use clap::Parser;
 use tokio::sync::RwLock;
 
 #[derive(Parser)]
-#[command(name = "fc-queue-runner")]
+#[command(name = "circus-queue-runner")]
 #[command(about = "CI Queue Runner - Build dispatch and execution")]
 struct Cli {
   #[arg(short, long)]
@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
   let cli = Cli::parse();
 
   let config = Config::load()?;
-  fc_common::init_tracing(&config.tracing);
+  circus_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Queue Runner");
 
@@ -77,16 +77,16 @@ async fn main() -> anyhow::Result<()> {
   let worker_pool_for_drain = worker_pool.clone();
 
   let wakeup = Arc::new(tokio::sync::Notify::new());
-  let listener_handle = fc_common::pg_notify::spawn_listener(
+  let listener_handle = circus_common::pg_notify::spawn_listener(
     db.pool(),
-    &[fc_common::pg_notify::CHANNEL_BUILDS_CHANGED],
+    &[circus_common::pg_notify::CHANNEL_BUILDS_CHANGED],
     wakeup.clone(),
   );
 
   let active_builds = worker_pool.active_builds().clone();
 
   tokio::select! {
-      result = fc_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, hot_config.clone(), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
+      result = circus_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, hot_config.clone(), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
           if let Err(e) = result {
               tracing::error!("Runner loop failed: {e}");
           }
@@ -184,7 +184,8 @@ async fn failed_paths_cleanup_loop(
   loop {
     tokio::time::sleep(interval).await;
     let ttl = hot_config.read().await.failed_paths_ttl;
-    match fc_common::repo::failed_paths_cache::cleanup_expired(&pool, ttl).await
+    match circus_common::repo::failed_paths_cache::cleanup_expired(&pool, ttl)
+      .await
     {
       Ok(count) if count > 0 => {
         tracing::info!(count, "Cleaned up expired failed paths cache entries");
@@ -319,7 +320,8 @@ async fn notification_retry_loop(
         continue;
       }
 
-      match fc_common::notifications::process_notification_task(&task).await {
+      match circus_common::notifications::process_notification_task(&task).await
+      {
         Ok(()) => {
           if let Err(e) =
             repo::notification_tasks::mark_completed(&pool, task.id).await

@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use chrono::Utc;
-use fc_common::{
+use circus_common::{
   config::EvaluatorConfig,
   error::{CiError, check_disk_space},
   models::{
@@ -28,7 +28,7 @@ use uuid::Uuid;
 pub async fn run(
   pool: PgPool,
   config: EvaluatorConfig,
-  notifications_config: fc_common::config::NotificationsConfig,
+  notifications_config: circus_common::config::NotificationsConfig,
   wakeup: Arc<Notify>,
 ) -> anyhow::Result<()> {
   let poll_interval = Duration::from_secs(config.poll_interval);
@@ -60,7 +60,7 @@ pub async fn run(
 async fn run_cycle(
   pool: &PgPool,
   config: &EvaluatorConfig,
-  notifications_config: &fc_common::config::NotificationsConfig,
+  notifications_config: &circus_common::config::NotificationsConfig,
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> anyhow::Result<()> {
@@ -112,8 +112,8 @@ async fn run_cycle(
             tracing::error!(
               "Evaluation failed due to disk space problems. Please free up \
                space on the server:\n- Run `nix-collect-garbage -d` to clean \
-               the Nix store\n- Clear /tmp/fc-evaluator directory\n- Check \
-               build logs directory if configured"
+               the Nix store\n- Clear /tmp/circus-evaluator directory\n- \
+               Check build logs directory if configured"
             );
           }
         }
@@ -126,9 +126,9 @@ async fn run_cycle(
 
 async fn evaluate_jobset(
   pool: &PgPool,
-  jobset: &fc_common::models::ActiveJobset,
+  jobset: &circus_common::models::ActiveJobset,
   config: &EvaluatorConfig,
-  notifications_config: &fc_common::config::NotificationsConfig,
+  notifications_config: &circus_common::config::NotificationsConfig,
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> anyhow::Result<()> {
@@ -355,7 +355,7 @@ async fn evaluate_jobset(
               // Skip aggregate builds (they complete later when constituents
               // finish)
               if !build.is_aggregate {
-                fc_common::notifications::dispatch_build_created(
+                circus_common::notifications::dispatch_build_created(
                   pool,
                   &build,
                   &project,
@@ -522,8 +522,8 @@ fn compute_inputs_hash(commit_hash: &str, inputs: &[JobsetInput]) -> String {
   hex::encode(hasher.finalize())
 }
 
-/// Check for declarative project config (.fc.toml or .fc/config.toml) in the
-/// repo.
+/// Check for declarative project config (.circus.toml or .circus/config.toml)
+/// in the repo.
 async fn check_declarative_config(
   pool: &PgPool,
   repo_path: &std::path::Path,
@@ -543,8 +543,8 @@ async fn check_declarative_config(
     enabled:        Option<bool>,
   }
 
-  let config_path = repo_path.join(".fc.toml");
-  let alt_config_path = repo_path.join(".fc/config.toml");
+  let config_path = repo_path.join(".circus.toml");
+  let alt_config_path = repo_path.join(".circus/config.toml");
 
   let path = if config_path.exists() {
     config_path
@@ -575,7 +575,7 @@ async fn check_declarative_config(
 
   if let Some(jobsets) = config.jobsets {
     for js in jobsets {
-      let input = fc_common::models::CreateJobset {
+      let input = circus_common::models::CreateJobset {
         project_id,
         name: js.name,
         nix_expression: js.nix_expression,

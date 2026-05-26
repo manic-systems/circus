@@ -1,4 +1,4 @@
-//! Error types for FC CI
+//! Error types for circus
 
 use thiserror::Error;
 

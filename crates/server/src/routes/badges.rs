@@ -14,12 +14,12 @@ async fn build_badge(
 ) -> Result<Response, ApiError> {
   // Find the project
   let project =
-    fc_common::repo::projects::get_by_name(&state.pool, &project_name)
+    circus_common::repo::projects::get_by_name(&state.pool, &project_name)
       .await
       .map_err(ApiError)?;
 
   // Find the jobset
-  let jobsets = fc_common::repo::jobsets::list_for_project(
+  let jobsets = circus_common::repo::jobsets::list_for_project(
     &state.pool,
     project.id,
     1000,
@@ -34,9 +34,10 @@ async fn build_badge(
   };
 
   // Get latest evaluation
-  let eval = fc_common::repo::evaluations::get_latest(&state.pool, jobset.id)
-    .await
-    .map_err(ApiError)?;
+  let eval =
+    circus_common::repo::evaluations::get_latest(&state.pool, jobset.id)
+      .await
+      .map_err(ApiError)?;
 
   let Some(eval) = eval else {
     return Ok(
@@ -46,7 +47,7 @@ async fn build_badge(
 
   // Find the build for this job
   let builds =
-    fc_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
+    circus_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
       .await
       .map_err(ApiError)?;
 
@@ -54,20 +55,26 @@ async fn build_badge(
 
   let (label, color) = build.map_or(("not found", "#9f9f9f"), |b| {
     match b.status {
-      fc_common::BuildStatus::Succeeded => ("passing", "#4c1"),
-      fc_common::BuildStatus::Failed => ("failing", "#e05d44"),
-      fc_common::BuildStatus::Running => ("building", "#dfb317"),
-      fc_common::BuildStatus::Pending => ("queued", "#dfb317"),
-      fc_common::BuildStatus::Cancelled => ("cancelled", "#9f9f9f"),
-      fc_common::BuildStatus::DependencyFailed => ("dep failed", "#e05d44"),
-      fc_common::BuildStatus::Aborted => ("aborted", "#9f9f9f"),
-      fc_common::BuildStatus::FailedWithOutput => ("failed output", "#e05d44"),
-      fc_common::BuildStatus::Timeout => ("timeout", "#e05d44"),
-      fc_common::BuildStatus::CachedFailure => ("cached fail", "#e05d44"),
-      fc_common::BuildStatus::UnsupportedSystem => ("unsupported", "#9f9f9f"),
-      fc_common::BuildStatus::LogLimitExceeded => ("log limit", "#e05d44"),
-      fc_common::BuildStatus::NarSizeLimitExceeded => ("nar limit", "#e05d44"),
-      fc_common::BuildStatus::NonDeterministic => ("non-det", "#e05d44"),
+      circus_common::BuildStatus::Succeeded => ("passing", "#4c1"),
+      circus_common::BuildStatus::Failed => ("failing", "#e05d44"),
+      circus_common::BuildStatus::Running => ("building", "#dfb317"),
+      circus_common::BuildStatus::Pending => ("queued", "#dfb317"),
+      circus_common::BuildStatus::Cancelled => ("cancelled", "#9f9f9f"),
+      circus_common::BuildStatus::DependencyFailed => ("dep failed", "#e05d44"),
+      circus_common::BuildStatus::Aborted => ("aborted", "#9f9f9f"),
+      circus_common::BuildStatus::FailedWithOutput => {
+        ("failed output", "#e05d44")
+      },
+      circus_common::BuildStatus::Timeout => ("timeout", "#e05d44"),
+      circus_common::BuildStatus::CachedFailure => ("cached fail", "#e05d44"),
+      circus_common::BuildStatus::UnsupportedSystem => {
+        ("unsupported", "#9f9f9f")
+      },
+      circus_common::BuildStatus::LogLimitExceeded => ("log limit", "#e05d44"),
+      circus_common::BuildStatus::NarSizeLimitExceeded => {
+        ("nar limit", "#e05d44")
+      },
+      circus_common::BuildStatus::NonDeterministic => ("non-det", "#e05d44"),
     }
   });
 
@@ -90,11 +97,11 @@ async fn latest_build(
   Path((project_name, jobset_name, job_name)): Path<(String, String, String)>,
 ) -> Result<Response, ApiError> {
   let project =
-    fc_common::repo::projects::get_by_name(&state.pool, &project_name)
+    circus_common::repo::projects::get_by_name(&state.pool, &project_name)
       .await
       .map_err(ApiError)?;
 
-  let jobsets = fc_common::repo::jobsets::list_for_project(
+  let jobsets = circus_common::repo::jobsets::list_for_project(
     &state.pool,
     project.id,
     1000,
@@ -108,16 +115,17 @@ async fn latest_build(
     return Ok((StatusCode::NOT_FOUND, "Jobset not found").into_response());
   };
 
-  let eval = fc_common::repo::evaluations::get_latest(&state.pool, jobset.id)
-    .await
-    .map_err(ApiError)?;
+  let eval =
+    circus_common::repo::evaluations::get_latest(&state.pool, jobset.id)
+      .await
+      .map_err(ApiError)?;
 
   let Some(eval) = eval else {
     return Ok((StatusCode::NOT_FOUND, "No evaluations found").into_response());
   };
 
   let builds =
-    fc_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
+    circus_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
       .await
       .map_err(ApiError)?;
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ jobset.name }} - FC CI{% endblock %}
+{% block title %}{{ jobset.name }} - circus{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs">
   <a href="/">Home</a> <span class="sep">/</span>
@@ -18,13 +18,13 @@
   <dt>State</dt>
   <dd>
     {% match jobset.state %}
-      {% when fc_common::models::JobsetState::Disabled %}
+      {% when circus_common::models::JobsetState::Disabled %}
         <span class="badge badge-cancelled">Disabled</span>
-      {% when fc_common::models::JobsetState::Enabled %}
+      {% when circus_common::models::JobsetState::Enabled %}
         <span class="badge badge-completed">Enabled</span>
-      {% when fc_common::models::JobsetState::OneShot %}
+      {% when circus_common::models::JobsetState::OneShot %}
         <span class="badge badge-pending">One-Shot</span>
-      {% when fc_common::models::JobsetState::OneAtATime %}
+      {% when circus_common::models::JobsetState::OneAtATime %}
         <span class="badge badge-running">One-at-a-Time</span>
     {% endmatch %}
   </dd>

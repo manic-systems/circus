@@ -28,16 +28,16 @@ async fn get_pool() -> Option<sqlx::PgPool> {
 }
 
 fn build_app(pool: sqlx::PgPool) -> axum::Router {
-  let config = fc_common::config::Config::default();
+  let config = circus_common::config::Config::default();
   let server_config = config.server.clone();
-  let state = fc_server::state::AppState {
+  let state = circus_server::state::AppState {
     pool,
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
   };
-  fc_server::routes::router(state, &server_config)
+  circus_server::routes::router(state, &server_config)
 }
 
 #[tokio::test]
@@ -46,9 +46,9 @@ async fn test_router_no_duplicate_routes() {
     return;
   };
 
-  let config = fc_common::config::Config::default();
+  let config = circus_common::config::Config::default();
   let server_config = config.server.clone();
-  let state = fc_server::state::AppState {
+  let state = circus_server::state::AppState {
     pool,
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
@@ -56,22 +56,22 @@ async fn test_router_no_duplicate_routes() {
     csrf_secret: std::sync::Arc::new([0u8; 32]),
   };
 
-  let _app = fc_server::routes::router(state, &server_config);
+  let _app = circus_server::routes::router(state, &server_config);
 }
 
 fn build_app_with_config(
   pool: sqlx::PgPool,
-  config: fc_common::config::Config,
+  config: circus_common::config::Config,
 ) -> axum::Router {
   let server_config = config.server.clone();
-  let state = fc_server::state::AppState {
+  let state = circus_server::state::AppState {
     pool,
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
   };
-  fc_server::routes::router(state, &server_config)
+  circus_server::routes::router(state, &server_config)
 }
 
 // API endpoint tests
@@ -274,7 +274,7 @@ async fn test_cache_invalid_hash_returns_404() {
     return;
   };
 
-  let mut config = fc_common::config::Config::default();
+  let mut config = circus_common::config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool, config);
 
@@ -350,7 +350,7 @@ async fn test_cache_nar_invalid_hash_returns_404() {
     return;
   };
 
-  let mut config = fc_common::config::Config::default();
+  let mut config = circus_common::config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool, config);
 
@@ -387,7 +387,7 @@ async fn test_cache_disabled_returns_404() {
     return;
   };
 
-  let mut config = fc_common::config::Config::default();
+  let mut config = circus_common::config::Config::default();
   config.cache.enabled = false;
   let app = build_app_with_config(pool, config);
 
@@ -585,7 +585,7 @@ async fn test_cache_info_returns_correct_headers() {
     return;
   };
 
-  let mut config = fc_common::config::Config::default();
+  let mut config = circus_common::config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool, config);
 
@@ -649,33 +649,33 @@ async fn test_metrics_endpoint() {
   let body_str = String::from_utf8(body.to_vec()).unwrap();
 
   // Verify metric names are present
-  assert!(body_str.contains("fc_builds_total"));
-  assert!(body_str.contains("fc_projects_total"));
-  assert!(body_str.contains("fc_evaluations_total"));
+  assert!(body_str.contains("circus_builds_total"));
+  assert!(body_str.contains("circus_projects_total"));
+  assert!(body_str.contains("circus_evaluations_total"));
 
   // Verify Prometheus format: HELP/TYPE headers and label syntax
   assert!(
-    body_str.contains("# HELP fc_builds_total"),
-    "Missing HELP header for fc_builds_total"
+    body_str.contains("# HELP circus_builds_total"),
+    "Missing HELP header for circus_builds_total"
   );
   assert!(
-    body_str.contains("# TYPE fc_builds_total gauge"),
-    "Missing TYPE header for fc_builds_total"
+    body_str.contains("# TYPE circus_builds_total gauge"),
+    "Missing TYPE header for circus_builds_total"
   );
   assert!(
-    body_str.contains("fc_builds_total{status=\"succeeded\"}"),
+    body_str.contains("circus_builds_total{status=\"succeeded\"}"),
     "Missing succeeded status label"
   );
   assert!(
-    body_str.contains("fc_builds_total{status=\"failed\"}"),
+    body_str.contains("circus_builds_total{status=\"failed\"}"),
     "Missing failed status label"
   );
   assert!(
-    body_str.contains("fc_queue_depth"),
+    body_str.contains("circus_queue_depth"),
     "Missing queue depth metric"
   );
   assert!(
-    body_str.contains("fc_builds_avg_duration_seconds"),
+    body_str.contains("circus_builds_avg_duration_seconds"),
     "Missing avg duration metric"
   );
 
@@ -842,11 +842,15 @@ async fn test_project_create_with_auth() {
 
   // Create an admin API key
   let mut hasher = sha2::Sha256::new();
-  hasher.update(b"fc_test_project_auth");
+  hasher.update(b"circus_test_project_auth");
   let key_hash = hex::encode(hasher.finalize());
-  let _ =
-    fc_common::repo::api_keys::upsert(&pool, "test-auth", &key_hash, "admin")
-      .await;
+  let _ = circus_common::repo::api_keys::upsert(
+    &pool,
+    "test-auth",
+    &key_hash,
+    "admin",
+  )
+  .await;
 
   let app = build_app(pool);
 
@@ -861,7 +865,7 @@ async fn test_project_create_with_auth() {
         .method("POST")
         .uri("/api/v1/projects")
         .header("content-type", "application/json")
-        .header("authorization", "Bearer fc_test_project_auth")
+        .header("authorization", "Bearer circus_test_project_auth")
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap(),
     )
@@ -916,11 +920,15 @@ async fn test_setup_endpoint_creates_project_and_jobsets() {
 
   // Create an admin API key
   let mut hasher = sha2::Sha256::new();
-  hasher.update(b"fc_test_setup_key");
+  hasher.update(b"circus_test_setup_key");
   let key_hash = hex::encode(hasher.finalize());
-  let _ =
-    fc_common::repo::api_keys::upsert(&pool, "test-setup", &key_hash, "admin")
-      .await;
+  let _ = circus_common::repo::api_keys::upsert(
+    &pool,
+    "test-setup",
+    &key_hash,
+    "admin",
+  )
+  .await;
 
   let app = build_app(pool.clone());
 
@@ -948,7 +956,7 @@ async fn test_setup_endpoint_creates_project_and_jobsets() {
         .method("POST")
         .uri("/api/v1/projects/setup")
         .header("content-type", "application/json")
-        .header("authorization", "Bearer fc_test_setup_key")
+        .header("authorization", "Bearer circus_test_setup_key")
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap(),
     )

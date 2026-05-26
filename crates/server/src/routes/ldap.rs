@@ -14,7 +14,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::post,
 };
-use fc_common::{models::UserType, repo};
+use circus_common::{models::UserType, repo};
 use serde::Deserialize;
 
 use crate::{error::ApiError, routes::cookie_security_flags, state::AppState};
@@ -105,7 +105,7 @@ async fn ldap_login(
     .map_err(ApiError)?;
 
   let cookie = format!(
-    "fc_user_session={}; {}; Path=/; Max-Age={}",
+    "circus_user_session={}; {}; Path=/; Max-Age={}",
     session.0,
     cookie_security_flags(&state.config.server),
     7 * 24 * 60 * 60

@@ -6,6 +6,6 @@
 craneLib.buildPackage (commonArgs
   // {
     inherit cargoArtifacts;
-    pname = "fc-migrate-cli";
-    cargoExtraArgs = "--package fc-migrate-cli";
+    pname = "circus-evaluator";
+    cargoExtraArgs = "--package circus-evaluator";
   })

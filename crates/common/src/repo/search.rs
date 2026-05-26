@@ -1,4 +1,4 @@
-//! Advanced search functionality for FC
+//! Advanced search functionality for circus
 
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;

@@ -4,7 +4,7 @@ use axum::{
   extract::{Path, State},
   routing::get,
 };
-use fc_common::{
+use circus_common::{
   Validate,
   models::{
     CreateRemoteBuilder,
@@ -20,7 +20,7 @@ use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
 async fn list_builders(
   State(state): State<AppState>,
 ) -> Result<Json<Vec<RemoteBuilder>>, ApiError> {
-  let builders = fc_common::repo::remote_builders::list(&state.pool)
+  let builders = circus_common::repo::remote_builders::list(&state.pool)
     .await
     .map_err(ApiError)?;
   Ok(Json(builders))
@@ -30,7 +30,7 @@ async fn get_builder(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<RemoteBuilder>, ApiError> {
-  let builder = fc_common::repo::remote_builders::get(&state.pool, id)
+  let builder = circus_common::repo::remote_builders::get(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(builder))
@@ -43,10 +43,11 @@ async fn create_builder(
 ) -> Result<Json<RemoteBuilder>, ApiError> {
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
-  let builder = fc_common::repo::remote_builders::create(&state.pool, input)
-    .await
-    .map_err(ApiError)?;
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  let builder =
+    circus_common::repo::remote_builders::create(&state.pool, input)
+      .await
+      .map_err(ApiError)?;
   Ok(Json(builder))
 }
 
@@ -58,9 +59,9 @@ async fn update_builder(
 ) -> Result<Json<RemoteBuilder>, ApiError> {
   input
     .validate()
-    .map_err(|msg| ApiError(fc_common::CiError::Validation(msg)))?;
+    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let builder =
-    fc_common::repo::remote_builders::update(&state.pool, id, input)
+    circus_common::repo::remote_builders::update(&state.pool, id, input)
       .await
       .map_err(ApiError)?;
   Ok(Json(builder))
@@ -71,7 +72,7 @@ async fn delete_builder(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  fc_common::repo::remote_builders::delete(&state.pool, id)
+  circus_common::repo::remote_builders::delete(&state.pool, id)
     .await
     .map_err(ApiError)?;
   Ok(Json(serde_json::json!({"deleted": true})))
@@ -86,27 +87,27 @@ async fn system_status(
   let projects: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM projects")
     .fetch_one(pool)
     .await
-    .map_err(|e| ApiError(fc_common::CiError::Database(e)))?;
+    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
   let jobsets: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobsets")
     .fetch_one(pool)
     .await
-    .map_err(|e| ApiError(fc_common::CiError::Database(e)))?;
+    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
   let evaluations: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM evaluations")
     .fetch_one(pool)
     .await
-    .map_err(|e| ApiError(fc_common::CiError::Database(e)))?;
+    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
 
-  let build_stats = fc_common::repo::builds::get_stats(pool)
+  let build_stats = circus_common::repo::builds::get_stats(pool)
     .await
     .map_err(ApiError)?;
-  let builders = fc_common::repo::remote_builders::count(pool)
+  let builders = circus_common::repo::remote_builders::count(pool)
     .await
     .map_err(ApiError)?;
 
   let channels: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM channels")
     .fetch_one(pool)
     .await
-    .map_err(|e| ApiError(fc_common::CiError::Database(e)))?;
+    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
 
   Ok(Json(SystemStatus {
     projects_count:    projects.0,

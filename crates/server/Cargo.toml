@@ -1,8 +1,7 @@
 [package]
-name                 = "fc-server"
+name                 = "circus-server"
 version.workspace    = true
 edition.workspace    = true
-authors.workspace    = true
 license.workspace    = true
 repository.workspace = true
 
@@ -39,7 +38,7 @@ uuid.workspace               = true
 xz2.workspace                = true
 
 # Our crates
-fc-common.workspace = true
+circus-common.workspace = true
 
 [dev-dependencies]
 tower.workspace = true

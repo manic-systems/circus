@@ -3,11 +3,11 @@
   self,
 }:
 pkgs.testers.nixosTest {
-  name = "fc-s3-cache-upload";
+  name = "circus-s3-cache-upload";
 
   nodes.machine = {
     imports = [
-      self.nixosModules.fc-ci
+      self.nixosModules.circus
       ../vm-common.nix
     ];
     _module.args.self = self;
@@ -22,12 +22,12 @@ pkgs.testers.nixosTest {
       '';
     };
 
-    # Configure FC to upload to the local MinIO instance
-    services.fc-ci = {
+    # Configure circus to upload to the local MinIO instance
+    services.circus = {
       settings = {
         cache_upload = {
           enabled = true;
-          store_uri = "s3://fc-cache?endpoint=http://127.0.0.1:9000&region=us-east-1";
+          store_uri = "s3://circus-cache?endpoint=http://127.0.0.1:9000&region=us-east-1";
           s3 = {
             region = "us-east-1";
             access_key_id = "minioadmin";
@@ -49,7 +49,7 @@ pkgs.testers.nixosTest {
 
     # Wait for PostgreSQL
     machine.wait_for_unit("postgresql.service")
-    machine.wait_until_succeeds("sudo -u fc psql -U fc -d fc -c 'SELECT 1'", timeout=30)
+    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
     # Wait for MinIO to be ready
     machine.wait_for_unit("minio.service")
@@ -57,38 +57,38 @@ pkgs.testers.nixosTest {
 
     # Configure MinIO client and create bucket
     machine.succeed("${pkgs.minio-client}/bin/mc alias set local http://127.0.0.1:9000 minioadmin minioadmin")
-    machine.succeed("${pkgs.minio-client}/bin/mc mb local/fc-cache")
-    machine.succeed("${pkgs.minio-client}/bin/mc policy set public local/fc-cache")
+    machine.succeed("${pkgs.minio-client}/bin/mc mb local/circus-cache")
+    machine.succeed("${pkgs.minio-client}/bin/mc policy set public local/circus-cache")
 
-    machine.wait_for_unit("fc-server.service")
+    machine.wait_for_unit("circus-server.service")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Seed an API key for write operations
     api_token = "fc_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u fc psql -U fc -d fc -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
     # Create a test flake inside the VM
     with subtest("Create bare git repo with test flake"):
-        machine.succeed("mkdir -p /var/lib/fc/test-repos")
-        machine.succeed("git init --bare /var/lib/fc/test-repos/s3-test-flake.git")
+        machine.succeed("mkdir -p /var/lib/circus/test-repos")
+        machine.succeed("git init --bare /var/lib/circus/test-repos/s3-test-flake.git")
 
         # Create a working copy, write the flake, commit, push
         machine.succeed("mkdir -p /tmp/s3-test-flake")
         machine.succeed("cd /tmp/s3-test-flake && git init")
-        machine.succeed("cd /tmp/s3-test-flake && git config user.email 'test@fc' && git config user.name 'FC Test'")
+        machine.succeed("cd /tmp/s3-test-flake && git config user.email 'test@circus' && git config user.name 'circus Test'")
 
         # Write a minimal flake.nix that builds a simple derivation
         machine.succeed("""
             cat > /tmp/s3-test-flake/flake.nix << 'FLAKE'
             {
-              description = "FC CI S3 cache test flake";
+              description = "circus S3 cache test flake";
               outputs = { self, ... }: {
                 packages.x86_64-linux.s3-test = derivation {
-                  name = "fc-s3-test";
+                  name = "circus-s3-test";
                   system = "x86_64-linux";
                   builder = "/bin/sh";
                   args = [ "-c" "echo s3-cache-test-content > $out" ];
@@ -98,9 +98,9 @@ pkgs.testers.nixosTest {
             FLAKE
         """)
         machine.succeed("cd /tmp/s3-test-flake && git add -A && git commit -m 'initial flake'")
-        machine.succeed("cd /tmp/s3-test-flake && git remote add origin /var/lib/fc/test-repos/s3-test-flake.git")
+        machine.succeed("cd /tmp/s3-test-flake && git remote add origin /var/lib/circus/test-repos/s3-test-flake.git")
         machine.succeed("cd /tmp/s3-test-flake && git push origin HEAD:refs/heads/master")
-        machine.succeed("chown -R fc:fc /var/lib/fc/test-repos")
+        machine.succeed("chown -R fc:fc /var/lib/circus/test-repos")
 
     # Create project + jobset
     with subtest("Create S3 test project and jobset"):
@@ -108,7 +108,7 @@ pkgs.testers.nixosTest {
             "curl -sf -X POST http://127.0.0.1:3000/api/v1/projects "
             f"{auth_header} "
             "-H 'Content-Type: application/json' "
-            "-d '{\"name\": \"s3-test-project\", \"repository_url\": \"file:///var/lib/fc/test-repos/s3-test-flake.git\"}' "
+            "-d '{\"name\": \"s3-test-project\", \"repository_url\": \"file:///var/lib/circus/test-repos/s3-test-flake.git\"}' "
             "| jq -r .id"
         )
         project_id = result.strip()
@@ -165,7 +165,7 @@ pkgs.testers.nixosTest {
     # Verify the build output was uploaded to S3
     with subtest("Build output was uploaded to S3 cache"):
         # List objects in the S3 bucket
-        bucket_contents = machine.succeed("${pkgs.minio-client}/bin/mc ls --recursive local/fc-cache/")
+        bucket_contents = machine.succeed("${pkgs.minio-client}/bin/mc ls --recursive local/circus-cache/")
 
         # Should have the .narinfo file and the .nar file
         assert ".narinfo" in bucket_contents, f"Expected .narinfo file in bucket, got: {bucket_contents}"
@@ -178,7 +178,7 @@ pkgs.testers.nixosTest {
 
         # Try to get the narinfo from S3
         narinfo_content = machine.succeed(
-            f"curl -sf http://127.0.0.1:9000/fc-cache/{store_hash}.narinfo"
+            f"curl -sf http://127.0.0.1:9000/circus-cache/{store_hash}.narinfo"
         )
         assert "StorePath:" in narinfo_content, f"Expected StorePath in narinfo: {narinfo_content}"
         assert "NarHash:" in narinfo_content, f"Expected NarHash in narinfo: {narinfo_content}"
@@ -190,7 +190,7 @@ pkgs.testers.nixosTest {
         )
         # The nix copy output should appear in the log or the system log
         # We'll check that the cache upload was attempted by looking at system logs
-        journal_log = machine.succeed("journalctl -u fc-queue-runner --since '5 minutes ago' --no-pager")
+        journal_log = machine.succeed("journalctl -u circus-queue-runner --since '5 minutes ago' --no-pager")
         assert "Pushed to binary cache" in journal_log or "nix copy" in journal_log, \
             f"Expected cache upload in logs: {journal_log}"
 

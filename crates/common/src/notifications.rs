@@ -514,7 +514,7 @@ async fn set_github_status(
   match http_client()
     .post(&url)
     .header("Authorization", format!("token {token}"))
-    .header("User-Agent", "fc-ci")
+    .header("User-Agent", "circus")
     .header("Accept", "application/vnd.github+json")
     .json(&body)
     .send()
@@ -770,12 +770,12 @@ async fn send_email_notification(
   };
 
   let subject = format!(
-    "[FC] {} - {} ({})",
+    "[circus] {} - {} ({})",
     status_str, build.job_name, project.name
   );
 
   let body = format!(
-    "Build notification from FC CI\n\nProject: {}\nJob: {}\nStatus: \
+    "Build notification from circus\n\nProject: {}\nJob: {}\nStatus: \
      {}\nDerivation: {}\nOutput: {}\nBuild ID: {}\n",
     project.name,
     build.job_name,
@@ -929,7 +929,7 @@ pub async fn process_notification_task(
       let resp = http_client()
         .post(&url)
         .header("Authorization", format!("token {token}"))
-        .header("User-Agent", "fc-ci")
+        .header("User-Agent", "circus")
         .header("Accept", "application/vnd.github+json")
         .json(&body)
         .send()
@@ -1141,9 +1141,9 @@ pub async fn process_notification_task(
       };
 
       let subject =
-        format!("[FC] {status_display} - {job_name} ({project_name})");
+        format!("[circus] {status_display} - {job_name} ({project_name})");
       let body = format!(
-        "Build notification from FC CI\n\nProject: {}\nJob: {}\nStatus: \
+        "Build notification from circus\n\nProject: {}\nJob: {}\nStatus: \
          {}\nDerivation: {}\nOutput: {}\nBuild ID: {}\n",
         project_name,
         job_name,

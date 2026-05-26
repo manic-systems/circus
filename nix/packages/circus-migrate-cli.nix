@@ -6,6 +6,6 @@
 craneLib.buildPackage (commonArgs
   // {
     inherit cargoArtifacts;
-    pname = "fc-queue-runner";
-    cargoExtraArgs = "--package fc-queue-runner";
+    pname = "circus-migrate-cli";
+    cargoExtraArgs = "--package circus-migrate-cli";
   })

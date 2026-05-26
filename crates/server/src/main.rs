@@ -1,11 +1,11 @@
+use circus_common::{Config, Database};
+use circus_server::{routes, state};
 use clap::Parser;
-use fc_common::{Config, Database};
-use fc_server::{routes, state};
 use state::AppState;
 use tokio::net::TcpListener;
 
 #[derive(Parser)]
-#[command(name = "fc-server")]
+#[command(name = "circus-server")]
 #[command(about = "CI Server - Web API and UI")]
 struct Cli {
   #[arg(short = 'H', long)]
@@ -44,21 +44,21 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
   let config = Config::load()?;
-  fc_common::init_tracing(&config.tracing);
+  circus_common::init_tracing(&config.tracing);
 
   let cli = Cli::parse();
 
   let host = cli.host.unwrap_or(config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);
 
-  fc_common::validate::warn_insecure_schemes(
+  circus_common::validate::warn_insecure_schemes(
     &config.server.allowed_url_schemes,
   );
 
   let db = Database::new(config.database.clone()).await?;
 
   // Bootstrap declarative projects, jobsets, and API keys from config
-  fc_common::bootstrap::run(db.pool(), &config.declarative).await?;
+  circus_common::bootstrap::run(db.pool(), &config.declarative).await?;
 
   // Per-process CSRF secret. Concatenating two v4 UUIDs gives 32 bytes of
   // entropy from the system CSPRNG with no extra dependency.
