@@ -32,7 +32,7 @@ axum-extra = { version = "0.12.5", features = [ "typed-header" ] }
 chrono = { version = "0.4.42", features = [ "serde" ] }
 clap = { version = "4.5.51", features = [ "derive" ] }
 config = "0.15.19"
-dashmap = "6.1.0"
+dashmap = "6.2.1"
 futures = "0.3.31"
 git2 = "0.20.4"
 hex = "0.4.3"
