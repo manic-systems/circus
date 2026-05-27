@@ -33,7 +33,7 @@ clap = { version = "4.5.51", features = [ "derive" ] }
 config = "0.15.19"
 dashmap = "6.1.0"
 futures = "0.3.31"
-git2 = "0.20.4"
+git2 = "0.21.0"
 hex = "0.4.3"
 hmac = "0.12.1"
 humantime-serde = "1.1.1"
