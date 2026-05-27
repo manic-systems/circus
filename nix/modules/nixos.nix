@@ -73,13 +73,20 @@
         })
       cfg.declarative.projects;
 
-      api_keys =
-        map (k: {
+      api_keys = map (k: let
+        hasInlineKey = k.key != null;
+        _ =
+          if hasInlineKey
+          then lib.warn "API key '${k.name}' has inline key set. Use keyFile instead to avoid plaintext keys in the Nix store." null
+          else null;
+      in
+        filterAttrs (_: v: v != null) {
           name = k.name;
           key = k.key;
+          key_file = k.keyFile;
           role = k.role;
         })
-        cfg.declarative.apiKeys;
+      cfg.declarative.apiKeys;
 
       users = mapAttrsToList (username: u:
         filterAttrs (_: v: v != null) {
@@ -322,10 +329,21 @@
       };
 
       key = mkOption {
-        type = str;
+        type = nullOr str;
+        default = null;
         description = ''
           The raw API key value (e.g. "circus_mykey123").
-          Will be hashed before storage. Consider using a secrets manager.
+          Will be hashed before storage.
+          For development/testing only. Use {option}`keyFile` for production.
+        '';
+      };
+
+      keyFile = mkOption {
+        type = nullOr str;
+        default = null;
+        description = ''
+          Path to a file containing the API key.
+          Preferred for production deployments.
         '';
       };
 
@@ -543,12 +561,12 @@ in {
         example = [
           {
             name = "admin";
-            key = "circus_admin_secret";
+            keyFile = "/run/secrets/circus-admin-key";
             role = "admin";
           }
           {
             name = "ci-bot";
-            key = "circus_bot_key";
+            keyFile = "/run/secrets/circus-bot-key";
             role = "eval-jobset";
           }
         ];
@@ -619,13 +637,20 @@ in {
 
   config = mkIf cfg.enable {
     assertions =
-      mapAttrsToList (
-        username: user: {
-          assertion = user.password != null || user.passwordFile != null;
-          message = "User '${username}' must have either 'password' or 'passwordFile' set.";
-        }
-      )
-      cfg.declarative.users;
+      (map (
+          k: {
+            assertion = k.key != null || k.keyFile != null;
+            message = "API key '${k.name}' must have either 'key' or 'keyFile' set.";
+          }
+        )
+        cfg.declarative.apiKeys)
+      ++ (mapAttrsToList (
+          username: user: {
+            assertion = user.password != null || user.passwordFile != null;
+            message = "User '${username}' must have either 'password' or 'passwordFile' set.";
+          }
+        )
+        cfg.declarative.users);
 
     users.users.circus = {
       isSystemUser = true;
