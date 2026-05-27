@@ -1,12 +1,12 @@
 # Design
 
 Notes to self and somewhat of a guide to design some of the design choices
-behind FC. This is not a contribution guideline, and changes to this document
+behind Circus. This is not a contribution guideline, and changes to this document
 are welcome if necessary.
 
 ## Overview
 
-FC is built as a local replacement for Hydra. Meaning you probably do not want
+Circus is built as a local replacement for Hydra. Meaning you probably do not want
 to deploy it on your Super Enterprise Friends Group that needs a reliable CI.
 This project is an attempt to utilize our infrastructure members as build
 machines to cache our projects without relying on Github's weak runners.
@@ -31,10 +31,10 @@ In Hydra:
 Hydra pulls changes from version control, re-evaluates Nix expressions, and
 triggers builds when inputs change.
 
-FC _more or less_ commits to this design, with minimal tweaks for modernity and
-UX. Most critically, FC is not designed to be used alongside Nixpkgs. Indeed,
+Circus _more or less_ commits to this design, with minimal tweaks for modernity and
+UX. Most critically, Circus is not designed to be used alongside Nixpkgs. Indeed,
 you _could_ do it and I am more than willing to try and support this use case
-but it is far from the main goal. The primary purpose of FC is to be a
+but it is far from the main goal. The primary purpose of Circus is to be a
 distributed, declarative CI that **has learned from Hydra's mistakes**.
 
 ## On Hydra
