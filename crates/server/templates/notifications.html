@@ -1,57 +1,66 @@
 {% extends "base.html" %}
 
-{% block title %}Notifications · {{ project.name }}{% endblock %}
+{% block title %}Notifications - {{ project.name }} - circus{% endblock %}
 
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
+<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+{% else %}
+<a href="/login">Login</a>
 {% endif %}
 {% endblock %}
 
-{% block content %}
-<section class="page-header">
-  <h1>Notifications: {{ project.name }}</h1>
-  <p class="muted">Configure delivery channels for build events on this project.</p>
-</section>
+{% block breadcrumbs %}
+<nav class="breadcrumbs">
+  <a href="/projects">Projects</a> <span class="sep">/</span>
+  <a href="/project/{{ project.id }}">{{ project.name }}</a> <span class="sep">/</span>
+  <span class="current">Notifications</span>
+</nav>
+{% endblock %}
 
-<section class="card">
-  <h2>Existing</h2>
-  {% if configs.is_empty() %}
-    <p class="muted">No notification configs yet.</p>
-  {% else %}
-    <table class="data-table">
-      <thead>
-        <tr><th>Type</th><th>Enabled</th><th>Created</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for c in configs %}
-          <tr>
-            <td><code>{{ c.notification_type }}</code></td>
-            <td>{% if c.enabled %}yes{% else %}no{% endif %}</td>
-            <td>{{ c.created_at }}</td>
-            <td>
-              {% if is_admin %}
-                <form method="post" action="/project/{{ project.id }}/notifications/{{ c.id }}/delete" class="inline">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button type="submit" class="btn btn-danger">Delete</button>
-                </form>
-              {% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% endif %}
-</section>
+{% block content %}
+<h1>Notifications</h1>
+<p>Configure delivery channels for build events on this project.</p>
+
+<h2>Existing</h2>
+{% if configs.is_empty() %}
+<div class="empty">No notification configs yet.</div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Type</th><th>Enabled</th><th>Created</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for c in configs %}
+    <tr>
+      <td><code>{{ c.notification_type }}</code></td>
+      <td>{% if c.enabled %}Yes{% else %}No{% endif %}</td>
+      <td>{{ c.created_at }}</td>
+      <td>
+        {% if is_admin %}
+        <form method="post" action="/project/{{ project.id }}/notifications/{{ c.id }}/delete" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn btn-danger btn-small">Delete</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
 
 {% if is_admin %}
-<section class="card">
-  <h2>Add new</h2>
-  <form method="post" action="/project/{{ project.id }}/notifications" class="form-stack">
+<h2>Add new</h2>
+<div class="form-card">
+  <form method="post" action="/project/{{ project.id }}/notifications">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>
-      Type
-      <select name="notification_type" required>
+    <div class="form-group">
+      <label for="notification_type">Type</label>
+      <select id="notification_type" name="notification_type" required>
         <option value="webhook">webhook</option>
         <option value="github_status">github_status</option>
         <option value="gitea_status">gitea_status</option>
@@ -59,13 +68,13 @@
         <option value="email">email</option>
         <option value="slack">slack</option>
       </select>
-    </label>
-    <label>
-      Config (JSON)
-      <textarea name="config" rows="8" placeholder='{"webhook_url": "https://hooks.slack.com/services/..."}' required></textarea>
-    </label>
-    <button type="submit" class="btn btn-primary">Create</button>
+    </div>
+    <div class="form-group">
+      <label for="config">Config (JSON)</label>
+      <textarea id="config" name="config" rows="8" placeholder='{"webhook_url": "https://hooks.slack.com/services/..."}' required></textarea>
+    </div>
+    <button type="submit" class="btn">Create</button>
   </form>
-</section>
+</div>
 {% endif %}
 {% endblock %}
