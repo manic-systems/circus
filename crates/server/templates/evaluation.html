@@ -2,7 +2,7 @@
 {% block title %}Evaluation {{ eval.commit_short }} - circus{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
+  <a href="/projects">Projects</a> <span class="sep">/</span>
   <a href="/project/{{ project_id }}">{{ project_name }}</a> <span class="sep">/</span>
   <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a> <span class="sep">/</span>
   <span class="current">{{ eval.commit_short }}</span>
@@ -15,7 +15,10 @@
 <p><strong>Time:</strong> {{ eval.time }}</p>
 {% match eval.error_message %}
   {% when Some with (err) %}
-<p><strong>Error:</strong> {{ err }}</p>
+<div class="flash-message flash-error">
+  <strong>Evaluation error</strong>
+  <pre class="error-detail">{{ err }}</pre>
+</div>
   {% when None %}
 {% endmatch %}
 
