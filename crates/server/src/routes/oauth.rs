@@ -266,6 +266,14 @@ async fn github_callback(
     .await
     .map_err(ApiError)?;
 
+  state
+    .sessions
+    .insert(session.0.clone(), crate::state::SessionData {
+      api_key:    None,
+      user:       Some(user),
+      created_at: std::time::Instant::now(),
+    });
+
   // Clear OAuth state cookie and set session cookie
   // Use SameSite=Lax for OAuth callback (must work across redirect)
   let security_flags = {

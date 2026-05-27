@@ -22,6 +22,7 @@ use circus_common::models::{
   NotificationConfig,
   Project,
   SystemStatus,
+  User,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -247,12 +248,18 @@ fn eval_badge(s: &EvaluationStatus) -> (String, String) {
 }
 
 fn is_admin(extensions: &Extensions) -> bool {
+  if let Some(user) = extensions.get::<User>() {
+    return user.role == "admin";
+  }
   extensions
     .get::<ApiKey>()
     .is_some_and(|k| k.role == "admin")
 }
 
 fn auth_name(extensions: &Extensions) -> String {
+  if let Some(user) = extensions.get::<User>() {
+    return user.username.clone();
+  }
   extensions
     .get::<ApiKey>()
     .map(|k| k.name.clone())
