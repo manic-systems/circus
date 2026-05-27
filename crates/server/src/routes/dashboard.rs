@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use askama::Template;
 use axum::{
   Form,
@@ -314,6 +315,8 @@ struct JobsetTemplate {
   project:        Project,
   jobset:         Jobset,
   eval_summaries: Vec<EvalSummaryView>,
+  is_admin:       bool,
+  auth_name:      String,
 }
 
 #[derive(Template)]
@@ -327,6 +330,8 @@ struct EvaluationsTemplate {
   next_offset: i64,
   page:        i64,
   total_pages: i64,
+  is_admin:    bool,
+  auth_name:   String,
 }
 
 #[derive(Template)]
@@ -342,6 +347,8 @@ struct EvaluationTemplate {
   failed_count:    i64,
   running_count:   i64,
   pending_count:   i64,
+  is_admin:        bool,
+  auth_name:       String,
 }
 
 #[derive(Template)]
@@ -358,6 +365,8 @@ struct BuildsTemplate {
   filter_status: String,
   filter_system: String,
   filter_job:    String,
+  is_admin:      bool,
+  auth_name:     String,
 }
 
 #[derive(Template)]
@@ -374,6 +383,8 @@ struct BuildTemplate {
   jobset_name:       String,
   project_id:        Uuid,
   project_name:      String,
+  is_admin:          bool,
+  auth_name:         String,
 }
 
 #[derive(Template)]
@@ -383,12 +394,16 @@ struct QueueTemplate {
   running_builds: Vec<QueueBuildView>,
   pending_count:  i64,
   running_count:  i64,
+  is_admin:       bool,
+  auth_name:      String,
 }
 
 #[derive(Template)]
 #[template(path = "channels.html")]
 struct ChannelsTemplate {
-  channels: Vec<Channel>,
+  channels:  Vec<Channel>,
+  is_admin:  bool,
+  auth_name: String,
 }
 
 #[derive(Template)]
@@ -399,6 +414,8 @@ struct ChannelTemplate {
   succeeded_count: i64,
   failed_count:    i64,
   pending_count:   i64,
+  is_admin:        bool,
+  auth_name:       String,
 }
 
 #[derive(Template)]
@@ -406,6 +423,7 @@ struct ChannelTemplate {
 struct NewsTemplate {
   items:      Vec<NewsItem>,
   is_admin:   bool,
+  auth_name:  String,
   csrf_token: String,
 }
 
@@ -673,6 +691,7 @@ async fn project_page(
 async fn jobset_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
+  extensions: Extensions,
 ) -> Html<String> {
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
   else {
@@ -746,6 +765,8 @@ async fn jobset_page(
     project,
     jobset,
     eval_summaries: summaries,
+    is_admin:       is_admin(&extensions),
+    auth_name:      auth_name(&extensions),
   };
   Html(
     tmpl
@@ -757,6 +778,7 @@ async fn jobset_page(
 async fn evaluations_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
+  extensions: Extensions,
 ) -> Html<String> {
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
@@ -802,6 +824,8 @@ async fn evaluations_page(
     next_offset: offset + limit,
     page,
     total_pages,
+    is_admin:  is_admin(&extensions),
+    auth_name: auth_name(&extensions),
   };
   Html(
     tmpl
@@ -813,6 +837,7 @@ async fn evaluations_page(
 async fn evaluation_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
+  extensions: Extensions,
 ) -> Html<String> {
   let Ok(eval) = circus_common::repo::evaluations::get(&state.pool, id).await
   else {
@@ -890,6 +915,8 @@ async fn evaluation_page(
     failed_count:    failed,
     running_count:   running,
     pending_count:   pending,
+    is_admin:        is_admin(&extensions),
+    auth_name:       auth_name(&extensions),
   };
   Html(
     tmpl
@@ -910,6 +937,7 @@ struct BuildFilterParams {
 async fn builds_page(
   State(state): State<AppState>,
   Query(params): Query<BuildFilterParams>,
+  extensions: Extensions,
 ) -> Html<String> {
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
@@ -948,6 +976,8 @@ async fn builds_page(
     filter_status: params.status.unwrap_or_default(),
     filter_system: params.system.unwrap_or_default(),
     filter_job: params.job_name.unwrap_or_default(),
+    is_admin:      is_admin(&extensions),
+    auth_name:     auth_name(&extensions),
   };
   Html(
     tmpl
@@ -959,6 +989,7 @@ async fn builds_page(
 async fn build_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
+  extensions: Extensions,
 ) -> Html<String> {
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
   else {
@@ -1028,6 +1059,8 @@ async fn build_page(
     jobset_name: jobset.name,
     project_id: project.id,
     project_name: project.name,
+    is_admin:    is_admin(&extensions),
+    auth_name:   auth_name(&extensions),
   };
   Html(
     tmpl
@@ -1036,7 +1069,7 @@ async fn build_page(
   )
 }
 
-async fn queue_page(State(state): State<AppState>) -> Html<String> {
+async fn queue_page(State(state): State<AppState>, extensions: Extensions) -> Html<String> {
   let running = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
@@ -1121,6 +1154,8 @@ async fn queue_page(State(state): State<AppState>) -> Html<String> {
     running_builds,
     pending_count,
     running_count,
+    is_admin:  is_admin(&extensions),
+    auth_name: auth_name(&extensions),
   };
   Html(
     tmpl
@@ -1139,12 +1174,16 @@ fn format_elapsed(secs: i64) -> String {
   }
 }
 
-async fn channels_page(State(state): State<AppState>) -> Html<String> {
+async fn channels_page(State(state): State<AppState>, extensions: Extensions) -> Html<String> {
   let channels = circus_common::repo::channels::list_all(&state.pool)
     .await
     .unwrap_or_default();
 
-  let tmpl = ChannelsTemplate { channels };
+  let tmpl = ChannelsTemplate {
+    channels,
+    is_admin:  is_admin(&extensions),
+    auth_name: auth_name(&extensions),
+  };
   Html(
     tmpl
       .render()
@@ -1155,6 +1194,7 @@ async fn channels_page(State(state): State<AppState>) -> Html<String> {
 async fn channel_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
+  extensions: Extensions,
 ) -> Html<String> {
   let Ok(channel) = circus_common::repo::channels::get(&state.pool, id).await
   else {
@@ -1197,6 +1237,8 @@ async fn channel_page(
     succeeded_count,
     failed_count,
     pending_count,
+    is_admin:  is_admin(&extensions),
+    auth_name: auth_name(&extensions),
   };
   Html(
     tmpl
@@ -1214,7 +1256,8 @@ async fn news_page(
     .unwrap_or_default();
   let tmpl = NewsTemplate {
     items,
-    is_admin: is_admin(&extensions),
+    is_admin:  is_admin(&extensions),
+    auth_name: auth_name(&extensions),
     csrf_token: csrf_from(&extensions),
   };
   Html(

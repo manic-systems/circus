@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Queue - circus{% endblock %}
+{% block auth %}
+{% if !auth_name.is_empty() %}
+<span class="auth-user">{{ auth_name }}</span>
+<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+{% else %}
+<a href="/login">Login</a>
+{% endif %}
+{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs">
   <a href="/">Home</a> <span class="sep">/</span>
