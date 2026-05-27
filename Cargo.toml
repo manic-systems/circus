@@ -18,7 +18,11 @@ circus-queue-runner = { path = "./crates/queue-runner", version = "0.4.0-dev" }
 circus-server       = { path = "./crates/server", version = "0.4.0-dev" }
 
 anyhow = "1.0.102"
-argon2 = "0.5.3"
+# `rand_core::OsRng` in ./crates/common/src/repo/users.rs:28
+# Item `os::OsRng` is configured out by feature flag.
+# crate/feature flag chain:
+# argon/std -> password-hash/std -> rand_core/std -> getrandom
+argon2 = { version = "0.5.3", features = [ "std" ] }
 askama = "0.16.0"
 async-stream = "0.3.6"
 axum = "0.8.9"
