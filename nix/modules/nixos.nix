@@ -638,6 +638,11 @@ in {
 
     users.groups.circus = {};
 
+    # NOTE: needed by nix-eval-jobs to access the Nix daemon.
+    # This is completely undocumented but used by other projects in a similar
+    # fashion to solve the same problem without clobbering `allowed-users`.
+    nix.settings.extra-allowed-users = [ "circus" ];
+
     services.postgresql = mkIf cfg.database.createLocally {
       enable = true;
       ensureDatabases = ["circus"];
