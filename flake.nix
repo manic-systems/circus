@@ -97,7 +97,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in {
       default = pkgs.mkShell {
-        name = "fc-dev";
+        name = "circus-dev";
         inputsFrom = [self.packages.${system}.circus-server];
 
         strictDeps = true;

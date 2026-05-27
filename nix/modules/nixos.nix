@@ -326,7 +326,7 @@
       key = mkOption {
         type = str;
         description = ''
-          The raw API key value (e.g. "fc_mykey123").
+          The raw API key value (e.g. "circus_mykey123").
           Will be hashed before storage. Consider using a secrets manager.
         '';
       };
@@ -545,7 +545,7 @@ in {
         example = [
           {
             name = "admin";
-            key = "fc_admin_secret";
+            key = "circus_admin_secret";
             role = "admin";
           }
           {
@@ -650,18 +650,18 @@ in {
     };
 
     services.circus.settings = mkDefault {
-      database.url = "postgresql:///fc?host=/run/postgresql";
+      database.url = "postgresql:///circus?host=/run/postgresql";
       server.host = "127.0.0.1";
       server.port = 3000;
 
       gc = {
-        gc_roots_dir = mkDefault "/nix/var/nix/gcroots/per-user/fc/fc-roots";
+        gc_roots_dir = mkDefault "/nix/var/nix/gcroots/per-user/circus/circus-roots";
         enabled = mkDefault true;
         max_age_days = mkDefault 30;
         cleanup_interval = mkDefault 3600;
       };
 
-      logs.log_dir = mkDefault "/var/lib/fc/logs";
+      logs.log_dir = mkDefault "/var/lib/circus/logs";
       cache.enabled = mkDefault true;
       evaluator.restrict_eval = mkDefault true;
       evaluator.allow_ifd = mkDefault false;
@@ -670,8 +670,8 @@ in {
 
     systemd = {
       tmpfiles.rules = [
-        (mkIf cfg.server.enable "d /var/lib/circus/logs 0750 fc fc -")
-        (mkIf cfg.queueRunner.enable "d /nix/var/nix/gcroots/per-user/circus 0755 fc fc -")
+        (mkIf cfg.server.enable "d /var/lib/circus/logs 0750 circus circus -")
+        (mkIf cfg.queueRunner.enable "d /nix/var/nix/gcroots/per-user/circus 0755 circus circus -")
       ];
 
       services = {
@@ -684,7 +684,7 @@ in {
           path = with pkgs; [nix zstd];
 
           serviceConfig = {
-            ExecStartPre = "${cfg.migratePackage}/bin/circus-migrate up ${finalSettings.database.url or "postgresql:///fc?host=/run/postgresql"}";
+            ExecStartPre = "${cfg.migratePackage}/bin/circus-migrate up ${finalSettings.database.url or "postgresql:///circus?host=/run/postgresql"}";
             ExecStart = "${cfg.package}/bin/circus-server";
             Restart = "on-failure";
             RestartSec = 5;

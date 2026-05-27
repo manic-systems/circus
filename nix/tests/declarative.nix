@@ -33,7 +33,7 @@ in
         queueRunner.enable = true;
 
         settings = {
-          database.url = "postgresql:///fc?host=/run/postgresql";
+          database.url = "postgresql:///circus?host=/run/postgresql";
           server = {
             host = "127.0.0.1";
             port = 3000;
@@ -78,12 +78,12 @@ in
         declarative.apiKeys = [
           {
             name = "decl-admin-key";
-            key = "fc_decl_admin";
+            key = "circus_decl_admin";
             role = "admin";
           }
           {
             name = "decl-readonly-key";
-            key = "fc_decl_readonly";
+            key = "circus_decl_readonly";
             role = "read-only";
           }
         ];
@@ -261,7 +261,7 @@ in
       with subtest("Declarative admin API key works"):
           code = machine.succeed(
               "curl -s -o /dev/null -w '%{http_code}' "
-              "-H 'Authorization: Bearer fc_decl_admin' "
+              "-H 'Authorization: Bearer circus_decl_admin' "
               "http://127.0.0.1:3000/api/v1/projects"
           )
           assert code.strip() == "200", f"Expected 200, got {code.strip()}"
@@ -270,7 +270,7 @@ in
           code = machine.succeed(
               "curl -s -o /dev/null -w '%{http_code}' "
               "-X POST http://127.0.0.1:3000/api/v1/projects "
-              "-H 'Authorization: Bearer fc_decl_admin' "
+              "-H 'Authorization: Bearer circus_decl_admin' "
               "-H 'Content-Type: application/json' "
               "-d '{\"name\": \"api-created\", \"repository_url\": \"https://example.com/api\"}'"
           )
@@ -279,7 +279,7 @@ in
       with subtest("Declarative read-only API key works for GET"):
           code = machine.succeed(
               "curl -s -o /dev/null -w '%{http_code}' "
-              "-H 'Authorization: Bearer fc_decl_readonly' "
+              "-H 'Authorization: Bearer circus_decl_readonly' "
               "http://127.0.0.1:3000/api/v1/projects"
           )
           assert code.strip() == "200", f"Expected 200, got {code.strip()}"
@@ -288,7 +288,7 @@ in
           code = machine.succeed(
               "curl -s -o /dev/null -w '%{http_code}' "
               "-X POST http://127.0.0.1:3000/api/v1/projects "
-              "-H 'Authorization: Bearer fc_decl_readonly' "
+              "-H 'Authorization: Bearer circus_decl_readonly' "
               "-H 'Content-Type: application/json' "
               "-d '{\"name\": \"should-fail\", \"repository_url\": \"https://example.com/fail\"}'"
           )
@@ -434,17 +434,17 @@ in
       with subtest("Users page requires admin access"):
           # Test HTML /users endpoint
           htmlResp = machine.succeed(
-              "curl -sf -H 'Authorization: Bearer fc_decl_admin' http://127.0.0.1:3000/users"
+              "curl -sf -H 'Authorization: Bearer circus_decl_admin' http://127.0.0.1:3000/users"
           )
           assert "User Management" in htmlResp or "Users" in htmlResp
 
           # Non-admin should be denied access via API
           machine.fail(
-              "curl -sf -H 'Authorization: Bearer fc_decl_readonly' http://127.0.0.1:3000/api/v1/users | grep 'decl-admin'"
+              "curl -sf -H 'Authorization: Bearer circus_decl_readonly' http://127.0.0.1:3000/api/v1/users | grep 'decl-admin'"
           )
           # Admin should have access via API
           adminApiResp = machine.succeed(
-              "curl -sf -H 'Authorization: Bearer fc_decl_admin' http://127.0.0.1:3000/api/v1/users"
+              "curl -sf -H 'Authorization: Bearer circus_decl_admin' http://127.0.0.1:3000/api/v1/users"
           )
           assert "decl-admin" in adminApiResp, "Expected decl-admin in API response"
           assert "decl-user" in adminApiResp, "Expected decl-user in API response"
@@ -452,7 +452,7 @@ in
       with subtest("Users API shows declarative users for admin"):
           # Use the admin API key to list users instead of session-based auth
           result = machine.succeed(
-              "curl -sf -H 'Authorization: Bearer fc_decl_admin' http://127.0.0.1:3000/api/v1/users"
+              "curl -sf -H 'Authorization: Bearer circus_decl_admin' http://127.0.0.1:3000/api/v1/users"
           )
           assert "decl-admin" in result, f"Users API should return decl-admin. Got: {result[:500]}"
           assert "decl-user" in result, f"Users API should return decl-user. Got: {result[:500]}"

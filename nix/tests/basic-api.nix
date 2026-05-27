@@ -28,8 +28,8 @@ pkgs.testers.nixosTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     ## Seed an API key for write operations
-    # Token: fc_testkey123 -> SHA-256 hash inserted into api_keys table
-    api_token = "fc_testkey123"
+    # Token: circus_testkey123 -> SHA-256 hash inserted into api_keys table
+    api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
@@ -143,9 +143,9 @@ pkgs.testers.nixosTest {
         result = machine.succeed("curl -sf http://127.0.0.1:3000/prometheus")
         machine.succeed(f"echo '{result[:1000]}' > /tmp/metrics.txt")
         machine.succeed("echo 'PROMETHEUS OUTPUT:' && cat /tmp/metrics.txt")
-        assert "fc_builds_total" in result, f"Missing fc_builds_total. Got: {result[:300]}"
-        assert "fc_projects_total" in result, "Missing fc_projects_total in prometheus metrics"
-        assert "fc_evaluations_total" in result, "Missing fc_evaluations_total in prometheus metrics"
+        assert "circus_builds_total" in result, f"Missing circus_builds_total. Got: {result[:300]}"
+        assert "circus_projects_total" in result, "Missing circus_projects_total in prometheus metrics"
+        assert "circus_evaluations_total" in result, "Missing circus_evaluations_total in prometheus metrics"
 
     # CORS: default restrictive (no Access-Control-Allow-Origin for cross-origin)
     with subtest("Default CORS does not allow arbitrary origins"):
@@ -161,15 +161,15 @@ pkgs.testers.nixosTest {
             f"CORS should not allow arbitrary origins: {result}"
 
     # Systemd hardening
-    with subtest("circus-server runs as fc user"):
+    with subtest("circus-server runs as circus user"):
         result = machine.succeed("systemctl show circus-server --property=User --value")
-        assert result.strip() == "circus", f"Expected fc user, got '{result.strip()}'"
+        assert result.strip() == "circus", f"Expected circus user, got '{result.strip()}'"
 
     with subtest("circus-server has NoNewPrivileges"):
         result = machine.succeed("systemctl show circus-server --property=NoNewPrivileges --value")
         assert result.strip() == "yes", f"Expected NoNewPrivileges, got '{result.strip()}'"
 
-    with subtest("fc user home directory exists"):
+    with subtest("circus user home directory exists"):
         machine.succeed("test -d /var/lib/circus")
 
     with subtest("Log directory exists"):

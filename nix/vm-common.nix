@@ -57,7 +57,7 @@ in {
       queueRunner.enable = true;
 
       settings = {
-        database.url = "postgresql:///fc?host=/run/postgresql";
+        database.url = "postgresql:///circus?host=/run/postgresql";
         server = {
           host = "127.0.0.1";
           port = 3000;
@@ -97,7 +97,7 @@ in {
       declarative.apiKeys = [
         {
           name = "bootstrap-admin";
-          key = "fc_bootstrap_key";
+          key = "circus_bootstrap_key";
           role = "admin";
         }
       ];

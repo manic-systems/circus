@@ -33,8 +33,8 @@ pkgs.testers.nixosTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Seed an API key for write operations
-    # Token: fc_testkey123 -> SHA-256 hash inserted into api_keys table
-    api_token = "fc_testkey123"
+    # Token: circus_testkey123 -> SHA-256 hash inserted into api_keys table
+    api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
@@ -42,7 +42,7 @@ pkgs.testers.nixosTest {
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
     # Seed a read-only key
-    ro_token = "fc_readonly_key"
+    ro_token = "circus_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
@@ -92,8 +92,8 @@ pkgs.testers.nixosTest {
         machine.succeed("cd /tmp/test-flake-work && git remote add origin /var/lib/circus/test-repos/test-flake.git")
         machine.succeed("cd /tmp/test-flake-work && git push origin HEAD:refs/heads/master")
 
-        # Set ownership for fc user
-        machine.succeed("chown -R fc:fc /var/lib/circus/test-repos")
+        # Set ownership for circus user
+        machine.succeed("chown -R circus:circus /var/lib/circus/test-repos")
 
     # Create project + jobset pointing to the local repo via API
     with subtest("Create E2E project and jobset via API"):
@@ -458,7 +458,7 @@ pkgs.testers.nixosTest {
         # Generate a Nix signing key
         machine.succeed("mkdir -p /var/lib/circus/keys")
         machine.succeed("nix-store --generate-binary-cache-key circus-test /var/lib/circus/keys/signing-key /var/lib/circus/keys/signing-key.pub")
-        machine.succeed("chown -R fc:fc /var/lib/circus/keys")
+        machine.succeed("chown -R circus:circus /var/lib/circus/keys")
         machine.succeed("chmod 600 /var/lib/circus/keys/signing-key")
 
         # Enable signing via systemd drop-in override
@@ -541,7 +541,7 @@ pkgs.testers.nixosTest {
 
         # Ensure the gc roots directory exists
         machine.succeed("mkdir -p /nix/var/nix/gcroots/per-user/circus")
-        machine.succeed("chown -R fc:fc /nix/var/nix/gcroots/per-user/circus")
+        machine.succeed("chown -R circus:circus /nix/var/nix/gcroots/per-user/circus")
 
         # Create a new build to test GC root creation
         machine.succeed(
@@ -609,13 +609,13 @@ pkgs.testers.nixosTest {
         # Add .circus.toml to the test repo with a new jobset definition
         machine.succeed(
             "cd /tmp/test-flake-work && "
-            "cat > .circus.toml << 'FCTOML'\n"
+            "cat > .circus.toml << 'CIRCUSTOML'\n"
             "[[jobsets]]\n"
             'name = "declarative-checks"\n'
             'nix_expression = "checks"\n'
             "flake_mode = true\n"
             "enabled = true\n"
-            "FCTOML\n"
+            "CIRCUSTOML\n"
         )
         machine.succeed("cd /tmp/test-flake-work && git add -A && git commit -m 'add declarative config'")
         machine.succeed("cd /tmp/test-flake-work && git push origin HEAD:refs/heads/master")

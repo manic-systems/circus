@@ -1116,7 +1116,7 @@ mod tests {
 workers = 4
 poll_interval = 5
 build_timeout = 3600
-work_dir = "/tmp/fc"
+work_dir = "/tmp/circus"
 unsupported_timeout = "2h 30m"
     "#;
 
@@ -1138,7 +1138,7 @@ mod humantime_option_test {
 workers = 4
 poll_interval = 5
 build_timeout = 3600
-work_dir = "/tmp/fc"
+work_dir = "/tmp/circus"
         "#;
     let config: QueueRunnerConfig = toml::from_str(toml).unwrap();
     assert_eq!(config.unsupported_timeout, None);

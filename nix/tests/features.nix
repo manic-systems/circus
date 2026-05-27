@@ -30,8 +30,8 @@ pkgs.testers.nixosTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Seed an API key for write operations
-    # Token: fc_testkey123 -> SHA-256 hash inserted into api_keys table
-    api_token = "fc_testkey123"
+    # Token: circus_testkey123 -> SHA-256 hash inserted into api_keys table
+    api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
@@ -39,7 +39,7 @@ pkgs.testers.nixosTest {
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
     # Seed a read-only key
-    ro_token = "fc_readonly_key"
+    ro_token = "circus_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
@@ -182,21 +182,21 @@ pkgs.testers.nixosTest {
             assert "escapeHtml" in body, "Admin page JS should use escapeHtml"
 
     # Metrics reflect actual data
-    with subtest("Metrics fc_projects_total reflects created projects"):
+    with subtest("Metrics circus_projects_total reflects created projects"):
         result = machine.succeed("curl -sf http://127.0.0.1:3000/metrics")
         for line in result.split("\n"):
-            if line.startswith("fc_projects_total"):
+            if line.startswith("circus_projects_total"):
                 val = int(line.split()[-1])
-                assert val >= 1, f"Expected fc_projects_total >= 1, got {val}"
+                assert val >= 1, f"Expected circus_projects_total >= 1, got {val}"
                 break
 
-    with subtest("Metrics fc_evaluations_total reflects triggered evaluation"):
+    with subtest("Metrics circus_evaluations_total reflects triggered evaluation"):
         result = machine.succeed("curl -sf http://127.0.0.1:3000/metrics")
         for line in result.split("\n"):
-            if line.startswith("fc_evaluations_total"):
+            if line.startswith("circus_evaluations_total"):
                 val = int(line.split()[-1])
                 # Might be 0 if no evaluations created yet
-                assert val >= 0, f"Expected fc_evaluations_total >= 0, got {val}"
+                assert val >= 0, f"Expected circus_evaluations_total >= 0, got {val}"
                 break
   '';
 }

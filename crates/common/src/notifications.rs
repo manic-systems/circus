@@ -514,7 +514,7 @@ async fn set_github_status(
   let body = serde_json::json!({
       "state": state,
       "description": description,
-      "context": format!("fc/{}", build.job_name),
+      "context": format!("circus/{}", build.job_name),
   });
 
   match http_client()
@@ -603,7 +603,7 @@ async fn set_gitea_status(
   let body = serde_json::json!({
       "state": state,
       "description": description,
-      "context": format!("fc/{}", build.job_name),
+      "context": format!("circus/{}", build.job_name),
   });
 
   match http_client()
@@ -670,7 +670,7 @@ async fn set_gitlab_status(
   let body = serde_json::json!({
       "state": state,
       "description": description,
-      "name": format!("fc/{}", build.job_name),
+      "name": format!("circus/{}", build.job_name),
   });
 
   match http_client()
@@ -926,7 +926,7 @@ pub async fn process_notification_task(
       let body = serde_json::json!({
         "state": state,
         "description": description,
-        "context": format!("fc/{job_name}"),
+        "context": format!("circus/{job_name}"),
       });
 
       let resp = http_client()
@@ -977,7 +977,7 @@ pub async fn process_notification_task(
       let body = serde_json::json!({
         "state": state,
         "description": description,
-        "context": format!("fc/{job_name}"),
+        "context": format!("circus/{job_name}"),
       });
 
       let resp = http_client()
@@ -1034,7 +1034,7 @@ pub async fn process_notification_task(
       let body = serde_json::json!({
         "state": state,
         "description": description,
-        "name": format!("fc/{job_name}"),
+        "name": format!("circus/{job_name}"),
       });
 
       let resp = http_client()

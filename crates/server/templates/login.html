@@ -10,7 +10,7 @@
       <div class="flash-message flash-error">{{ msg }}</div>
       {% when None %}
     {% endmatch %}
-    
+
     <!-- User Login -->
     <div class="form-card login-form">
       <h3>Sign in with username</h3>
@@ -26,18 +26,18 @@
         <button type="submit" class="btn btn-full">Sign in</button>
       </form>
     </div>
-    
+
     <div class="login-divider">
       <span>or</span>
     </div>
-    
+
     <!-- API Key Login -->
     <div class="form-card login-form">
       <h3>Sign in with API key</h3>
       <form method="POST" action="/login">
         <div class="form-group">
           <label for="api_key">API Key</label>
-          <input type="password" id="api_key" name="api_key" placeholder="fc_..." autocomplete="current-password">
+          <input type="password" id="api_key" name="api_key" placeholder="circus_..." autocomplete="current-password">
         </div>
         <button type="submit" class="btn btn-full btn-secondary">Sign in with API key</button>
       </form>

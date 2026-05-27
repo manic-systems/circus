@@ -30,8 +30,8 @@ pkgs.testers.nixosTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Seed an API key for write operations
-    # Token: fc_testkey123 -> SHA-256 hash inserted into api_keys table
-    api_token = "fc_testkey123"
+    # Token: circus_testkey123 -> SHA-256 hash inserted into api_keys table
+    api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
@@ -52,7 +52,7 @@ pkgs.testers.nixosTest {
         code = machine.succeed(
             "curl -s -o /dev/null -w '%{http_code}' "
             "-X POST http://127.0.0.1:3000/api/v1/projects "
-            "-H 'Authorization: Bearer fc_wrong_token_here' "
+            "-H 'Authorization: Bearer circus_wrong_token_here' "
             "-H 'Content-Type: application/json' "
             "-d '{\"name\": \"bad-auth-test\", \"repository_url\": \"https://example.com/repo\"}'"
         )
@@ -77,7 +77,7 @@ pkgs.testers.nixosTest {
 
     ## RBAC tests
     # Seed a read-only key
-    ro_token = "fc_readonly_key"
+    ro_token = "circus_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
