@@ -35,7 +35,7 @@ dashmap = "6.1.0"
 futures = "0.3.31"
 git2 = "0.20.4"
 hex = "0.4.3"
-hmac = "0.12.1"
+hmac = "0.13.0"
 humantime-serde = "1.1.1"
 ldap3 = { version = "0.12.1", default-features = false, features = [ "tls-rustls", "tls-rustls-ring" ] }
 lettre = { version = "0.11.19", default-features = false, features = [
