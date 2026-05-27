@@ -499,10 +499,13 @@ pub struct DeclarativeJobsetInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclarativeApiKey {
-  pub name: String,
-  pub key:  String,
+  pub name:     String,
+  /// API key provided inline (for dev/testing only).
+  pub key:      Option<String>,
+  /// Path to a file containing the API key (for production use with secrets).
+  pub key_file: Option<String>,
   #[serde(default = "default_role")]
-  pub role: String,
+  pub role:     String,
 }
 
 /// Declarative user definition for configuration-driven user management.
@@ -1003,9 +1006,10 @@ mod tests {
         members:        vec![],
       }],
       api_keys:        vec![DeclarativeApiKey {
-        name: "test-key".to_string(),
-        key:  "circus_test".to_string(),
-        role: "admin".to_string(),
+        name:     "test-key".to_string(),
+        key:      Some("circus_test".to_string()),
+        key_file: None,
+        role:     "admin".to_string(),
       }],
       users:           vec![],
       remote_builders: vec![],

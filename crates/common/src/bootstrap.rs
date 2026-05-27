@@ -219,8 +219,37 @@ pub async fn run(pool: &PgPool, config: &DeclarativeConfig) -> Result<()> {
 
   // Upsert API keys
   for decl_key in &config.api_keys {
+    // Resolve key from inline or file
+    let key = decl_key.key.as_ref().map_or_else(
+      || {
+        decl_key.key_file.as_ref().and_then(|file| {
+          let expanded = expand_path(file);
+          match std::fs::read_to_string(&expanded) {
+            Ok(k) => Some(k.trim().to_string()),
+            Err(e) => {
+              tracing::warn!(
+                name = %decl_key.name,
+                file = %expanded,
+                "Failed to read API key file: {e}"
+              );
+              None
+            },
+          }
+        })
+      },
+      |k| Some(k.clone()),
+    );
+
+    let Some(key) = key else {
+      tracing::warn!(
+        name = %decl_key.name,
+        "Declarative API key has no key or key_file set, skipping"
+      );
+      continue;
+    };
+
     let mut hasher = Sha256::new();
-    hasher.update(decl_key.key.as_bytes());
+    hasher.update(key.as_bytes());
     let key_hash = hex::encode(hasher.finalize());
 
     let api_key =
