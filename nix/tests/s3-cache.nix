@@ -64,7 +64,7 @@ pkgs.testers.nixosTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Seed an API key for write operations
-    api_token = "fc_testkey123"
+    api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
@@ -100,7 +100,7 @@ pkgs.testers.nixosTest {
         machine.succeed("cd /tmp/s3-test-flake && git add -A && git commit -m 'initial flake'")
         machine.succeed("cd /tmp/s3-test-flake && git remote add origin /var/lib/circus/test-repos/s3-test-flake.git")
         machine.succeed("cd /tmp/s3-test-flake && git push origin HEAD:refs/heads/master")
-        machine.succeed("chown -R fc:fc /var/lib/circus/test-repos")
+        machine.succeed("chown -R circus:circus /var/lib/circus/test-repos")
 
     # Create project + jobset
     with subtest("Create S3 test project and jobset"):

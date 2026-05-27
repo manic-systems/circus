@@ -69,7 +69,7 @@ pkgs.testers.nixosTest {
     with subtest("Declarative API key works for authentication"):
         code = machine.succeed(
             "curl -s -o /dev/null -w '%{http_code}' "
-            "-H 'Authorization: Bearer fc_bootstrap_key' "
+            "-H 'Authorization: Bearer circus_bootstrap_key' "
             "http://127.0.0.1:3000/api/v1/projects"
         )
         assert code.strip() == "200", f"Expected 200 with bootstrap key, got {code.strip()}"

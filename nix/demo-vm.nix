@@ -36,7 +36,7 @@
       queueRunner.enable = true;
 
       settings = {
-        database.url = "postgresql:///fc?host=/run/postgresql";
+        database.url = "postgresql:///circus?host=/run/postgresql";
         gc.enabled = false;
         logs.log_dir = "/var/lib/circus/logs";
         cache.enabled = true;

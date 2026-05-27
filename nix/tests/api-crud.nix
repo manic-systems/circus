@@ -33,8 +33,8 @@ pkgs.testers.nixosTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     # Seed an API key for write operations
-    # Token: fc_testkey123 -> SHA-256 hash inserted into api_keys table
-    api_token = "fc_testkey123"
+    # Token: circus_testkey123 -> SHA-256 hash inserted into api_keys table
+    api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
@@ -42,7 +42,7 @@ pkgs.testers.nixosTest {
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
     # Seed a read-only key
-    ro_token = "fc_readonly_key"
+    ro_token = "circus_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
@@ -633,7 +633,7 @@ pkgs.testers.nixosTest {
     with subtest("Login with invalid API key shows error"):
         body = machine.succeed(
             "curl -sf -X POST http://127.0.0.1:3000/login "
-            "-d 'api_key=fc_invalid_key'"
+            "-d 'api_key=circus_invalid_key'"
         )
         assert "Invalid" in body or "invalid" in body or "error" in body.lower(), \
             f"Expected error message for invalid login: {body[:200]}"
@@ -671,7 +671,7 @@ pkgs.testers.nixosTest {
             "Logout should set Max-Age=0 to clear cookie"
 
     # RBAC with create-projects role
-    cp_token = "fc_createprojects_key"
+    cp_token = "circus_createprojects_key"
     cp_hash = hashlib.sha256(cp_token.encode()).hexdigest()
     machine.succeed(
         f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('creator', '{cp_hash}', 'create-projects')\""
