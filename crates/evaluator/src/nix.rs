@@ -122,6 +122,19 @@ pub async fn evaluate(
   circus_common::validate::validate_nix_expression(nix_expression)
     .map_err(|e| CiError::NixEval(format!("Invalid nix expression: {e}")))?;
 
+  // Strip a flake-style attribute prefix the user may have typed (".#packages"
+  // or "#packages"). The flake ref already adds the '#' separator, so leaving
+  // it in produces an attribute path like "#packages".
+  let normalized = nix_expression
+    .strip_prefix(".#")
+    .or_else(|| nix_expression.strip_prefix('#'))
+    .unwrap_or(nix_expression);
+  let nix_expression = if normalized.is_empty() {
+    nix_expression
+  } else {
+    normalized
+  };
+
   if flake_mode {
     evaluate_flake(repo_path, nix_expression, timeout, config, inputs).await
   } else {
