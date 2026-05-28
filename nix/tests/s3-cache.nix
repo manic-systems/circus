@@ -12,37 +12,50 @@ pkgs.testers.nixosTest {
     ];
     _module.args.self = self;
 
-    # Add MinIO for S3-compatible storage
-    services.minio = {
+    # Add Garage for S3-compatible storage
+    services.garage = {
       enable = true;
-      listenAddress = "127.0.0.1:9000";
-      rootCredentialsFile = pkgs.writeText "minio-root-credentials" ''
-        MINIO_ROOT_USER=minioadmin
-        MINIO_ROOT_PASSWORD=minioadmin
-      '';
+      package = pkgs.garage_2;
+      settings = {
+        rpc_bind_addr = "127.0.0.1:3901";
+        rpc_secret = "0000000000000000000000000000000000000000000000000000000000000000";
+        replication_factor = 1;
+        s3_api = {
+          api_bind_addr = "127.0.0.1:3900";
+          s3_region = "garage";
+        };
+        s3_web = {
+          bind_addr = "127.0.0.1:3902";
+          root_domain = "web.garage.test";
+        };
+      };
     };
 
-    # Configure circus to upload to the local MinIO instance
+    # Configure circus to upload to the local Garage instance
     services.circus = {
       settings = {
         cache_upload = {
           enabled = true;
-          store_uri = "s3://circus-cache?endpoint=http://127.0.0.1:9000&region=us-east-1";
+          store_uri = "s3://circus-cache?region=garage&endpoint=http://127.0.0.1:3900";
           s3 = {
-            region = "us-east-1";
-            access_key_id = "minioadmin";
-            secret_access_key = "minioadmin";
-            endpoint_url = "http://127.0.0.1:9000";
+            region = "garage";
+            access_key_id = "GKcircus";
+            secret_access_key = "0000000000000000";
+            endpoint_url = "http://127.0.0.1:3900";
             use_path_style = true;
           };
         };
       };
     };
+
+    systemd.services.circus-queue-runner.environment = {
+      AWS_ACCESS_KEY_ID = "GKcircus";
+      AWS_SECRET_ACCESS_KEY = "0000000000000000";
+    };
   };
 
   testScript = ''
     import hashlib
-    import json
     import time
 
     machine.start()
@@ -51,14 +64,19 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("postgresql.service")
     machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
-    # Wait for MinIO to be ready
-    machine.wait_for_unit("minio.service")
-    machine.wait_until_succeeds("curl -sf http://127.0.0.1:9000/minio/health/live", timeout=30)
+    # Wait for Garage to be ready
+    machine.wait_for_unit("garage.service")
+    machine.wait_for_open_port(3901)
 
     # Configure MinIO client and create bucket
-    machine.succeed("${pkgs.minio-client}/bin/mc alias set local http://127.0.0.1:9000 minioadmin minioadmin")
-    machine.succeed("${pkgs.minio-client}/bin/mc mb local/circus-cache")
-    machine.succeed("${pkgs.minio-client}/bin/mc policy set public local/circus-cache")
+    machine.succeed("${pkgs.garage_2}/bin/garage layout assign -z test -c 1G $(${pkgs.garage_2}/bin/garage node id | cut -d@ -f1)")
+    machine.succeed("${pkgs.garage_2}/bin/garage layout apply --version 1")
+    machine.succeed("${pkgs.garage_2}/bin/garage bucket create circus-cache")
+    machine.succeed("${pkgs.garage_2}/bin/garage key import --yes -n circus-key GKcircus 0000000000000000")
+    machine.succeed("${pkgs.garage_2}/bin/garage bucket allow circus-cache --key circus-key --read --write")
+    machine.succeed("${pkgs.garage_2}/bin/garage bucket website circus-cache --allow")
+    machine.succeed("${pkgs.minio-client}/bin/mc alias set local http://127.0.0.1:3900 GKcircus 0000000000000000")
+    machine.succeed("echo StoreDir: /nix/store > nix-cache-info && ${pkgs.minio-client}/bin/mc cp nix-cache-info local/circus-cache/nix-cache-info")
 
     machine.wait_for_unit("circus-server.service")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -178,7 +196,7 @@ pkgs.testers.nixosTest {
 
         # Try to get the narinfo from S3
         narinfo_content = machine.succeed(
-            f"curl -sf http://127.0.0.1:9000/circus-cache/{store_hash}.narinfo"
+            f"curl -sf http://127.0.0.1:3902/{store_hash}.narinfo -H 'Host: circus-cache.web.garage.test'"
         )
         assert "StorePath:" in narinfo_content, f"Expected StorePath in narinfo: {narinfo_content}"
         assert "NarHash:" in narinfo_content, f"Expected NarHash in narinfo: {narinfo_content}"
