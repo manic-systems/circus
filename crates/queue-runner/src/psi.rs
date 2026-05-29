@@ -75,6 +75,8 @@ impl PsiCache {
 /// Returns `None` if anything goes wrong - the caller then treats the builder
 /// as unloaded rather than penalizing it for a transient connectivity blip.
 pub async fn read(ssh_uri: &str, timeout: Duration) -> Option<PsiSnapshot> {
+  // Ensure ssh-ng is ignored here.
+  let ssh_uri = ssh_uri.strip_prefix("ssh-ng://").unwrap_or(ssh_uri);
   let cmd = tokio::process::Command::new("ssh")
     .args([
       "-o",
