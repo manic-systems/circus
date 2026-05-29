@@ -831,6 +831,7 @@ in {
 
           path = with pkgs; [
             nix
+            openssh
           ];
 
           serviceConfig = {
