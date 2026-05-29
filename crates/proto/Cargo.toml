@@ -1,0 +1,19 @@
+[package]
+name                 = "circus-proto"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+capnp.workspace         = true
+capnp-futures.workspace = true
+capnp-rpc.workspace     = true
+futures.workspace       = true
+thiserror.workspace     = true
+
+[build-dependencies]
+capnpc.workspace = true
+
+[lints]
+workspace = true
