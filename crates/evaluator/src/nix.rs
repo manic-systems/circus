@@ -441,6 +441,34 @@ async fn evaluate_legacy(
   })?
 }
 
+/// Recursively flatten a nix eval --json value into (attr_path, drv_path)
+/// pairs. String values are treated as derivation paths. Objects are recursed
+/// into. Other types are skipped.
+fn flatten_attrs(
+  prefix: &str,
+  value: &serde_json::Value,
+) -> Vec<(String, String)> {
+  match value {
+    serde_json::Value::String(s) => {
+      // Store path - likely a derivation
+      vec![(prefix.to_string(), s.clone())]
+    },
+    serde_json::Value::Object(map) => {
+      let mut result = Vec::new();
+      for (key, val) in map {
+        let child_prefix = if prefix.is_empty() {
+          key.clone()
+        } else {
+          format!("{prefix}.{key}")
+        };
+        result.extend(flatten_attrs(&child_prefix, val));
+      }
+      result
+    },
+    _ => Vec::new(),
+  }
+}
+
 async fn evaluate_with_nix_eval(
   repo_path: &Path,
   nix_expression: &str,
@@ -461,28 +489,27 @@ async fn evaluate_with_nix_eval(
 
   // Parse the JSON output - expecting an attrset of name -> derivation
   let stdout = String::from_utf8_lossy(&output.stdout);
-  let attrs: serde_json::Value =
+  let value: serde_json::Value =
     serde_json::from_str(&stdout).map_err(|e| {
       CiError::NixEval(format!("Failed to parse nix eval output: {e}"))
     })?;
 
-  let mut jobs = Vec::new();
-  if let serde_json::Value::Object(map) = attrs {
-    for (name, _value) in map {
-      // Get derivation path via nix derivation show
-      let drv_ref =
-        format!("{}#{}.{}", repo_path.display(), nix_expression, name);
-      let drv_output = tokio::process::Command::new("nix")
-        .args(["derivation", "show", &drv_ref])
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|e| {
-          CiError::NixEval(format!("Failed to get derivation for {name}: {e}"))
-        })?;
+  let entries = flatten_attrs("", &value);
 
-      if drv_output.status.success() {
-        let drv_stdout = String::from_utf8_lossy(&drv_output.stdout);
+  let mut jobs = Vec::new();
+  for (name, drv_path) in entries {
+    // Fetch system via nix derivation show
+    let drv_ref =
+      format!("{}#{}.{}", repo_path.display(), nix_expression, name);
+    let drv_output = tokio::process::Command::new("nix")
+      .args(["derivation", "show", &drv_ref])
+      .kill_on_drop(true)
+      .output()
+      .await;
+
+    let system = match drv_output {
+      Ok(out) if out.status.success() => {
+        let drv_stdout = String::from_utf8_lossy(&out.stdout);
         if let Ok(drv_json) =
           serde_json::from_str::<serde_json::Value>(&drv_stdout)
           // Newer `nix derivation show` wraps output as
@@ -490,28 +517,32 @@ async fn evaluate_with_nix_eval(
           // drv paths directly at the top level. Without unwrapping the
           // "derivations" key, the first top-level key parsed as the drv_path
           // becomes the literal string "derivations".
-          && let Some((drv_path, drv_val)) = drv_json
+          && let Some((_, drv_val)) = drv_json
             .get("derivations")
             .and_then(serde_json::Value::as_object)
             .or_else(|| drv_json.as_object())
             .and_then(|o| o.iter().next())
         {
-          let system = drv_val
+          drv_val
             .get("system")
             .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
-          jobs.push(NixJob {
-            name: name.clone(),
-            drv_path: drv_path.clone(),
-            system,
-            outputs: None,
-            input_drvs: None,
-            constituents: None,
-            meta: NixMeta::default(),
-          });
+            .map(std::string::ToString::to_string)
+        } else {
+          None
         }
-      }
-    }
+      },
+      _ => None,
+    };
+
+    jobs.push(NixJob {
+      name: name.clone(),
+      drv_path,
+      system,
+      outputs: None,
+      input_drvs: None,
+      constituents: None,
+      meta: NixMeta::default(),
+    });
   }
 
   Ok(jobs)
