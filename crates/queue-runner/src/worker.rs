@@ -835,7 +835,14 @@ async fn try_remote_build(
     }
 
     // Build remotely via --store
-    let store_uri = format!("ssh://{}", builder.ssh_uri);
+    // Allow ssh-ng but default to ssh.
+    let store_uri = if builder.ssh_uri.starts_with("ssh://")
+      || builder.ssh_uri.starts_with("ssh-ng://")
+    {
+      builder.ssh_uri.clone()
+    } else {
+      format!("ssh://{}", builder.ssh_uri)
+    };
     let result = crate::builder::run_nix_build_remote(
       drv_path,
       work_dir,
