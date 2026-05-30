@@ -1,12 +1,11 @@
 target/
 
 # Nix
-result*
-result-*
-*.qcow2
+/result*
+/*.qcow2
 
 # Misc
-.direnv
+/.direnv
 
 # Migrations
 *_test_migration.sql
