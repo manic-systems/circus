@@ -835,11 +835,9 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
   let mut hasher = Sha256::new();
   hasher.update(token.as_bytes());
   let digest = hex::encode(hasher.finalize());
-  allowed.iter().any(|a| subtle_eq(a, &digest))
-}
-
-fn subtle_eq(a: &str, b: &str) -> bool {
-  a.as_bytes().ct_eq(b.as_bytes()).into()
+  allowed
+    .iter()
+    .any(|a| bool::from(a.as_bytes().ct_eq(digest.as_bytes())))
 }
 
 async fn upsert_session(
