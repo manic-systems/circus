@@ -66,8 +66,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31
         with:
+          enable_kvm: true
           extra_nix_config: |
             system-features = kvm benchmark big-parallel nixos-test uid-range
+            extra-experimental-features = nix-command flakes auto-allocate-uids
             auto-allocate-uids = true
 
       # XXX: do we want to run those checks on any other arch? Maybe Darwin
