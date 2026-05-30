@@ -122,36 +122,27 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
 }
 
 fn parse_endpoint(url: &str) -> anyhow::Result<(String, u16, bool)> {
-  let (rest, tls) = if let Some(r) = url.strip_prefix("circus+tls://") {
-    (r, true)
-  } else if let Some(r) = url.strip_prefix("circus://") {
-    (r, false)
+  let has_scheme = url.contains("://");
+  let normalized = if has_scheme {
+    url.to_owned()
   } else {
-    (url, false)
+    format!("circus://{url}")
   };
-  let (host, port_str) = if let Some(stripped) = rest.strip_prefix('[') {
-    let end = stripped
-      .find(']')
-      .ok_or_else(|| anyhow::anyhow!("invalid bracketed host in runner_url"))?;
-    let host = &stripped[..end];
-    let after = &stripped[end + 1..];
-    let port = after
-      .strip_prefix(':')
-      .ok_or_else(|| anyhow::anyhow!("missing port in runner_url"))?;
-    (host, port)
-  } else {
-    let (host, port) = rest
-      .rsplit_once(':')
-      .ok_or_else(|| anyhow::anyhow!("missing host or port in runner_url"))?;
-    (host, port)
-  };
-  if host.is_empty() {
-    return Err(anyhow::anyhow!("missing host in runner_url"));
+  let parsed = url::Url::parse(&normalized)
+    .with_context(|| format!("invalid runner_url: {url}"))?;
+  let scheme = parsed.scheme();
+  let tls = matches!(scheme, "circus+tls");
+  if !matches!(scheme, "circus" | "circus+tls") {
+    return Err(anyhow::anyhow!("unsupported runner_url scheme: {scheme}"));
   }
-  let port: u16 = port_str
-    .parse()
-    .context("runner_url port is not a number")?;
-  Ok((host.to_owned(), port, tls))
+  let host = parsed
+    .host_str()
+    .ok_or_else(|| anyhow::anyhow!("missing host in runner_url"))?
+    .to_owned();
+  let port = parsed
+    .port()
+    .ok_or_else(|| anyhow::anyhow!("missing port in runner_url"))?;
+  Ok((host, port, tls))
 }
 
 async fn verify_runner_version(
