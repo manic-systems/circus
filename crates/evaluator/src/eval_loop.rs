@@ -638,6 +638,65 @@ async fn evaluate_jobset(
 /// Detect whether a derivation is a fixed-output derivation by reading the
 /// `.drv` file and checking for `outputHash` in its env vars.
 /// Returns `(is_fod, fod_hash)`.
+/// Read the derivation's `requiredSystemFeatures` env var via
+/// `nix derivation show`. The Nix derivation format encodes this attribute
+/// as a colon- or space-separated string in `env.requiredSystemFeatures`
+/// (a function of how nixpkgs builds the drv); modern Nix exposes a
+/// structured `requiredSystemFeatures` key on the derivation too.
+///
+/// We accept either: parse a JSON list if present, otherwise split the
+/// env string on whitespace. Failure (drv not on disk, nix not on PATH,
+/// malformed JSON) returns an empty list, mirroring the SSH path which
+/// treats absence as "no constraint".
+async fn read_required_features(drv_path: &str) -> Vec<String> {
+  let Ok(output) = tokio::process::Command::new("nix")
+    .args([
+      "--extra-experimental-features",
+      "nix-command",
+      "derivation",
+      "show",
+      drv_path,
+    ])
+    .output()
+    .await
+  else {
+    return Vec::new();
+  };
+  if !output.status.success() {
+    return Vec::new();
+  }
+  let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+  else {
+    return Vec::new();
+  };
+  let Some(drv) = parsed.as_object().and_then(|o| o.values().next()) else {
+    return Vec::new();
+  };
+  let drv = drv.as_object();
+
+  // 1. Top-level `requiredSystemFeatures` list (modern Nix).
+  if let Some(arr) = drv
+    .and_then(|d| d.get("requiredSystemFeatures"))
+    .and_then(|v| v.as_array())
+  {
+    return arr
+      .iter()
+      .filter_map(|v| v.as_str().map(str::to_owned))
+      .filter(|s| !s.is_empty())
+      .collect();
+  }
+  // 2. `env.requiredSystemFeatures`: space-separated string.
+  if let Some(env_str) = drv
+    .and_then(|d| d.get("env"))
+    .and_then(|v| v.as_object())
+    .and_then(|env| env.get("requiredSystemFeatures"))
+    .and_then(|v| v.as_str())
+  {
+    return env_str.split_whitespace().map(str::to_owned).collect();
+  }
+  Vec::new()
+}
+
 fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
   let Ok(content) = std::fs::read_to_string(drv_path) else {
     return (false, None);
@@ -680,6 +739,7 @@ async fn create_builds_from_eval(
     let is_aggregate = job.constituents.is_some();
 
     let (is_fod, fod_hash) = detect_fod(&job.drv_path);
+    let required_features = read_required_features(&job.drv_path).await;
     let build = repo::builds::create(pool, CreateBuild {
       evaluation_id: eval_id,
       job_name: job.name.clone(),
@@ -694,6 +754,7 @@ async fn create_builds_from_eval(
       meta_license: job.meta.license.clone(),
       meta_homepage: job.meta.homepage.clone(),
       meta_maintainers: job.meta.maintainers.clone(),
+      required_features,
     })
     .await?;
 
