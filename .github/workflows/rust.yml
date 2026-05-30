@@ -13,32 +13,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
+      - uses: cachix/install-nix-action@v31
+      - name: Check Rust Formatting
+        run: nix develop --command cargo fmt --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings
+      - uses: cachix/install-nix-action@v31
+      - name: Run Clippy
+        run: nix develop --command cargo clippy --all-targets -- -D warnings
 
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          toolchain: nightly
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
+      - uses: cachix/install-nix-action@v31
       - name: Run Test Suite
-        run: cargo nextest run --all
+        run:  nix develop --command cargo nextest run --all
