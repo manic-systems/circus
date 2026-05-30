@@ -27,6 +27,11 @@ impl agent_session::Server for SessionImpl {
     params: agent_session::HeartbeatParams,
     _results: agent_session::HeartbeatResults,
   ) -> Result<(), capnp::Error> {
+    #![expect(
+      clippy::future_not_send,
+      reason = "capnp-rpc session capability is !Send; the RPC thread uses a \
+                single-threaded runtime"
+    )]
     let pr = params.get()?;
     let ping = pr.get_ping()?;
     let pressure = ping.get_pressure()?;

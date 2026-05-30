@@ -81,31 +81,30 @@ pub(super) async fn login_action(
         Redirect::to("/"),
       )
         .into_response();
-    } else {
-      crate::audit::record_with_actor(
-        &state.pool,
-        &circus_common::audit::Actor::anonymous(),
-        None,
-        "LOGIN_FAILURE",
-        Some("dashboard"),
-        Some(username),
-        serde_json::json!({ "method": "password" }),
-      )
-      .await;
-
-      let tmpl = LoginTemplate {
-        error: Some("Invalid username or password".to_string()),
-      };
-      return (
-        StatusCode::UNAUTHORIZED,
-        Html(
-          tmpl
-            .render()
-            .unwrap_or_else(|e| format!("Template error: {e}")),
-        ),
-      )
-        .into_response();
     }
+    crate::audit::record_with_actor(
+      &state.pool,
+      &circus_common::audit::Actor::anonymous(),
+      None,
+      "LOGIN_FAILURE",
+      Some("dashboard"),
+      Some(username),
+      serde_json::json!({ "method": "password" }),
+    )
+    .await;
+
+    let tmpl = LoginTemplate {
+      error: Some("Invalid username or password".to_string()),
+    };
+    return (
+      StatusCode::UNAUTHORIZED,
+      Html(
+        tmpl
+          .render()
+          .unwrap_or_else(|e| format!("Template error: {e}")),
+      ),
+    )
+      .into_response();
   }
 
   // Fall back to API key authentication

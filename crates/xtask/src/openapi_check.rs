@@ -1,26 +1,27 @@
-//! OpenAPI drift detection.
+//! `OpenAPI` drift detection.
 //!
-//! The hand-written OpenAPI document at
+//! The hand-written `OpenAPI` document at
 //! `crates/server/src/routes/openapi.rs` is the source of truth for our
 //! published REST surface. It is easy for the document to drift when a
 //! handler is added or renamed without updating the JSON. This check
 //! parses route registrations from the source tree, normalizes them to
-//! OpenAPI-style paths, and compares against the documented set.
+//! `OpenAPI`-style paths, and compares against the documented set.
 //!
 //! Modules under `crates/server/src/routes/` are classified into:
 //!
 //! - **api**: nested under `/api/v1` in `routes/mod.rs`; must appear in the
-//!   OpenAPI document.
-//! - **public**: lives at the root, exposed to OpenAPI by policy (LDAP login,
+//!   `OpenAPI` document.
+//! - **public**: lives at the root, exposed to `OpenAPI` by policy (LDAP login,
 //!   channel manifests).
-//! - **excluded**: intentionally not in OpenAPI (cache speaks the Nix binary
+//! - **excluded**: intentionally not in `OpenAPI` (cache speaks the Nix binary
 //!   cache protocol, dashboard is HTML, etc.).
 //!
 //! When the check fails, the report lists exactly which routes are missing
-//! from the document and which OpenAPI entries no longer match any route.
+//! from the document and which `OpenAPI` entries no longer match any route.
 
 use std::{
   collections::BTreeSet,
+  fmt::Write,
   fs,
   path::{Path, PathBuf},
 };
@@ -45,10 +46,10 @@ const API_MODULES: &[&str] = &[
   "users",
 ];
 
-/// Public modules whose routes also belong in the OpenAPI document.
+/// Public modules whose routes also belong in the `OpenAPI` document.
 const PUBLIC_DOCUMENTED_MODULES: &[&str] = &["channel_manifests", "ldap"];
 
-/// Modules whose routes are intentionally NOT in the OpenAPI document.
+/// Modules whose routes are intentionally NOT in the `OpenAPI` document.
 /// Kept for documentation and policy review.
 #[allow(dead_code)]
 const EXCLUDED_MODULES: &[&str] = &[
@@ -63,6 +64,7 @@ const EXCLUDED_MODULES: &[&str] = &[
 ];
 
 pub fn run() -> Result<()> {
+  #![expect(clippy::print_stdout, reason = "xtask CLI output is intentional")]
   let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     .join("../..")
     .canonicalize()?;
@@ -94,7 +96,7 @@ pub fn run() -> Result<()> {
     if !missing_in_openapi.is_empty() {
       msg.push_str("\nRoutes registered but not documented in openapi.rs:\n");
       for r in &missing_in_openapi {
-        msg.push_str(&format!("  - {r}\n"));
+        let _ = writeln!(msg, "  - {r}");
       }
     }
     if !stale_openapi.is_empty() {
@@ -102,7 +104,7 @@ pub fn run() -> Result<()> {
         "\nOpenAPI paths that no longer match any registered route:\n",
       );
       for r in &stale_openapi {
-        msg.push_str(&format!("  - {r}\n"));
+        let _ = writeln!(msg, "  - {r}");
       }
     }
     msg.push_str(
@@ -135,6 +137,11 @@ pub fn parse_routes_in_file(path: &Path) -> Result<BTreeSet<String>> {
     .with_context(|| format!("reading {}", path.display()))?;
 
   // Match `.route("..."` or `.route(\n        "..."`.
+  #[expect(
+    clippy::expect_used,
+    reason = "static regex initializer - invalid regex would be a programming \
+              error"
+  )]
   let route_re = Regex::new(r#"\.route\(\s*"([^"]+)""#).expect("valid regex");
 
   let api = API_MODULES.contains(&module.as_str());
@@ -159,7 +166,7 @@ pub fn parse_routes_in_file(path: &Path) -> Result<BTreeSet<String>> {
   Ok(out)
 }
 
-/// Axum 0.8 paths use `{name}` style placeholders, which matches OpenAPI
+/// Axum 0.8 paths use `{name}` style placeholders, which matches `OpenAPI`
 /// style already, so no conversion is needed. We do trim trailing slashes
 /// (except for the root) to canonicalize.
 fn normalize_path(p: &str) -> String {
@@ -170,7 +177,7 @@ fn normalize_path(p: &str) -> String {
   }
 }
 
-/// Extract every top-level `"/path": { ... }` key from the OpenAPI document
+/// Extract every top-level `"/path": { ... }` key from the `OpenAPI` document
 /// source by parsing the file's `json!(...)` literal naively. We don't
 /// actually run the Rust code; we extract the JSON-ish source between the
 /// `"paths": {` brace and its matching close, then scan keys.

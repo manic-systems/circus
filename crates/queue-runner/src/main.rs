@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
   // loop will flip each agent back to connected on register.
   match repo::builder_sessions::reset_all_connected(db.pool()).await {
     Ok(n) if n > 0 => {
-      tracing::info!(reset = n, "cleared stale builder_sessions.connected")
+      tracing::info!(reset = n, "cleared stale builder_sessions.connected");
     },
     Ok(_) => {},
     Err(e) => tracing::warn!("could not reset builder_sessions.connected: {e}"),
@@ -76,18 +76,17 @@ async fn main() -> anyhow::Result<()> {
   // is started further down; agents that register before the listener is
   // up simply reconnect via their supervisor loop.
   let agent_pool = AgentPool::new();
-  let heartbeat_ttl = qr_config
-    .rpc
-    .as_ref()
-    .map(|c| std::time::Duration::from_secs(c.heartbeat_ttl_secs))
-    .unwrap_or_else(|| std::time::Duration::from_secs(60));
+  let heartbeat_ttl = qr_config.rpc.as_ref().map_or_else(
+    || std::time::Duration::from_mins(1),
+    |c| std::time::Duration::from_secs(c.heartbeat_ttl_secs),
+  );
 
   let worker_pool = Arc::new(WorkerPool::new(
     db.pool().clone(),
     workers,
     work_dir.clone(),
     nix_store_dir,
-    hot_config.clone(),
+    Arc::clone(&hot_config),
     log_config,
     gc_config,
     signing_config,
@@ -117,16 +116,16 @@ async fn main() -> anyhow::Result<()> {
     );
   }
 
-  let worker_pool_for_drain = worker_pool.clone();
+  let worker_pool_for_drain = Arc::clone(&worker_pool);
 
   let wakeup = Arc::new(tokio::sync::Notify::new());
   let listener_handle = circus_common::pg_notify::spawn_listener(
     db.pool(),
     &[circus_common::pg_notify::CHANNEL_BUILDS_CHANGED],
-    wakeup.clone(),
+    Arc::clone(&wakeup),
   );
 
-  let active_builds = worker_pool.active_builds().clone();
+  let active_builds = Arc::clone(worker_pool.active_builds());
 
   // capnp-rpc lives in its own thread because its capabilities are
   // !Send; the rest of the queue-runner stays on the multi-threaded
@@ -148,16 +147,16 @@ async fn main() -> anyhow::Result<()> {
   }
 
   tokio::select! {
-      result = circus_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, hot_config.clone(), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
+      result = circus_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, Arc::clone(&hot_config), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
           if let Err(e) = result {
               tracing::error!("Runner loop failed: {e}");
           }
       }
       () = gc_loop(gc_config_for_loop, db.pool().clone()) => {}
-      () = failed_paths_cleanup_loop(db.pool().clone(), hot_config.clone(), failed_paths_cache) => {}
+      () = failed_paths_cleanup_loop(db.pool().clone(), Arc::clone(&hot_config), failed_paths_cache) => {}
       () = cancel_checker_loop(db.pool().clone(), active_builds) => {}
-      () = notification_retry_loop(db.pool().clone(), hot_config.clone()) => {}
-      () = sighup_loop(hot_config.clone()) => {}
+      () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
+      () = sighup_loop(Arc::clone(&hot_config)) => {}
       () = heartbeat_loop(db.pool().clone(), qr_config.poll_interval) => {}
       () = shutdown_signal() => {
           tracing::info!("Shutdown signal received, draining in-flight builds...");
@@ -225,10 +224,12 @@ fn spawn_rpc_thread(
         }
       }));
     })
-    .map(|_| ())
-    .unwrap_or_else(|e| {
-      tracing::error!("failed to spawn rpc thread: {e}");
-    });
+    .map_or_else(
+      |e| {
+        tracing::error!("failed to spawn rpc thread: {e}");
+      },
+      |_| {},
+    );
 }
 
 async fn cleanup_stale_logs(log_dir: &std::path::Path) {
@@ -249,6 +250,7 @@ async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
   let interval = std::time::Duration::from_secs(gc_config.cleanup_interval);
   let max_age = std::time::Duration::from_secs(gc_config.max_age_days * 86400);
 
+  #[expect(clippy::infinite_loop, reason = "intentional background GC loop")]
   loop {
     tokio::time::sleep(interval).await;
 
@@ -299,6 +301,10 @@ async fn failed_paths_cleanup_loop(
   }
 
   let interval = std::time::Duration::from_hours(1);
+  #[expect(
+    clippy::infinite_loop,
+    reason = "intentional background cleanup loop"
+  )]
   loop {
     tokio::time::sleep(interval).await;
     let ttl = hot_config.read().await.failed_paths_ttl;
@@ -318,6 +324,10 @@ async fn failed_paths_cleanup_loop(
 
 async fn cancel_checker_loop(pool: sqlx::PgPool, active_builds: ActiveBuilds) {
   let interval = Duration::from_secs(2);
+  #[expect(
+    clippy::infinite_loop,
+    reason = "intentional background cancel check loop"
+  )]
   loop {
     tokio::time::sleep(interval).await;
 
@@ -362,6 +372,10 @@ async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
     tracing::warn!("initial queue-runner heartbeat failed: {e}");
   }
 
+  #[expect(
+    clippy::infinite_loop,
+    reason = "intentional background heartbeat loop"
+  )]
   loop {
     tokio::time::sleep(interval).await;
     if let Err(e) = circus_common::service_heartbeat::record(
@@ -379,6 +393,7 @@ async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
 }
 
 async fn sighup_loop(hot_config: Arc<RwLock<HotConfig>>) {
+  #[expect(clippy::infinite_loop, reason = "intentional SIGHUP handler loop")]
   #[cfg(unix)]
   {
     use tokio::signal::unix::SignalKind;
@@ -453,6 +468,10 @@ async fn notification_retry_loop(
     }
   });
 
+  #[expect(
+    clippy::infinite_loop,
+    reason = "intentional notification retry loop"
+  )]
   loop {
     tokio::time::sleep(poll_interval).await;
 
@@ -518,6 +537,11 @@ async fn notification_retry_loop(
 }
 
 async fn shutdown_signal() {
+  #[expect(
+    clippy::expect_used,
+    reason = "signal handler install failure indicates a broken runtime; \
+              panicking is appropriate"
+  )]
   let ctrl_c = async {
     tokio::signal::ctrl_c()
       .await
@@ -525,6 +549,11 @@ async fn shutdown_signal() {
   };
 
   #[cfg(unix)]
+  #[expect(
+    clippy::expect_used,
+    reason = "signal handler install failure indicates a broken runtime; \
+              panicking is appropriate"
+  )]
   let terminate = async {
     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
       .expect("failed to install SIGTERM handler")

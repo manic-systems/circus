@@ -17,7 +17,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// Extract the acting principal from request extensions. Returns
-/// `Actor::anonymous()` when neither a User nor an ApiKey is present (for
+/// `Actor::anonymous()` when neither a User nor an `ApiKey` is present (for
 /// example, a failed login attempt before any session was established).
 #[must_use]
 pub fn actor_from_extensions(extensions: &Extensions) -> Actor {
@@ -40,7 +40,7 @@ pub fn remote_addr_from_extensions(extensions: &Extensions) -> Option<String> {
 }
 
 /// Build an actor from an [`ApiKey`] resolved by an extractor like
-/// `RequireAdmin`. Use this from handlers that have the ApiKey in hand
+/// `RequireAdmin`. Use this from handlers that have the `ApiKey` in hand
 /// already and do not need to inspect raw extensions.
 #[must_use]
 pub fn actor_from_api_key(key: &ApiKey) -> Actor {
@@ -48,7 +48,7 @@ pub fn actor_from_api_key(key: &ApiKey) -> Actor {
 }
 
 /// One-call helper for handlers that have already extracted an
-/// authenticated ApiKey (typically via `RequireAdmin`).
+/// authenticated `ApiKey` (typically via `RequireAdmin`).
 pub async fn record_for_key(
   pool: &PgPool,
   key: &ApiKey,

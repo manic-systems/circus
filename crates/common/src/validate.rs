@@ -24,14 +24,40 @@ pub fn is_valid_nix_hash(hash: &str) -> bool {
       .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
-static NAME_RE: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").unwrap());
+static NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+  #[expect(
+    clippy::expect_used,
+    reason = "static regex initializer - invalid regex would be a programming \
+              error"
+  )]
+  {
+    Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+      .expect("invalid NAME_RE regex pattern")
+  }
+});
 
-static COMMIT_HASH_RE: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^[0-9a-fA-F]{1,64}$").unwrap());
+static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
+  #[expect(
+    clippy::expect_used,
+    reason = "static regex initializer - invalid regex would be a programming \
+              error"
+  )]
+  {
+    Regex::new(r"^[0-9a-fA-F]{1,64}$")
+      .expect("invalid COMMIT_HASH_RE regex pattern")
+  }
+});
 
-static SYSTEM_RE: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^\w+-\w+$").unwrap());
+static SYSTEM_RE: LazyLock<Regex> = LazyLock::new(|| {
+  #[expect(
+    clippy::expect_used,
+    reason = "static regex initializer - invalid regex would be a programming \
+              error"
+  )]
+  {
+    Regex::new(r"^\w+-\w+$").expect("invalid SYSTEM_RE regex pattern")
+  }
+});
 
 /// Schemes considered insecure for repository URLs.
 const INSECURE_SCHEMES: &[&str] = &["file", "http"];
@@ -275,7 +301,10 @@ fn validate_drv_path(path: &str) -> Result<(), String> {
   if !path.starts_with('/') {
     return Err("drv_path must be an absolute path".to_string());
   }
-  if !path.ends_with(".drv") {
+  if !std::path::Path::new(path)
+    .extension()
+    .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
+  {
     return Err("drv_path must end with .drv".to_string());
   }
   if path.contains("..") {

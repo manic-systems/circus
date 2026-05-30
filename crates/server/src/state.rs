@@ -105,10 +105,19 @@ impl AppState {
   /// Compute the CSRF token bound to a given session ID. Same input always
   /// produces the same output for the lifetime of the process; comparing
   /// with [`subtle::ConstantTimeEq`] avoids timing leaks.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the HMAC key length is rejected by `Hmac::<Sha256>`.
+  /// The key is always 32 bytes, which SHA-256 accepts.
   #[must_use]
   pub fn csrf_token_for(&self, session_id: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
+    #[expect(
+      clippy::expect_used,
+      reason = "32-byte key is always valid for HMAC-SHA256"
+    )]
     let mut mac = Hmac::<Sha256>::new_from_slice(self.csrf_secret.as_ref())
       .expect("HMAC-SHA256 accepts any key length");
     mac.update(session_id.as_bytes());
@@ -126,7 +135,7 @@ impl AppState {
   /// Spawn a background task that periodically evicts expired sessions.
   /// This prevents unbounded memory growth from the in-memory session store.
   pub fn spawn_session_cleanup(&self) {
-    let sessions = self.sessions.clone();
+    let sessions = Arc::clone(&self.sessions);
     tokio::spawn(async move {
       loop {
         tokio::time::sleep(SESSION_CLEANUP_INTERVAL).await;
@@ -149,7 +158,7 @@ impl AppState {
   /// and trims the map back to the size cap. Without this the cache grows
   /// without bound on a busy mirror.
   pub fn spawn_narinfo_cleanup(&self) {
-    let cache = self.narinfo_cache.clone();
+    let cache = Arc::clone(&self.narinfo_cache);
     tokio::spawn(async move {
       loop {
         tokio::time::sleep(SESSION_CLEANUP_INTERVAL).await;

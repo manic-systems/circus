@@ -1,5 +1,6 @@
 //! Integration tests for advanced search functionality
 //! Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL` connection string.
+#![expect(clippy::expect_used, clippy::print_stdout, reason = "Fine in tests")]
 
 use circus_common::{BuildStatus, models::*, repo, repo::search::*};
 use uuid::Uuid;
@@ -83,8 +84,8 @@ async fn test_project_search() {
   assert_eq!(results.total_projects, 2);
 
   // Cleanup
-  repo::projects::delete(&pool, project1.id).await.ok();
-  repo::projects::delete(&pool, project2.id).await.ok();
+  let _ = repo::projects::delete(&pool, project1.id).await;
+  let _ = repo::projects::delete(&pool, project2.id).await;
 }
 
 #[tokio::test]
@@ -236,7 +237,7 @@ async fn test_build_search_with_filters() {
   assert!(results.builds.iter().any(|b| b.id == build1.id));
 
   // Cleanup - cascades to jobsets, evaluations, builds
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -322,7 +323,7 @@ async fn test_multi_entity_search() {
   );
 
   // Cleanup - cascades to all children
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -381,7 +382,7 @@ async fn test_search_pagination() {
 
   // Cleanup
   for id in project_ids {
-    repo::projects::delete(&pool, id).await.ok();
+    let _ = repo::projects::delete(&pool, id).await;
   }
 }
 
@@ -428,8 +429,8 @@ async fn test_search_sorting() {
   assert!(results.projects[1].name.starts_with("zzz"));
 
   // Cleanup
-  repo::projects::delete(&pool, project_a.id).await.ok();
-  repo::projects::delete(&pool, project_z.id).await.ok();
+  let _ = repo::projects::delete(&pool, project_a.id).await;
+  let _ = repo::projects::delete(&pool, project_z.id).await;
 }
 
 #[tokio::test]
@@ -526,5 +527,5 @@ async fn test_quick_search() {
   let _ = builds; // Acknowledge builds were returned
 
   // Cleanup - cascades to all children
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }

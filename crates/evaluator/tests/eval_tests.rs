@@ -1,5 +1,6 @@
 //! Tests for nix evaluation output parsing.
 //! These tests do NOT require nix or a database.
+#![expect(clippy::unwrap_used, reason = "Fine in tests")]
 
 #[test]
 fn test_parse_valid_job() {

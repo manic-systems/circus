@@ -37,7 +37,7 @@ impl LogSinkImpl {
 
 async fn open(inner: &Inner) -> std::io::Result<File> {
   if let Some(parent) = inner.path.parent() {
-    tokio::fs::create_dir_all(parent).await.ok();
+    let _ = tokio::fs::create_dir_all(parent).await;
   }
   OpenOptions::new()
     .create(true)
@@ -48,6 +48,14 @@ async fn open(inner: &Inner) -> std::io::Result<File> {
 
 #[allow(refining_impl_trait_internal, refining_impl_trait_reachable)]
 impl log_sink::Server for LogSinkImpl {
+  #[expect(
+    clippy::expect_used,
+    reason = "guard is unconditionally initialised; None is impossible"
+  )]
+  #[expect(
+    clippy::significant_drop_tightening,
+    reason = "file lock held during writes"
+  )]
   fn write(
     self: capnp::capability::Rc<Self>,
     params: log_sink::WriteParams,
@@ -55,19 +63,20 @@ impl log_sink::Server for LogSinkImpl {
   ) -> Promise<(), capnp::Error> {
     let inner = Arc::clone(&self.inner);
     Promise::from_future(async move {
-      let pr = params.get().map_err(capnp::Error::from)?;
-      let chunk = pr.get_chunk().map_err(capnp::Error::from)?.to_vec();
+      let pr = params.get()?;
+      let chunk = pr.get_chunk()?.to_vec();
 
-      let mut guard = inner.file.lock().await;
-      if guard.is_none() {
+      let needs_open = inner.file.lock().await.is_none();
+      if needs_open {
         let f = open(&inner).await.map_err(|e| {
           capnp::Error::failed(format!(
             "open log {}: {e}",
             inner.path.display()
           ))
         })?;
-        *guard = Some(f);
+        *inner.file.lock().await = Some(f);
       }
+      let mut guard = inner.file.lock().await;
       let f = guard.as_mut().expect("just initialised");
       f.write_all(&chunk)
         .await
@@ -86,7 +95,8 @@ impl log_sink::Server for LogSinkImpl {
   ) -> Promise<(), capnp::Error> {
     let inner = Arc::clone(&self.inner);
     Promise::from_future(async move {
-      if let Some(mut f) = inner.file.lock().await.take() {
+      let file_opt = inner.file.lock().await.take();
+      if let Some(mut f) = file_opt {
         let _ = f.flush().await;
       }
       Ok(())

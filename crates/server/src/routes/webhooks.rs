@@ -134,10 +134,7 @@ fn jobset_matches_branch(
   jobset_branch: Option<&str>,
   pushed_branch: &str,
 ) -> bool {
-  match jobset_branch {
-    None => true,
-    Some(b) => b == pushed_branch,
-  }
+  jobset_branch.is_none_or(|b| b == pushed_branch)
 }
 
 /// Verify HMAC-SHA256 webhook signature.
@@ -253,11 +250,8 @@ async fn handle_github_push(
     ));
   }
 
-  let pushed_branch = payload
-    .git_ref
-    .as_deref()
-    .map(strip_branch_prefix)
-    .unwrap_or("");
+  let pushed_branch =
+    payload.git_ref.as_deref().map_or("", strip_branch_prefix);
 
   let jobsets = repo::jobsets::list_all_for_project(&state.pool, project_id)
     .await
@@ -497,11 +491,8 @@ async fn handle_gitea_push(
     ));
   }
 
-  let pushed_branch = payload
-    .git_ref
-    .as_deref()
-    .map(strip_branch_prefix)
-    .unwrap_or("");
+  let pushed_branch =
+    payload.git_ref.as_deref().map_or("", strip_branch_prefix);
 
   let jobsets = repo::jobsets::list_all_for_project(&state.pool, project_id)
     .await
@@ -640,11 +631,8 @@ async fn handle_gitlab_push(
     ));
   }
 
-  let pushed_branch = payload
-    .git_ref
-    .as_deref()
-    .map(strip_branch_prefix)
-    .unwrap_or("");
+  let pushed_branch =
+    payload.git_ref.as_deref().map_or("", strip_branch_prefix);
 
   let jobsets = repo::jobsets::list_all_for_project(&state.pool, project_id)
     .await
@@ -811,6 +799,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
   use super::*;
 

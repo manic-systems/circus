@@ -92,7 +92,7 @@ struct RateLimitState {
 
 /// How long an idle bucket persists before the periodic sweep drops it.
 const RATE_LIMIT_BUCKET_TTL: std::time::Duration =
-  std::time::Duration::from_secs(300);
+  std::time::Duration::from_mins(5);
 
 async fn rate_limit_middleware(
   ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
@@ -108,13 +108,17 @@ async fn rate_limit_middleware(
     // Periodic cleanup of idle buckets (every 60s, Instant-based so a
     // wall-clock step doesn't strand us).
     {
-      let mut last = rl.last_cleanup.lock().unwrap_or_else(|e| e.into_inner());
-      if now.duration_since(*last) > std::time::Duration::from_secs(60) {
+      let mut last = rl
+        .last_cleanup
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+      if now.duration_since(*last) > std::time::Duration::from_mins(1) {
         *last = now;
         rl.buckets.retain(|_, b| {
           now.duration_since(b.last_refilled) < RATE_LIMIT_BUCKET_TTL
         });
       }
+      drop(last);
     }
 
     let mut entry = rl.buckets.entry(ip).or_insert_with(|| {
@@ -125,7 +129,7 @@ async fn rate_limit_middleware(
     });
 
     let elapsed = now.duration_since(entry.last_refilled).as_secs_f64();
-    entry.tokens = (entry.tokens + elapsed * rl.rps).min(rl.burst);
+    entry.tokens = elapsed.mul_add(rl.rps, entry.tokens).min(rl.burst);
     entry.last_refilled = now;
 
     if entry.tokens < 1.0 {
@@ -139,12 +143,18 @@ async fn rate_limit_middleware(
 }
 
 async fn serve_style_css() -> Response {
-  Response::builder()
-    .header(header::CONTENT_TYPE, "text/css")
-    .header(header::CACHE_CONTROL, "public, max-age=3600")
-    .body(Body::from(STYLE_CSS))
-    .unwrap()
-    .into_response()
+  #[expect(
+    clippy::expect_used,
+    reason = "response builder with static values cannot fail"
+  )]
+  {
+    Response::builder()
+      .header(header::CONTENT_TYPE, "text/css")
+      .header(header::CACHE_CONTROL, "public, max-age=3600")
+      .body(Body::from(STYLE_CSS))
+      .expect("response builder should not fail")
+  }
+  .into_response()
 }
 
 pub fn router(state: AppState, config: &ServerConfig) -> Router {

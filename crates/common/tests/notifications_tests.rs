@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, reason = "Fine in tests")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use circus_common::notifications::*;
@@ -15,7 +16,7 @@ fn test_rate_limit_extraction() {
   let state = state.unwrap();
   assert_eq!(state.limit, 5000);
   assert_eq!(state.remaining, 1234);
-  assert_eq!(state.reset_at, 1735689600);
+  assert_eq!(state.reset_at, 1_735_689_600);
 }
 
 #[test]

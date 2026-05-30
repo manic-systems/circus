@@ -32,8 +32,8 @@ serde_json.workspace         = true
 sha2.workspace               = true
 sqlx.workspace               = true
 subtle.workspace             = true
-time.workspace               = true
 thiserror.workspace          = true
+time.workspace               = true
 tokio.workspace              = true
 tokio-rustls.workspace       = true
 tokio-util.workspace         = true
@@ -46,3 +46,6 @@ x509-parser.workspace        = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints]
+workspace = true

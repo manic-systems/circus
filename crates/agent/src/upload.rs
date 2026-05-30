@@ -10,11 +10,11 @@
 //!    gzip from `async-compression`) directly into the PUT body while a
 //!    `HashingReader` tracks the on-the-wire SHA-256 and length. The NAR is
 //!    never buffered in agent memory.
-//! 4. Tell the runner via `Runner.notifyUploadComplete` with the final NarInfo
-//!    so it can persist + sign.
+//! 4. Tell the runner via `Runner.notifyUploadComplete` with the final
+//!    `NarInfo` so it can persist + sign.
 //!
 //! Failure of any single output is reported into `errorMessage` of the
-//! BuildResult; the build itself is not retroactively failed, matching
+//! `BuildResult`; the build itself is not retroactively failed, matching
 //! Hydra's behaviour.
 
 use std::{
@@ -64,6 +64,11 @@ pub struct UploadStats {
 
 /// Run the full upload flow for every output. Returns when each path
 /// has been recorded either as a success or a failure.
+///
+/// # Errors
+///
+/// Returns error if the HTTP client cannot be built. Individual
+/// per-path failures are accumulated in `UploadStats::failures`.
 pub async fn upload_all(
   runner_cap: &runner::Client,
   machine_id: &str,
@@ -71,6 +76,10 @@ pub async fn upload_all(
   compression: &str,
   outputs: &[ResolvedOutput],
 ) -> anyhow::Result<UploadStats> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let started = Instant::now();
   let mut successes = Vec::new();
   let mut failures = Vec::new();
@@ -165,6 +174,10 @@ async fn request_presigned(
   build_id: &str,
   metadata: &[PathMetadata],
 ) -> Result<Vec<PresignSlot>, capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut req = runner_cap.request_presigned_urls_request();
   {
     let mut p = req.get();
@@ -188,6 +201,10 @@ async fn request_presigned(
     )));
   }
   let mut out = Vec::with_capacity(inner.len() as usize);
+  #[expect(
+    clippy::explicit_iter_loop,
+    reason = "capnp struct_list::Reader requires explicit .iter()"
+  )]
   for entry in inner.iter() {
     out.push(PresignSlot {
       nar_url:  entry.get_nar_url()?.to_str()?.to_owned(),
@@ -281,7 +298,7 @@ async fn upload_one(
   })
 }
 
-/// AsyncRead adapter that updates a SHA-256 hasher and a byte counter
+/// `AsyncRead` adapter that updates a SHA-256 hasher and a byte counter
 /// on every successful read. No buffering; data flows straight through.
 struct HashingReader {
   inner:   Pin<Box<dyn AsyncRead + Send>>,
@@ -297,7 +314,7 @@ impl AsyncRead for HashingReader {
   ) -> Poll<std::io::Result<()>> {
     let prev = buf.filled().len();
     let result = self.inner.as_mut().poll_read(cx, buf);
-    if let Poll::Ready(Ok(())) = &result {
+    if matches!(&result, Poll::Ready(Ok(()))) {
       let new = &buf.filled()[prev..];
       if !new.is_empty() {
         self.hasher.lock().update(new);
@@ -343,7 +360,10 @@ async fn query_path_info(store_path: &str) -> anyhow::Result<PathMetadata> {
     .and_then(|v| v.as_str())
     .ok_or_else(|| anyhow::anyhow!("missing narHash"))?
     .to_owned();
-  let nar_size = obj.get("narSize").and_then(|v| v.as_u64()).unwrap_or(0);
+  let nar_size = obj
+    .get("narSize")
+    .and_then(serde_json::Value::as_u64)
+    .unwrap_or(0);
   let references = obj
     .get("references")
     .and_then(|v| v.as_array())
@@ -379,6 +399,10 @@ async fn notify_complete(
   uploaded: &UploadedBytes,
   compression: &str,
 ) -> Result<(), capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut req = runner_cap.notify_upload_complete_request();
   {
     let mut p = req.get();

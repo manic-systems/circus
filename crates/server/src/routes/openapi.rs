@@ -1,4 +1,4 @@
-//! OpenAPI 3.1 description of the public REST API.
+//! `OpenAPI` 3.1 description of the public REST API.
 //!
 //! Hand-written rather than derived from route handlers. The trade-off:
 //! schema drift is possible if a handler changes without touching this
@@ -9,7 +9,7 @@
 //! plus the public LDAP login and channel manifest endpoints. The cache
 //! NAR/narinfo endpoints are intentionally omitted because they speak
 //! the Nix binary cache protocol, not JSON, and clients of that protocol
-//! do not consult OpenAPI docs.
+//! do not consult `OpenAPI` docs.
 
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use serde_json::{Value, json};

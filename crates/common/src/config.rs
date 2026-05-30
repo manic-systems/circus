@@ -126,7 +126,7 @@ pub struct QueueRunnerConfig {
   #[serde(with = "humantime_serde")]
   pub unsupported_timeout: Option<Duration>,
 
-  /// Builder selection strategy (default: speed_factor_only).
+  /// Builder selection strategy (default: `speed_factor_only`).
   #[serde(default)]
   pub scheduling_strategy: BuilderSchedulingStrategy,
 
@@ -345,7 +345,7 @@ impl std::fmt::Debug for SlackNotificationConfig {
 /// LDAP authentication configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LdapConfig {
-  /// LDAP server URL, e.g. "ldap://host:389" or "ldaps://host:636".
+  /// LDAP server URL, e.g. `<ldap://host:389>` or `<ldaps://host:636>`.
   pub url:              String,
   /// Bind DN template with `{username}` placeholder.
   pub bind_dn_template: String,
@@ -384,7 +384,7 @@ pub enum NarCompression {
 
 impl NarCompression {
   #[must_use]
-  pub fn as_str(&self) -> &'static str {
+  pub const fn as_str(&self) -> &'static str {
     match self {
       Self::Zstd => "zstd",
       Self::Bzip2 => "bzip2",
@@ -395,7 +395,7 @@ impl NarCompression {
   }
 
   #[must_use]
-  pub fn file_extension(&self) -> &'static str {
+  pub const fn file_extension(&self) -> &'static str {
     match self {
       Self::Zstd => ".nar.zst",
       Self::Bzip2 => ".nar.bz2",
@@ -446,7 +446,7 @@ pub struct CacheUploadConfig {
   #[serde(default)]
   pub fail_build_on_upload_error: bool,
   /// Wire compression for the agent's presigned-upload path. The agent
-  /// streams the NAR through the chosen encoder before PUTing to S3, and
+  /// streams the NAR through the chosen encoder before `PUTing` to S3, and
   /// the runner records this in the narinfo `Compression:` field.
   /// Accepted values: `zstd`, `xz`, `gzip`, `none`. Defaults to `zstd`.
   #[serde(default = "default_upload_compression")]
@@ -1134,6 +1134,7 @@ fn apply_env_overrides_for_option_fields(config: &mut Config) {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
   use std::env;
 
@@ -1251,12 +1252,9 @@ mod tests {
 
   #[test]
   fn test_declarative_config_with_main_config() {
-    // Ensure declarative section is optional (default empty)
-    // Use the config crate loader which provides defaults for missing fields
     let config = Config::default();
     assert!(config.declarative.projects.is_empty());
     assert!(config.declarative.api_keys.is_empty());
-    // And that the Config can be serialized back with declarative section
     let toml_str = toml::to_string_pretty(&config).unwrap();
     let parsed: Config = toml::from_str(&toml_str).unwrap();
     assert!(parsed.declarative.projects.is_empty());
@@ -1275,7 +1273,8 @@ mod tests {
 
   #[test]
   fn test_environment_override() {
-    // Test environment variable parsing directly
+    // SAFETY: setting environment variables is not thread-safe but tests run
+    // sequentially. This is a common testing pattern for configuration.
     unsafe {
       env::set_var(
         "CIRCUS_DATABASE__URL",
@@ -1284,13 +1283,13 @@ mod tests {
       env::set_var("CIRCUS_SERVER__PORT", "8080");
     }
 
-    // Test that environment variables are being read correctly
     let db_url = std::env::var("CIRCUS_DATABASE__URL").unwrap();
     let server_port = std::env::var("CIRCUS_SERVER__PORT").unwrap();
 
     assert_eq!(db_url, "postgresql://test:test@localhost/test");
     assert_eq!(server_port, "8080");
 
+    // SAFETY: ditto — cleaning up test state.
     unsafe {
       env::remove_var("CIRCUS_DATABASE__URL");
       env::remove_var("CIRCUS_SERVER__PORT");
@@ -1300,14 +1299,13 @@ mod tests {
   #[test]
   fn test_unsupported_timeout_config() {
     let mut config = Config::default();
-    config.queue_runner.unsupported_timeout = Some(Duration::from_secs(3600));
+    config.queue_runner.unsupported_timeout = Some(Duration::from_hours(1));
 
-    // Serialize and deserialize to verify serde works
     let toml_str = toml::to_string(&config).unwrap();
     let parsed: Config = toml::from_str(&toml_str).unwrap();
     assert_eq!(
       parsed.queue_runner.unsupported_timeout,
-      Some(Duration::from_secs(3600))
+      Some(Duration::from_hours(1))
     );
   }
 
@@ -1319,17 +1317,15 @@ mod tests {
 
   #[test]
   fn test_unsupported_timeout_various_formats() {
-    // Test 30 minutes
     let mut config = Config::default();
-    config.queue_runner.unsupported_timeout = Some(Duration::from_secs(1800));
+    config.queue_runner.unsupported_timeout = Some(Duration::from_mins(30));
     let toml_str = toml::to_string(&config).unwrap();
     let parsed: Config = toml::from_str(&toml_str).unwrap();
     assert_eq!(
       parsed.queue_runner.unsupported_timeout,
-      Some(Duration::from_secs(1800))
+      Some(Duration::from_mins(30))
     );
 
-    // Test disabled (0s)
     let mut config = Config::default();
     config.queue_runner.unsupported_timeout = Some(Duration::from_secs(0));
     let toml_str = toml::to_string(&config).unwrap();
@@ -1342,7 +1338,6 @@ mod tests {
 
   #[test]
   fn test_humantime_serde_parsing() {
-    // Test that we can directly parse a QueueRunnerConfig with humantime format
     let toml = r#"
 workers = 4
 poll_interval = 5
@@ -1354,12 +1349,13 @@ unsupported_timeout = "2h 30m"
     let qr_config: QueueRunnerConfig = toml::from_str(toml).unwrap();
     assert_eq!(
       qr_config.unsupported_timeout,
-      Some(Duration::from_secs(9000)) // 2.5 hours
+      Some(Duration::from_mins(150))
     );
   }
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod humantime_option_test {
   use super::*;
 

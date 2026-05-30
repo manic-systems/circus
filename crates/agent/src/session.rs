@@ -12,6 +12,7 @@
 
 use std::{
   collections::HashMap,
+  fmt::Write,
   sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -51,13 +52,17 @@ use crate::{build, config::Agent, psi};
 /// # Errors
 /// Network or RPC errors. Connection-time errors (`connect`, `register`)
 /// are bubbled; mid-stream errors land in tracing and end the function.
+#[expect(
+  clippy::future_not_send,
+  reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+)]
 pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
   let (host, port, want_tls) = parse_endpoint(&cfg.runner_url)?;
   tracing::info!(host = %host, port, want_tls, "dialing runner");
   let socket = TcpStream::connect((host.as_str(), port))
     .await
     .with_context(|| format!("connect to runner {host}:{port}"))?;
-  socket.set_nodelay(true).ok();
+  let _ = socket.set_nodelay(true);
 
   let want_tls = want_tls || cfg.tls.is_some();
 
@@ -76,7 +81,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
       rh.compat(),
       wh.compat_write(),
       rpc_twoparty_capnp::Side::Client,
-      Default::default(),
+      capnp::message::ReaderOptions::default(),
     );
     RpcSystem::new(Box::new(network), None)
   } else {
@@ -85,7 +90,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
       read_half.compat(),
       write_half.compat_write(),
       rpc_twoparty_capnp::Side::Client,
-      Default::default(),
+      capnp::message::ReaderOptions::default(),
     );
     RpcSystem::new(Box::new(network), None)
   };
@@ -115,7 +120,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
     Duration::from_secs(cfg.heartbeat_interval_secs.max(1)),
   );
 
-  rpc_join.await.ok();
+  let _ = rpc_join.await;
   heartbeat_join.abort();
   let _ = disconnector.await;
   Ok(())
@@ -148,6 +153,10 @@ fn parse_endpoint(url: &str) -> anyhow::Result<(String, u16, bool)> {
 async fn verify_runner_version(
   runner_cap: &runner::Client,
 ) -> anyhow::Result<()> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let response = runner_cap
     .version_request()
     .send()
@@ -170,6 +179,10 @@ async fn register(
   machine_id: Uuid,
   local_builder: builder::Client,
 ) -> anyhow::Result<agent_session::Client> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut req = runner_cap.register_request();
   let mut params = req.get();
   fill_info(params.reborrow().init_info(), cfg, machine_id);
@@ -226,9 +239,7 @@ fn read_hostname() -> String {
 }
 
 fn num_cpus() -> usize {
-  std::thread::available_parallelism()
-    .map(std::num::NonZeroUsize::get)
-    .unwrap_or(1)
+  std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
 fn spawn_heartbeat(
@@ -251,6 +262,10 @@ fn spawn_heartbeat(
 async fn send_heartbeat(
   session: &agent_session::Client,
 ) -> Result<(), capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut req = session.heartbeat_request();
   let mut ping: heartbeat::Builder<'_> = req.get().init_ping();
   let load = read_loadavg();
@@ -303,12 +318,18 @@ struct BuilderInner {
   /// Runner capability, used to request presigned URLs and notify the
   /// runner of upload completion. Cloning a capnp client is cheap.
   runner_cap: runner::Client,
-  /// build_id -> CancellationToken. Inserted by `assign`, removed by
+  /// `build_id` -> `CancellationToken`. Inserted by `assign`, removed by
   /// the per-build task at completion, signalled by `abort`.
   running:    Mutex<HashMap<Uuid, CancellationToken>>,
 }
 
 impl BuilderImpl {
+  #[expect(
+    clippy::arc_with_non_send_sync,
+    reason = "BuilderInner is intentionally !Send + !Sync; the agent runs on \
+              a single-threaded tokio runtime so an Arc is never actually \
+              shared across threads"
+  )]
   fn new(max_jobs: u32, machine_id: Uuid, runner_cap: runner::Client) -> Self {
     Self {
       inner: Arc::new(BuilderInner {
@@ -415,7 +436,6 @@ impl builder::Server for BuilderImpl {
               if !stats.failures.is_empty() {
                 let mut msg = String::from("upload failures: ");
                 for (path, why) in &stats.failures {
-                  use std::fmt::Write as _;
                   let _ = write!(msg, "[{path} -> {why}] ");
                 }
                 if !local.error_message.is_empty() {
@@ -438,7 +458,7 @@ impl builder::Server for BuilderImpl {
               if !local.error_message.is_empty() {
                 local.error_message.push('\n');
               }
-              local.error_message.push_str(&format!("upload: {e}"));
+              let _ = write!(local.error_message, "upload: {e}");
             },
           }
         }
@@ -463,7 +483,8 @@ impl builder::Server for BuilderImpl {
       let pr = params.get()?;
       let id_str = pr.get_build_id()?.to_str()?;
       if let Ok(id) = Uuid::parse_str(id_str) {
-        if let Some(tok) = inner.running.lock().get(&id).cloned() {
+        let value = inner.running.lock().get(&id).cloned();
+        if let Some(tok) = value {
           tok.cancel();
           tracing::info!(%id, "aborting build per runner request");
         } else {
@@ -501,6 +522,10 @@ async fn report_result(
   sink: &result_sink::Client,
   outcome: anyhow::Result<build::LocalResult>,
 ) -> Result<(), capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut req = sink.report_request();
   let mut r = req.get().init_result();
   match outcome {

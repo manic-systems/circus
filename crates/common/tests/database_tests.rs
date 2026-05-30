@@ -1,4 +1,5 @@
 //! Database integration tests
+#![expect(clippy::print_stdout, reason = "Fine in tests")]
 
 use circus_common::{config::DatabaseConfig, *};
 use sqlx::PgPool;

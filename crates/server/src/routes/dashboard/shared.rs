@@ -155,7 +155,7 @@ pub(super) fn parse_build_error(raw: &str) -> Vec<BuildErrorLine> {
     out
   }
 
-  fn classify(level: i64) -> &'static str {
+  const fn classify(level: i64) -> &'static str {
     match level {
       0 => "error",
       1 => "warn",
@@ -203,7 +203,10 @@ pub(super) fn parse_build_error(raw: &str) -> Vec<BuildErrorLine> {
         if cleaned.is_empty() {
           continue;
         }
-        let level = v.get("level").and_then(|l| l.as_i64()).unwrap_or(3);
+        let level = v
+          .get("level")
+          .and_then(serde_json::Value::as_i64)
+          .unwrap_or(3);
         lines.push(BuildErrorLine {
           text:  cleaned,
           level: classify(level),
@@ -246,7 +249,7 @@ pub(super) fn format_duration(
 }
 
 pub(super) fn build_view(b: &Build) -> BuildView {
-  let (text, class) = status_badge(&b.status);
+  let (text, class) = status_badge(b.status);
   BuildView {
     id:            b.id,
     job_name:      b.job_name.clone(),
@@ -319,7 +322,7 @@ pub(super) fn eval_view_with_context(
   v
 }
 
-pub(super) fn status_badge(s: &BuildStatus) -> (String, String) {
+pub(super) fn status_badge(s: BuildStatus) -> (String, String) {
   match s {
     BuildStatus::Succeeded => ("Succeeded".into(), "succeeded".into()),
     BuildStatus::Failed => ("Failed".into(), "failed".into()),

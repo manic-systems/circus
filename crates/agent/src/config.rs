@@ -65,7 +65,7 @@ pub struct Agent {
   #[serde(default = "default_work_dir")]
   pub work_dir: PathBuf,
 
-  /// Persistent state file holding the agent's UUIDv4 machine ID. The
+  /// Persistent state file holding the agent's `UUIDv4` machine ID. The
   /// file is created on first start and read on every subsequent start
   /// so reconnects preserve identity. Defaults to
   /// `<work_dir>/machine_id`.

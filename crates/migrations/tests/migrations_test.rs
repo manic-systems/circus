@@ -1,6 +1,6 @@
 //! Integration tests for the migrations crate.
 //!
-//! Tests that require a live PostgreSQL instance skip themselves cleanly when
+//! Tests that require a live `PostgreSQL` instance skip themselves cleanly when
 //! no database is reachable, matching the pattern used in
 //! `crates/common/tests/database_tests.rs`. The pure tests at the bottom of
 //! this file run unconditionally.
@@ -8,6 +8,7 @@
 //! Set `CIRCUS_TEST_DATABASE_URL` to point tests at a specific database. The
 //! default, `postgresql://postgres:password@localhost/circus_migrations_test`,
 //! is suitable for the `nix develop` postgres dev shell.
+#![expect(clippy::expect_used, clippy::print_stderr, reason = "Fine in tests")]
 
 use circus_migrations::{
   REQUIRED_TABLES,
@@ -29,7 +30,7 @@ fn test_database_url() -> String {
 /// state. Failure to drop is non-fatal -- if the connection cannot be made
 /// the caller will detect that next and skip.
 async fn reset_database(url: &str) {
-  if let Ok(true) = Postgres::database_exists(url).await {
+  if matches!(Postgres::database_exists(url).await, Ok(true)) {
     let _ = Postgres::drop_database(url).await;
   }
 }

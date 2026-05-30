@@ -6,7 +6,14 @@ use regex::Regex;
 
 /// Username validation: 3-32 chars, alphanumeric + underscore + hyphen
 static USERNAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"^[a-zA-Z0-9_-]{3,32}$").expect("Invalid username regex pattern")
+  #[expect(
+    clippy::expect_used,
+    reason = "static regex initializer - panic on invalid regex is intentional"
+  )]
+  {
+    Regex::new(r"^[a-zA-Z0-9_-]{3,32}$")
+      .expect("Invalid username regex pattern")
+  }
 });
 
 /// Validation errors

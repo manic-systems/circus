@@ -1,15 +1,22 @@
-//! Cargo-level OpenAPI drift detection.
+//! Cargo-level `OpenAPI` drift detection.
 //!
 //! The xtask binary (`cargo xtask openapi-check`) is the operator-facing
 //! entry point for this check. This test runs the same logic during
-//! `cargo test` so that CI catches drift without anyone remembering to
-//! invoke xtask explicitly.
+//! `cargo test` so that CI catches drift without anyone remembering to invoke
+//! xtask explicitly.
 //!
 //! Both this test and the xtask carry their own copy of the scanner
 //! because xtask is a binary-only crate today. If the two diverge, fix
 //! both. The duplication is small and well-contained; a future move to
-//! generated OpenAPI (utoipa) deletes both copies.
+//! generated `OpenAPI` (utoipa) deletes both copies.
 
+#![expect(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::panic,
+  clippy::format_push_string,
+  reason = "Fine in tests"
+)]
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
 const API_MODULES: &[&str] = &[

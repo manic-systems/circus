@@ -5,6 +5,8 @@
 //! Tests that need a live postgres are covered in the `circus-migrations`
 //! integration suite.
 
+#![expect(clippy::unwrap_used, clippy::expect_used, reason = "Fine in tests")]
+
 use std::{path::Path, process::Command};
 
 fn bin() -> &'static Path {

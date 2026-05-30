@@ -17,10 +17,10 @@ use uuid::Uuid;
 /// # Errors
 ///
 /// Returns error if directory read fails.
-pub fn cleanup_old_roots(
+pub fn cleanup_old_roots<S: std::hash::BuildHasher>(
   roots_dir: &Path,
   max_age: Duration,
-  pinned_build_ids: &HashSet<Uuid>,
+  pinned_build_ids: &HashSet<Uuid, S>,
 ) -> std::io::Result<u64> {
   if !roots_dir.exists() {
     return Ok(0);

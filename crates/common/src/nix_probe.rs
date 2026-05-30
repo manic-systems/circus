@@ -260,6 +260,7 @@ pub(crate) fn extract_systems(val: &serde_json::Value) -> Vec<String> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
   use serde_json::json;
 

@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-/// One result sink per dispatch. Holds the PgPool, the build id, the
+/// One result sink per dispatch. Holds the `PgPool`, the build id, the
 /// originating agent (so per-agent counters stay in sync), and a
 /// completion notify the dispatch task awaits.
 pub struct ResultSinkImpl {
@@ -72,7 +72,8 @@ impl result_sink::Server for ResultSinkImpl {
         tracing::warn!(%machine_id, "failed to record outcome: {e}");
       }
 
-      if let Some(tx) = done.lock().await.take() {
+      let done_opt = done.lock().await.take();
+      if let Some(tx) = done_opt {
         let _ = tx.send(kind);
       }
       Ok(())

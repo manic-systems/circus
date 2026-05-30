@@ -1,6 +1,12 @@
 //! Tests for the queue runner.
 //! Nix log parsing tests require no external binaries.
 //! Database tests require `TEST_DATABASE_URL`.
+#![expect(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::print_stdout,
+  reason = "Fine in tests"
+)]
 
 // Nix log line parsing
 
@@ -102,7 +108,7 @@ async fn test_worker_pool_drain_stops_dispatch() {
     circus_common::config::CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
-    std::time::Duration::from_secs(60),
+    std::time::Duration::from_mins(1),
   );
 
   // Drain should not panic
@@ -226,7 +232,7 @@ async fn test_worker_pool_active_builds_cancel() {
     circus_common::config::CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
-    std::time::Duration::from_secs(60),
+    std::time::Duration::from_mins(1),
   );
 
   // Active builds map should start empty

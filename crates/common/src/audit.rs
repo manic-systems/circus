@@ -12,7 +12,7 @@ use crate::error::{CiError, Result};
 pub struct Actor {
   /// `"api_key"`, `"user"`, or `"anonymous"`.
   pub kind: ActorKind,
-  /// Database id of the underlying api_key or user row when known.
+  /// Database id of the underlying `api_key` or user row when known.
   pub id:   Option<Uuid>,
   /// Display name at the time of the action; preserved so the log remains
   /// readable after the referenced row is deleted.
@@ -40,7 +40,7 @@ impl ActorKind {
 
 impl Actor {
   #[must_use]
-  pub fn anonymous() -> Self {
+  pub const fn anonymous() -> Self {
     Self {
       kind: ActorKind::Anonymous,
       id:   None,

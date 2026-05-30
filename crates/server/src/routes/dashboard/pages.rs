@@ -879,7 +879,7 @@ pub(super) async fn starred_page(
           builds.first().map_or_else(
             || ("No builds".to_string(), "pending".to_string(), None),
             |build| {
-              let (text, class) = status_badge(&build.status);
+              let (text, class) = status_badge(build.status);
               (text, class, Some(build.id))
             },
           )

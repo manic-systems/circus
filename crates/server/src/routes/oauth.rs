@@ -27,8 +27,9 @@ use oauth2::{
   basic::{BasicClient, BasicErrorResponseType, BasicTokenType},
 };
 use serde::Deserialize;
+use subtle::ConstantTimeEq;
 
-use crate::{error::ApiError, state::AppState};
+use super::super::{error::ApiError, state::AppState};
 
 /// Type alias for the fully-configured GitHub OAuth client (oauth2 v5.0
 /// type-state)
@@ -69,6 +70,10 @@ struct GitHubEmailResponse {
   verified: bool,
 }
 
+#[expect(
+  clippy::expect_used,
+  reason = "hard-coded URLs and validated redirect URI are infallible"
+)]
 fn build_github_client(config: &GitHubOAuthConfig) -> GitHubOAuthClient {
   let auth_url =
     AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
@@ -124,13 +129,19 @@ async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
     security_flags
   );
 
-  Response::builder()
-    .status(StatusCode::FOUND)
-    .header(header::LOCATION, auth_url.as_str())
-    .header(header::SET_COOKIE, cookie)
-    .body(axum::body::Body::empty())
-    .unwrap()
-    .into_response()
+  #[expect(
+    clippy::expect_used,
+    reason = "response builder with static values cannot fail"
+  )]
+  {
+    Response::builder()
+      .status(StatusCode::FOUND)
+      .header(header::LOCATION, auth_url.as_str())
+      .header(header::SET_COOKIE, cookie)
+      .body(axum::body::Body::empty())
+      .expect("response builder should not fail")
+  }
+  .into_response()
 }
 
 async fn github_callback(
@@ -157,7 +168,6 @@ async fn github_callback(
       })
     });
 
-  use subtle::ConstantTimeEq;
   let state_ok = stored_state.is_some_and(|s| {
     s.len() == params.state.len()
       && s.as_bytes().ct_eq(params.state.as_bytes()).into()
@@ -309,13 +319,19 @@ async fn github_callback(
   );
 
   Ok(
-    Response::builder()
-      .status(StatusCode::FOUND)
-      .header(header::LOCATION, "/")
-      .header(header::SET_COOKIE, clear_state)
-      .header(header::SET_COOKIE, session_cookie)
-      .body(axum::body::Body::empty())
-      .unwrap(),
+    #[expect(
+      clippy::expect_used,
+      reason = "response builder with static values cannot fail"
+    )]
+    {
+      Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, "/")
+        .header(header::SET_COOKIE, clear_state)
+        .header(header::SET_COOKIE, session_cookie)
+        .body(axum::body::Body::empty())
+        .expect("response builder should not fail")
+    },
   )
 }
 
@@ -326,6 +342,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
   use super::*;
 

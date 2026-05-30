@@ -16,11 +16,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
   /// Verify that every API route registered in the server has a matching
-  /// entry in the hand-written OpenAPI document.
+  /// entry in the hand-written `OpenAPI` document.
   OpenapiCheck,
 }
 
 fn main() -> ExitCode {
+  #![expect(clippy::print_stderr, reason = "xtask error output is intentional")]
   let cli = Cli::parse();
   let result = match cli.command {
     Cmd::OpenapiCheck => openapi_check::run(),
