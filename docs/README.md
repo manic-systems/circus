@@ -27,30 +27,25 @@ for clowns. Hope this answers your other question.
 
 ## Architecture
 
-Circus follows Hydra's three-daemon model with a shared PostgreSQL database:
+Circus follows Hydra's three-daemon model with a shared PostgreSQL database. The
+server handles the API and dashboard, the evaluator polls repositories and runs
+Nix evaluations, and the queue-runner dispatches builds to workers. See the
+[design document] for architectural details, data flow, and how the pieces fit
+together.
 
-- **server** (`circus-server`): REST API (Axum), dashboard, binary cache,
-  metrics, webhooks
+- **server** (`circus-server`): REST API, dashboard, binary cache, metrics,
+  webhooks
 - **evaluator** (`circus-evaluator`): Git polling and Nix evaluation via
   `nix-eval-jobs`
 - **queue-runner** (`circus-queue-runner`): Build dispatch with semaphore-based
   worker pool
+- **agent** (`circus-agent`): Persistent build host that receives work over RPC
 - **common** (`circus-common`): Shared types, database layer, configuration,
   validation
-- **migrate-cli** (`circus-migrate`): Database migration CLI (runs, validates,
-  creates migrations)
+- **proto** (`circus-proto`): Cap'n Proto schema and generated RPC bindings
+- **migrate-cli** (`circus-migrate`): Database migration CLI
 - **migrations** (`circus-migrations`): SQL migration files and runtime
-
-```mermaid
-flowchart LR
-    A["Git Repo"] --> B["Evaluator<br/>(polls, clones, runs nix-eval-jobs)"]
-    B --> C["Evaluation + Build Records<br/>in DB"]
-    C --> D["Queue Runner<br/>(claims builds atomically,<br/>runs nix build)"]
-    D --> E["BuildSteps<br/>and BuildProducts"]
-```
-
-See the [design document] for more details on the architecture, similarities and
-differences with Hydra. For feedback and questions, head to the issues tab.
+- **xtask** (`xtask`): Developer tooling (route drift checks)
 
 ## Quick Start
 
@@ -208,6 +203,7 @@ development.
 | `server`        | `ldap.bind_dn_template`      | none                                                | LDAP bind DN template (`{username}` placeholder) |
 | `server`        | `ldap.base_dn`               | none                                                | LDAP base DN for user searches                   |
 | `server`        | `ldap.tls_ca_cert`           | none                                                | Custom CA cert for LDAP TLS                      |
+| `server`        | `email_validation_regex`     | none                                                | Custom regex for email validation                |
 | `evaluator`     | `poll_interval`              | `60`                                                | Seconds between git poll cycles                  |
 | `evaluator`     | `git_timeout`                | `600`                                               | Git operation timeout (seconds)                  |
 | `evaluator`     | `nix_timeout`                | `1800`                                              | Nix evaluation timeout (seconds)                 |
@@ -227,6 +223,13 @@ development.
 | `queue_runner`  | `scheduling_strategy`        | `speed_factor_only`                                 | Builder selection strategy                       |
 | `queue_runner`  | `psi_threshold`              | none                                                | PSI pressure threshold (skip builders)           |
 | `queue_runner`  | `psi_check_timeout`          | `5`                                                 | SSH PSI check timeout (seconds)                  |
+| `queue_runner`  | `extra_nix_build_args`       | `[]`                                                | Extra arguments passed to `nix build`            |
+| `queue_runner`  | `rpc.bind`                   | none                                                | Cap'n Proto RPC listen address                   |
+| `queue_runner`  | `rpc.auth_tokens`            | `[]`                                                | Valid authentication tokens for agents           |
+| `queue_runner`  | `rpc.max_connections`        | `16`                                                | Maximum concurrent agent connections             |
+| `queue_runner`  | `rpc.presign_expiry_secs`    | `3600`                                              | Presigned URL expiry (seconds)                   |
+| `queue_runner`  | `rpc.tls`                    | none                                                | TLS configuration for RPC endpoint               |
+| `queue_runner`  | `rpc.heartbeat_ttl_secs`     | `30`                                                | Agent heartbeat TTL before marking unavailable   |
 | `gc`            | `enabled`                    | `true`                                              | Manage GC roots for build outputs                |
 | `gc`            | `gc_roots_dir`               | `/nix/var/nix/gcroots/per-user/circus/circus-roots` | GC roots directory                               |
 | `gc`            | `max_age_days`               | `30`                                                | Remove GC roots older than N days                |
@@ -260,10 +263,16 @@ development.
 | `notifications` | `retry_poll_interval`        | `5`                                                 | Retry poll interval (seconds)                    |
 | `notifications` | `email.smtp_host`            | none                                                | SMTP host for email notifications                |
 | `notifications` | `email.smtp_port`            | none                                                | SMTP port                                        |
+| `notifications` | `email.smtp_user`            | none                                                | SMTP username (optional)                         |
+| `notifications` | `email.smtp_password`        | none                                                | SMTP password (optional)                         |
+| `notifications` | `email.tls`                  | `false`                                             | Enable TLS for SMTP connection                   |
 | `notifications` | `email.from_address`         | none                                                | From address for notification emails             |
 | `notifications` | `email.to_addresses`         | `[]`                                                | Recipient addresses                              |
 | `notifications` | `slack.webhook_url`          | none                                                | Slack incoming webhook URL                       |
 | `notifications` | `slack.on_failure_only`      | `false`                                             | Only send Slack alerts on failure                |
+| `notifications` | `alerts.enabled`             | `false`                                             | Enable error-rate threshold alerts               |
+| `notifications` | `alerts.error_threshold`     | `0.5`                                               | Error rate threshold to trigger alert            |
+| `notifications` | `alerts.time_window_minutes` | `60`                                                | Time window for error rate calculation           |
 | `tracing`       | `level`                      | `info`                                              | Log level (trace/debug/info/warn/error)          |
 | `tracing`       | `format`                     | `compact`                                           | Log output format                                |
 | `tracing`       | `show_targets`               | `true`                                              | Show module path in log messages                 |
@@ -275,6 +284,7 @@ development.
 | `declarative`   | `api_keys`                   | `[]`                                                | Declarative API key definitions                  |
 | `declarative`   | `users`                      | `[]`                                                | Declarative user definitions                     |
 | `declarative`   | `remote_builders`            | `[]`                                                | Declarative remote builder definitions           |
+| `nix`           | `store_dir`                  | `/nix/store`                                        | Nix store directory                              |
 
 <!--markdownlint-enable MD013 -->
 
@@ -474,13 +484,50 @@ Do note that this requires some SSH key setup. Namely.
 The queue-runner tracks builder health automatically: consecutive failures
 disable the builder with exponential backoff until it recovers.
 
+#### Persistent Agents
+
+Circus also supports a persistent agent deployment model where `circus-agent`
+processes run on builder machines and connect back to the queue-runner over
+Cap'n Proto RPC. This is the preferred path for clusters that want the runner to
+push work to hosts without per-build SSH setup.
+
+The agent connects, registers its capabilities (systems, features, speed
+factor), and waits for assignments. The runner dispatches builds to connected
+agents with matching system requirements and streams logs and results back. If
+the connection drops, the runner retries the build elsewhere on the next pass.
+
+You can run the agent with the NixOS module:
+
+```nix
+{
+  services.circus-agent = {
+    enable = true;
+    package = circus.packages.x86_64-linux.circus-agent;
+    settings.agent = {
+      name = "builder-1";
+      runner_url = "circus://headnode.internal";
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      max_jobs = 4;
+      speed_factor = 1;
+    };
+  };
+}
+```
+
+The agent authenticates with a shared token (configured via `rpc.auth_tokens` on
+the queue-runner side and `authTokenFile` on the agent side). See the
+[design document] for more details on the RPC protocol and distributed builds.
+
 ## Authentication
 
-Circus supports two authentication methods:
+Circus supports several authentication methods:
 
 1. **API Keys** - Bearer token authentication for API access
 2. **User Accounts** - Username/password with session cookies for dashboard
    access
+
+OAuth (GitHub) and LDAP are also supported as experimental methods. See the
+sections below for configuration details.
 
 ### API Key Bootstrapping
 
@@ -839,7 +886,10 @@ Build a specific crate:
 $ cargo build -p circus-server
 $ cargo build -p circus-evaluator
 $ cargo build -p circus-queue-runner
+$ cargo build -p circus-agent
 $ cargo build -p circus-common
+$ cargo build -p circus-proto
 $ cargo build -p circus-migrate-cli
 $ cargo build -p circus-migrations
+$ cargo build -p xtask
 ```

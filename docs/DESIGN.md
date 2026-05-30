@@ -102,11 +102,26 @@ work to hosts without relying on per-build SSH setup.
 - validation and bootstrap logic
 - notification, logging, and maintenance helpers
 
-### `circus-migrate` and `circus-migrations`
+### `circus-proto`
 
-These crates manage database schema changes. `circus-migrate` is the CLI entry
-point, and `circus-migrations` contains the SQL migration files and runtime
-support.
+`circus-proto` holds the Cap'n Proto schema and generated Rust bindings for the
+runner-to-agent RPC protocol. The schema defines the interfaces that agents and
+the queue runner use to communicate: registration, build assignment, log
+streaming, result reporting, and presigned upload negotiation. The proto crate
+is versioned independently so the runner and agent can detect protocol
+mismatches at connection time.
+
+### `circus-migrate-cli` and `circus-migrations`
+
+These crates manage database schema changes. `circus-migrate-cli` is the CLI
+entry point (typically invoked as `circus-migrate`), and `circus-migrations`
+contains the SQL migration files and runtime support.
+
+### `xtask`
+
+`xtask` is a developer tooling crate. It currently provides a route drift check
+that parses route registrations from the source tree without compiling the full
+server crate.
 
 ## Data Flow
 
@@ -182,6 +197,97 @@ If the connection drops, the runner treats that agent as unavailable and retries
 the build elsewhere on the next pass. That keeps the system resilient without
 requiring manual cleanup for normal disconnects.
 
+## RPC Protocol
+
+The runner and agent communicate over Cap'n Proto RPC. The protocol is defined
+in `crates/proto/schema/circus.capnp` and the generated bindings live in
+`circus-proto`.
+
+The connection lifecycle works like this:
+
+1. The agent connects to the runner's RPC endpoint (`circus://` or
+   `circus+tls://`)
+2. The agent calls `Runner.register` with its machine info: name, systems,
+   features, speed factor, CPU count
+3. The runner validates the protocol version and stores the agent's capabilities
+4. The runner calls `Builder.assign` on the agent when a matching build is
+   available
+5. The agent runs the build, streams logs via `LogSink`, and reports results via
+   `ResultSink`
+6. The agent sends periodic heartbeats with load averages, memory usage, and PSI
+   (Pressure Stall Information) data
+
+For presigned S3 uploads, the agent calls `Runner.requestPresignedUrls` before
+starting the build, then uploads directly to S3 and calls
+`Runner.notifyUploadComplete` when done.
+
+The runner can also ask an agent to shut down gracefully by calling
+`Builder.shutdown`, or abort a build by calling `Builder.abort`.
+
+## Notifications
+
+Circus sends notifications through several channels when build events happen.
+The notification system supports six types:
+
+- **Generic webhook**: POST a JSON payload to a configured URL
+- **GitHub commit status**: update the commit status via the GitHub API
+- **Gitea/Forgejo commit status**: update via the Gitea or Forgejo API
+- **GitLab commit status**: update via the GitLab API with a private token
+- **Slack**: post a formatted message via a Slack incoming webhook
+- **Email**: send an email via SMTP (using lettre with optional TLS)
+
+Notifications fire on build creation (pending), build start (running), and build
+completion (success or failure). All notification types support a retry queue
+with exponential backoff, configurable max attempts, and a retention period for
+completed tasks.
+
+The webhook ingestion side supports inbound push events from GitHub, Gitea,
+Forgejo, and GitLab. These trigger evaluations on the matching jobset when the
+pushed branch matches.
+
+## Authentication and Security
+
+Circus supports three authentication methods:
+
+- **API keys**: Bearer tokens stored as SHA-256 hashes. Used for API access and
+  dashboard login. Keys carry a role (admin, read-only, or custom granular
+  permissions).
+- **User accounts**: Username/password with session cookies. Used for dashboard
+  access. Passwords are hashed with argon2.
+- **OAuth (GitHub)**: experimental OAuth2 flow with CSRF protection. Users
+  auto-upsert with a read-only role on first login.
+- **LDAP**: bind-based authentication with DN template substitution. Also
+  auto-upserts local users.
+
+The server enforces several security measures:
+
+- CSRF protection with per-process secrets
+- Rate limiting per IP (token bucket, configurable RPS and burst)
+- Security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
+- Request body size limits
+- CORS (configurable origins, or permissive mode for development)
+- LDAP DN injection prevention (metacharacter escaping)
+- Audit logging for all mutations
+
+## Binary Cache and Channels
+
+Circus serves a Nix-compatible binary cache at `/nix-cache/`. It supports the
+full narinfo protocol: clients request `.narinfo` files by hash, and the server
+responds with a signed redirect to the NAR download URL or serves the NAR
+directly.
+
+NAR compression is configurable (zstd, bzip2, brotli, xz, or none). The server
+can optionally sign narinfo files with a Nix secret key.
+
+Build outputs can also be uploaded to an external cache store (typically S3)
+after a successful build. The agent supports direct presigned S3 upload, and the
+queue-runner can fall back to `nix copy` for SSH builders.
+
+Channels provide promoted evaluation outputs for consumers. Each channel tracks
+a git revision, a binary cache URL, and a store path listing. The server exposes
+Hydra-compatible channel endpoints: `git-revision`, `binary-cache-url`,
+`store-paths.xz`, and `nixexprs.tar.xz`.
+
 ## Configuration
 
 Circus is configured from a TOML file with environment variable overrides. The
@@ -200,6 +306,7 @@ The current high-level groups are:
 - `cache`
 - `signing`
 - `cache_upload`
+- `tracing`
 - `oauth`
 - `declarative`
 - `nix`
@@ -226,12 +333,31 @@ primary UI concepts.
 
 The following parts of the design are already real in the current codebase:
 
-- the three main daemons and the shared database model
-- the optional persistent agent path
-- the dashboard/API/cache/metrics server
-- declarative bootstrap on startup
-- authentication with API keys and user sessions
-- the documented configuration tree
+- the three main daemons (server, evaluator, queue-runner) and the shared
+  PostgreSQL database model
+- the optional persistent agent path with Cap'n Proto RPC
+- the SSH fallback for clusters without agents
+- the dashboard, REST API, binary cache, Prometheus metrics, and webhooks
+- declarative bootstrap on startup (projects, jobsets, users, API keys, remote
+  builders)
+- authentication with API keys, user sessions, and session cookies
+- OAuth (GitHub) and LDAP as experimental login methods
+- the documented configuration tree with environment variable overrides
+- hot-reload of select configuration fields via SIGHUP
+- six notification channels (webhook, GitHub, Gitea, GitLab, Slack, email) with
+  retry and backoff
+- inbound webhook ingestion from GitHub, Gitea, Forgejo, and GitLab
+- binary cache protocol with narinfo signing and configurable compression
+- channel manifests and Hydra-compatible nixexprs tarball generation
+- S3 cache upload with presigned agent-side upload and nix copy fallback
+- PSI-aware scheduling for build hosts
+- GC root management with configurable retention
+- build badges, search, starred jobs, and news/announcements
+- OpenAPI specification
+- NixOS modules for the daemons and the agent
+- integration test suite covering API, auth, webhooks, declarative config,
+  distributed builds, and end-to-end workflows
 
 Areas that are still evolving are expected to change over time, especially the
-distributed-build surface and the more advanced administrative workflows.
+distributed-build surface and the more advanced administrative workflows. The
+agent protocol is versioned but may see breaking changes before 1.0.
