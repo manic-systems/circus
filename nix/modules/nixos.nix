@@ -6,7 +6,7 @@
 }: let
   inherit (lib.modules) mkIf mkDefault;
   inherit (lib.options) mkOption mkEnableOption literalExpression;
-  inherit (lib.types) bool str int package listOf submodule nullOr enum attrsOf;
+  inherit (lib.types) bool str int port package listOf submodule nullOr enum attrsOf;
   inherit (lib.attrsets) recursiveUpdate optionalAttrs mapAttrsToList filterAttrs;
   inherit (lib.lists) optional map;
 
@@ -14,6 +14,43 @@
 
   settingsFormat = pkgs.formats.toml {};
   settingsType = settingsFormat.type;
+  settingsSubmodule = submodule {
+    freeformType = settingsType;
+    options = {
+      database = mkOption {
+        type = submodule {
+          freeformType = settingsType;
+          options.url = mkOption {
+            type = str;
+            description = "PostgreSQL connection URL used by all Circus services.";
+          };
+        };
+        default = {};
+        description = "Database settings.";
+      };
+
+      server = mkOption {
+        type = submodule {
+          freeformType = settingsType;
+          options = {
+            host = mkOption {
+              type = str;
+              default = "127.0.0.1";
+              description = "Address the HTTP server binds to.";
+            };
+
+            port = mkOption {
+              type = port;
+              default = 3000;
+              description = "Port the HTTP server binds to.";
+            };
+          };
+        };
+        default = {};
+        description = "HTTP server settings.";
+      };
+    };
+  };
 
   # Build the final settings by merging declarative config into settings
   finalSettings = recursiveUpdate cfg.settings (optionalAttrs (cfg.declarative.projects != [] || cfg.declarative.apiKeys != [] || cfg.declarative.users != {} || cfg.declarative.remoteBuilders != []) {
@@ -516,7 +553,7 @@ in {
     };
 
     settings = mkOption {
-      type = settingsType;
+      type = settingsSubmodule;
       default = {};
       description = ''
         circus configuration as a Nix attribute set. Will be converted to TOML

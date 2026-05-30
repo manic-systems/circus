@@ -115,14 +115,16 @@ testers.runNixOSTest {
       services.circus-agent = {
         enable = true;
         package = circus-packages.circus-agent;
-        name = "agent-01";
-        runnerUrl = "circus://runner:8443";
         authTokenFile = "/etc/circus-agent/token";
-        systems = [pkgs.stdenv.hostPlatform.system];
-        max_jobs = 2;
-        speed_factor = 1.0;
-        heartbeatInterval = 3;
-        reconnectDelay = 2;
+        settings.agent = {
+          name = "agent-01";
+          runner_url = "circus://runner:8443";
+          systems = [pkgs.stdenv.hostPlatform.system];
+          max_jobs = 2;
+          speed_factor = 1.0;
+          heartbeat_interval_secs = 3;
+          reconnect_delay_secs = 2;
+        };
       };
     };
   };
