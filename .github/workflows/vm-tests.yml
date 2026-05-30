@@ -69,11 +69,24 @@ jobs:
           enable_kvm: true
           extra_nix_config: |
             system-features = kvm benchmark big-parallel nixos-test uid-range
-            extra-experimental-features = nix-command flakes auto-allocate-uids
+            extra-experimental-features = nix-command flakes auto-allocate-uids cgroups
             auto-allocate-uids = true
+            use-cgroups = true
+
+      - name: Restore cached paths
+        id: cache-store-restore
+        uses: nix-community/cache-nix-action@7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: 0
+          purge-primary-key: never
 
       # XXX: do we want to run those checks on any other arch? Maybe Darwin
       # in the future once Circus can actually run on Darwin?
       - name: Build ${{ matrix.check }} for x86_64-linux
         run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
-
