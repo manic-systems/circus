@@ -98,6 +98,39 @@ async fn narinfo(
     );
   }
 
+  // Persistent narinfo from the agents' presigned upload flow. This
+  // table sees every successful upload across the cluster, so a path
+  // built on one builder is available from any cache fetcher without
+  // running nix path-info locally.
+  if let Ok(row) =
+    circus_common::repo::narinfo_cache::get_by_hash_part(&state.pool, hash)
+      .await
+  {
+    let body = render_narinfo_row(&row);
+    let body = if let (true, Some(key_file)) = (
+      state.config.signing.enabled,
+      state.config.signing.key_file.as_ref(),
+    ) {
+      sign_narinfo(&body, key_file).await
+    } else {
+      body
+    };
+    state
+      .narinfo_cache
+      .insert(hash.to_owned(), crate::state::CachedNarinfo {
+        body:       body.clone(),
+        created_at: std::time::Instant::now(),
+      });
+    return Ok(
+      (
+        StatusCode::OK,
+        [("content-type", "text/x-nix-narinfo")],
+        body,
+      )
+        .into_response(),
+    );
+  }
+
   let store_dir = state.config.nix.store_dir.to_string_lossy();
   let store_dir = store_dir.trim_end_matches('/');
   let store_path = match find_store_path(&state.pool, hash, store_dir).await? {
@@ -216,6 +249,38 @@ async fn narinfo(
     )
       .into_response(),
   )
+}
+
+/// Render a `narinfo_cache::NarInfo` row to the on-the-wire narinfo
+/// format. Mirrors the field order emitted by the path-info path so a
+/// substituter can't tell the two sources apart.
+fn render_narinfo_row(
+  row: &circus_common::repo::narinfo_cache::NarInfo,
+) -> String {
+  use std::fmt::Write as _;
+  let mut s = String::new();
+  let _ = writeln!(s, "StorePath: {}", row.store_path);
+  let _ = writeln!(s, "URL: {}", row.url);
+  let _ = writeln!(s, "Compression: {}", row.compression);
+  if let Some(fh) = &row.file_hash {
+    let _ = writeln!(s, "FileHash: {fh}");
+  }
+  if let Some(fs) = row.file_size {
+    let _ = writeln!(s, "FileSize: {fs}");
+  }
+  let _ = writeln!(s, "NarHash: {}", row.nar_hash);
+  let _ = writeln!(s, "NarSize: {}", row.nar_size);
+  let _ = writeln!(s, "References: {}", row.references.join(" "));
+  if let Some(d) = &row.deriver {
+    let _ = writeln!(s, "Deriver: {d}");
+  }
+  if let Some(c) = &row.ca {
+    let _ = writeln!(s, "CA: {c}");
+  }
+  if let Some(sig) = &row.sig {
+    let _ = writeln!(s, "Sig: {sig}");
+  }
+  s
 }
 
 /// Sign narinfo using nix store sign command

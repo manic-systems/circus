@@ -550,6 +550,22 @@ fn document() -> Value {
           "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
           "responses": { "204": { "description": "Deleted" } } }
       },
+      "/admin/builders/sessions": {
+        "get": { "summary": "List all persistent builder agent sessions (connected + historical)",
+          "responses": { "200": { "description": "Array of BuilderSession rows" } } }
+      },
+      "/admin/builders/sessions/connected": {
+        "get": { "summary": "List currently-connected builder agents",
+          "responses": { "200": { "description": "Array of BuilderSession rows where connected = TRUE" } } }
+      },
+      "/admin/builders/sessions/{machine_id}": {
+        "get": { "summary": "Get a single builder agent session by its stable machine_id",
+          "parameters": [{ "name": "machine_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": {
+            "200": { "description": "BuilderSession" },
+            "404": { "description": "No session with that machine_id" }
+          } }
+      },
       "/admin/config": {
         "get": { "summary": "Read the server config file",
           "responses": { "200": { "description": "Raw config body",

@@ -381,39 +381,58 @@ pub async fn build_nixexprs_tarball(
   nix_src.push_str("{}\n");
 
   let channel_name = channel_name.to_string();
-  tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-    let mut xz_buf = Vec::new();
-    {
-      let xz_writer = xz2::write::XzEncoder::new(&mut xz_buf, 6);
-      let mut tar_builder = tar::Builder::new(xz_writer);
+  // Build the deterministic tar in a blocking task (tar::Builder is sync),
+  // then xz-encode the resulting bytes through async-compression. This
+  // keeps the project on one lzma backend.
+  let tar_bytes =
+    tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+      let mut buf = Vec::new();
+      {
+        let mut tar_builder = tar::Builder::new(&mut buf);
+        append_deterministic(
+          &mut tar_builder,
+          "channel/channel-name",
+          channel_name.as_bytes(),
+        )?;
+        append_deterministic(
+          &mut tar_builder,
+          "channel/default.nix",
+          nix_src.as_bytes(),
+        )?;
+        tar_builder
+          .into_inner()
+          .map_err(|e| format!("Failed to finish tar: {e}"))?;
+      }
+      Ok(buf)
+    })
+    .await
+    .map_err(|e| {
+      ApiError(circus_common::CiError::Build(format!(
+        "Task join error: {e}"
+      )))
+    })?
+    .map_err(|e| ApiError(circus_common::CiError::Build(e)))?;
 
-      append_deterministic(
-        &mut tar_builder,
-        "channel/channel-name",
-        channel_name.as_bytes(),
-      )?;
-      append_deterministic(
-        &mut tar_builder,
-        "channel/default.nix",
-        nix_src.as_bytes(),
-      )?;
-
-      let xz_writer = tar_builder
-        .into_inner()
-        .map_err(|e| format!("Failed to finish tar: {e}"))?;
-      xz_writer
-        .finish()
-        .map_err(|e| format!("Failed to finish xz: {e}"))?;
-    }
-    Ok(xz_buf)
-  })
-  .await
-  .map_err(|e| {
+  encode_xz_async(tar_bytes).await.map_err(|e| {
     ApiError(circus_common::CiError::Build(format!(
-      "Task join error: {e}"
+      "xz encode failed: {e}"
     )))
-  })?
-  .map_err(|e| ApiError(circus_common::CiError::Build(e)))
+  })
+}
+
+/// Encode `bytes` with xz (level 6) via async-compression. Identical
+/// shape to the helper in `channel_manifests.rs`; kept private here to
+/// avoid a route-module cross-import.
+async fn encode_xz_async(bytes: Vec<u8>) -> std::io::Result<Vec<u8>> {
+  use async_compression::tokio::write::XzEncoder;
+  use tokio::io::AsyncWriteExt as _;
+  let mut enc = XzEncoder::with_quality(
+    Vec::with_capacity(bytes.len()),
+    async_compression::Level::Precise(6),
+  );
+  enc.write_all(&bytes).await?;
+  enc.shutdown().await?;
+  Ok(enc.into_inner())
 }
 
 /// Append a single file to a tar archive with fixed metadata (mtime=1,

@@ -13,8 +13,7 @@
 //! All endpoints are public (no API key) since they are consumed by Nix
 //! clients that have no way to supply credentials.
 
-use std::io::Write;
-
+use async_compression::tokio::write::XzEncoder;
 use axum::{
   Router,
   body::Body,
@@ -25,6 +24,20 @@ use axum::{
 };
 
 use crate::{error::ApiError, state::AppState};
+
+/// Encode `bytes` with xz (level 6 to match the historical default).
+/// Async-only: uses `async-compression`'s tokio writer so we don't have
+/// to spawn a blocking task or carry a second lzma backend.
+async fn encode_xz(bytes: Vec<u8>) -> std::io::Result<Vec<u8>> {
+  use tokio::io::AsyncWriteExt as _;
+  let mut enc = XzEncoder::with_quality(
+    Vec::with_capacity(bytes.len()),
+    async_compression::Level::Precise(6),
+  );
+  enc.write_all(&bytes).await?;
+  enc.shutdown().await?;
+  Ok(enc.into_inner())
+}
 
 async fn git_revision(
   State(state): State<AppState>,
@@ -122,16 +135,7 @@ async fn store_paths(
   paths.dedup();
 
   let plain = paths.join("\n");
-  let compressed = tokio::task::spawn_blocking(move || {
-    let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 6);
-    encoder.write_all(plain.as_bytes())?;
-    encoder.finish()
-  })
-  .await
-  .map_err(|e| {
-    ApiError(circus_common::CiError::Build(format!("xz join error: {e}")))
-  })?
-  .map_err(|e| {
+  let compressed = encode_xz(plain.into_bytes()).await.map_err(|e| {
     ApiError(circus_common::CiError::Build(format!(
       "xz encode failed: {e}"
     )))

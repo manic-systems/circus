@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace             = true
 askama.workspace             = true
+async-compression.workspace  = true
 async-stream.workspace       = true
 axum.workspace               = true
 axum-extra.workspace         = true
@@ -36,7 +37,6 @@ tower-http.workspace         = true
 tracing.workspace            = true
 tracing-subscriber.workspace = true
 uuid.workspace               = true
-xz2.workspace                = true
 
 # Our crates
 circus-common.workspace = true

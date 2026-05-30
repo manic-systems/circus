@@ -35,6 +35,49 @@ async fn list_builders(
   Ok(Json(builders))
 }
 
+/// All builder sessions known to the cluster, connected or not. Backed by
+/// the `builder_sessions` table that the queue-runner upserts on register
+/// and on heartbeat.
+async fn list_builder_sessions(
+  State(state): State<AppState>,
+) -> Result<
+  Json<Vec<circus_common::repo::builder_sessions::BuilderSession>>,
+  ApiError,
+> {
+  let sessions = circus_common::repo::builder_sessions::list(&state.pool)
+    .await
+    .map_err(ApiError)?;
+  Ok(Json(sessions))
+}
+
+/// Currently-connected agents only. The shape of the rows is the same as
+/// [`list_builder_sessions`]; this endpoint matches the dashboard's
+/// "live agents" panel.
+async fn list_connected_builder_sessions(
+  State(state): State<AppState>,
+) -> Result<
+  Json<Vec<circus_common::repo::builder_sessions::BuilderSession>>,
+  ApiError,
+> {
+  let sessions =
+    circus_common::repo::builder_sessions::list_connected(&state.pool)
+      .await
+      .map_err(ApiError)?;
+  Ok(Json(sessions))
+}
+
+async fn get_builder_session(
+  State(state): State<AppState>,
+  Path(machine_id): Path<Uuid>,
+) -> Result<Json<circus_common::repo::builder_sessions::BuilderSession>, ApiError>
+{
+  let session =
+    circus_common::repo::builder_sessions::get(&state.pool, machine_id)
+      .await
+      .map_err(ApiError)?;
+  Ok(Json(session))
+}
+
 async fn get_builder(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
@@ -324,6 +367,15 @@ pub fn router() -> Router<AppState> {
     .route(
       "/admin/builders/{id}",
       get(get_builder).put(update_builder).delete(delete_builder),
+    )
+    .route("/admin/builders/sessions", get(list_builder_sessions))
+    .route(
+      "/admin/builders/sessions/connected",
+      get(list_connected_builder_sessions),
+    )
+    .route(
+      "/admin/builders/sessions/{machine_id}",
+      get(get_builder_session),
     )
     .route("/admin/system", get(system_status))
     .route("/admin/notification-tasks", get(list_notification_tasks))
