@@ -106,6 +106,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
     }
   });
 
+  verify_runner_version(&runner_cap).await?;
   let session = register(&runner_cap, cfg, machine_id, local_builder).await?;
   tracing::info!("registered with runner");
 
@@ -128,17 +129,48 @@ fn parse_endpoint(url: &str) -> anyhow::Result<(String, u16, bool)> {
   } else {
     (url, false)
   };
-  let mut split = rest.rsplitn(2, ':');
-  let port: u16 = split
-    .next()
-    .ok_or_else(|| anyhow::anyhow!("missing port in runner_url"))?
+  let (host, port_str) = if let Some(stripped) = rest.strip_prefix('[') {
+    let end = stripped
+      .find(']')
+      .ok_or_else(|| anyhow::anyhow!("invalid bracketed host in runner_url"))?;
+    let host = &stripped[..end];
+    let after = &stripped[end + 1..];
+    let port = after
+      .strip_prefix(':')
+      .ok_or_else(|| anyhow::anyhow!("missing port in runner_url"))?;
+    (host, port)
+  } else {
+    let (host, port) = rest
+      .rsplit_once(':')
+      .ok_or_else(|| anyhow::anyhow!("missing host or port in runner_url"))?;
+    (host, port)
+  };
+  if host.is_empty() {
+    return Err(anyhow::anyhow!("missing host in runner_url"));
+  }
+  let port: u16 = port_str
     .parse()
     .context("runner_url port is not a number")?;
-  let host = split
-    .next()
-    .ok_or_else(|| anyhow::anyhow!("missing host in runner_url"))?
-    .to_owned();
-  Ok((host, port, tls))
+  Ok((host.to_owned(), port, tls))
+}
+
+async fn verify_runner_version(
+  runner_cap: &runner::Client,
+) -> anyhow::Result<()> {
+  let response = runner_cap
+    .version_request()
+    .send()
+    .promise
+    .await
+    .context("version")?;
+  let payload = response.get().context("version response")?;
+  let proto = payload.get_proto()?.to_str()?;
+  if proto != PROTO_VERSION {
+    return Err(anyhow::anyhow!(
+      "proto mismatch: runner={proto} agent={PROTO_VERSION}"
+    ));
+  }
+  Ok(())
 }
 
 async fn register(
