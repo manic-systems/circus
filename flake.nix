@@ -99,6 +99,9 @@
 
           taplo
           cargo-nextest
+          clippy
+          rust-analyzer
+          (rustfmt.override { asNightly = true; })
         ];
       };
     });
