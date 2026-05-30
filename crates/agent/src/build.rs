@@ -88,8 +88,53 @@ pub async fn run(
     .take()
     .ok_or_else(|| anyhow::anyhow!("child stderr missing"))?;
 
-  let mut stdout_reader = BufReader::new(stdout).lines();
-  let mut stderr_reader = BufReader::new(stderr).lines();
+  // Drive stdout and stderr in two independent tasks so that EOF on one
+  // stream does not cause lines buffered in the other to be discarded.
+  // Both tasks forward lines (or IO errors) through a shared channel.
+  let (line_tx, mut line_rx) =
+    tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
+  {
+    let tx = line_tx.clone();
+    let mut reader = BufReader::new(stdout).lines();
+    tokio::spawn(async move {
+      loop {
+        match reader.next_line().await {
+          Ok(Some(line)) => {
+            if tx.send(Ok(line)).is_err() {
+              break;
+            }
+          },
+          Ok(None) => break,
+          Err(e) => {
+            let _ = tx.send(Err(format!("stdout read: {e}")));
+            break;
+          },
+        }
+      }
+    });
+  }
+  {
+    let tx = line_tx.clone();
+    let mut reader = BufReader::new(stderr).lines();
+    tokio::spawn(async move {
+      loop {
+        match reader.next_line().await {
+          Ok(Some(line)) => {
+            if tx.send(Ok(line)).is_err() {
+              break;
+            }
+          },
+          Ok(None) => break,
+          Err(e) => {
+            let _ = tx.send(Err(format!("stderr read: {e}")));
+            break;
+          },
+        }
+      }
+    });
+  }
+  // Drop the original sender so the channel closes once both reader tasks end.
+  drop(line_tx);
 
   let mut bytes_sent: u64 = 0;
   let mut error_message = String::new();
@@ -105,17 +150,8 @@ pub async fn run(
 
   loop {
     let read_timeout = remaining_silent(&opts.max_silent_time, last_output);
-    let line: Option<String> = tokio::select! {
-      r = stdout_reader.next_line() => match r {
-        Ok(Some(line)) => Some(line),
-        Ok(None) => None,
-        Err(e) => { error_message = format!("stdout read: {e}"); None }
-      },
-      r = stderr_reader.next_line() => match r {
-        Ok(Some(line)) => Some(line),
-        Ok(None) => None,
-        Err(e) => { error_message = format!("stderr read: {e}"); None }
-      },
+    let msg: Option<Result<String, String>> = tokio::select! {
+      r = line_rx.recv() => r,
       () = sleep_opt(read_timeout) => {
         error_message = "max-silent-time exceeded".into();
         let _ = child.start_kill();
@@ -129,7 +165,14 @@ pub async fn run(
       }
     };
 
-    let Some(line) = line else { break };
+    let line = match msg {
+      None => break,
+      Some(Err(e)) => {
+        error_message = e;
+        break;
+      },
+      Some(Ok(l)) => l,
+    };
     last_output = Instant::now();
 
     if log_size_exceeded {
@@ -143,8 +186,9 @@ pub async fn run(
     }
     bytes_sent = bytes_sent.saturating_add(line.len() as u64 + 1);
     if let Err(e) = forward_chunk(&log_sink, line.as_bytes()).await {
-      tracing::warn!(error = ?e, "log sink write failed; dropping further chunks");
+      tracing::warn!(error = ?e, "log sink write failed; killing child");
       log_size_exceeded = true;
+      let _ = child.start_kill();
     }
 
     if let Some(deadline) = overall_deadline
