@@ -41,6 +41,7 @@ jobs:
           - circus-evaluator
           - circus-queue-runner
           - circus-migrate-cli
+          - circus-agent
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31

@@ -54,6 +54,8 @@ jobs:
             check: e2e
           - name: Declarative
             check: declarative
+          - name: Distributed
+            check: distributed
           - name: GC Pinning
             check: gc-pinning
           - name: Machine Health
