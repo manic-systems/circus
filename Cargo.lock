@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "circus-agent"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "circus-common"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "argon2",
@@ -591,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "circus-evaluator"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "chrono",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "circus-migrate-cli"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "circus-common",
@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "circus-migrations"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "sqlx",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "circus-proto"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "capnp",
  "capnp-futures",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "circus-queue-runner"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "base64",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "circus-server"
-version = "0.7.0-dev"
+version = "0.8.0-dev"
 dependencies = [
  "anyhow",
  "askama",

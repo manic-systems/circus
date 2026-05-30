@@ -7,17 +7,17 @@ edition      = "2024"
 license      = "MPL-2.0"
 repository   = "https://github.com/manic-systems/circus"
 rust-version = "1.95.0"
-version      = "0.7.0-dev"
+version      = "0.8.0-dev"
 
 [workspace.dependencies]
 # Components
-circus-agent        = { path = "./crates/agent", version = "0.7.0-dev" }
-circus-common       = { path = "./crates/common", version = "0.7.0-dev" }
-circus-evaluator    = { path = "./crates/evaluator", version = "0.7.0-dev" }
-circus-migrations   = { path = "./crates/migrations", version = "0.7.0-dev" }
-circus-proto        = { path = "./crates/proto", version = "0.7.0-dev" }
-circus-queue-runner = { path = "./crates/queue-runner", version = "0.7.0-dev" }
-circus-server       = { path = "./crates/server", version = "0.7.0-dev" }
+circus-agent        = { path = "./crates/agent", version = "0.8.0-dev" }
+circus-common       = { path = "./crates/common", version = "0.8.0-dev" }
+circus-evaluator    = { path = "./crates/evaluator", version = "0.8.0-dev" }
+circus-migrations   = { path = "./crates/migrations", version = "0.8.0-dev" }
+circus-proto        = { path = "./crates/proto", version = "0.8.0-dev" }
+circus-queue-runner = { path = "./crates/queue-runner", version = "0.8.0-dev" }
+circus-server       = { path = "./crates/server", version = "0.8.0-dev" }
 
 anyhow = "1.0.102"
 askama = "0.16.0"
