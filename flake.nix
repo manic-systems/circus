@@ -21,6 +21,7 @@
     # NixOS module for circus
     nixosModules = {
       circus = ./nix/modules/nixos.nix;
+      circus-agent = ./nix/modules/circus-agent.nix;
       default = self.nixosModules.circus;
     };
 
@@ -53,7 +54,7 @@
         pname = "circus";
         inherit src;
         strictDeps = true;
-        nativeBuildInputs = with pkgs; [pkg-config];
+        nativeBuildInputs = with pkgs; [pkg-config capnproto];
         buildInputs = with pkgs; [openssl];
       };
 
@@ -63,6 +64,7 @@
       demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
       # circus Packages
+      circus-agent = callCratePackage ./nix/packages/circus-agent.nix;
       circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
       circus-migrate-cli = callCratePackage ./nix/packages/circus-migrate-cli.nix;
       circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
@@ -86,9 +88,10 @@
         gc-pinning = callTest ./nix/tests/gc-pinning.nix;
         machine-health = callTest ./nix/tests/machine-health.nix;
         channel-tarball = callTest ./nix/tests/channel-tarball.nix;
+        distributed = callTest ./nix/tests/distributed.nix;
       };
     in {
-      inherit (vmTests) service-startup basic-api auth-rbac api-crud features webhooks e2e declarative gc-pinning machine-health channel-tarball;
+      inherit (vmTests) service-startup basic-api auth-rbac api-crud features webhooks e2e declarative gc-pinning machine-health channel-tarball distributed;
       full = pkgs.symlinkJoin {
         name = "vm-tests-full";
         paths = builtins.attrValues vmTests;

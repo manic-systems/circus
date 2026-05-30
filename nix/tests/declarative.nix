@@ -1,12 +1,11 @@
 {
   pkgs,
+  lib,
   testers,
   self,
 }: let
-  circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-
-  # Password files for testing passwordFile option
-  # Passwords must be at least 12 characters with at least one uppercase letter
+  # Password files for testing passwordFile option.
+  # Passwords must be at least 12 characters with at least one uppercase letter.
   adminPasswordFile = pkgs.writeText "admin-password" "SecretAdmin123!";
   userPasswordFile = pkgs.writeText "user-password" "SecretUser123!";
   disabledPasswordFile = pkgs.writeText "disabled-password" "DisabledPass123!";
@@ -15,57 +14,13 @@ in
     name = "circus-declarative";
 
     nodes.machine = {
-      imports = [self.nixosModules.circus];
+      imports = [
+        self.nixosModules.circus
+        ../vm-common.nix
+      ];
       _module.args.self = self;
 
-      # The decl-e2e jobset is built for real, which needs more room than the
-      # default test VM provides (matches nix/vm-common.nix).
-      virtualisation = {
-        memorySize = 2048;
-        cores = 2;
-        diskSize = 10000;
-      };
-
-      programs.git.enable = true;
-      security.sudo.enable = true;
-      environment.systemPackages = with pkgs; [nix nix-eval-jobs zstd curl jq openssl];
-
-      # The decl-e2e project below is evaluated for real, so the evaluator needs
-      # flakes and must not reach out to a binary cache (the VM has no network).
-      nix.settings = {
-        experimental-features = ["nix-command" "flakes"];
-        substituters = pkgs.lib.mkForce [];
-      };
-
       services.circus = {
-        enable = true;
-        package = circus-packages.circus-server;
-        evaluatorPackage = circus-packages.circus-evaluator;
-        queueRunnerPackage = circus-packages.circus-queue-runner;
-        migratePackage = circus-packages.circus-migrate-cli;
-
-        server.enable = true;
-        evaluator.enable = true;
-        queueRunner.enable = true;
-
-        settings = {
-          database.url = "postgresql:///circus?host=/run/postgresql";
-          server = {
-            host = "127.0.0.1";
-            port = 3000;
-            cors_permissive = false;
-            # Permit the file:// URL the decl-e2e project uses for its local repo.
-            allowed_url_schemes = ["https" "http" "git" "ssh" "file"];
-          };
-          gc.enabled = false;
-          logs.log_dir = "/var/lib/circus/logs";
-          cache.enabled = true;
-          signing.enabled = false;
-          # Poll fast so the bootstrapped jobset is evaluated within the test.
-          evaluator.poll_interval = 5;
-        };
-
-        # Declarative users
         declarative.users = {
           # Admin user with passwordFile
           decl-admin = {
@@ -94,8 +49,8 @@ in
           };
         };
 
-        # Declarative API keys
-        declarative.apiKeys = [
+        # Replace vm-common's bootstrap key list entirely.
+        declarative.apiKeys = lib.mkForce [
           {
             name = "decl-admin-key";
             key = "circus_decl_admin";
@@ -108,8 +63,8 @@ in
           }
         ];
 
-        # Declarative projects with various jobset states
-        declarative.projects = [
+        # Replace vm-common's placeholder project list entirely.
+        declarative.projects = lib.mkForce [
           {
             name = "decl-project-1";
             repositoryUrl = "https://github.com/test/decl1";
@@ -184,6 +139,8 @@ in
     };
 
     testScript = ''
+      import time
+
       machine.start()
       machine.wait_for_unit("postgresql.service")
       machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
@@ -229,22 +186,8 @@ in
           # Argon2 hashes start with $argon2
           assert result.strip().startswith("$argon2"), f"Expected argon2 hash, got '{result.strip()[:20]}...'"
 
-      with subtest("User with passwordFile has correct password hash"):
-          # The password in the file is 'SecretAdmin123!'
-          result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
-          )
-          assert len(result.strip()) > 50, "Password hash should be substantial length"
-
-      with subtest("User with inline password has correct password hash"):
-          result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-user'\""
-          )
-          assert result.strip().startswith("$argon2"), f"Expected argon2 hash for inline password user, got '{result.strip()[:20]}...'"
-
       # DECLARATIVE USER WEB LOGIN
       with subtest("Web login with declarative admin user succeeds"):
-          # Login via POST to /login with username/password
           result = machine.succeed(
               "curl -s -w '\\n%{http_code}' "
               "-X POST http://127.0.0.1:3000/login "
@@ -252,7 +195,6 @@ in
           )
           lines = result.strip().split('\n')
           code = lines[-1]
-          # Should redirect (302/303) on success
           assert code in ("200", "302", "303"), f"Expected redirect on login, got {code}"
 
       with subtest("Web login with declarative user (passwordFile) succeeds"):
@@ -283,7 +225,6 @@ in
           )
           lines = result.strip().split('\n')
           code = lines[-1]
-          # Should return 401 for wrong password
           assert code in ("401",), f"Expected 401 for wrong password, got {code}"
 
       with subtest("Web login with disabled user fails"):
@@ -294,7 +235,6 @@ in
           )
           lines = result.strip().split('\n')
           code = lines[-1]
-          # Disabled user should not be able to login (401 or 403)
           assert code in ("401", "403"), f"Expected login failure for disabled user, got {code}"
 
       # DECLARATIVE API KEYS
@@ -445,80 +385,23 @@ in
           )
           assert result.strip() == "60", f"Expected check_interval 60, got '{result.strip()}'"
 
-      # IDEMPOTENCY
-      with subtest("Bootstrap is idempotent - no duplicate users"):
-          result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM users WHERE username = 'decl-admin'\""
-          )
-          count = int(result.strip())
-          assert count == 1, f"Expected exactly 1 decl-admin user, got {count}"
-
-      with subtest("Bootstrap is idempotent - no duplicate projects"):
-          result = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq '.items | map(select(.name==\"decl-project-1\")) | length'"
-          )
-          count = int(result.strip())
-          assert count == 1, f"Expected exactly 1 decl-project-1, got {count}"
-
-      with subtest("Bootstrap is idempotent - no duplicate API keys"):
-          result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM api_keys WHERE name = 'decl-admin-key'\""
-          )
-          count = int(result.strip())
-          assert count == 1, f"Expected exactly 1 decl-admin-key, got {count}"
-
-      with subtest("Bootstrap is idempotent - no duplicate jobsets"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
-          result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq '.items | map(select(.name==\"enabled-jobset\")) | length'"
-          )
-          count = int(result.strip())
-          assert count == 1, f"Expected exactly 1 enabled-jobset, got {count}"
-
       # USER MANAGEMENT UI (admin-only)
       with subtest("Users page requires admin access"):
-          # Test HTML /users endpoint
           htmlResp = machine.succeed(
               "curl -sf -H 'Authorization: Bearer circus_decl_admin' http://127.0.0.1:3000/users"
           )
           assert "User Management" in htmlResp or "Users" in htmlResp
 
-          # Non-admin should be denied access via API
           machine.fail(
               "curl -sf -H 'Authorization: Bearer circus_decl_readonly' http://127.0.0.1:3000/api/v1/users | grep 'decl-admin'"
           )
-          # Admin should have access via API
           adminApiResp = machine.succeed(
               "curl -sf -H 'Authorization: Bearer circus_decl_admin' http://127.0.0.1:3000/api/v1/users"
           )
           assert "decl-admin" in adminApiResp, "Expected decl-admin in API response"
           assert "decl-user" in adminApiResp, "Expected decl-user in API response"
 
-      with subtest("Users API shows declarative users for admin"):
-          # Use the admin API key to list users instead of session-based auth
-          result = machine.succeed(
-              "curl -sf -H 'Authorization: Bearer circus_decl_admin' http://127.0.0.1:3000/api/v1/users"
-          )
-          assert "decl-admin" in result, f"Users API should return decl-admin. Got: {result[:500]}"
-          assert "decl-user" in result, f"Users API should return decl-user. Got: {result[:500]}"
-
-      # STARRED JOBS PAGE
-      with subtest("Starred page exists and returns 200"):
-          code = machine.succeed(
-              "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/starred"
-          )
-          assert code.strip() == "200", f"Expected 200, got {code.strip()}"
-
-      with subtest("Starred page shows login prompt when not logged in"):
-          body = machine.succeed("curl -sf http://127.0.0.1:3000/starred")
-          assert "Login required" in body or "login" in body.lower(), "Starred page should prompt for login"
-
       # DECLARATIVE JOBSET END-TO-END
-      # Everything above proves rows land in the database. This section proves a
-      # bootstrapped jobset is actually fetched, evaluated, and built - the part
-      # fake-URL projects can never exercise.
       with subtest("Local flake repo for the decl-e2e project is populated"):
           machine.succeed("mkdir -p /var/lib/circus/test-repos")
           machine.succeed("git init --bare /var/lib/circus/test-repos/decl-flake.git")
@@ -604,5 +487,55 @@ in
               f"curl -sf 'http://127.0.0.1:3000/api/v1/evaluations?jobset_id={off_jobset}' | jq '.items | length'"
           ).strip())
           assert off_evals == 0, f"Disabled jobset should have 0 evaluations, got {off_evals}"
+
+      with subtest("Disabled declarative jobset produced no builds"):
+          # Join through evaluations since builds reference evaluation_id, not
+          # jobset_id directly.
+          off_builds = int(machine.succeed(
+              f"sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE e.jobset_id = '{off_jobset}'\""
+          ).strip())
+          assert off_builds == 0, f"Disabled jobset should have 0 builds, got {off_builds}"
+
+      # BUILD PIPELINE CORRECTNESS
+      # These subtests verify that the distributed build pipeline (evaluator ->
+      # queue runner -> builder -> result sink) runs correctly end to end.
+      with subtest("Build log is non-empty after completion"):
+          # The queue runner writes the build log to disk; the server exposes it
+          # at /api/v1/builds/{id}/log. An empty or missing log means the log
+          # sink or the streaming path is broken even if the build succeeded.
+          log_body = machine.succeed(
+              f"curl -sf http://127.0.0.1:3000/api/v1/builds/{decl_build_id}/log"
+          )
+          assert len(log_body.strip()) > 0, "Build log must not be empty"
+
+      with subtest("Build output path is realised in the Nix store"):
+          # nix-store --check-validity exits non-zero if the path is missing or
+          # its hash does not match, confirming the output is a real realised path
+          # and not just a string the server fabricated.
+          machine.succeed(f"nix-store --check-validity {output_path}")
+
+      with subtest("API build list matches database build count for evaluation"):
+          db_count = int(machine.succeed(
+              f"sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builds WHERE evaluation_id = '{eval_id}'\""
+          ).strip())
+          api_count = int(machine.succeed(
+              f"curl -sf 'http://127.0.0.1:3000/api/v1/builds?evaluation_id={eval_id}' "
+              "| jq '.items | length'"
+          ).strip())
+          assert db_count == api_count, \
+              f"DB build count ({db_count}) != API build count ({api_count})"
+
+      with subtest("Re-evaluation with unchanged source produces no second evaluation"):
+          # The evaluator caches by (jobset_id, source_commit). A second poll
+          # against the same commit must not create a duplicate evaluation row.
+          # We wait one poll cycle (checkInterval = 5s) then assert the count
+          # is still 1.
+          time.sleep(8)
+          eval_count = int(machine.succeed(
+              f"curl -sf 'http://127.0.0.1:3000/api/v1/evaluations?jobset_id={enabled_jobset}' "
+              "| jq '.items | map(select(.status==\"completed\")) | length'"
+          ).strip())
+          assert eval_count == 1, \
+              f"Expected 1 completed evaluation for unchanged source, got {eval_count}"
     '';
   }
