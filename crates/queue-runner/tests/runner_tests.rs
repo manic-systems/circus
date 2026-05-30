@@ -101,6 +101,8 @@ async fn test_worker_pool_drain_stops_dispatch() {
     circus_common::config::SigningConfig::default(),
     circus_common::config::CacheUploadConfig::default(),
     None,
+    circus_queue_runner::rpc::AgentPool::new(),
+    std::time::Duration::from_secs(60),
   );
 
   // Drain should not panic
@@ -223,6 +225,8 @@ async fn test_worker_pool_active_builds_cancel() {
     circus_common::config::SigningConfig::default(),
     circus_common::config::CacheUploadConfig::default(),
     None,
+    circus_queue_runner::rpc::AgentPool::new(),
+    std::time::Duration::from_secs(60),
   );
 
   // Active builds map should start empty

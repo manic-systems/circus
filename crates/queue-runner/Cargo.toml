@@ -6,24 +6,38 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
+# Our crates
+circus-common.workspace = true
+circus-proto.workspace  = true
+
 anyhow.workspace             = true
+base64.workspace             = true
+capnp.workspace              = true
+capnp-futures.workspace      = true
+capnp-rpc.workspace          = true
 chrono.workspace             = true
 clap.workspace               = true
 config.workspace             = true
 dashmap.workspace            = true
+futures.workspace            = true
+hex.workspace                = true
+hmac.workspace               = true
+parking_lot.workspace        = true
+ring.workspace               = true
+rustls.workspace             = true
+rustls-pemfile.workspace     = true
 serde.workspace              = true
 serde_json.workspace         = true
+sha2.workspace               = true
 sqlx.workspace               = true
 thiserror.workspace          = true
 tokio.workspace              = true
+tokio-rustls.workspace       = true
 tokio-util.workspace         = true
 tracing.workspace            = true
 tracing-subscriber.workspace = true
 urlencoding.workspace        = true
 uuid.workspace               = true
-
-# Our crates
-circus-common.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

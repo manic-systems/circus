@@ -6,7 +6,10 @@ use circus_common::{
   gc_roots,
   repo,
 };
-use circus_queue_runner::worker::{ActiveBuilds, WorkerPool};
+use circus_queue_runner::{
+  rpc::{AgentPool, server::ServerConfig as RpcServerConfig},
+  worker::{ActiveBuilds, WorkerPool},
+};
 use clap::Parser;
 use tokio::sync::RwLock;
 
@@ -33,7 +36,9 @@ async fn main() -> anyhow::Result<()> {
   let gc_config = config.gc;
   let gc_config_for_loop = gc_config.clone();
   let signing_config = config.signing;
+  let signing_config_for_rpc = signing_config.clone();
   let cache_upload_config = config.cache_upload;
+  let cache_upload_for_rpc = cache_upload_config.clone();
   let qr_config = config.queue_runner;
   let nix_store_dir = config.nix.store_dir;
 
@@ -52,8 +57,30 @@ async fn main() -> anyhow::Result<()> {
 
   let db = Database::new(config.database).await?;
 
+  // Crash recovery for builder_sessions.connected: rows from any
+  // previous runner instance are stale once we boot. The RPC accept
+  // loop will flip each agent back to connected on register.
+  match repo::builder_sessions::reset_all_connected(db.pool()).await {
+    Ok(n) if n > 0 => {
+      tracing::info!(reset = n, "cleared stale builder_sessions.connected")
+    },
+    Ok(_) => {},
+    Err(e) => tracing::warn!("could not reset builder_sessions.connected: {e}"),
+  }
+
   let signing_enabled = signing_config.enabled;
   let signing_key_file = signing_config.key_file.clone();
+
+  // Agent pool must be constructed BEFORE the worker pool so the
+  // scheduler can hand work to connected agents. The RPC server thread
+  // is started further down; agents that register before the listener is
+  // up simply reconnect via their supervisor loop.
+  let agent_pool = AgentPool::new();
+  let heartbeat_ttl = qr_config
+    .rpc
+    .as_ref()
+    .map(|c| std::time::Duration::from_secs(c.heartbeat_ttl_secs))
+    .unwrap_or_else(|| std::time::Duration::from_secs(60));
 
   let worker_pool = Arc::new(WorkerPool::new(
     db.pool().clone(),
@@ -66,6 +93,8 @@ async fn main() -> anyhow::Result<()> {
     signing_config,
     cache_upload_config,
     alert_config,
+    Arc::clone(&agent_pool),
+    heartbeat_ttl,
   ));
 
   {
@@ -99,6 +128,25 @@ async fn main() -> anyhow::Result<()> {
 
   let active_builds = worker_pool.active_builds().clone();
 
+  // capnp-rpc lives in its own thread because its capabilities are
+  // !Send; the rest of the queue-runner stays on the multi-threaded
+  // runtime. The AgentPool (constructed above and shared with the
+  // worker pool) bridges the boundary via per-agent channels.
+  if let Some(rpc_cfg) = qr_config.rpc.clone() {
+    spawn_rpc_thread(
+      rpc_cfg,
+      cache_upload_for_rpc,
+      signing_config_for_rpc,
+      Arc::clone(&agent_pool),
+      db.pool().clone(),
+    );
+  } else {
+    tracing::info!(
+      "[queue_runner.rpc] not set; agent path disabled, falling back to SSH \
+       dispatch only"
+    );
+  }
+
   tokio::select! {
       result = circus_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, hot_config.clone(), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
           if let Err(e) = result {
@@ -126,6 +174,61 @@ async fn main() -> anyhow::Result<()> {
   db.close().await;
 
   Ok(())
+}
+
+/// Spawn the capnp-rpc agent listener on its own current-thread runtime.
+///
+/// capnp-rpc capabilities are reference-counted with `Rc`, so all task
+/// driving the RPC system must live on a single thread. We isolate that
+/// to one OS thread; the main multi-threaded runtime is untouched. Cross
+/// the boundary via `Arc<AgentPool>` (channels inside).
+fn spawn_rpc_thread(
+  cfg: circus_common::config::RpcConfig,
+  cache_cfg: circus_common::config::CacheUploadConfig,
+  signing_cfg: circus_common::config::SigningConfig,
+  pool: Arc<AgentPool>,
+  db_pool: sqlx::PgPool,
+) {
+  std::thread::Builder::new()
+    .name("circus-rpc".into())
+    .spawn(move || {
+      let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+      {
+        Ok(r) => r,
+        Err(e) => {
+          tracing::error!("rpc runtime build failed: {e}");
+          return;
+        },
+      };
+      let local = tokio::task::LocalSet::new();
+      let server_cfg = match RpcServerConfig::from_user(&cfg) {
+        Ok(c) => {
+          c.with_presigner_from(&cache_cfg).with_signing_key(
+            signing_cfg
+              .enabled
+              .then_some(signing_cfg.key_file)
+              .flatten(),
+          )
+        },
+        Err(e) => {
+          tracing::error!("rpc config error: {e}");
+          return;
+        },
+      };
+      rt.block_on(local.run_until(async move {
+        if let Err(e) =
+          circus_queue_runner::rpc::serve(server_cfg, pool, db_pool).await
+        {
+          tracing::error!("rpc server ended: {e}");
+        }
+      }));
+    })
+    .map(|_| ())
+    .unwrap_or_else(|e| {
+      tracing::error!("failed to spawn rpc thread: {e}");
+    });
 }
 
 async fn cleanup_stale_logs(log_dir: &std::path::Path) {
