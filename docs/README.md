@@ -69,8 +69,7 @@ together.
 [INSTALL.md]: ./INSTALL.md
 [USAGE.md]: ./USAGE.md
 [DISTRIBUTED.md]: ./DISTRIBUTED.md
-
-[COMPARISON.md]
+[COMPARISON.md]: ./COMPARISON.md
 
 Circus documentation is split into different documents, detailing different
 aspects of its usage. Quickstart options, demo VM usage, configuration, database
@@ -139,8 +138,8 @@ $ cargo nextest run -p circus-server
 
 ### API Reference Updates
 
-The endpoint reference is generated into [docs/API.md](./API.md). Update it
-after route changes with:
+The endpoint reference is generated into [API.md](./API.md). Update it after
+route changes with:
 
 ```bash
 # Run api-docs task to generate 'docs/API.md'
