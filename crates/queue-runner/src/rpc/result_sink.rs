@@ -27,10 +27,10 @@ pub struct ResultSinkImpl {
   pub done: Arc<tokio::sync::Mutex<Option<oneshot::Sender<BuildOutcomeKind>>>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum BuildOutcomeKind {
   Success,
-  Failure,
+  Failure { error_message: Option<String> },
   TimedOut,
   Aborted,
 }
@@ -54,14 +54,23 @@ impl result_sink::Server for ResultSinkImpl {
         BuildOutcome::Success => BuildOutcomeKind::Success,
         BuildOutcome::TimedOut => BuildOutcomeKind::TimedOut,
         BuildOutcome::Aborted => BuildOutcomeKind::Aborted,
-        _ => BuildOutcomeKind::Failure,
+        _ => {
+          BuildOutcomeKind::Failure {
+            error_message: r
+              .get_error_message()
+              .ok()
+              .and_then(|s| s.to_str().ok())
+              .filter(|s| !s.is_empty())
+              .map(std::borrow::ToOwned::to_owned),
+          }
+        },
       };
 
-      let status = match kind {
+      let status = match &kind {
         BuildOutcomeKind::Success => BuildStatus::Succeeded,
         BuildOutcomeKind::Aborted => BuildStatus::Aborted,
         BuildOutcomeKind::TimedOut => BuildStatus::Timeout,
-        BuildOutcomeKind::Failure => BuildStatus::Failed,
+        BuildOutcomeKind::Failure { .. } => BuildStatus::Failed,
       };
 
       let err_msg = r

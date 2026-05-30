@@ -9,6 +9,7 @@
 //! [`super::pool::AgentMeta`].
 
 use std::{
+  collections::HashMap,
   net::SocketAddr,
   sync::{
     Arc,
@@ -33,7 +34,7 @@ use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
 use tokio::{
   net::TcpListener,
-  sync::{mpsc, oneshot},
+  sync::{Semaphore, mpsc, oneshot},
 };
 use tokio_rustls::TlsAcceptor;
 use tokio_util::compat::{
@@ -72,6 +73,22 @@ pub struct ServerConfig {
   /// `<key-name>:<base64-secret>`). When set, narinfo records are signed
   /// before persistence so cache fetchers see a trust-rooted entry.
   pub signing_key_file:   Option<std::path::PathBuf>,
+  active_uploads: Arc<parking_lot::Mutex<HashMap<UploadKey, ExpectedUpload>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct UploadKey {
+  machine_id: Uuid,
+  build_id:   Uuid,
+  store_path: String,
+}
+
+#[derive(Debug, Clone)]
+struct ExpectedUpload {
+  nar_hash:    String,
+  nar_size:    u64,
+  compression: String,
+  nar_path:    String,
 }
 
 #[derive(Clone)]
@@ -114,6 +131,7 @@ impl ServerConfig {
       presign_expiry: std::time::Duration::from_secs(cfg.presign_expiry_secs),
       upload_compression: "zstd".to_owned(),
       signing_key_file: None,
+      active_uploads: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     })
   }
 
@@ -164,6 +182,7 @@ pub async fn serve(
   tracing::info!(addr = %cfg.bind, tls = cfg.tls.is_some(), "circus-rpc listening");
 
   let cfg = Arc::new(cfg);
+  let connection_permits = Arc::new(Semaphore::new(cfg.max_connections));
   loop {
     let (socket, peer) = match listener.accept().await {
       Ok(p) => p,
@@ -175,7 +194,15 @@ pub async fn serve(
     let pool = Arc::clone(&pool);
     let db_pool = db_pool.clone();
     let cfg = Arc::clone(&cfg);
+    let permits = Arc::clone(&connection_permits);
     tokio::task::spawn_local(async move {
+      let Ok(_permit) = permits.try_acquire_owned() else {
+        tracing::warn!(
+          ?peer,
+          "rpc connection rejected: max_connections reached"
+        );
+        return;
+      };
       if let Err(e) = serve_one(socket, peer, cfg, pool, db_pool).await {
         tracing::warn!(?peer, "rpc session ended: {e}");
       }
@@ -378,6 +405,7 @@ impl runner::Server for RunnerImpl {
         cpu_count: cpu,
         max_jobs: maxj,
         current_jobs: Arc::new(AtomicU32::new(0)),
+        active_builds: RwLock::new(Default::default()),
         heartbeat: RwLock::new(Default::default()),
         registered_at: Instant::now(),
         tx,
@@ -423,17 +451,37 @@ impl runner::Server for RunnerImpl {
   ) -> Promise<(), capnp::Error> {
     Promise::from_future(async move {
       let pr = params.get()?;
-      let machine_id = pr.get_machine_id()?.to_str()?.to_owned();
-      let build_id = pr.get_build_id()?.to_str()?.to_owned();
+      let machine_id =
+        parse_uuid_param(pr.get_machine_id()?.to_str()?, "machine_id")?;
+      let build_id =
+        parse_uuid_param(pr.get_build_id()?.to_str()?, "build_id")?;
       let req_list = pr.get_request()?;
       let presigner = self.cfg.presigner.clone();
       let expiry = self.cfg.presign_expiry;
       let compression = self.cfg.upload_compression.clone();
 
+      let registered = *self.registered_machine.lock();
+      if registered != Some(machine_id) {
+        return Err(capnp::Error::failed(
+          "machine_id does not match registered session".into(),
+        ));
+      }
+      let Some(meta) = self.pool.get(&machine_id) else {
+        return Err(capnp::Error::failed(
+          "registered agent is not in the live pool".into(),
+        ));
+      };
+      if !meta.active_builds.read().contains(&build_id) {
+        return Err(capnp::Error::failed(
+          "build_id is not active for this agent".into(),
+        ));
+      }
+
       let mut out = results.get().init_responses(req_list.len());
       for (i, req) in req_list.iter().enumerate() {
         let store_path = req.get_store_path()?.to_str()?.to_owned();
         let nar_hash = req.get_nar_hash()?.to_str()?.to_owned();
+        let nar_size = req.get_nar_size();
         let mut slot = out.reborrow().get(i as u32);
         slot.set_store_path(store_path.as_str());
         slot.set_compression(compression.as_str());
@@ -451,9 +499,20 @@ impl runner::Server for RunnerImpl {
         let url = p.presign_put(&key, expiry);
         slot.set_nar_url(url.as_str());
         slot.set_nar_path(key.as_str());
+        self.cfg.active_uploads.lock().insert(
+          UploadKey {
+            machine_id,
+            build_id,
+            store_path: store_path.clone(),
+          },
+          ExpectedUpload {
+            nar_hash,
+            nar_size,
+            compression: compression.clone(),
+            nar_path: key,
+          },
+        );
       }
-      let _ = machine_id;
-      let _ = build_id;
       Ok(())
     })
   }
@@ -467,8 +526,10 @@ impl runner::Server for RunnerImpl {
     let self_cfg = Arc::clone(&self.cfg);
     Promise::from_future(async move {
       let pr = params.get()?;
-      let machine_id = pr.get_machine_id()?.to_str()?.to_owned();
-      let build_id = pr.get_build_id()?.to_str()?.to_owned();
+      let machine_id =
+        parse_uuid_param(pr.get_machine_id()?.to_str()?, "machine_id")?;
+      let build_id =
+        parse_uuid_param(pr.get_build_id()?.to_str()?, "build_id")?;
       let info = pr.get_nar_info()?;
       let store_path = info.get_store_path()?.to_str()?.to_owned();
       let nar_hash = info.get_nar_hash()?.to_str()?.to_owned();
@@ -496,6 +557,32 @@ impl runner::Server for RunnerImpl {
         let s = info.get_sig()?.to_str()?;
         (!s.is_empty()).then(|| s.to_owned())
       };
+
+      let registered = *self.registered_machine.lock();
+      if registered != Some(machine_id) {
+        return Err(capnp::Error::failed(
+          "machine_id does not match registered session".into(),
+        ));
+      }
+      let key = UploadKey {
+        machine_id,
+        build_id,
+        store_path: store_path.clone(),
+      };
+      let Some(expected) = self_cfg.active_uploads.lock().remove(&key) else {
+        return Err(capnp::Error::failed(
+          "upload was not presigned for this session/build/path".into(),
+        ));
+      };
+      if expected.nar_hash != nar_hash
+        || expected.nar_size != info.get_nar_size()
+        || expected.compression != compression
+        || expected.nar_path != url
+      {
+        return Err(capnp::Error::failed(
+          "narinfo does not match presigned upload".into(),
+        ));
+      }
 
       tracing::info!(
         %machine_id,
@@ -648,9 +735,12 @@ async fn run_dispatch_pump(
     let pool = db_pool.clone();
     let builder_cap = builder_cap.clone();
     let current_jobs_counter = Arc::clone(&meta.current_jobs);
+    let meta_for_task = Arc::clone(&meta);
 
     tokio::task::spawn_local(async move {
-      let outcome = dispatch_one(&builder_cap, &cmd, &pool, machine_id).await;
+      let outcome =
+        dispatch_one(&builder_cap, &cmd, &pool, machine_id, &meta_for_task)
+          .await;
       current_jobs_counter.fetch_sub(1, Ordering::Relaxed);
       let _ = cmd.completion.send(outcome);
       tracing::debug!(%machine_id, build_id = %cmd.build_id, "dispatch finished");
@@ -663,7 +753,9 @@ async fn dispatch_one(
   cmd: &DispatchCommand,
   pool: &PgPool,
   machine_id: Uuid,
+  meta: &AgentMeta,
 ) -> DispatchResult {
+  meta.active_builds.write().insert(cmd.build_id);
   let (done_tx, done_rx) = oneshot::channel::<BuildOutcomeKind>();
   let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone());
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
@@ -705,16 +797,26 @@ async fn dispatch_one(
 
   if let Err(e) = req.send().promise.await {
     tracing::warn!(build_id = %cmd.build_id, "assign call failed: {e}");
+    meta.active_builds.write().remove(&cmd.build_id);
     return DispatchResult::Disconnected;
   }
 
-  match done_rx.await {
+  let out = match done_rx.await {
     Ok(BuildOutcomeKind::Success) => DispatchResult::Succeeded,
     Ok(BuildOutcomeKind::TimedOut) => DispatchResult::TimedOut,
     Ok(BuildOutcomeKind::Aborted) => DispatchResult::Aborted,
-    Ok(BuildOutcomeKind::Failure) => DispatchResult::Failed,
+    Ok(BuildOutcomeKind::Failure { error_message }) => {
+      DispatchResult::Failed(error_message.unwrap_or_default())
+    },
     Err(_) => DispatchResult::Disconnected,
-  }
+  };
+  meta.active_builds.write().remove(&cmd.build_id);
+  out
+}
+
+fn parse_uuid_param(value: &str, name: &str) -> Result<Uuid, capnp::Error> {
+  Uuid::parse_str(value)
+    .map_err(|e| capnp::Error::failed(format!("bad {name}: {e}")))
 }
 
 fn read_text_list(

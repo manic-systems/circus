@@ -127,6 +127,25 @@ pub async fn record_outcome(
   Ok(())
 }
 
+/// Whether a live agent should receive new work right now.
+///
+/// A failed agent is temporarily disabled through `disabled_until`; the
+/// in-memory pool tracks connectivity, while this row tracks failure backoff.
+///
+/// # Errors
+/// Returns the underlying sqlx error.
+pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
+  let row = sqlx::query_as::<_, (bool,)>(
+    "SELECT disabled_until IS NULL OR disabled_until <= NOW() FROM \
+     builder_sessions WHERE machine_id = $1",
+  )
+  .bind(machine_id)
+  .fetch_optional(pool)
+  .await
+  .map_err(CiError::Database)?;
+  Ok(row.is_some_and(|(schedulable,)| schedulable))
+}
+
 /// Mark every row disconnected. Called on runner startup to clean up
 /// after a crash where the `connected` flag did not get flipped.
 ///

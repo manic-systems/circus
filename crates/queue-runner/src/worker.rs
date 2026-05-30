@@ -524,6 +524,42 @@ async fn try_agent_dispatch(
       return None;
     }
   }
+  candidates.retain(|(_, snap)| {
+    snap
+      .mandatory_features
+      .iter()
+      .all(|f| build.required_features.iter().any(|required| required == f))
+  });
+  if candidates.is_empty() {
+    return None;
+  }
+
+  let mut eligible = Vec::with_capacity(candidates.len());
+  for candidate in candidates {
+    match repo::builder_sessions::is_schedulable(pool, candidate.0.machine_id)
+      .await
+    {
+      Ok(true) => eligible.push(candidate),
+      Ok(false) => {
+        tracing::debug!(
+          machine_id = %candidate.0.machine_id,
+          name = %candidate.1.name,
+          "skipping agent disabled by failure backoff"
+        );
+      },
+      Err(e) => {
+        tracing::warn!(
+          machine_id = %candidate.0.machine_id,
+          name = %candidate.1.name,
+          "failed to read agent backoff state: {e}"
+        );
+      },
+    }
+  }
+  let mut candidates = eligible;
+  if candidates.is_empty() {
+    return None;
+  }
 
   // Ordering.
   candidates.sort_by(|a, b| {
@@ -597,42 +633,46 @@ async fn try_agent_dispatch(
       Ok(crate::rpc::pool::DispatchResult::Succeeded) => {
         let outputs = read_drv_outputs(drv_path).await;
         return Some(crate::builder::BuildResult {
-          success:      true,
-          exit_code:    Some(0),
-          stdout:       String::new(),
-          stderr:       String::new(),
-          output_paths: outputs,
-          sub_steps:    Vec::new(),
+          success:              true,
+          exit_code:            Some(0),
+          stdout:               String::new(),
+          stderr:               String::new(),
+          output_paths:         outputs,
+          sub_steps:            Vec::new(),
+          cache_upload_handled: cache_upload_enabled_s3,
         });
       },
-      Ok(crate::rpc::pool::DispatchResult::Failed) => {
+      Ok(crate::rpc::pool::DispatchResult::Failed(error_message)) => {
         return Some(crate::builder::BuildResult {
-          success:      false,
-          exit_code:    Some(1),
-          stdout:       String::new(),
-          stderr:       String::new(),
-          output_paths: Vec::new(),
-          sub_steps:    Vec::new(),
+          success:              false,
+          exit_code:            Some(1),
+          stdout:               String::new(),
+          stderr:               error_message,
+          output_paths:         Vec::new(),
+          sub_steps:            Vec::new(),
+          cache_upload_handled: cache_upload_enabled_s3,
         });
       },
       Ok(crate::rpc::pool::DispatchResult::TimedOut) => {
         return Some(crate::builder::BuildResult {
-          success:      false,
-          exit_code:    Some(124),
-          stdout:       String::new(),
-          stderr:       "build timed out".into(),
-          output_paths: Vec::new(),
-          sub_steps:    Vec::new(),
+          success:              false,
+          exit_code:            Some(124),
+          stdout:               String::new(),
+          stderr:               "build timed out".into(),
+          output_paths:         Vec::new(),
+          sub_steps:            Vec::new(),
+          cache_upload_handled: cache_upload_enabled_s3,
         });
       },
       Ok(crate::rpc::pool::DispatchResult::Aborted) => {
         return Some(crate::builder::BuildResult {
-          success:      false,
-          exit_code:    Some(130),
-          stdout:       String::new(),
-          stderr:       "build aborted".into(),
-          output_paths: Vec::new(),
-          sub_steps:    Vec::new(),
+          success:              false,
+          exit_code:            Some(130),
+          stdout:               String::new(),
+          stderr:               "build aborted".into(),
+          output_paths:         Vec::new(),
+          sub_steps:            Vec::new(),
+          cache_upload_handled: cache_upload_enabled_s3,
         });
       },
       Ok(crate::rpc::pool::DispatchResult::Disconnected) | Err(_) => {
@@ -1147,6 +1187,7 @@ async fn run_build(
         // Push to external binary cache if configured
         let mut upload_failed_paths: Vec<String> = Vec::new();
         if cache_upload_config.enabled
+          && !build_result.cache_upload_handled
           && let Some(ref store_uri) = cache_upload_config.store_uri
         {
           upload_failed_paths = push_to_cache(

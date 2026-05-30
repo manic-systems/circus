@@ -56,12 +56,13 @@ pub async fn run_nix_build_remote(
 }
 
 pub struct BuildResult {
-  pub success:      bool,
-  pub exit_code:    Option<i32>,
-  pub stdout:       String,
-  pub stderr:       String,
-  pub output_paths: Vec<String>,
-  pub sub_steps:    Vec<SubStep>,
+  pub success:              bool,
+  pub exit_code:            Option<i32>,
+  pub stdout:               String,
+  pub stderr:               String,
+  pub output_paths:         Vec<String>,
+  pub sub_steps:            Vec<SubStep>,
+  pub cache_upload_handled: bool,
 }
 
 /// A sub-step parsed from nix's internal JSON log format.
@@ -197,6 +198,7 @@ async fn run_nix_build_command(
       stderr: stderr_buf,
       output_paths,
       sub_steps,
+      cache_upload_handled: false,
     })
   })
   .await;

@@ -14,7 +14,7 @@
 //! connection task.
 
 use std::{
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -50,7 +50,7 @@ pub struct DispatchCommand {
 #[derive(Debug)]
 pub enum DispatchResult {
   Succeeded,
-  Failed,
+  Failed(String),
   TimedOut,
   Aborted,
   /// Agent connection dropped before the result arrived; the caller
@@ -72,7 +72,8 @@ pub struct AgentMeta {
   pub cpu_count:          u32,
   pub max_jobs:           u32,
 
-  pub current_jobs: Arc<AtomicU32>,
+  pub current_jobs:  Arc<AtomicU32>,
+  pub active_builds: RwLock<HashSet<Uuid>>,
 
   pub heartbeat:     RwLock<HeartbeatSnapshot>,
   pub registered_at: Instant,

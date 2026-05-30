@@ -399,6 +399,8 @@ impl builder::Server for BuilderImpl {
                   local.error_message.push('\n');
                 }
                 local.error_message.push_str(msg.trim_end());
+                local.outcome = circus_proto::BuildOutcome::UploadFailure;
+                local.exit_code = 1;
               }
               tracing::info!(
                 %build_id,
