@@ -42,6 +42,7 @@ use tokio_util::compat::{
   TokioAsyncWriteCompatExt as _,
 };
 use uuid::Uuid;
+use x509_parser::prelude::FromDer;
 
 use super::{
   AgentPool,
@@ -290,27 +291,14 @@ fn extract_peer_cn(
 }
 
 fn parse_cn(der: &[u8]) -> Option<String> {
-  // OID 2.5.4.3 (commonName) encoded as a DER OBJECT IDENTIFIER is
-  // `06 03 55 04 03`. In an X.509 Subject the CN follows directly as
-  // a directory string with one of these tags:
-  //   0x0C UTF8String, 0x13 PrintableString, 0x14 TeletexString,
-  //   0x16 IA5String. We support short-form length only (high bit clear).
-  const NEEDLE: &[u8] = &[0x06, 0x03, 0x55, 0x04, 0x03];
-  let mut i = 0;
-  while i + NEEDLE.len() + 2 <= der.len() {
-    if der[i..i + NEEDLE.len()] == *NEEDLE {
-      let after = &der[i + NEEDLE.len()..];
-      let tag = after[0];
-      if matches!(tag, 0x0C | 0x13 | 0x14 | 0x16) {
-        let len = after[1] as usize;
-        if 2 + len <= after.len() {
-          return std::str::from_utf8(&after[2..2 + len])
-            .ok()
-            .map(str::to_owned);
-        }
-      }
+  let (_, cert) =
+    x509_parser::certificate::X509Certificate::from_der(der).ok()?;
+  for attr in cert.subject().iter_attributes() {
+    if attr.attr_type().to_id_string() == "2.5.4.3"
+      && let Ok(val) = attr.attr_value().as_str()
+    {
+      return Some(val.to_owned());
     }
-    i += 1;
   }
   None
 }
@@ -570,7 +558,8 @@ impl runner::Server for RunnerImpl {
         build_id,
         store_path: store_path.clone(),
       };
-      let Some(expected) = self_cfg.active_uploads.lock().remove(&key) else {
+      let Some(expected) = self_cfg.active_uploads.lock().get(&key).cloned()
+      else {
         return Err(capnp::Error::failed(
           "upload was not presigned for this session/build/path".into(),
         ));
@@ -640,8 +629,11 @@ impl runner::Server for RunnerImpl {
       )
       .await
       {
-        tracing::warn!(%store_path, "failed to persist narinfo: {e}");
+        return Err(capnp::Error::failed(format!(
+          "failed to persist narinfo: {e}"
+        )));
       }
+      self_cfg.active_uploads.lock().remove(&key);
       Ok(())
     })
   }
@@ -762,7 +754,6 @@ async fn dispatch_one(
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
   let result_sink_impl = ResultSinkImpl {
     pool: pool.clone(),
-    build_id: cmd.build_id,
     machine_id,
     done: Arc::new(tokio::sync::Mutex::new(Some(done_tx))),
   };
