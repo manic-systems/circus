@@ -32,6 +32,7 @@ use circus_proto::{
 use parking_lot::RwLock;
 use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
+use subtle::ConstantTimeEq as _;
 use tokio::{
   net::TcpListener,
   sync::{Semaphore, mpsc, oneshot},
@@ -293,6 +294,13 @@ fn extract_peer_cn(
 fn parse_cn(der: &[u8]) -> Option<String> {
   let (_, cert) =
     x509_parser::certificate::X509Certificate::from_der(der).ok()?;
+  if let Ok(Some(san)) = cert.subject_alternative_name() {
+    for name in &san.value.general_names {
+      if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
+        return Some((*dns).to_owned());
+      }
+    }
+  }
   for attr in cert.subject().iter_attributes() {
     if attr.attr_type().to_id_string() == "2.5.4.3"
       && let Ok(val) = attr.attr_value().as_str()
@@ -831,14 +839,7 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
 }
 
 fn subtle_eq(a: &str, b: &str) -> bool {
-  if a.len() != b.len() {
-    return false;
-  }
-  let mut acc: u8 = 0;
-  for (x, y) in a.bytes().zip(b.bytes()) {
-    acc |= x ^ y;
-  }
-  acc == 0
+  a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 async fn upsert_session(
