@@ -52,22 +52,26 @@ use super::{
 
 #[derive(Clone)]
 pub struct ServerConfig {
-  pub bind:            SocketAddr,
+  pub bind:               SocketAddr,
   /// SHA-256 hex digests of accepted bearer tokens. Empty = reject all.
-  pub token_hashes:    Vec<String>,
-  pub max_connections: usize,
+  pub token_hashes:       Vec<String>,
+  pub max_connections:    usize,
   /// Optional TLS. `None` means plain TCP.
-  pub tls:             Option<TlsState>,
+  pub tls:                Option<TlsState>,
   /// Optional S3 presigner. `None` disables the presigned-upload path;
   /// agents that request a presigned URL get a per-entry error in the
   /// response.
-  pub presigner:       Option<Arc<super::s3::Presigner>>,
+  pub presigner:          Option<Arc<super::s3::Presigner>>,
   /// How long presigned PUT URLs are valid for. Defaults to one hour.
-  pub presign_expiry:  std::time::Duration,
+  pub presign_expiry:     std::time::Duration,
+  /// Wire compression advertised to agents for the presigned-upload path.
+  /// Must match `CacheUploadConfig::compression` so the S3 key suffix and
+  /// the narinfo `Compression:` field agree. Defaults to `"zstd"`.
+  pub upload_compression: String,
   /// Path to the Ed25519 signing key (Nix format
   /// `<key-name>:<base64-secret>`). When set, narinfo records are signed
   /// before persistence so cache fetchers see a trust-rooted entry.
-  pub signing_key_file: Option<std::path::PathBuf>,
+  pub signing_key_file:   Option<std::path::PathBuf>,
 }
 
 #[derive(Clone)]
@@ -108,6 +112,7 @@ impl ServerConfig {
       tls,
       presigner: None,
       presign_expiry: std::time::Duration::from_secs(cfg.presign_expiry_secs),
+      upload_compression: "zstd".to_owned(),
       signing_key_file: None,
     })
   }
@@ -116,7 +121,10 @@ impl ServerConfig {
   /// signs every persisted narinfo (matches the SSH-path behaviour
   /// where signing is done by `nix store sign` after copy).
   #[must_use]
-  pub fn with_signing_key(mut self, key_file: Option<std::path::PathBuf>) -> Self {
+  pub fn with_signing_key(
+    mut self,
+    key_file: Option<std::path::PathBuf>,
+  ) -> Self {
     self.signing_key_file = key_file;
     self
   }
@@ -134,6 +142,7 @@ impl ServerConfig {
       && let Some(p) = super::s3::Presigner::from_config(uri, s3_cfg)
     {
       self.presigner = Some(Arc::new(p));
+      self.upload_compression = cache_cfg.compression.clone();
     }
     self
   }
@@ -419,25 +428,26 @@ impl runner::Server for RunnerImpl {
       let req_list = pr.get_request()?;
       let presigner = self.cfg.presigner.clone();
       let expiry = self.cfg.presign_expiry;
+      let compression = self.cfg.upload_compression.clone();
 
-      let mut out = results
-        .get()
-        .init_responses(req_list.len());
+      let mut out = results.get().init_responses(req_list.len());
       for (i, req) in req_list.iter().enumerate() {
         let store_path = req.get_store_path()?.to_str()?.to_owned();
         let nar_hash = req.get_nar_hash()?.to_str()?.to_owned();
         let mut slot = out.reborrow().get(i as u32);
         slot.set_store_path(store_path.as_str());
-        slot.set_compression("zstd");
+        slot.set_compression(compression.as_str());
         let Some(p) = presigner.as_ref() else {
           slot.set_error_message("runner has no S3 presigner configured");
           continue;
         };
-        // S3 key shape: nar/<sha256-base32 from nar_hash>.nar.zst, matching
-        // the layout Nix expects in narinfo. We accept whatever hash
-        // encoding the agent sends (sha256:hex or sri); the agent picks the
-        // canonical form before calling.
-        let key = format!("nar/{}.nar.zst", short_hash(&nar_hash));
+        // S3 key shape: nar/<sha256-base32 from nar_hash>.<ext>, where the
+        // extension is derived from the configured compression so the key
+        // suffix matches the actual encoding. Nix clients use the narinfo
+        // `Compression:` field to decompress, but operators and S3-level
+        // tooling rely on the extension being accurate.
+        let ext = compression_ext(&compression);
+        let key = format!("nar/{}.{}", short_hash(&nar_hash), ext);
         let url = p.presign_put(&key, expiry);
         slot.set_nar_url(url.as_str());
         slot.set_nar_path(key.as_str());
@@ -593,13 +603,32 @@ async fn sign_fingerprint(
   Ok(format!("{name}:{}", B64.encode(sig.as_ref())))
 }
 
-/// Extract the bytes after `sha256:` or `sha256-` from a nar hash. We use
+/// Map a compression algorithm name to the conventional NAR file extension.
+///
+/// Nix uses `nar/<hash>.nar.<ext>` in its binary cache layout. The
+/// extension is purely cosmetic for Nix clients (they use the narinfo
+/// `Compression:` field), but operators and S3 tooling rely on it being
+/// accurate.
+fn compression_ext(compression: &str) -> &'static str {
+  match compression {
+    "zstd" => "nar.zst",
+    "xz" => "nar.xz",
+    "gzip" | "gz" => "nar.gz",
+    "bzip2" | "bz2" => "nar.bz2",
+    _ => "nar",
+  }
+}
+
+/// Extract the bytes after `sha256:` or `sha256-` from a nar hash.
 /// this as the key segment so we don't have to base64-decode here. Falls
 /// back to the input if the prefix isn't recognised.
 fn short_hash(h: &str) -> String {
   for prefix in ["sha256:", "sha256-"] {
     if let Some(rest) = h.strip_prefix(prefix) {
-      return rest.trim_end_matches('=').replace('/', "_").replace('+', "-");
+      return rest
+        .trim_end_matches('=')
+        .replace('/', "_")
+        .replace('+', "-");
     }
   }
   h.to_owned()
@@ -639,10 +668,10 @@ async fn dispatch_one(
   let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone());
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
   let result_sink_impl = ResultSinkImpl {
-    pool:       pool.clone(),
-    build_id:   cmd.build_id,
+    pool: pool.clone(),
+    build_id: cmd.build_id,
     machine_id,
-    done:       Arc::new(tokio::sync::Mutex::new(Some(done_tx))),
+    done: Arc::new(tokio::sync::Mutex::new(Some(done_tx))),
   };
   let result_cap: result_sink::Client = capnp_rpc::new_client(result_sink_impl);
 
@@ -733,8 +762,8 @@ async fn upsert_session(
   sqlx::query(
     "INSERT INTO builder_sessions (machine_id, name, hostname, systems, \
      supported_features, mandatory_features, speed_factor, cpu_count, \
-     max_jobs, proto_version, connected, last_seen, updated_at) VALUES ($1, $2, \
-     $3, $4, $5, $6, $7, $8, $9, $10, TRUE, NOW(), NOW()) ON CONFLICT \
+     max_jobs, proto_version, connected, last_seen, updated_at) VALUES ($1, \
+     $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, NOW(), NOW()) ON CONFLICT \
      (machine_id) DO UPDATE SET name = EXCLUDED.name, hostname = \
      EXCLUDED.hostname, systems = EXCLUDED.systems, supported_features = \
      EXCLUDED.supported_features, mandatory_features = \
