@@ -11,7 +11,7 @@ in
     containers.machine = {
       imports = [
         self.nixosModules.circus
-        ../container-common.nix
+        ../common/container.nix
       ];
       _module.args.self = self;
 

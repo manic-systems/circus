@@ -8,7 +8,7 @@ testers.runNixOSTest {
   containers.machine = {
     imports = [
       self.nixosModules.circus
-      ../container-common.nix
+      ../common/container.nix
     ];
 
     config._module.args = {inherit self;};

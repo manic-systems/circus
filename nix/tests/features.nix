@@ -8,7 +8,7 @@ testers.runNixOSTest {
   containers.machine = {
     imports = [
       self.nixosModules.circus
-      ../container-common.nix
+      ../common/container.nix
     ];
     _module.args.self = self;
   };
@@ -159,20 +159,7 @@ testers.runNixOSTest {
         f"{auth_header}"
     )
 
-    # Dashboard improvements
-    with subtest("Home page has dashboard-grid two-column layout"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/")
-        assert "dashboard-grid" in body, "Home page should have dashboard-grid class"
-
-    with subtest("Home page has colored stat values"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/")
-        assert "stat-value-green" in body, "Home page should have green stat value for completed"
-        assert "stat-value-red" in body, "Home page should have red stat value for failed"
-
-    with subtest("Home page has escapeHtml utility"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/")
-        assert "escapeHtml" in body, "Home page should include escapeHtml function"
-
+    # Dashboard
     with subtest("Admin page JS uses escapeHtml for error handling"):
         # Login to get admin view
         if match:

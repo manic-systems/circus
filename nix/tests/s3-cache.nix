@@ -8,7 +8,7 @@ pkgs.testers.nixosTest {
   nodes.machine = {
     imports = [
       self.nixosModules.circus
-      ../vm-common.nix
+      ../common/vm.nix
     ];
     _module.args.self = self;
 

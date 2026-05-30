@@ -13,11 +13,11 @@
     inherit (nixpkgs) lib;
     forAllSystems = lib.genAttrs ["x86_64-linux" "aarch64-linux"];
   in {
-    # NixOS module for circus
+    # NixOS modules for Circus and components
     nixosModules = {
-      circus = ./nix/modules/nixos.nix;
+      circus = ./nix/modules/circus.nix;
       circus-agent = ./nix/modules/circus-agent.nix;
-      default = self.nixosModules.circus;
+      default = self.nixosModules.circus; # agent is optional
     };
 
     packages = forAllSystems (system: let

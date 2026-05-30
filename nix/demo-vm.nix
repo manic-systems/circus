@@ -4,7 +4,7 @@
   lib,
 }: let
   inherit (lib.modules) mkForce;
-  circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+  circusPkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
 
   # Demo password file to demonstrate passwordFile option
   # Password must be at least 12 characters with at least one uppercase letter
@@ -19,7 +19,7 @@
       (modulesPath + "/virtualisation/qemu-vm.nix")
 
       self.nixosModules.circus
-      ./vm-common.nix
+      ./common/vm.nix
 
       {config._module.args = {inherit self;};}
     ];
@@ -39,12 +39,6 @@
       after = ["circus-server.service"];
       requires = ["circus-server.service"];
       wantedBy = ["multi-user.target"];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        User = "circus";
-        Group = "circus";
-      };
       path = [pkgs.postgresql pkgs.curl];
       script = ''
         # Wait for server to be ready
@@ -63,15 +57,22 @@
         RO_HASH="$(echo -n 'circus_demo_readonly_key' | sha256sum | cut -d' ' -f1)"
         psql -U circus -d circus -c "INSERT INTO api_keys (name, key_hash, role) VALUES ('demo-readonly', '$RO_HASH', 'read-only') ON CONFLICT DO NOTHING" 2>/dev/null || true
       '';
+
+      serviceConfig = {
+        RemainAfterExit = true;
+        Type = "oneshot";
+        User = "circus";
+        Group = "circus";
+      };
     };
     services = {
       circus = {
         enable = true;
 
-        package = circus-packages.circus-server;
-        evaluatorPackage = circus-packages.circus-evaluator;
-        queueRunnerPackage = circus-packages.circus-queue-runner;
-        migratePackage = circus-packages.circus-migrate-cli;
+        package = circusPkgs.circus-server;
+        evaluatorPackage = circusPkgs.circus-evaluator;
+        queueRunnerPackage = circusPkgs.circus-queue-runner;
+        migratePackage = circusPkgs.circus-migrate-cli;
 
         server.enable = true;
         evaluator.enable = true;
@@ -108,8 +109,6 @@
       getty = {
         autologinUser = "root";
         greetingLine = ''
-          ====================================================
-
           Dashboard:     http://localhost:3000
           Health:        http://localhost:3000/health
           API base:      http://localhost:3000/api/v1
@@ -120,10 +119,8 @@
           Admin API key: circus_demo_admin_key
           Read-only key: circus_demo_readonly_key
 
-          Login at http://localhost:3000/login using
+          Login at <http://localhost:3000/login> using
           the credentials or the API key provided above.
-
-          ===================================================
         '';
       };
     };
@@ -132,10 +129,8 @@
     environment.systemPackages = with pkgs; [
       curl
       jq
-      htop
-      nix
+      btop
       nix-eval-jobs
-      git
       zstd
     ];
 
