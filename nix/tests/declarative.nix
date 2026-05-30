@@ -16,125 +16,129 @@ in
     nodes.machine = {
       imports = [
         self.nixosModules.circus
-        ../vm-common.nix
+        ../common/vm.nix
       ];
       _module.args.self = self;
 
       services.circus = {
-        declarative.users = {
-          # Admin user with passwordFile
-          decl-admin = {
-            email = "admin@test.local";
-            passwordFile = toString adminPasswordFile;
-            role = "admin";
+        declarative = {
+          users = {
+            # Admin user with passwordFile
+            decl-admin = {
+              email = "admin@test.local";
+              passwordFile = toString adminPasswordFile;
+              role = "admin";
+            };
+            # Regular user with passwordFile
+            decl-user = {
+              email = "user@test.local";
+              passwordFile = toString userPasswordFile;
+              role = "read-only";
+            };
+            # User with passwordFile
+            decl-user2 = {
+              email = "user2@test.local";
+              passwordFile = toString userPasswordFile;
+              role = "read-only";
+            };
+            # Disabled user with passwordFile
+            decl-disabled = {
+              email = "disabled@test.local";
+              passwordFile = toString disabledPasswordFile;
+              role = "read-only";
+              enabled = false;
+            };
           };
-          # Regular user with passwordFile
-          decl-user = {
-            email = "user@test.local";
-            passwordFile = toString userPasswordFile;
-            role = "read-only";
-          };
-          # User with passwordFile
-          decl-user2 = {
-            email = "user2@test.local";
-            passwordFile = toString userPasswordFile;
-            role = "read-only";
-          };
-          # Disabled user with passwordFile
-          decl-disabled = {
-            email = "disabled@test.local";
-            passwordFile = toString disabledPasswordFile;
-            role = "read-only";
-            enabled = false;
-          };
+
+          # Replace vm-common's bootstrap key list entirely.
+          apiKeys = lib.mkForce [
+            {
+              name = "decl-admin-key";
+              key = "circus_decl_admin";
+              role = "admin";
+            }
+            {
+              name = "decl-readonly-key";
+              key = "circus_decl_readonly";
+              role = "read-only";
+            }
+          ];
+
+          # Replaces the placeholder project from shared VM commons
+          # entirely.
+          projects = lib.mkForce [
+            {
+              name = "decl-project-1";
+              repositoryUrl = "https://github.com/test/decl1";
+              description = "First declarative project";
+              jobsets = [
+                {
+                  name = "enabled-jobset";
+                  nixExpression = "packages";
+                  enabled = true;
+                  flakeMode = true;
+                  checkInterval = 300;
+                  state = "enabled";
+                }
+                {
+                  name = "disabled-jobset";
+                  nixExpression = "disabled";
+                  state = "disabled";
+                }
+                {
+                  name = "oneshot-jobset";
+                  nixExpression = "oneshot";
+                  state = "one_shot";
+                }
+                {
+                  name = "oneatatime-jobset";
+                  nixExpression = "exclusive";
+                  state = "one_at_a_time";
+                  checkInterval = 60;
+                }
+              ];
+            }
+            {
+              name = "decl-project-2";
+              repositoryUrl = "https://github.com/test/decl2";
+              jobsets = [
+                {
+                  name = "main";
+                  nixExpression = ".";
+                  flakeMode = true;
+                }
+              ];
+            }
+
+            # Unlike the projects above (fake URLs that can never resolve in a
+            # network-less VM), this one points at a local repo populated at
+            # runtime, so the declarative path drives a real evaluation + build.
+            {
+              name = "decl-e2e";
+              repositoryUrl = "file:///var/lib/circus/test-repos/decl-flake.git";
+              description = "Declarative project that actually evaluates";
+              jobsets = [
+                {
+                  name = "packages";
+                  nixExpression = "packages";
+                  flakeMode = true;
+                  branch = "master";
+                  state = "enabled";
+                  checkInterval = 5;
+                }
+                # Same repo, disabled: the evaluator must never touch it.
+                {
+                  name = "off";
+                  nixExpression = "packages";
+                  flakeMode = true;
+                  branch = "master";
+                  state = "disabled";
+                  checkInterval = 5;
+                }
+              ];
+            }
+          ];
         };
-
-        # Replace vm-common's bootstrap key list entirely.
-        declarative.apiKeys = lib.mkForce [
-          {
-            name = "decl-admin-key";
-            key = "circus_decl_admin";
-            role = "admin";
-          }
-          {
-            name = "decl-readonly-key";
-            key = "circus_decl_readonly";
-            role = "read-only";
-          }
-        ];
-
-        # Replace vm-common's placeholder project list entirely.
-        declarative.projects = lib.mkForce [
-          {
-            name = "decl-project-1";
-            repositoryUrl = "https://github.com/test/decl1";
-            description = "First declarative project";
-            jobsets = [
-              {
-                name = "enabled-jobset";
-                nixExpression = "packages";
-                enabled = true;
-                flakeMode = true;
-                checkInterval = 300;
-                state = "enabled";
-              }
-              {
-                name = "disabled-jobset";
-                nixExpression = "disabled";
-                state = "disabled";
-              }
-              {
-                name = "oneshot-jobset";
-                nixExpression = "oneshot";
-                state = "one_shot";
-              }
-              {
-                name = "oneatatime-jobset";
-                nixExpression = "exclusive";
-                state = "one_at_a_time";
-                checkInterval = 60;
-              }
-            ];
-          }
-          {
-            name = "decl-project-2";
-            repositoryUrl = "https://github.com/test/decl2";
-            jobsets = [
-              {
-                name = "main";
-                nixExpression = ".";
-                flakeMode = true;
-              }
-            ];
-          }
-          # Unlike the projects above (fake URLs that can never resolve in a
-          # network-less VM), this one points at a local repo populated at
-          # runtime, so the declarative path drives a real evaluation + build.
-          {
-            name = "decl-e2e";
-            repositoryUrl = "file:///var/lib/circus/test-repos/decl-flake.git";
-            description = "Declarative project that actually evaluates";
-            jobsets = [
-              {
-                name = "packages";
-                nixExpression = "packages";
-                flakeMode = true;
-                branch = "master";
-                state = "enabled";
-                checkInterval = 5;
-              }
-              # Same repo, disabled: the evaluator must never touch it.
-              {
-                name = "off";
-                nixExpression = "packages";
-                flakeMode = true;
-                branch = "master";
-                state = "disabled";
-                checkInterval = 5;
-              }
-            ];
-          }
-        ];
       };
     };
 

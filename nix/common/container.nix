@@ -7,42 +7,20 @@
   inherit (lib.modules) mkDefault;
   circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
 in {
-  # Common machine configuration for all circus integration tests
+  # Common machine configuration for circus integration tests that run as
+  # nspawn containers rather than QEMU VMs. Identical to vm-common.nix but
+  # without the virtualisation.* options that only exist in qemu-vm.nix.
   config = {
-    ## VM hardware
-    virtualisation = {
-      memorySize = 2048;
-      cores = 2;
-      diskSize = 10000;
-      graphics = false;
-
-      # Forward guest:3000 -> host:3000 so the dashboard is reachable
-      forwardPorts = [
-        {
-          from = "host";
-          host.port = 3000;
-          guest.port = 3000;
-        }
-      ];
-    };
-
-    # Machine config
     programs.git.enable = true;
     security.sudo.enable = true;
 
-    # Ensure nix and zstd are available for cache endpoints.
-    # python3 is needed by e2e webhook tests; harmless for other tests.
     environment.systemPackages = with pkgs; [nix nix-eval-jobs zstd curl jq openssl python3];
 
-    # Enable Nix flakes and nix-command experimental features required by evaluator
-    nix.settings.experimental-features = ["nix-command" "flakes" "auto-allocate-uids"];
+    nix = {
+      settings.experimental-features = ["nix-command" "flakes" "auto-allocate-uids"];
+      settings.substituters = lib.mkForce [];
+    };
 
-    # VM tests have no network. We need to disable substituters to prevent
-    # Nix from trying to contact cache.nixos.org and timing out each time.
-    nix.settings.substituters = lib.mkForce [];
-
-    # Allow incoming requests on port 3000 to make the dashboard accessible from
-    # the host machine.
     networking.firewall.allowedTCPPorts = [3000];
 
     services.circus = {
@@ -63,7 +41,6 @@ in {
           host = "127.0.0.1";
           port = 3000;
           cors_permissive = false;
-          # Allow file:// URLs in VM tests (no network, repos are local)
           allowed_url_schemes = ["https" "http" "git" "ssh" "file"];
         };
 
@@ -93,8 +70,6 @@ in {
         };
       };
 
-      # Declarative configuration for VM tests
-      # This is set outside of settings so the NixOS module can transform field names
       declarative.apiKeys = [
         {
           name = "bootstrap-admin";
@@ -103,8 +78,6 @@ in {
         }
       ];
 
-      # Declarative project for tests that expect bootstrapped data
-      # Jobset is disabled so evaluator won't try to fetch from GitHub
       declarative.projects = [
         {
           name = "declarative-project";
@@ -117,7 +90,7 @@ in {
               flakeMode = true;
               enabled = true;
               checkInterval = 3600;
-              state = "disabled"; # disabled: exists but won't be evaluated
+              state = "disabled";
             }
           ];
         }

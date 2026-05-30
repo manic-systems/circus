@@ -8,7 +8,7 @@ testers.runNixOSTest {
   containers.machine = {
     imports = [
       self.nixosModules.circus
-      ../container-common.nix
+      ../common/container.nix
     ];
     _module.args.self = self;
   };
@@ -160,7 +160,7 @@ testers.runNixOSTest {
         assert "last_failure" in b, "Missing last_failure in API response"
 
     with subtest("Exponential backoff increases with failures"):
-        # Record 1st failure: expect ~60s backoff
+        # Record 1st failure; expect ~60s backoff
         machine.succeed(
             "sudo -u circus psql -U circus -d circus -c \""
             f"UPDATE remote_builders SET consecutive_failures = 0, disabled_until = NULL WHERE id = '{builder_id}'\""
