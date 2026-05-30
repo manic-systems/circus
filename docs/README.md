@@ -52,34 +52,6 @@ flowchart LR
 See the [design document] for more details on the architecture, similarities and
 differences with Hydra. For feedback and questions, head to the issues tab.
 
-## Development
-
-```bash
-# Enter dev shell
-$ nix develop
-
-# Build all crates
-$ cargo build
-
-# Run all tests (uses nextest; dev shell includes cargo-nextest)
-$ cargo nextest run
-
-# Type-check only
-$ cargo check
-```
-
-Build a specific crate:
-
-```bash
-# Specify a crate to build if packaging individual crates separately.
-$ cargo build -p circus-server
-$ cargo build -p circus-evaluator
-$ cargo build -p circus-queue-runner
-$ cargo build -p circus-common
-$ cargo build -p circus-migrate-cli
-$ cargo build -p circus-migrations
-```
-
 ## Quick Start
 
 1. Enter dev shell and start PostgreSQL:
@@ -572,37 +544,26 @@ custom permission schemes.
 
 ### Dashboard Login
 
-The dashboard supports both authentication methods:
+Circus supports several methods for logging in via the dashboard. The stable and
+currently encouraged methods are:
 
 - **API Key Login**: Enter your API key on the login page for a session cookie
 - **Username/Password**: Log in with user credentials for persistent sessions
 
-Session cookies are valid for 24 hours and allow access to admin features
-without re-entering credentials.
+> [!TIP]
+> Session cookies are valid for 24 hours and allow access to admin features
+> without re-entering credentials.
 
-### Roles
+We also have **experimental** support for OAuth and LDAP authentication. You may
+test them at your disposal, but they are not recommended for production
+deployments. Report bugs!
 
-> [!NOTE]
-> Roles are an experimental feature designed to bring Circus on-par with
-> enterprise-grade Hydra deployments. The feature is currently unstable, and
-> might change at any given time. Do not rely on roles for the time being.
+#### OAuth Authentication (experimental)
 
-| Role              | Permissions                          |
-| ----------------- | ------------------------------------ |
-| `admin`           | Full access to all endpoints         |
-| `read-only`       | Read-only access (GET requests only) |
-| `create-projects` | Create projects and jobsets          |
-| `eval-jobset`     | Trigger evaluations                  |
-| `cancel-build`    | Cancel builds                        |
-| `restart-jobs`    | Restart failed/completed builds      |
-| `bump-to-front`   | Bump build priority                  |
-
-### OAuth Authentication
-
-Circus supports GitHub OAuth for user login. When configured, users can log in
-via GitHub and are automatically assigned a `read-only` role by default.
-
-Enable OAuth by setting the following in your configuration:
+Circus supports GitHub OAuth for user login as an **experimental feature**. When
+configured, users can log in via GitHub and are automatically assigned a
+`read-only` role by default. Enable OAuth by setting the following in your
+configuration:
 
 ```toml
 [oauth.github]
@@ -618,7 +579,7 @@ The OAuth flow:
    `/api/v1/auth/github/callback`
 3. Circus creates a session cookie and redirects to the dashboard
 
-### LDAP Authentication
+#### LDAP Authentication (experimental)
 
 Circus supports LDAP bind-based authentication for dashboard login. Configure it
 under the `server.ldap` section:
@@ -634,6 +595,23 @@ tls_ca_cert = "/etc/ssl/certs/ca-certificates.crt"
 The LDAP login endpoint is `POST /auth/ldap` which accepts `username` and
 `password` fields. On success, it creates a session cookie identical to the
 standard user login flow.
+
+#### Roles
+
+> [!NOTE]
+> Roles are an experimental feature designed to bring Circus on-par with
+> enterprise-grade Hydra deployments. The feature is currently unstable, and
+> might change at any given time. Do not rely on roles for the time being.
+
+| Role              | Permissions                          |
+| ----------------- | ------------------------------------ |
+| `admin`           | Full access to all endpoints         |
+| `read-only`       | Read-only access (GET requests only) |
+| `create-projects` | Create projects and jobsets          |
+| `eval-jobset`     | Trigger evaluations                  |
+| `cancel-build`    | Cancel builds                        |
+| `restart-jobs`    | Restart failed/completed builds      |
+| `bump-to-front`   | Bump build priority                  |
 
 ## Monitoring
 
@@ -679,7 +657,9 @@ scrape_configs:
 
 ## Backup & Restore
 
-Circus stores all state in PostgreSQL. To back up:
+Until Circus reaches 1.0.0, you're encouraged to take regular backups. You can
+do this with a Systemd timer or manually via `pg_dump` in your terminal. To back
+up Circus' state stored in PostgreSQL:
 
 ```bash
 # Create a backup
@@ -833,3 +813,33 @@ The web dashboard is available at the root URL (`/`). Pages include:
 - `/users` - User management (admin)
 - `/starred` - Starred builds list
 - `/metrics` - Metrics dashboard page
+
+## Hacking
+
+### Building a Circus
+
+```bash
+# Enter dev shell
+$ nix develop
+
+# Build all crates
+$ cargo build
+
+# Run all tests (uses nextest; dev shell includes cargo-nextest)
+$ cargo nextest run
+
+# Type-check only
+$ cargo check
+```
+
+Build a specific crate:
+
+```bash
+# Specify a crate to build if packaging individual crates separately.
+$ cargo build -p circus-server
+$ cargo build -p circus-evaluator
+$ cargo build -p circus-queue-runner
+$ cargo build -p circus-common
+$ cargo build -p circus-migrate-cli
+$ cargo build -p circus-migrations
+```
