@@ -63,7 +63,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31
-        # XXX: do we want to run those checks on any other arch? Maybe Darwin
-        # in the future once Circus can actually run on Darwin?
-      - run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
+        with:
+          extra_nix_config: |
+            system-features = kvm benchmark big-parallel nixos-test uid-range
+            auto-allocate-uids = true
+
+      # XXX: do we want to run those checks on any other arch? Maybe Darwin
+      # in the future once Circus can actually run on Darwin?
+      - name: Build ${{ matrix.check }} for x86_64-linux
+        run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
 
