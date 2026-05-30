@@ -180,6 +180,13 @@ async fn request_presigned(
   }
   let resp = req.send().promise.await?;
   let inner = resp.get()?.get_responses()?;
+  if inner.len() != metadata.len() as u32 {
+    return Err(capnp::Error::failed(format!(
+      "presign response length mismatch: expected {}, got {}",
+      metadata.len(),
+      inner.len()
+    )));
+  }
   let mut out = Vec::with_capacity(inner.len() as usize);
   for entry in inner.iter() {
     out.push(PresignSlot {
