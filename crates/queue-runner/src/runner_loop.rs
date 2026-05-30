@@ -74,7 +74,7 @@ pub async fn run(
   unsupported_timeout: Option<Duration>,
 ) -> anyhow::Result<()> {
   let mut last_orphan_reset = tokio::time::Instant::now();
-  let orphan_reset_interval = Duration::from_secs(60);
+  let orphan_reset_interval = Duration::from_mins(1);
   reset_orphaned_builds(&pool).await;
 
   loop {
@@ -229,8 +229,7 @@ pub async fn run(
               .args(["--check-validity", &output_path])
               .status()
               .await
-              .map(|s| s.success())
-              .unwrap_or(false);
+              .is_ok_and(|s| s.success());
 
             if valid {
               tracing::info!(

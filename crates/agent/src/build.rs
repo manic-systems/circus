@@ -62,6 +62,10 @@ pub async fn run(
   log_sink: log_sink::Client,
   cancel: CancellationToken,
 ) -> anyhow::Result<LocalResult> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut args: Vec<String> = vec![
     "--realise".into(),
     "--log-format".into(),
@@ -202,25 +206,24 @@ pub async fn run(
 
   let status = match overall_deadline {
     Some(deadline) => {
-      match timeout(
+      if let Ok(s) = timeout(
         deadline.saturating_duration_since(Instant::now()),
         child.wait(),
       )
       .await
       {
-        Ok(s) => s?,
-        Err(_) => {
-          let _ = child.kill().await;
-          let _ = close_log(&log_sink).await;
-          return Ok(LocalResult {
-            outcome:        circus_proto::BuildOutcome::TimedOut,
-            exit_code:      -1,
-            build_time_ms:  started.elapsed().as_millis() as u64,
-            upload_time_ms: 0,
-            outputs:        Vec::new(),
-            error_message:  "build-timeout exceeded".into(),
-          });
-        },
+        s?
+      } else {
+        let _ = child.kill().await;
+        let _ = close_log(&log_sink).await;
+        return Ok(LocalResult {
+          outcome:        circus_proto::BuildOutcome::TimedOut,
+          exit_code:      -1,
+          build_time_ms:  started.elapsed().as_millis() as u64,
+          upload_time_ms: 0,
+          outputs:        Vec::new(),
+          error_message:  "build-timeout exceeded".into(),
+        });
       }
     },
     None => child.wait().await?,
@@ -350,6 +353,10 @@ async fn forward_chunk(
   sink: &log_sink::Client,
   chunk: &[u8],
 ) -> Result<(), capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let mut req = sink.write_request();
   req.get().set_chunk(chunk);
   req.send().promise.await?;
@@ -357,6 +364,10 @@ async fn forward_chunk(
 }
 
 async fn close_log(sink: &log_sink::Client) -> Result<(), capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   sink.close_request().send().promise.await?;
   Ok(())
 }

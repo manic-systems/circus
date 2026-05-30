@@ -1,4 +1,9 @@
 //! Integration tests for database and configuration
+#![expect(
+  clippy::print_stdout,
+  clippy::unnecessary_wraps,
+  reason = "Fine in tests"
+)]
 
 mod notifications_tests;
 

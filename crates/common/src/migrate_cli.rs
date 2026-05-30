@@ -30,7 +30,7 @@ pub enum Commands {
   },
   /// Create a new migration file
   Create {
-    /// Migration name (snake_case, becomes part of the filename)
+    /// Migration name (`snake_case`, becomes part of the filename)
     #[arg(required = true)]
     name:       String,
     /// Directory to write the migration file into. Defaults to
@@ -46,6 +46,10 @@ pub enum Commands {
 /// # Errors
 ///
 /// Returns error if command execution fails.
+#[expect(
+  clippy::print_stdout,
+  reason = "CLI output is the primary user-facing interface"
+)]
 pub async fn run() -> anyhow::Result<()> {
   let cli = Cli::parse();
 
@@ -135,6 +139,12 @@ pub fn create_migration(
 }
 
 #[cfg(test)]
+#[expect(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::panic,
+  reason = "Fine in tests"
+)]
 mod tests {
   use clap::Parser;
 

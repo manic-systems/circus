@@ -3,6 +3,12 @@
 //! Tests the full flow: create project -> jobset -> evaluation -> builds.
 //!
 //! Nix-dependent steps are skipped if nix is not available.
+#![expect(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::print_stdout,
+  reason = "Fine in tests"
+)]
 
 use axum::{
   body::Body,

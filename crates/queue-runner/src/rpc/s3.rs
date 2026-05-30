@@ -1,5 +1,5 @@
-//! Minimal AWS SigV4 presigned PUT URL generator for S3 / S3-compatible
-//! endpoints (e.g. MinIO).
+//! Minimal AWS `SigV4` presigned PUT URL generator for S3 / S3-compatible
+//! endpoints (e.g. `MinIO`).
 //!
 //! We do NOT pull in `aws-sdk-s3`: the surface we need is one API call
 //! (presign a PUT for NAR upload) and we already have `hmac`, `sha2`,
@@ -78,6 +78,7 @@ impl Presigner {
   /// slash), valid for `expiry`, signed against the wall clock. Use
   /// [`Presigner::presign_at`] when a deterministic timestamp is needed
   /// (tests, signed-time-window negotiation).
+  #[must_use]
   pub fn presign_put(&self, key: &str, expiry: Duration) -> String {
     self.presign_at("PUT", key, expiry, SystemTime::now())
   }
@@ -86,6 +87,7 @@ impl Presigner {
   /// so the test suite (and any cross-region time-budgeting code) can
   /// produce deterministic signatures without resorting to env-var
   /// backdoors.
+  #[must_use]
   pub fn presign_at(
     &self,
     method: &str,
@@ -158,6 +160,11 @@ impl Presigner {
   /// style that's `{bucket}.{endpoint_host}`, not the bare endpoint.
   /// Path-style URLs put the bucket in the path; virtual-hosted style puts
   /// it in the subdomain.
+  #[expect(
+    clippy::option_if_let_else,
+    reason = "the if-let/else structure is clearer than a combinator chain \
+              for this control flow"
+  )]
   fn host_and_base(&self, key: &str) -> (String, String) {
     let key = key.trim_start_matches('/');
     if let Some(endpoint) = &self.endpoint_url {
@@ -177,7 +184,7 @@ impl Presigner {
         }
         (endpoint_host, base)
       } else {
-        let scheme = endpoint_url.as_ref().map(Url::scheme).unwrap_or("https");
+        let scheme = endpoint_url.as_ref().map_or("https", Url::scheme);
         let host = format!("{}.{endpoint_host}", self.bucket);
         let mut base = format!("{scheme}://{host}");
         if !key.is_empty() {
@@ -206,10 +213,10 @@ fn format_iso8601(t: SystemTime) -> String {
 fn canonical_path(key: &str, path_style_bucket: Option<&String>) -> String {
   let key = key.trim_start_matches('/');
   let segments: Vec<String> = key.split('/').map(aws_path_encode).collect();
-  match path_style_bucket {
-    Some(b) => format!("/{}/{}", aws_path_encode(b), segments.join("/")),
-    None => format!("/{}", segments.join("/")),
-  }
+  path_style_bucket.map_or_else(
+    || format!("/{}", segments.join("/")),
+    |b| format!("/{}/{}", aws_path_encode(b), segments.join("/")),
+  )
 }
 
 fn aws_query_encode(s: &str) -> String {
@@ -233,14 +240,23 @@ fn derive_signing_key(
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-  let mut mac =
-    HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
-  mac.update(data);
-  mac.finalize().into_bytes().to_vec()
+  #[expect(
+    clippy::expect_used,
+    reason = "HMAC::new_from_slice only fails if key length is wrong; signing \
+              key is always valid"
+  )]
+  {
+    let mut mac =
+      HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+  }
 }
 
 #[cfg(test)]
 mod tests {
+  use std::time::UNIX_EPOCH;
+
   use super::*;
 
   /// Locked-in AWS reference vector ensures we are byte-for-byte
@@ -256,9 +272,8 @@ mod tests {
   /// - region us-east-1
   /// - bucket examplebucket, key test.txt
   /// - time 20130524T000000Z, expires 86400
-  /// - virtual-hosted style
-  /// Expected signature:
-  /// aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404
+  /// - virtual-hosted style Expected signature:
+  ///   aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404
   #[test]
   fn matches_aws_reference_get_vector() {
     let presigner = Presigner {
@@ -276,10 +291,20 @@ mod tests {
       endpoint_url:   Some("https://s3.amazonaws.com".into()),
       use_path_style: false,
     };
+    #[expect(
+      clippy::duration_suboptimal_units,
+      reason = "pinned timestamp for AWS reference vector; must match the \
+                exact seconds from the AWS docs"
+    )]
     let pinned = UNIX_EPOCH + Duration::from_secs(1_369_353_600);
     let url = presigner.presign_at(
       "GET",
       "test.txt",
+      #[expect(
+        clippy::duration_suboptimal_units,
+        reason = "pinned expiry for AWS reference vector; must match the \
+                  exact value from the AWS docs"
+      )]
       Duration::from_secs(86_400),
       pinned,
     );

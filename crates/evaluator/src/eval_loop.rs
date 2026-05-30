@@ -233,17 +233,15 @@ async fn evaluate_pending_eval(
 ) -> anyhow::Result<()> {
   // Claim the row atomically. If the row is no longer pending another
   // wakeup already handled it; bail out without doing the git fetch.
-  let claimed =
-    match repo::evaluations::try_claim_pending(pool, eval.id).await? {
-      Some(e) => e,
-      None => {
-        tracing::debug!(
-          eval_id = %eval.id,
-          "Pending evaluation already claimed, skipping"
-        );
-        return Ok(());
-      },
-    };
+  let Some(claimed) =
+    repo::evaluations::try_claim_pending(pool, eval.id).await?
+  else {
+    tracing::debug!(
+      eval_id = %eval.id,
+      "Pending evaluation already claimed, skipping"
+    );
+    return Ok(());
+  };
 
   tracing::info!(
       jobset = %jobset.name,

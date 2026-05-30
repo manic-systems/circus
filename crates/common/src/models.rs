@@ -109,6 +109,11 @@ impl JobsetState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "Build is a database row matching a well-known schema; the bools \
+            represent orthogonal flags"
+)]
 pub struct Build {
   pub id:                         Uuid,
   pub evaluation_id:              Uuid,
@@ -257,7 +262,6 @@ impl BuildStatus {
   pub const fn from_exit_code(exit_code: i32) -> Self {
     match exit_code {
       0 => Self::Succeeded,
-      1 => Self::Failed,
       2 => Self::DependencyFailed,
       3 | 5 => Self::Aborted, // 5 is obsolete in Hydra, treat as aborted
       4 => Self::Cancelled,

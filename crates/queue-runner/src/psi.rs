@@ -50,6 +50,7 @@ impl PsiCache {
   /// Look up a cached reading; returns `None` if the entry is missing or
   /// stale. A cached `None` value indicates a recent SSH failure, which
   /// callers should treat as "unknown, do not penalize".
+  #[must_use]
   pub fn get(
     &self,
     ssh_uri: &str,
@@ -134,9 +135,11 @@ fn parse(text: &str) -> Option<PsiSnapshot> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
   use super::*;
 
+  #[expect(clippy::expect_used, reason = "Fine in tests")]
   #[test]
   fn parses_three_stanzas() {
     let text = "some avg10=5.00 avg60=3.00 avg300=2.00 total=12345\nsome \

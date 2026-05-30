@@ -1,6 +1,12 @@
 //! Integration tests for user management - CRUD, authentication, and
 //! relationships. Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL`
 //! connection string.
+#![expect(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::print_stdout,
+  reason = "Fine in tests"
+)]
 
 use circus_common::{models::*, repo};
 use uuid::Uuid;
@@ -205,7 +211,7 @@ async fn test_user_authentication() {
   ));
 
   // Cleanup
-  repo::users::delete(&pool, user.id).await.ok();
+  let _ = repo::users::delete(&pool, user.id).await;
 }
 
 #[tokio::test]
@@ -294,7 +300,7 @@ async fn test_user_unique_constraints() {
     .await
     .unwrap()
     .unwrap();
-  repo::users::delete(&pool, user.id).await.ok();
+  let _ = repo::users::delete(&pool, user.id).await;
 }
 
 #[tokio::test]
@@ -338,7 +344,7 @@ async fn test_oauth_user_creation() {
   assert_eq!(updated.id, user.id);
 
   // Cleanup
-  repo::users::delete(&pool, user.id).await.ok();
+  let _ = repo::users::delete(&pool, user.id).await;
 }
 
 // Starred Jobs Tests
@@ -457,8 +463,8 @@ async fn test_starred_jobs_crud() {
   assert!(!is_starred);
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
-  repo::users::delete(&pool, user.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
+  let _ = repo::users::delete(&pool, user.id).await;
 }
 
 #[tokio::test]
@@ -532,8 +538,8 @@ async fn test_starred_jobs_delete_by_job() {
   assert_eq!(count, 0);
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
-  repo::users::delete(&pool, user.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
+  let _ = repo::users::delete(&pool, user.id).await;
 }
 
 // Project Members Tests
@@ -639,8 +645,8 @@ async fn test_project_members_crud() {
   assert!(matches!(result, Err(circus_common::CiError::NotFound(_))));
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
-  repo::users::delete(&pool, user.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
+  let _ = repo::users::delete(&pool, user.id).await;
 }
 
 #[tokio::test]
@@ -845,11 +851,11 @@ async fn test_project_members_permissions() {
   );
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
-  repo::users::delete(&pool, admin_user.id).await.ok();
-  repo::users::delete(&pool, maintainer_user.id).await.ok();
-  repo::users::delete(&pool, member_user.id).await.ok();
-  repo::users::delete(&pool, non_member.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
+  let _ = repo::users::delete(&pool, admin_user.id).await;
+  let _ = repo::users::delete(&pool, maintainer_user.id).await;
+  let _ = repo::users::delete(&pool, member_user.id).await;
+  let _ = repo::users::delete(&pool, non_member.id).await;
 }
 
 #[tokio::test]

@@ -150,10 +150,10 @@ async fn enqueue_notifications(
             build_id = %build.id,
             url = %url,
             "Enqueued webhook notification task"
-        )
+        );
       },
       Err(e) => {
-        error!(build_id = %build.id, "Failed to enqueue webhook notification: {e}")
+        error!(build_id = %build.id, "Failed to enqueue webhook notification: {e}");
       },
     }
   } else {

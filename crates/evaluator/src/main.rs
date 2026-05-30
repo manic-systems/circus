@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
   let listener_handle = circus_common::pg_notify::spawn_listener(
     db.pool(),
     &[circus_common::pg_notify::CHANNEL_JOBSETS_CHANGED],
-    wakeup.clone(),
+    Arc::clone(&wakeup),
   );
 
   tokio::select! {
@@ -79,6 +79,7 @@ async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
     tracing::warn!("initial evaluator heartbeat failed: {e}");
   }
 
+  #[expect(clippy::infinite_loop, reason = "intentional heartbeat loop")]
   loop {
     tokio::time::sleep(interval).await;
     if let Err(e) = circus_common::service_heartbeat::record(
@@ -94,6 +95,7 @@ async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
   }
 }
 
+#[expect(clippy::expect_used, reason = "standard signal handler pattern")]
 async fn shutdown_signal() {
   let ctrl_c = async {
     tokio::signal::ctrl_c()

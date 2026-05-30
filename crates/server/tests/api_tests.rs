@@ -1,5 +1,6 @@
 //! Integration tests for API endpoints.
 //! Requires `TEST_DATABASE_URL` to be set.
+#![expect(clippy::unwrap_used, clippy::print_stdout, reason = "Fine in tests")]
 
 use axum::{
   body::Body,

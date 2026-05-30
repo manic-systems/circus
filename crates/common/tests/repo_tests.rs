@@ -1,5 +1,11 @@
 //! Integration tests for repository CRUD operations.
 //! Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL` connection string.
+#![expect(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::print_stdout,
+  reason = "Fine in tests"
+)]
 
 use circus_common::{models::*, repo};
 
@@ -229,7 +235,7 @@ async fn test_jobset_crud() {
     .expect("delete jobset");
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -377,7 +383,7 @@ async fn test_evaluation_and_build_lifecycle() {
   assert!(!recent.is_empty());
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -477,7 +483,7 @@ async fn test_batch_get_completed_by_drv_paths() {
   assert!(empty.is_empty());
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -551,7 +557,7 @@ async fn test_batch_check_deps_for_builds() {
   assert!(empty.is_empty());
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -623,7 +629,7 @@ async fn test_list_filtered_with_system_filter() {
   assert_eq!(x86_count, x86_builds.len() as i64);
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -686,7 +692,7 @@ async fn test_list_filtered_with_job_name_filter() {
   assert_eq!(count, 2);
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -727,7 +733,7 @@ async fn test_reset_orphaned_batch_limit() {
   assert!(build.started_at.is_none());
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -765,7 +771,7 @@ async fn test_build_cancel_cascade() {
   assert!(matches!(child.status, BuildStatus::Cancelled));
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -810,7 +816,7 @@ async fn test_dedup_by_drv_path() {
   assert!(batch.contains_key(&drv));
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -863,7 +869,7 @@ async fn test_build_outputs_crud() {
   assert_eq!(found[0].name, "out");
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -895,5 +901,5 @@ async fn test_build_outputs_cascade_delete() {
   assert_eq!(outputs.len(), 0);
 
   // Cleanup
-  repo::projects::delete(&pool, project.id).await.ok();
+  let _ = repo::projects::delete(&pool, project.id).await;
 }

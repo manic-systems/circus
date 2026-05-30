@@ -45,6 +45,11 @@ async fn run_supervisor(
   cfg: circus_agent::config::Agent,
   machine_id: Uuid,
 ) -> anyhow::Result<()> {
+  #![expect(clippy::infinite_loop, reason = "intentional reconnect loop")]
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
   let backoff = Duration::from_secs(cfg.reconnect_delay_secs.max(1));
   loop {
     match session::run_once(&cfg, machine_id).await {
@@ -74,7 +79,7 @@ fn resolve_machine_id(cfg: &AgentConfig) -> anyhow::Result<Uuid> {
     return Ok(id);
   }
   if let Some(parent) = path.parent() {
-    std::fs::create_dir_all(parent).ok();
+    let _ = std::fs::create_dir_all(parent);
   }
   let id = Uuid::new_v4();
   std::fs::write(&path, id.to_string())?;

@@ -36,7 +36,9 @@ pub struct WorkerPool {
   upload_semaphore:    Arc<Semaphore>,
   worker_count:        usize,
   pool:                PgPool,
+  #[expect(clippy::rc_buffer, reason = "shared config across tasks")]
   work_dir:            Arc<PathBuf>,
+  #[expect(clippy::rc_buffer, reason = "shared config across tasks")]
   nix_store_dir:       Arc<PathBuf>,
   hot_config:          Arc<RwLock<HotConfig>>,
   log_config:          Arc<LogConfig>,
@@ -132,21 +134,21 @@ impl WorkerPool {
       return;
     }
 
-    let semaphore = self.semaphore.clone();
-    let upload_semaphore = self.upload_semaphore.clone();
+    let semaphore = Arc::clone(&self.semaphore);
+    let upload_semaphore = Arc::clone(&self.upload_semaphore);
     let pool = self.pool.clone();
-    let work_dir = self.work_dir.clone();
-    let nix_store_dir = self.nix_store_dir.clone();
-    let hot_config = self.hot_config.clone();
-    let log_config = self.log_config.clone();
-    let gc_config = self.gc_config.clone();
-    let signing_config = self.signing_config.clone();
-    let cache_upload_config = self.cache_upload_config.clone();
-    let alert_manager = self.alert_manager.clone();
-    let psi_cache = self.psi_cache.clone();
-    let agent_pool = self.agent_pool.clone();
+    let work_dir = Arc::clone(&self.work_dir);
+    let nix_store_dir = Arc::clone(&self.nix_store_dir);
+    let hot_config = Arc::clone(&self.hot_config);
+    let log_config = Arc::clone(&self.log_config);
+    let gc_config = Arc::clone(&self.gc_config);
+    let signing_config = Arc::clone(&self.signing_config);
+    let cache_upload_config = Arc::clone(&self.cache_upload_config);
+    let alert_manager = Arc::clone(&self.alert_manager);
+    let psi_cache = Arc::clone(&self.psi_cache);
+    let agent_pool = Arc::clone(&self.agent_pool);
     let heartbeat_ttl = self.heartbeat_ttl;
-    let active_builds = self.active_builds.clone();
+    let active_builds = Arc::clone(&self.active_builds);
     let cancel_token = CancellationToken::new();
     let build_id = build.id;
 
@@ -189,13 +191,13 @@ impl WorkerPool {
           &signing_config,
           &cache_upload_config,
           &alert_manager,
-          upload_semaphore.clone(),
+          Arc::clone(&upload_semaphore),
           scheduling_strategy,
           psi_threshold,
           psi_check_timeout,
-          psi_cache.clone(),
+          Arc::clone(&psi_cache),
           extra_nix_args,
-          agent_pool.clone(),
+          Arc::clone(&agent_pool),
           heartbeat_ttl,
         )
         .await
@@ -478,7 +480,11 @@ async fn try_agent_dispatch(
 ) -> Option<crate::builder::BuildResult> {
   use std::time::Instant;
 
-  use circus_common::config::BuilderSchedulingStrategy::*;
+  use circus_common::config::BuilderSchedulingStrategy::{
+    CpuCoreCountWithSpeedFactor,
+    Dynamic,
+    SpeedFactorOnly,
+  };
 
   let mut candidates = agent_pool.candidates_for(system);
   if candidates.is_empty() {
@@ -677,7 +683,6 @@ async fn try_agent_dispatch(
       },
       Ok(crate::rpc::pool::DispatchResult::Disconnected) | Err(_) => {
         tracing::warn!(name = %snap.name, "agent disconnected mid-build; trying next");
-        continue;
       },
     }
   }
@@ -813,6 +818,7 @@ async fn try_remote_build(
   None
 }
 
+#[expect(clippy::ref_option, reason = "used as fn parameter pattern")]
 async fn collect_metrics_and_alert(
   pool: &PgPool,
   build: &Build,
@@ -874,6 +880,8 @@ async fn collect_metrics_and_alert(
 
 #[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::ref_option, reason = "used as fn parameter pattern")]
+#[expect(clippy::rc_buffer, reason = "extra args shared across calls")]
 async fn run_build(
   pool: &PgPool,
   build: &Build,
@@ -902,7 +910,8 @@ async fn run_build(
     return Ok(());
   }
 
-  let claimed_build = claimed.unwrap(); // Safe: we checked is_some()
+  #[expect(clippy::expect_used, reason = "checked is_some() above")]
+  let claimed_build = claimed.expect("checked is_some() above");
 
   // Normalize drv_path: nix-eval-jobs always emits absolute store paths,
   // but manually-inserted or migrated rows may have bare filenames. Without
@@ -1185,20 +1194,21 @@ async fn run_build(
         }
 
         // Push to external binary cache if configured
-        let mut upload_failed_paths: Vec<String> = Vec::new();
-        if cache_upload_config.enabled
+        let upload_failed_paths = if cache_upload_config.enabled
           && !build_result.cache_upload_handled
           && let Some(ref store_uri) = cache_upload_config.store_uri
         {
-          upload_failed_paths = push_to_cache(
+          push_to_cache(
             &build_result.output_paths,
             store_uri,
             cache_upload_config.s3.as_ref(),
-            upload_semaphore.clone(),
+            Arc::clone(&upload_semaphore),
             cache_upload_config.upload_max_retries,
           )
-          .await;
-        }
+          .await
+        } else {
+          Vec::new()
+        };
 
         if !upload_failed_paths.is_empty()
           && cache_upload_config.fail_build_on_upload_error

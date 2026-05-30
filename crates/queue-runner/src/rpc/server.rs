@@ -9,7 +9,7 @@
 //! [`super::pool::AgentMeta`].
 
 use std::{
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   net::SocketAddr,
   sync::{
     Arc,
@@ -48,7 +48,7 @@ use x509_parser::prelude::FromDer;
 use super::{
   AgentPool,
   log_sink::LogSinkImpl,
-  pool::{AgentMeta, DispatchCommand, DispatchResult},
+  pool::{AgentMeta, DispatchCommand, DispatchResult, HeartbeatSnapshot},
   result_sink::{BuildOutcomeKind, ResultSinkImpl},
   session::SessionImpl,
 };
@@ -103,7 +103,7 @@ pub struct TlsState {
 }
 
 impl ServerConfig {
-  /// Build a ServerConfig from the user-facing `RpcConfig`. TLS material
+  /// Build a `ServerConfig` from the user-facing `RpcConfig`. TLS material
   /// is loaded here; failure prevents the listener from starting.
   ///
   /// # Errors
@@ -162,14 +162,14 @@ impl ServerConfig {
       && let Some(p) = super::s3::Presigner::from_config(uri, s3_cfg)
     {
       self.presigner = Some(Arc::new(p));
-      self.upload_compression = cache_cfg.compression.clone();
+      self.upload_compression.clone_from(&cache_cfg.compression);
     }
     self
   }
 }
 
 /// Run the accept loop on the current `LocalSet`. The caller is
-/// responsible for spawning the runtime + LocalSet.
+/// responsible for spawning the runtime + `LocalSet`.
 ///
 /// # Errors
 /// Returns the underlying error if the listener cannot be bound.
@@ -185,6 +185,7 @@ pub async fn serve(
 
   let cfg = Arc::new(cfg);
   let connection_permits = Arc::new(Semaphore::new(cfg.max_connections));
+  #[expect(clippy::infinite_loop, reason = "intentional accept loop")]
   loop {
     let (socket, peer) = match listener.accept().await {
       Ok(p) => p,
@@ -212,6 +213,7 @@ pub async fn serve(
   }
 }
 
+#[expect(clippy::future_not_send, reason = "capnp future")]
 async fn serve_one(
   socket: tokio::net::TcpStream,
   peer: SocketAddr,
@@ -219,7 +221,7 @@ async fn serve_one(
   pool: Arc<AgentPool>,
   db_pool: PgPool,
 ) -> anyhow::Result<()> {
-  socket.set_nodelay(true).ok();
+  let _ = socket.set_nodelay(true);
   tracing::info!(?peer, "incoming rpc connection");
 
   let registered_machine: Arc<parking_lot::Mutex<Option<Uuid>>> =
@@ -234,7 +236,7 @@ async fn serve_one(
       rh.compat(),
       wh.compat_write(),
       rpc_twoparty_capnp::Side::Server,
-      Default::default(),
+      capnp::message::ReaderOptions::default(),
     );
     let runner_impl = RunnerImpl {
       cfg: Arc::clone(&cfg),
@@ -252,7 +254,7 @@ async fn serve_one(
       read_half.compat(),
       write_half.compat_write(),
       rpc_twoparty_capnp::Side::Server,
-      Default::default(),
+      capnp::message::ReaderOptions::default(),
     );
     let runner_impl = RunnerImpl {
       cfg:                Arc::clone(&cfg),
@@ -402,8 +404,8 @@ impl runner::Server for RunnerImpl {
         cpu_count: cpu,
         max_jobs: maxj,
         current_jobs: Arc::new(AtomicU32::new(0)),
-        active_builds: RwLock::new(Default::default()),
-        heartbeat: RwLock::new(Default::default()),
+        active_builds: RwLock::new(HashSet::new()),
+        heartbeat: RwLock::new(HeartbeatSnapshot::default()),
         registered_at: Instant::now(),
         tx,
       });
@@ -724,6 +726,7 @@ fn short_hash(h: &str) -> String {
 
 /// Pull from the dispatch channel forever, sending each command through
 /// the held builder capability.
+#[expect(clippy::future_not_send, reason = "capnp future")]
 async fn run_dispatch_pump(
   builder_cap: builder::Client,
   meta: Arc<AgentMeta>,
@@ -749,6 +752,7 @@ async fn run_dispatch_pump(
   }
 }
 
+#[expect(clippy::future_not_send, reason = "capnp future")]
 async fn dispatch_one(
   builder_cap: &builder::Client,
   cmd: &DispatchCommand,
@@ -840,6 +844,7 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
     .any(|a| bool::from(a.as_bytes().ct_eq(digest.as_bytes())))
 }
 
+#[expect(clippy::too_many_arguments, reason = "DB upsert needs all fields")]
 async fn upsert_session(
   pool: &PgPool,
   machine_id: Uuid,

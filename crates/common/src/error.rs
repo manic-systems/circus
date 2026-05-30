@@ -82,8 +82,20 @@ pub fn check_disk_space(path: &std::path::Path) -> Result<DiskSpaceInfo> {
     let cpath = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
       CiError::DiskSpace("Invalid path for disk check".to_string())
     })?;
+    // SAFETY: zeroing a C struct is safe; all-zero is a valid representation
+    // for statfs and the subsequent statfs() call will populate it.
+    #[expect(
+      clippy::undocumented_unsafe_blocks,
+      reason = "trivial unsafe for FFI struct init"
+    )]
     let mut statfs: libc::statfs = unsafe { std::mem::zeroed() };
 
+    // SAFETY: cpath is a valid CString, statfs is a valid pointer to a
+    // zeroed statfs struct.
+    #[expect(
+      clippy::undocumented_unsafe_blocks,
+      reason = "trivial unsafe FFI call with valid pointers"
+    )]
     if unsafe { libc::statfs(cpath.as_ptr(), &raw mut statfs) } != 0 {
       return Err(CiError::Io(std::io::Error::last_os_error()));
     }

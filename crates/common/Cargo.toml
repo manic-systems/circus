@@ -33,3 +33,6 @@ tracing-subscriber.workspace = true
 urlencoding.workspace        = true
 uuid.workspace               = true
 whoami.workspace             = true
+
+[lints]
+workspace = true

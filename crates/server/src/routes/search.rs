@@ -45,7 +45,7 @@ struct SearchRequest {
   q: String,
 
   /// Entities to search (projects, jobsets, evaluations, builds)
-  /// Default: ["projects", "builds"]
+  /// Default: `["projects", "builds"]`
   #[serde(default)]
   entities: Vec<String>,
 

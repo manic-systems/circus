@@ -42,7 +42,7 @@ pub struct DispatchCommand {
   /// charge.
   pub presigned_upload: Option<String>,
   /// Completion signal: the per-connection task sends the outcome here
-  /// after the agent reports via ResultSink. Some scheduler errors are
+  /// after the agent reports via `ResultSink`. Some scheduler errors are
   /// also surfaced here (queue full, connection closed mid-dispatch).
   pub completion:       tokio::sync::oneshot::Sender<DispatchResult>,
 }
@@ -157,20 +157,25 @@ impl AgentPool {
     &self,
     system: &str,
   ) -> Vec<(Arc<AgentMeta>, AgentSnapshot)> {
-    let guard = self.inner.read();
-    let mut out = Vec::with_capacity(guard.len());
-    for m in guard.values() {
-      if !m.systems.iter().any(|s| s == system) {
-        continue;
-      }
-      let cur = m.current_jobs.load(Ordering::Relaxed);
-      if cur >= m.max_jobs {
-        continue;
-      }
-      let snap = snapshot(m, cur);
-      out.push((Arc::clone(m), snap));
-    }
-    out
+    let candidates: Vec<Arc<AgentMeta>> = {
+      let guard = self.inner.read();
+      guard
+        .values()
+        .filter(|m| {
+          m.systems.iter().any(|s| s == system)
+            && m.current_jobs.load(Ordering::Relaxed) < m.max_jobs
+        })
+        .map(Arc::clone)
+        .collect()
+    };
+    candidates
+      .into_iter()
+      .map(|m| {
+        let cur = m.current_jobs.load(Ordering::Relaxed);
+        let snap = snapshot(&m, cur);
+        (m, snap)
+      })
+      .collect()
   }
 
   #[must_use]

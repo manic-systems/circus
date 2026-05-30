@@ -15,6 +15,10 @@ struct Cli {
   port: Option<u16>,
 }
 
+#[expect(
+  clippy::expect_used,
+  reason = "fatal if the runtime cannot deliver signals"
+)]
 async fn shutdown_signal() {
   let ctrl_c = async {
     tokio::signal::ctrl_c()
@@ -48,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
   let cli = Cli::parse();
 
-  let host = cli.host.unwrap_or(config.server.host.clone());
+  let host = cli.host.unwrap_or_else(|| config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);
 
   circus_common::validate::warn_insecure_schemes(

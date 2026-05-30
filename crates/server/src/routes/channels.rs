@@ -354,7 +354,7 @@ pub async fn build_nixexprs_tarball(
       let default_output = if outputs.contains_key("out") {
         "out"
       } else {
-        outputs.keys().next().map(String::as_str).unwrap_or("out")
+        outputs.keys().next().map_or("out", String::as_str)
       };
       let _ = writeln!(
         nix_src,

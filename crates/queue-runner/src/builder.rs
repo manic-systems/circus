@@ -300,7 +300,7 @@ fn update_sub_steps(steps: &mut Vec<SubStep>, action: &str, drv_path: String) {
         drv_path,
         completed_at: None,
         success: false,
-      })
+      });
     },
     "stop" => {
       if let Some(step) = steps.iter_mut().rfind(|s| s.drv_path == drv_path) {

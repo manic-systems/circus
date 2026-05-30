@@ -21,9 +21,10 @@ use uuid::Uuid;
 use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
 
 fn config_file_path() -> std::path::PathBuf {
-  std::env::var_os("CIRCUS_CONFIG_FILE")
-    .map(std::path::PathBuf::from)
-    .unwrap_or_else(|| std::path::PathBuf::from("circus.toml"))
+  std::env::var_os("CIRCUS_CONFIG_FILE").map_or_else(
+    || std::path::PathBuf::from("circus.toml"),
+    std::path::PathBuf::from,
+  )
 }
 
 async fn list_builders(

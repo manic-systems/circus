@@ -118,11 +118,7 @@ fn parse_meta(v: Option<&serde_json::Value>) -> NixMeta {
       match x {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Array(arr) => {
-          arr
-            .iter()
-            .filter_map(|v| v.as_str())
-            .next()
-            .map(str::to_owned)
+          arr.iter().find_map(|v| v.as_str()).map(str::to_owned)
         },
         _ => None,
       }
@@ -349,14 +345,11 @@ async fn evaluate_legacy(
     }
     for input in inputs {
       match input.input_type.as_str() {
-        "string" | "path" => {
-          cmd.args(["--arg", &input.name, &input.value]);
-        },
         // Legacy expressions can't take a git override the way flakes do,
         // but the input value (a fetched path) is meaningful as a path
         // argument. Threading it through as --arg preserves the input's
         // effect on evaluation instead of silently dropping it.
-        "git" => {
+        "string" | "path" | "git" => {
           cmd.args(["--arg", &input.name, &input.value]);
         },
         _ => {
@@ -441,7 +434,7 @@ async fn evaluate_legacy(
   })?
 }
 
-/// Recursively flatten a nix eval --json value into (attr_path, drv_path)
+/// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)
 /// pairs. String values are treated as derivation paths. Objects are recursed
 /// into. Other types are skipped.
 fn flatten_attrs(
