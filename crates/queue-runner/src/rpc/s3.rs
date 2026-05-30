@@ -9,13 +9,21 @@
 //! Reference: AWS Signature Version 4, query-string presigning.
 //! <https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html>
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
+use chrono::{DateTime, Utc};
 use circus_common::config::S3CacheConfig;
 use hmac::{Hmac, KeyInit as _, Mac};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest as _, Sha256};
+use url::Url;
 
 type HmacSha256 = Hmac<Sha256>;
+const AWS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+  .remove(b'-')
+  .remove(b'_')
+  .remove(b'.')
+  .remove(b'~');
 
 /// Credentials lifted from `S3CacheConfig`. The config layer is the
 /// authoritative source: rotation belongs in whatever provisions
@@ -108,11 +116,11 @@ impl Presigner {
 
     let canonical_query = query
       .iter()
-      .map(|(k, v)| format!("{}={}", uri_encode(k, true), uri_encode(v, true)))
+      .map(|(k, v)| format!("{}={}", aws_query_encode(k), aws_query_encode(v)))
       .collect::<Vec<_>>()
       .join("&");
     let canonical_uri =
-      canonical_path(key, self.use_path_style.then(|| &self.bucket));
+      canonical_path(key, self.use_path_style.then_some(&self.bucket));
     let canonical_headers = format!("host:{host}\n");
     let signed_headers = "host";
     let payload_hash = "UNSIGNED-PAYLOAD";
@@ -153,25 +161,29 @@ impl Presigner {
   fn host_and_base(&self, key: &str) -> (String, String) {
     let key = key.trim_start_matches('/');
     if let Some(endpoint) = &self.endpoint_url {
-      let endpoint = endpoint.trim_end_matches('/');
-      let endpoint_host = endpoint
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .split('/')
-        .next()
+      let endpoint_url = Url::parse(endpoint).ok();
+      let endpoint_host = endpoint_url
+        .as_ref()
+        .and_then(Url::host_str)
         .unwrap_or(endpoint)
         .to_owned();
       if self.use_path_style {
-        let base = format!("{endpoint}/{}/{key}", self.bucket);
+        let mut base = endpoint.trim_end_matches('/').to_owned();
+        base.push('/');
+        base.push_str(&self.bucket);
+        if !key.is_empty() {
+          base.push('/');
+          base.push_str(key);
+        }
         (endpoint_host, base)
       } else {
-        let scheme = if endpoint.starts_with("http://") {
-          "http"
-        } else {
-          "https"
-        };
+        let scheme = endpoint_url.as_ref().map(Url::scheme).unwrap_or("https");
         let host = format!("{}.{endpoint_host}", self.bucket);
-        let base = format!("{scheme}://{host}/{key}");
+        let mut base = format!("{scheme}://{host}");
+        if !key.is_empty() {
+          base.push('/');
+          base.push_str(key);
+        }
         (host, base)
       }
     } else if self.use_path_style {
@@ -187,58 +199,25 @@ impl Presigner {
 }
 
 fn format_iso8601(t: SystemTime) -> String {
-  // YYYYMMDDTHHMMSSZ
-  let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-  let (year, month, day, hour, minute, second) = unix_to_civil(secs);
-  format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z")
-}
-
-/// Howard Hinnant's `civil_from_days`; converts epoch seconds to
-/// `(Y,M,D,h,m,s)` without pulling in `chrono` for one call.
-fn unix_to_civil(secs: u64) -> (u32, u32, u32, u32, u32, u32) {
-  let days = (secs / 86400) as i64;
-  let secs_of_day = (secs % 86400) as u32;
-  let hour = secs_of_day / 3600;
-  let minute = (secs_of_day % 3600) / 60;
-  let second = secs_of_day % 60;
-
-  let z = days + 719_468;
-  let era = z.div_euclid(146_097);
-  let doe = (z - era * 146_097) as u64;
-  let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-  let y = yoe as i64 + era * 400;
-  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-  let mp = (5 * doy + 2) / 153;
-  let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-  let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-  let y = if m <= 2 { y + 1 } else { y };
-  (y as u32, m, d, hour, minute, second)
+  let ts: DateTime<Utc> = DateTime::<Utc>::from(t);
+  ts.format("%Y%m%dT%H%M%SZ").to_string()
 }
 
 fn canonical_path(key: &str, path_style_bucket: Option<&String>) -> String {
   let key = key.trim_start_matches('/');
-  let segments: Vec<String> =
-    key.split('/').map(|s| uri_encode(s, false)).collect();
+  let segments: Vec<String> = key.split('/').map(aws_path_encode).collect();
   match path_style_bucket {
-    Some(b) => format!("/{}/{}", uri_encode(b, false), segments.join("/")),
+    Some(b) => format!("/{}/{}", aws_path_encode(b), segments.join("/")),
     None => format!("/{}", segments.join("/")),
   }
 }
 
-/// AWS-flavoured URI encoder. Unreserved characters per RFC 3986
-/// `A-Z a-z 0-9 - _ . ~` plus `/` when `encode_slash = false`.
-fn uri_encode(s: &str, encode_slash: bool) -> String {
-  let mut out = String::with_capacity(s.len());
-  for b in s.bytes() {
-    let unreserved =
-      b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
-    if unreserved || (!encode_slash && b == b'/') {
-      out.push(b as char);
-    } else {
-      out.push_str(&format!("%{b:02X}"));
-    }
-  }
-  out
+fn aws_query_encode(s: &str) -> String {
+  utf8_percent_encode(s, &AWS_QUERY_ENCODE_SET).to_string()
+}
+
+fn aws_path_encode(s: &str) -> String {
+  utf8_percent_encode(s, &AWS_QUERY_ENCODE_SET).to_string()
 }
 
 fn derive_signing_key(
