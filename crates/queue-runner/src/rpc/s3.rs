@@ -117,10 +117,15 @@ impl Presigner {
     let signed_headers = "host";
     let payload_hash = "UNSIGNED-PAYLOAD";
 
-    let canonical_request = format!(
-      "{method}\n{canonical_uri}\n{canonical_query}\n{canonical_headers}\\
-       n{signed_headers}\n{payload_hash}"
-    );
+    let canonical_request = [
+      method,
+      canonical_uri.as_str(),
+      canonical_query.as_str(),
+      canonical_headers.as_str(),
+      signed_headers,
+      payload_hash,
+    ]
+    .join("\n");
     let canonical_hash =
       hex::encode(Sha256::digest(canonical_request.as_bytes()));
 
