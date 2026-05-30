@@ -264,7 +264,8 @@ async fn serve_one(
     rpc.await
   };
 
-  if let Some(machine_id) = *registered_for_cleanup.lock() {
+  let registered_machine_id = *registered_for_cleanup.lock();
+  if let Some(machine_id) = registered_machine_id {
     pool.remove(&machine_id);
     if let Err(e) = mark_disconnected(&db_pool, machine_id).await {
       tracing::warn!(%machine_id, "failed to mark disconnected: {e}");

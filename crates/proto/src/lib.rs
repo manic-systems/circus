@@ -15,6 +15,15 @@
 pub const PROTO_VERSION: &str = "circus-proto/2";
 
 pub mod circus_capnp {
+  #![allow(
+    clippy::all,
+    clippy::nursery,
+    clippy::pedantic,
+    clippy::restriction,
+    warnings,
+    reason = "Generated Cap'n Proto bindings are not hand-maintained Rust"
+  )]
+
   include!(concat!(env!("OUT_DIR"), "/circus_capnp.rs"));
 }
 
