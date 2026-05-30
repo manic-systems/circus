@@ -17,8 +17,9 @@ pub async fn create(pool: &PgPool, input: CreateBuild) -> Result<Build> {
   sqlx::query_as::<_, Build>(
     "INSERT INTO builds (evaluation_id, job_name, drv_path, status, system, \
      outputs, is_aggregate, constituents, is_fod, fod_hash, meta_description, \
-     meta_license, meta_homepage, meta_maintainers) VALUES ($1, $2, $3, \
-     'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *",
+     meta_license, meta_homepage, meta_maintainers, required_features) VALUES \
+     ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+     RETURNING *",
   )
   .bind(input.evaluation_id)
   .bind(&input.job_name)
@@ -33,6 +34,7 @@ pub async fn create(pool: &PgPool, input: CreateBuild) -> Result<Build> {
   .bind(&input.meta_license)
   .bind(&input.meta_homepage)
   .bind(&input.meta_maintainers)
+  .bind(&input.required_features)
   .fetch_one(pool)
   .await
   .map_err(|e| {

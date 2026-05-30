@@ -145,6 +145,77 @@ pub struct QueueRunnerConfig {
   /// `["--option", "extra-substituters", "https://cache.nixos.org"]`.
   #[serde(default)]
   pub extra_nix_build_args: Vec<String>,
+
+  /// Capnp-rpc endpoint for persistent build agents. When set, the
+  /// queue-runner listens on this address and dispatches eligible builds
+  /// to connected agents in preference to the SSH `remote_builders`
+  /// path. Leave unset to disable the agent path entirely.
+  #[serde(default)]
+  pub rpc: Option<RpcConfig>,
+}
+
+/// Configuration for the capnp-rpc agent endpoint. Used when distributed
+/// builds run through long-lived `circus-agent` connections rather than
+/// per-build SSH dispatch. See `docs/DISTRIBUTED.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcConfig {
+  /// Listen address, e.g. `"0.0.0.0:8443"` or `"[::]:8443"`.
+  pub bind: String,
+
+  /// SHA-256 hex digests of accepted bearer tokens. An agent presents a
+  /// raw token in `register`; we hash and compare in constant time.
+  /// Empty = reject all (agents will fail to register).
+  #[serde(default)]
+  pub auth_tokens: Vec<String>,
+
+  /// Hard cap on concurrent connections; serves as a flood guard.
+  #[serde(default = "default_max_rpc_conns")]
+  pub max_connections: usize,
+
+  /// Lifetime of every minted presigned PUT URL. Should comfortably
+  /// exceed the longest expected NAR upload (largest output * speed
+  /// factor); defaults to one hour.
+  #[serde(default = "default_presign_expiry_secs")]
+  pub presign_expiry_secs: u64,
+
+  /// Optional TLS material. Plain TCP when absent.
+  #[serde(default)]
+  pub tls: Option<RpcTlsConfig>,
+
+  /// Heartbeat freshness window. Heartbeats older than this drop the
+  /// agent from scheduling decisions.
+  #[serde(default = "default_heartbeat_ttl_secs")]
+  pub heartbeat_ttl_secs: u64,
+}
+
+/// Server-side TLS material for the capnp-rpc endpoint. When `client_ca`
+/// is set the server requires mTLS and pins the client certificate's CN
+/// to the registered agent name; without it the server accepts any TLS
+/// client and authentication relies on the bearer token alone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcTlsConfig {
+  pub cert_file: PathBuf,
+  pub key_file:  PathBuf,
+  #[serde(default)]
+  pub client_ca: Option<PathBuf>,
+  /// When `client_ca` is set and this is true, the server requires the
+  /// client certificate's CN to equal the agent's `name`. Defaults to
+  /// true; flip to false for cluster operators using a per-tenant CA
+  /// rather than per-host certs.
+  #[serde(default = "default_true")]
+  pub pin_cn:    bool,
+}
+
+const fn default_max_rpc_conns() -> usize {
+  256
+}
+
+const fn default_heartbeat_ttl_secs() -> u64 {
+  60
+}
+
+const fn default_presign_expiry_secs() -> u64 {
+  3600
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,10 +445,20 @@ pub struct CacheUploadConfig {
   /// succeed; the operator can re-push out of band.
   #[serde(default)]
   pub fail_build_on_upload_error: bool,
+  /// Wire compression for the agent's presigned-upload path. The agent
+  /// streams the NAR through the chosen encoder before PUTing to S3, and
+  /// the runner records this in the narinfo `Compression:` field.
+  /// Accepted values: `zstd`, `xz`, `gzip`, `none`. Defaults to `zstd`.
+  #[serde(default = "default_upload_compression")]
+  pub compression:                String,
 }
 
 const fn default_upload_concurrency() -> usize {
   4
+}
+
+fn default_upload_compression() -> String {
+  "zstd".to_owned()
 }
 
 const fn default_upload_retries() -> u32 {
@@ -741,6 +822,7 @@ impl Default for QueueRunnerConfig {
       psi_threshold:        None,
       psi_check_timeout:    5,
       extra_nix_build_args: Vec::new(),
+      rpc:                  None,
     }
   }
 }
