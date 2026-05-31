@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
   config::{DeclarativeConfig, DeclarativeWebhook},
   error::Result,
-  models::{CreateJobset, CreateProject, JobsetState},
+  models::{CreateJobset, CreateProject, JobsetState, JobsetTriggerMode},
   repo,
 };
 
@@ -124,6 +124,10 @@ pub async fn run(pool: &PgPool, config: &DeclarativeConfig) -> Result<()> {
         .state
         .as_deref()
         .map(JobsetState::from_config_str);
+      let trigger_mode = decl_jobset
+        .trigger_mode
+        .as_deref()
+        .map(JobsetTriggerMode::from_config_str);
 
       let jobset = repo::jobsets::upsert(pool, CreateJobset {
         project_id: project.id,
@@ -132,6 +136,7 @@ pub async fn run(pool: &PgPool, config: &DeclarativeConfig) -> Result<()> {
         enabled: Some(decl_jobset.enabled),
         flake_mode: Some(decl_jobset.flake_mode),
         check_interval: Some(decl_jobset.check_interval),
+        trigger_mode,
         branch: decl_jobset.branch.clone(),
         scheduling_shares: Some(decl_jobset.scheduling_shares),
         state,
