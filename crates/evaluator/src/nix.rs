@@ -462,6 +462,63 @@ fn flatten_attrs(
   }
 }
 
+struct ShownDerivation {
+  drv_path:   String,
+  system:     Option<String>,
+  outputs:    Option<HashMap<String, String>>,
+  input_drvs: Option<HashMap<String, serde_json::Value>>,
+}
+
+fn parse_derivation_show(value: &serde_json::Value) -> Option<ShownDerivation> {
+  // Newer nix derivation show wraps output as
+  // {"derivations": {<drv>: {...}}, "version": N}; older nix keys the
+  // drv paths directly at the top level.
+  let derivations = value
+    .get("derivations")
+    .and_then(serde_json::Value::as_object)
+    .or_else(|| value.as_object())?;
+  let (drv_path, drv_val) = derivations.iter().next()?;
+
+  let system = drv_val
+    .get("system")
+    .and_then(|v| v.as_str())
+    .map(std::string::ToString::to_string);
+
+  let outputs = drv_val
+    .get("outputs")
+    .and_then(serde_json::Value::as_object)
+    .map(|map| {
+      map
+        .iter()
+        .filter_map(|(name, output)| {
+          output
+            .get("path")
+            .or_else(|| output.get("outPath"))
+            .and_then(|v| v.as_str())
+            .map(|path| (name.clone(), path.to_string()))
+        })
+        .collect::<HashMap<_, _>>()
+    })
+    .filter(|map| !map.is_empty());
+
+  let input_drvs = drv_val.get("inputDrvs").and_then(|v| {
+    serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone()).ok()
+  });
+
+  let drv_path = if drv_path.starts_with("/nix/store/") {
+    drv_path.clone()
+  } else {
+    format!("/nix/store/{drv_path}")
+  };
+
+  Some(ShownDerivation {
+    drv_path,
+    system,
+    outputs,
+    input_drvs,
+  })
+}
+
 async fn evaluate_with_nix_eval(
   repo_path: &Path,
   nix_expression: &str,
@@ -490,8 +547,9 @@ async fn evaluate_with_nix_eval(
   let entries = flatten_attrs("", &value);
 
   let mut jobs = Vec::new();
-  for (name, drv_path) in entries {
-    // Fetch system via nix derivation show
+  for (name, eval_path) in entries {
+    // nix eval stringifies derivations to outPath. Resolve the attr with
+    // nix derivation show so queue-runner receives the buildable .drv path.
     let drv_ref =
       format!("{}#{}.{}", repo_path.display(), nix_expression, name);
     let drv_output = tokio::process::Command::new("nix")
@@ -500,39 +558,33 @@ async fn evaluate_with_nix_eval(
       .output()
       .await;
 
-    let system = match drv_output {
+    let shown = match drv_output {
       Ok(out) if out.status.success() => {
         let drv_stdout = String::from_utf8_lossy(&out.stdout);
-        if let Ok(drv_json) =
-          serde_json::from_str::<serde_json::Value>(&drv_stdout)
-          // Newer `nix derivation show` wraps output as
-          // `{"derivations": {<drv>: {...}}, "version": N}`; older nix keys the
-          // drv paths directly at the top level. Without unwrapping the
-          // "derivations" key, the first top-level key parsed as the drv_path
-          // becomes the literal string "derivations".
-          && let Some((_, drv_val)) = drv_json
-            .get("derivations")
-            .and_then(serde_json::Value::as_object)
-            .or_else(|| drv_json.as_object())
-            .and_then(|o| o.iter().next())
-        {
-          drv_val
-            .get("system")
-            .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string)
-        } else {
-          None
-        }
+        serde_json::from_str::<serde_json::Value>(&drv_stdout)
+          .ok()
+          .and_then(|drv_json| parse_derivation_show(&drv_json))
       },
       _ => None,
+    };
+
+    let (drv_path, system, outputs, input_drvs) = if let Some(shown) = shown {
+      (
+        shown.drv_path,
+        shown.system,
+        shown.outputs,
+        shown.input_drvs,
+      )
+    } else {
+      (eval_path, None, None, None)
     };
 
     jobs.push(NixJob {
       name: name.clone(),
       drv_path,
       system,
-      outputs: None,
-      input_drvs: None,
+      outputs,
+      input_drvs,
       constituents: None,
       meta: NixMeta::default(),
     });
@@ -621,5 +673,100 @@ mod meta_tests {
     assert!(m.license.is_none());
     assert!(m.homepage.is_none());
     assert!(m.maintainers.is_none());
+  }
+
+  #[test]
+  fn parse_derivation_show_wrapped_uses_drv_key() {
+    let v = serde_json::json!({
+      "derivations": {
+        "/nix/store/abc-hello.drv": {
+          "system": "x86_64-linux",
+          "outputs": {
+            "out": {
+              "path": "/nix/store/def-hello"
+            }
+          },
+          "inputDrvs": {
+            "/nix/store/bash.drv": ["out"]
+          }
+        }
+      },
+      "version": 3
+    });
+
+    let shown = parse_derivation_show(&v);
+    assert!(shown.is_some());
+    let Some(shown) = shown else {
+      return;
+    };
+    assert_eq!(shown.drv_path, "/nix/store/abc-hello.drv");
+    assert_eq!(shown.system.as_deref(), Some("x86_64-linux"));
+    assert_eq!(
+      shown
+        .outputs
+        .as_ref()
+        .and_then(|o| o.get("out"))
+        .map(String::as_str),
+      Some("/nix/store/def-hello"),
+    );
+    assert!(
+      shown
+        .input_drvs
+        .as_ref()
+        .is_some_and(|i| i.contains_key("/nix/store/bash.drv"))
+    );
+  }
+
+  #[test]
+  fn parse_derivation_show_wrapped_normalizes_store_basename() {
+    let v = serde_json::json!({
+      "derivations": {
+        "abc-hello.drv": {
+          "system": "x86_64-linux",
+          "outputs": {
+            "out": {
+              "path": "/nix/store/def-hello"
+            }
+          }
+        }
+      },
+      "version": 3
+    });
+
+    let shown = parse_derivation_show(&v);
+    assert!(shown.is_some());
+    let Some(shown) = shown else {
+      return;
+    };
+    assert_eq!(shown.drv_path, "/nix/store/abc-hello.drv");
+  }
+
+  #[test]
+  fn parse_derivation_show_legacy_uses_top_level_drv_key() {
+    let v = serde_json::json!({
+      "/nix/store/abc-hello.drv": {
+        "system": "x86_64-linux",
+        "outputs": {
+          "out": {
+            "outPath": "/nix/store/def-hello"
+          }
+        }
+      }
+    });
+
+    let shown = parse_derivation_show(&v);
+    assert!(shown.is_some());
+    let Some(shown) = shown else {
+      return;
+    };
+    assert_eq!(shown.drv_path, "/nix/store/abc-hello.drv");
+    assert_eq!(
+      shown
+        .outputs
+        .as_ref()
+        .and_then(|o| o.get("out"))
+        .map(String::as_str),
+      Some("/nix/store/def-hello"),
+    );
   }
 }
