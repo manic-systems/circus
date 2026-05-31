@@ -126,6 +126,7 @@ pub fn document() -> Value {
             "flake_mode":     { "type": "boolean" },
             "enabled":        { "type": "boolean" },
             "check_interval": { "type": "integer" },
+            "trigger_mode":   { "type": "string", "enum": ["source_change", "interval"] },
             "state":          { "type": "string" }
           }
         },
@@ -148,7 +149,8 @@ pub fn document() -> Value {
             "jobset_id":       { "$ref": "#/components/schemas/Uuid" },
             "commit_hash":     { "type": "string" },
             "evaluation_time": { "$ref": "#/components/schemas/Timestamp" },
-            "status":          { "type": "string" }
+            "status":          { "type": "string" },
+            "trigger_kind":    { "type": "string", "enum": ["source_change", "manual", "interval"] }
           }
         },
         "Channel": {
