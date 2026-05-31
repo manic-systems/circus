@@ -82,6 +82,64 @@ pub struct ServerConfig {
   pub email_validation_regex: Option<String>,
   /// LDAP authentication configuration.
   pub ldap:                   Option<LdapConfig>,
+  /// Dashboard page-level access policy.
+  pub page_access:            PageAccessConfig,
+}
+
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PageAccessLevel {
+  /// Anyone can view the page.
+  #[default]
+  Public,
+  /// A logged-in user or API key session is required.
+  Authenticated,
+  /// Only administrators can view the page.
+  Admin,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PageAccessConfig {
+  pub home:        PageAccessLevel,
+  pub projects:    PageAccessLevel,
+  pub project:     PageAccessLevel,
+  pub jobset:      PageAccessLevel,
+  pub jobset_jobs: PageAccessLevel,
+  pub evaluations: PageAccessLevel,
+  pub evaluation:  PageAccessLevel,
+  pub builds:      PageAccessLevel,
+  pub build:       PageAccessLevel,
+  pub queue:       PageAccessLevel,
+  pub channels:    PageAccessLevel,
+  pub channel:     PageAccessLevel,
+  pub news:        PageAccessLevel,
+  pub starred:     PageAccessLevel,
+  pub metrics:     PageAccessLevel,
+}
+
+impl Default for PageAccessConfig {
+  fn default() -> Self {
+    Self {
+      home:        PageAccessLevel::Public,
+      projects:    PageAccessLevel::Public,
+      project:     PageAccessLevel::Public,
+      jobset:      PageAccessLevel::Public,
+      jobset_jobs: PageAccessLevel::Public,
+      evaluations: PageAccessLevel::Public,
+      evaluation:  PageAccessLevel::Public,
+      builds:      PageAccessLevel::Public,
+      build:       PageAccessLevel::Public,
+      queue:       PageAccessLevel::Public,
+      channels:    PageAccessLevel::Public,
+      channel:     PageAccessLevel::Public,
+      news:        PageAccessLevel::Public,
+      starred:     PageAccessLevel::Public,
+      metrics:     PageAccessLevel::Public,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -790,6 +848,7 @@ impl Default for ServerConfig {
       force_secure_cookies:   false,
       email_validation_regex: None,
       ldap:                   None,
+      page_access:            PageAccessConfig::default(),
     }
   }
 }
@@ -1218,6 +1277,23 @@ mod tests {
     );
     assert_eq!(config.api_keys.len(), 1);
     assert_eq!(config.api_keys[0].role, "admin");
+  }
+
+  #[test]
+  fn test_page_access_config_deserialization() {
+    let toml_str = r#"
+            [page_access]
+            evaluations = "authenticated"
+            metrics = "admin"
+        "#;
+
+    let config: ServerConfig = toml::from_str(toml_str).unwrap();
+    assert_eq!(config.page_access.projects, PageAccessLevel::Public);
+    assert_eq!(
+      config.page_access.evaluations,
+      PageAccessLevel::Authenticated
+    );
+    assert_eq!(config.page_access.metrics, PageAccessLevel::Admin);
   }
 
   #[test]
