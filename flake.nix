@@ -50,6 +50,7 @@
       demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
       # circus Packages
+      circus-admin = callCratePackage ./nix/packages/circus-admin.nix;
       circus-agent = callCratePackage ./nix/packages/circus-agent.nix;
       circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
       circus-migrate-cli = callCratePackage ./nix/packages/circus-migrate-cli.nix;

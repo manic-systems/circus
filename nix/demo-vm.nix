@@ -127,6 +127,7 @@
 
     # Useful tools inside the VM
     environment.systemPackages = with pkgs; [
+      circusPkgs.circus-admin
       curl
       jq
       btop
