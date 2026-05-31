@@ -69,6 +69,19 @@ In practice it:
 - evaluates Nix expressions
 - records evaluation results and derived build data
 
+Jobsets choose their evaluator trigger policy explicitly:
+
+- **`source_change`** keeps the default CI behavior. Webhooks, manual triggers,
+  and periodic git polling can wake the evaluator, but unchanged source/input
+  hashes are skipped.
+- **`interval`** treats `check_interval` as a full scheduled rebuild cadence.
+  The evaluator creates a fresh evaluation and build set on each due tick, even
+  when the source revision is unchanged. The queue runner bypasses Circus-level
+  build result caches and passes `--rebuild` to Nix for those builds.
+  Source-change/manual trigger rows are not consumed for interval-mode jobsets,
+  and a new interval run is skipped while the previous run still has pending or
+  running work.
+
 ### `circus-queue-runner`
 
 The queue runner owns build execution. It pulls pending builds from the

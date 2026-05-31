@@ -6,7 +6,10 @@ use axum::{
   http::{HeaderMap, StatusCode},
   routing::post,
 };
-use circus_common::{models::CreateEvaluation, repo};
+use circus_common::{
+  models::{CreateEvaluation, Jobset, JobsetTriggerMode},
+  repo,
+};
 use hmac::KeyInit;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -137,6 +140,10 @@ fn jobset_matches_branch(
   jobset_branch.is_none_or(|b| b == pushed_branch)
 }
 
+fn jobset_accepts_source_trigger(jobset: &Jobset) -> bool {
+  jobset.enabled && jobset.trigger_mode == JobsetTriggerMode::SourceChange
+}
+
 /// Verify HMAC-SHA256 webhook signature.
 /// The `secret` parameter is the raw webhook secret stored in DB.
 fn verify_signature(secret: &str, body: &[u8], signature: &str) -> bool {
@@ -259,7 +266,7 @@ async fn handle_github_push(
 
   let mut triggered = 0;
   for jobset in &jobsets {
-    if !jobset.enabled {
+    if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
     if !jobset_matches_branch(jobset.branch.as_deref(), pushed_branch) {
@@ -366,7 +373,7 @@ async fn handle_github_pull_request(
 
   let mut triggered = 0;
   for jobset in &jobsets {
-    if !jobset.enabled {
+    if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
     // PR builds against the merge target. Only fire jobsets that track
@@ -500,7 +507,7 @@ async fn handle_gitea_push(
 
   let mut triggered = 0;
   for jobset in &jobsets {
-    if !jobset.enabled {
+    if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
     if !jobset_matches_branch(jobset.branch.as_deref(), pushed_branch) {
@@ -640,7 +647,7 @@ async fn handle_gitlab_push(
 
   let mut triggered = 0;
   for jobset in &jobsets {
-    if !jobset.enabled {
+    if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
     if !jobset_matches_branch(jobset.branch.as_deref(), pushed_branch) {
@@ -744,7 +751,7 @@ async fn handle_gitlab_merge_request(
 
   let mut triggered = 0;
   for jobset in &jobsets {
-    if !jobset.enabled {
+    if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
     if !jobset_matches_branch(jobset.branch.as_deref(), base) {

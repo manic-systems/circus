@@ -10,9 +10,11 @@ use axum::{
 use circus_common::{
   CreateEvaluation,
   Evaluation,
+  JobsetTriggerMode,
   PaginatedResponse,
   PaginationParams,
   Validate,
+  repo,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -88,7 +90,18 @@ async fn trigger_evaluation(
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let evaluation = circus_common::repo::evaluations::create(&state.pool, input)
+
+  let jobset = repo::jobsets::get(&state.pool, input.jobset_id)
+    .await
+    .map_err(ApiError)?;
+  if jobset.trigger_mode != JobsetTriggerMode::SourceChange {
+    return Err(ApiError(circus_common::CiError::Validation(
+      "manual evaluation triggers are disabled for interval-mode jobsets"
+        .to_string(),
+    )));
+  }
+
+  let evaluation = repo::evaluations::create_manual(&state.pool, input)
     .await
     .map_err(ApiError)?;
   Ok(Json(evaluation))
