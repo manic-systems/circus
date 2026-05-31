@@ -89,7 +89,7 @@ testers.runNixOSTest {
         assert "text/html" in ct.lower(), f"Expected text/html, got: {ct}"
 
     with subtest("Admin page shows system status"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/admin")
+        body = machine.succeed(f"curl -sf {auth_header} http://127.0.0.1:3000/admin")
         assert "Administration" in body, "Admin page missing heading"
         assert "System Status" in body, "Admin page missing system status section"
         assert "Remote Builders" in body, "Admin page missing remote builders section"

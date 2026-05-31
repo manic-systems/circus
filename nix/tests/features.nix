@@ -68,15 +68,21 @@ testers.runNixOSTest {
     # Setup wizard page
     with subtest("Setup wizard page returns 200"):
         code = machine.succeed(
-            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/projects/new"
+            f"curl -s -o /dev/null -w '%{{http_code}}' {auth_header} http://127.0.0.1:3000/projects/new"
         )
         assert code.strip() == "200", f"Expected 200 for /projects/new, got {code.strip()}"
 
     with subtest("Setup wizard page contains wizard steps"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/projects/new")
+        body = machine.succeed(f"curl -sf {auth_header} http://127.0.0.1:3000/projects/new")
         assert "Step 1" in body, "Setup wizard should contain Step 1"
         assert "Repository URL" in body, "Setup wizard should contain URL input"
         assert "probeRepo" in body, "Setup wizard should contain probe JS function"
+
+    with subtest("Setup wizard redirects anonymous users to login"):
+        code = machine.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/projects/new"
+        )
+        assert code.strip() == "303", f"Expected 303 for anonymous /projects/new, got {code.strip()}"
 
     with subtest("Projects page links to setup wizard"):
         # Login first to get admin view
