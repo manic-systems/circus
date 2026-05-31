@@ -24,6 +24,10 @@ use uuid::Uuid;
 pub(super) struct BuildView {
   pub(super) id:            Uuid,
   pub(super) job_name:      String,
+  pub(super) project_id:    Option<Uuid>,
+  pub(super) project_name:  String,
+  pub(super) jobset_id:     Option<Uuid>,
+  pub(super) jobset_name:   String,
   pub(super) status_text:   String,
   pub(super) status_class:  String,
   pub(super) system:        String,
@@ -253,6 +257,10 @@ pub(super) fn build_view(b: &Build) -> BuildView {
   BuildView {
     id:            b.id,
     job_name:      b.job_name.clone(),
+    project_id:    None,
+    project_name:  String::new(),
+    jobset_id:     None,
+    jobset_name:   String::new(),
     status_text:   text,
     status_class:  class,
     system:        b.system.clone().unwrap_or_else(|| "-".to_string()),
@@ -289,6 +297,21 @@ pub(super) fn build_view(b: &Build) -> BuildView {
       .unwrap_or_default(),
     log_url:       b.log_url.clone().unwrap_or_default(),
   }
+}
+
+pub(super) fn build_view_with_context(
+  b: &Build,
+  project_id: Uuid,
+  project_name: &str,
+  jobset_id: Uuid,
+  jobset_name: &str,
+) -> BuildView {
+  let mut v = build_view(b);
+  v.project_id = Some(project_id);
+  v.project_name = project_name.to_string();
+  v.jobset_id = Some(jobset_id);
+  v.jobset_name = jobset_name.to_string();
+  v
 }
 
 pub(super) fn eval_view(e: &Evaluation) -> EvalView {
