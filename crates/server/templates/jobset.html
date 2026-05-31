@@ -12,11 +12,26 @@
 <nav class="breadcrumbs">
   <a href="/projects">Projects</a> <span class="sep">/</span>
   <a href="/project/{{ project.id }}">{{ project.name }}</a> <span class="sep">/</span>
+  <a href="/project/{{ project.id }}#jobsets">Jobsets</a> <span class="sep">/</span>
   <span class="current">{{ jobset.name }}</span>
 </nav>
 {% endblock %}
 {% block content %}
 <h1>{{ jobset.name }}</h1>
+
+<nav class="tab-nav">
+  <a class="active" href="/jobset/{{ jobset.id }}">Evaluations</a>
+  <a href="/jobset/{{ jobset.id }}/jobs">Jobs</a>
+</nav>
+
+{% if is_admin %}
+<div class="action-bar">
+  <form class="inline" method="POST" action="/jobset/{{ jobset.id }}/delete" onsubmit="return confirm('Delete this jobset and all of its evaluations/builds?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn btn-danger btn-small" type="submit">Delete Jobset</button>
+  </form>
+</div>
+{% endif %}
 
 <dl class="detail-grid">
   <dt>Expression</dt>
@@ -80,17 +95,35 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Commit</th><th>Status</th><th>Succeeded</th><th>Failed</th><th>Pending</th><th>Time</th></tr>
+    <tr><th>Commit</th><th>Status</th><th>Succeeded</th><th>Failed</th><th>Pending</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for e in eval_summaries %}
     <tr>
       <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
-      <td><span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span></td>
+      <td>
+        <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
+        {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+      </td>
       <td>{{ e.succeeded }}</td>
       <td>{{ e.failed }}</td>
       <td>{{ e.pending }}</td>
       <td>{{ e.time }}</td>
+      {% if is_admin %}
+      <td>
+        <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="return_to" value="/jobset/{{ jobset.id }}">
+          {% if e.hidden %}
+          <input type="hidden" name="hidden" value="false">
+          <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
+          {% else %}
+          <input type="hidden" name="hidden" value="true">
+          <button class="btn btn-small btn-outline" type="submit">Hide</button>
+          {% endif %}
+        </form>
+      </td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>

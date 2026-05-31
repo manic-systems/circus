@@ -27,6 +27,8 @@ use super::shared::{
   BuildView,
   EvalSummaryView,
   EvalView,
+  JobStatusColumn,
+  JobStatusRow,
   ProjectSummaryView,
   QueueBuildView,
   StarredJobView,
@@ -44,6 +46,7 @@ pub(super) struct HomeTemplate {
   pub(super) recent_builds:    Vec<BuildView>,
   pub(super) recent_evals:     Vec<EvalView>,
   pub(super) projects:         Vec<ProjectSummaryView>,
+  pub(super) announcements:    Vec<NewsItem>,
   pub(super) is_admin:         bool,
   pub(super) auth_name:        String,
 }
@@ -71,6 +74,7 @@ pub(super) struct ProjectTemplate {
   pub(super) recent_evals: Vec<EvalView>,
   pub(super) is_admin:     bool,
   pub(super) auth_name:    String,
+  pub(super) csrf_token:   String,
 }
 
 #[derive(Template)]
@@ -81,6 +85,19 @@ pub(super) struct JobsetTemplate {
   pub(super) eval_summaries: Vec<EvalSummaryView>,
   pub(super) is_admin:       bool,
   pub(super) auth_name:      String,
+  pub(super) csrf_token:     String,
+}
+
+#[derive(Template)]
+#[template(path = "jobset_jobs.html")]
+pub(super) struct JobsetJobsTemplate {
+  pub(super) project:       Project,
+  pub(super) jobset:        Jobset,
+  pub(super) columns:       Vec<JobStatusColumn>,
+  pub(super) rows:          Vec<JobStatusRow>,
+  pub(super) show_inactive: bool,
+  pub(super) is_admin:      bool,
+  pub(super) auth_name:     String,
 }
 
 #[derive(Template)]
@@ -96,6 +113,7 @@ pub(super) struct EvaluationsTemplate {
   pub(super) total_pages: i64,
   pub(super) is_admin:    bool,
   pub(super) auth_name:   String,
+  pub(super) csrf_token:  String,
 }
 
 #[derive(Template)]
@@ -113,6 +131,7 @@ pub(super) struct EvaluationTemplate {
   pub(super) pending_count:   i64,
   pub(super) is_admin:        bool,
   pub(super) auth_name:       String,
+  pub(super) csrf_token:      String,
 }
 
 #[derive(Template)]
