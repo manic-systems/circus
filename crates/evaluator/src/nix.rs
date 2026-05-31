@@ -435,18 +435,31 @@ async fn evaluate_legacy(
 }
 
 /// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)
-/// pairs. String values are treated as derivation paths. Objects are recursed
-/// into. Other types are skipped.
+/// pairs. Structured derivation objects are emitted as a single job; plain
+/// attrsets are recursed into. Bare strings are only accepted when they already
+/// look like `.drv` store paths, so derivation metadata such as `type` or
+/// `name` never becomes a build by accident.
 fn flatten_attrs(
   prefix: &str,
   value: &serde_json::Value,
 ) -> Vec<(String, String)> {
   match value {
-    serde_json::Value::String(s) => {
-      // Store path - likely a derivation
+    serde_json::Value::String(s) if is_store_drv_path(s) => {
       vec![(prefix.to_string(), s.clone())]
     },
     serde_json::Value::Object(map) => {
+      if map
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|t| t == "derivation")
+        && let Some(drv_path) = map
+          .get("drvPath")
+          .or_else(|| map.get("drv_path"))
+          .and_then(serde_json::Value::as_str)
+      {
+        return vec![(prefix.to_string(), drv_path.to_string())];
+      }
+
       let mut result = Vec::new();
       for (key, val) in map {
         let child_prefix = if prefix.is_empty() {
@@ -460,6 +473,13 @@ fn flatten_attrs(
     },
     _ => Vec::new(),
   }
+}
+
+fn is_store_drv_path(value: &str) -> bool {
+  value.starts_with("/nix/store/")
+    && std::path::Path::new(value)
+      .extension()
+      .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
 }
 
 struct ShownDerivation {
@@ -715,6 +735,75 @@ mod meta_tests {
         .as_ref()
         .is_some_and(|i| i.contains_key("/nix/store/bash.drv"))
     );
+  }
+
+  #[test]
+  fn flatten_attrs_emits_one_job_per_structured_derivation() {
+    let value = serde_json::json!({
+      "x86_64-linux": {
+        "default": {
+          "type": "derivation",
+          "name": "hello",
+          "system": "x86_64-linux",
+          "drvPath": "/nix/store/abc-hello.drv",
+          "outPath": "/nix/store/def-hello",
+          "outputs": ["out"]
+        },
+        "nested": {
+          "world": {
+            "type": "derivation",
+            "drvPath": "/nix/store/ghi-world.drv"
+          }
+        }
+      }
+    });
+
+    let jobs = flatten_attrs("", &value);
+
+    assert_eq!(jobs.len(), 2);
+    assert_eq!(
+      jobs[0],
+      (
+        "x86_64-linux.default".to_string(),
+        "/nix/store/abc-hello.drv".to_string(),
+      ),
+    );
+    assert_eq!(
+      jobs[1],
+      (
+        "x86_64-linux.nested.world".to_string(),
+        "/nix/store/ghi-world.drv".to_string(),
+      ),
+    );
+  }
+
+  #[test]
+  fn flatten_attrs_ignores_derivation_metadata_strings() {
+    let value = serde_json::json!({
+      "default": {
+        "type": "derivation",
+        "name": "hello",
+        "system": "x86_64-linux",
+        "drvPath": "/nix/store/abc-hello.drv"
+      },
+      "metadata": {
+        "type": "derivations",
+        "name": "not-a-job"
+      },
+      "legacy": "/nix/store/def-legacy.drv"
+    });
+
+    let jobs = flatten_attrs("", &value);
+
+    assert_eq!(jobs.len(), 2);
+    assert!(jobs.contains(&(
+      "default".to_string(),
+      "/nix/store/abc-hello.drv".to_string(),
+    )));
+    assert!(jobs.contains(&(
+      "legacy".to_string(),
+      "/nix/store/def-legacy.drv".to_string(),
+    )));
   }
 
   #[test]
