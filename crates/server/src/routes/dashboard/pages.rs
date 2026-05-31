@@ -22,6 +22,7 @@ use super::{
     StarredJobView,
     auth_name,
     build_view,
+    build_view_with_context,
     eval_badge,
     eval_view,
     eval_view_with_context,
@@ -516,8 +517,63 @@ pub(super) async fn builds_page(
 
   let total_pages = (total + limit - 1) / limit.max(1);
   let page = offset / limit.max(1) + 1;
+
+  let mut context_by_eval = std::collections::HashMap::new();
+  for item in &items {
+    if context_by_eval.contains_key(&item.evaluation_id) {
+      continue;
+    }
+    let context = match circus_common::repo::evaluations::get(
+      &state.pool,
+      item.evaluation_id,
+    )
+    .await
+    {
+      Ok(eval) => {
+        match circus_common::repo::jobsets::get(&state.pool, eval.jobset_id)
+          .await
+        {
+          Ok(jobset) => {
+            match circus_common::repo::projects::get(
+              &state.pool,
+              jobset.project_id,
+            )
+            .await
+            {
+              Ok(project) => {
+                Some((project.id, project.name, jobset.id, jobset.name))
+              },
+              Err(_) => None,
+            }
+          },
+          Err(_) => None,
+        }
+      },
+      Err(_) => None,
+    };
+    if let Some(context) = context {
+      context_by_eval.insert(item.evaluation_id, context);
+    }
+  }
+
   let tmpl = BuildsTemplate {
-    builds: items.iter().map(build_view).collect(),
+    builds: items
+      .iter()
+      .map(|item| {
+        context_by_eval.get(&item.evaluation_id).map_or_else(
+          || build_view(item),
+          |(project_id, project_name, jobset_id, jobset_name)| {
+            build_view_with_context(
+              item,
+              *project_id,
+              project_name,
+              *jobset_id,
+              jobset_name,
+            )
+          },
+        )
+      })
+      .collect(),
     limit,
     has_prev: offset > 0,
     has_next: offset + limit < total,
