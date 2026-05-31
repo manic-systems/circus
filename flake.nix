@@ -76,9 +76,10 @@
         machine-health = callTest ./nix/tests/machine-health.nix;
         channel-tarball = callTest ./nix/tests/channel-tarball.nix;
         distributed = callTest ./nix/tests/distributed.nix;
+        s3-cache = callTest ./nix/tests/s3-cache.nix;
       };
     in {
-      inherit (vmTests) service-startup basic-api auth-rbac api-crud features webhooks e2e declarative gc-pinning machine-health channel-tarball distributed;
+      inherit (vmTests) service-startup basic-api auth-rbac api-crud features webhooks e2e declarative gc-pinning machine-health channel-tarball distributed s3-cache;
       full = pkgs.symlinkJoin {
         name = "vm-tests-full";
         paths = builtins.attrValues vmTests;
