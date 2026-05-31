@@ -35,7 +35,16 @@ use crate::state::AppState;
 pub(super) async fn admin_page(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  if !is_admin(&extensions) {
+    let target = if auth_name(&extensions).is_empty() {
+      "/login"
+    } else {
+      "/"
+    };
+    return Err(Redirect::to(target).into_response());
+  }
+
   let pool = &state.pool;
 
   let projects: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM projects")
@@ -181,11 +190,11 @@ pub(super) async fn admin_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 // ---------- Users page ----------
@@ -352,6 +361,15 @@ pub(super) async fn notifications_page(
   Path(project_id): Path<Uuid>,
   extensions: Extensions,
 ) -> Result<Html<String>, Response> {
+  if !is_admin(&extensions) {
+    let target = if auth_name(&extensions).is_empty() {
+      "/login"
+    } else {
+      "/projects"
+    };
+    return Err(Redirect::to(target).into_response());
+  }
+
   let project = circus_common::repo::projects::get(&state.pool, project_id)
     .await
     .map_err(|_| Redirect::to("/projects").into_response())?;

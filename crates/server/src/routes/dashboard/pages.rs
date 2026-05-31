@@ -9,7 +9,7 @@ use askama::Template;
 use axum::{
   extract::{Path, Query, State},
   http::Extensions,
-  response::Html,
+  response::{Html, IntoResponse, Redirect, Response},
 };
 use circus_common::models::{BuildStatus, Evaluation};
 use uuid::Uuid;
@@ -985,14 +985,25 @@ pub(super) async fn metrics_page(extensions: Extensions) -> Html<String> {
   )
 }
 
-pub(super) async fn project_setup_page(extensions: Extensions) -> Html<String> {
+pub(super) async fn project_setup_page(
+  extensions: Extensions,
+) -> Result<Html<String>, Response> {
+  if !is_admin(&extensions) {
+    let target = if auth_name(&extensions).is_empty() {
+      "/login"
+    } else {
+      "/projects"
+    };
+    return Err(Redirect::to(target).into_response());
+  }
+
   let tmpl = ProjectSetupTemplate {
     is_admin:  is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
