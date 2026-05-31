@@ -610,6 +610,8 @@ pub struct DeclarativeJobset {
   pub flake_mode:        bool,
   #[serde(default = "default_check_interval")]
   pub check_interval:    i32,
+  /// Trigger mode: `source_change` or `interval`.
+  pub trigger_mode:      Option<String>,
   /// Jobset state: disabled, enabled, `one_shot`, or `one_at_a_time`
   pub state:             Option<String>,
   /// Git branch to track (defaults to repository default branch)
@@ -1196,6 +1198,7 @@ mod tests {
             [[projects.jobsets]]
             name = "packages"
             nix_expression = "packages"
+            trigger_mode = "interval"
 
             [[api_keys]]
             name = "admin-key"
@@ -1209,6 +1212,10 @@ mod tests {
     assert_eq!(config.projects[0].jobsets[0].name, "packages");
     assert!(config.projects[0].jobsets[0].enabled); // default true
     assert!(config.projects[0].jobsets[0].flake_mode); // default true
+    assert_eq!(
+      config.projects[0].jobsets[0].trigger_mode.as_deref(),
+      Some("interval")
+    );
     assert_eq!(config.api_keys.len(), 1);
     assert_eq!(config.api_keys[0].role, "admin");
   }
@@ -1226,6 +1233,7 @@ mod tests {
           enabled:           true,
           flake_mode:        true,
           check_interval:    300,
+          trigger_mode:      None,
           state:             None,
           branch:            None,
           scheduling_shares: 100,

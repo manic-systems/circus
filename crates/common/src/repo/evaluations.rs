@@ -3,7 +3,12 @@ use uuid::Uuid;
 
 use crate::{
   error::{CiError, Result},
-  models::{CreateEvaluation, Evaluation, EvaluationStatus},
+  models::{
+    CreateEvaluation,
+    Evaluation,
+    EvaluationStatus,
+    EvaluationTriggerKind,
+  },
 };
 
 /// Create a new evaluation in pending state.
@@ -15,13 +20,87 @@ pub async fn create(
   pool: &PgPool,
   input: CreateEvaluation,
 ) -> Result<Evaluation> {
+  create_with_kind(
+    pool,
+    input,
+    EvaluationTriggerKind::SourceChange,
+    EvaluationStatus::Pending,
+  )
+  .await
+}
+
+/// Create a manually-triggered evaluation in pending state.
+///
+/// # Errors
+///
+/// Returns error if database insert fails or evaluation already exists.
+pub async fn create_manual(
+  pool: &PgPool,
+  input: CreateEvaluation,
+) -> Result<Evaluation> {
+  create_with_kind(
+    pool,
+    input,
+    EvaluationTriggerKind::Manual,
+    EvaluationStatus::Pending,
+  )
+  .await
+}
+
+/// Create a source-change poll evaluation that is already being processed.
+///
+/// # Errors
+///
+/// Returns error if database insert fails or evaluation already exists.
+pub async fn create_running_source_change(
+  pool: &PgPool,
+  input: CreateEvaluation,
+) -> Result<Evaluation> {
+  create_with_kind(
+    pool,
+    input,
+    EvaluationTriggerKind::SourceChange,
+    EvaluationStatus::Running,
+  )
+  .await
+}
+
+/// Create an interval-triggered evaluation that is already being processed.
+///
+/// Interval evaluations intentionally do not deduplicate on commit hash: each
+/// interval tick is a fresh CI run for the same jobset state.
+///
+/// # Errors
+///
+/// Returns error if database insert fails.
+pub async fn create_interval(
+  pool: &PgPool,
+  input: CreateEvaluation,
+) -> Result<Evaluation> {
+  create_with_kind(
+    pool,
+    input,
+    EvaluationTriggerKind::Interval,
+    EvaluationStatus::Running,
+  )
+  .await
+}
+
+async fn create_with_kind(
+  pool: &PgPool,
+  input: CreateEvaluation,
+  trigger_kind: EvaluationTriggerKind,
+  status: EvaluationStatus,
+) -> Result<Evaluation> {
   sqlx::query_as::<_, Evaluation>(
-    "INSERT INTO evaluations (jobset_id, commit_hash, status, pr_number, \
-     pr_head_branch, pr_base_branch, pr_action) VALUES ($1, $2, 'pending', \
-     $3, $4, $5, $6) RETURNING *",
+    "INSERT INTO evaluations (jobset_id, commit_hash, status, trigger_kind, \
+     pr_number, pr_head_branch, pr_base_branch, pr_action) VALUES ($1, $2, \
+     $3, $4, $5, $6, $7, $8) RETURNING *",
   )
   .bind(input.jobset_id)
   .bind(&input.commit_hash)
+  .bind(status)
+  .bind(trigger_kind)
   .bind(input.pr_number)
   .bind(&input.pr_head_branch)
   .bind(&input.pr_base_branch)
@@ -296,7 +375,7 @@ pub async fn get_by_jobset_and_commit(
 ) -> Result<Option<Evaluation>> {
   sqlx::query_as::<_, Evaluation>(
     "SELECT * FROM evaluations WHERE jobset_id = $1 AND commit_hash = $2 \
-     ORDER BY evaluation_time DESC LIMIT 1",
+     ORDER BY (trigger_kind = 'interval') ASC, evaluation_time DESC LIMIT 1",
   )
   .bind(jobset_id)
   .bind(commit_hash)

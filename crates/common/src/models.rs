@@ -24,6 +24,7 @@ pub struct Jobset {
   pub enabled:           bool,
   pub flake_mode:        bool,
   pub check_interval:    i32,
+  pub trigger_mode:      JobsetTriggerMode,
   pub branch:            Option<String>,
   pub scheduling_shares: i32,
   pub created_at:        DateTime<Utc>,
@@ -42,6 +43,7 @@ pub struct Evaluation {
   pub status:          EvaluationStatus,
   pub error_message:   Option<String>,
   pub inputs_hash:     Option<String>,
+  pub trigger_kind:    EvaluationTriggerKind,
   pub pr_number:       Option<i32>,
   pub pr_head_branch:  Option<String>,
   pub pr_base_branch:  Option<String>,
@@ -58,10 +60,22 @@ pub enum EvaluationStatus {
   Failed,
 }
 
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default,
+)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "varchar", rename_all = "snake_case")]
+pub enum EvaluationTriggerKind {
+  #[default]
+  SourceChange,
+  Manual,
+  Interval,
+}
+
 /// Jobset scheduling state (Hydra-compatible).
 ///
 /// - `Disabled`: Jobset will not be evaluated
-/// - `Enabled`: Normal operation, evaluated according to `check_interval`
+/// - `Enabled`: Normal operation, evaluated according to its trigger mode
 /// - `OneShot`: Evaluated once, then automatically set to Disabled
 /// - `OneAtATime`: Only one build can run at a time for this jobset
 #[derive(
@@ -104,6 +118,47 @@ impl JobsetState {
       "one_shot" => Self::OneShot,
       "one_at_a_time" => Self::OneAtATime,
       _ => Self::Enabled,
+    }
+  }
+}
+
+/// How a jobset enters the evaluator.
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default,
+)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "varchar", rename_all = "snake_case")]
+pub enum JobsetTriggerMode {
+  /// Rebuild when a source/manual trigger or polling discovers new inputs.
+  #[default]
+  SourceChange,
+  /// Rebuild on the jobset interval, even when inputs did not change.
+  Interval,
+}
+
+impl JobsetTriggerMode {
+  /// Returns true when webhook/manual pending evaluations should be accepted.
+  #[must_use]
+  pub const fn accepts_source_triggers(&self) -> bool {
+    matches!(self, Self::SourceChange)
+  }
+
+  /// Returns the database string representation of this trigger mode.
+  #[must_use]
+  pub const fn as_str(&self) -> &'static str {
+    match self {
+      Self::SourceChange => "source_change",
+      Self::Interval => "interval",
+    }
+  }
+
+  /// Parses a trigger mode from declarative config.
+  /// Unrecognised values default to `SourceChange`.
+  #[must_use]
+  pub fn from_config_str(s: &str) -> Self {
+    match s {
+      "interval" => Self::Interval,
+      _ => Self::SourceChange,
     }
   }
 }
@@ -363,6 +418,7 @@ pub struct ActiveJobset {
   pub enabled:           bool,
   pub flake_mode:        bool,
   pub check_interval:    i32,
+  pub trigger_mode:      JobsetTriggerMode,
   pub branch:            Option<String>,
   pub scheduling_shares: i32,
   pub created_at:        DateTime<Utc>,
@@ -641,6 +697,7 @@ pub struct CreateJobset {
   pub enabled:           Option<bool>,
   pub flake_mode:        Option<bool>,
   pub check_interval:    Option<i32>,
+  pub trigger_mode:      Option<JobsetTriggerMode>,
   pub branch:            Option<String>,
   pub scheduling_shares: Option<i32>,
   pub state:             Option<JobsetState>,
@@ -654,6 +711,7 @@ pub struct UpdateJobset {
   pub enabled:           Option<bool>,
   pub flake_mode:        Option<bool>,
   pub check_interval:    Option<i32>,
+  pub trigger_mode:      Option<JobsetTriggerMode>,
   pub branch:            Option<String>,
   pub scheduling_shares: Option<i32>,
   pub state:             Option<JobsetState>,
