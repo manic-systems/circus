@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>{% block title %}circus{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -18,11 +19,20 @@
       <a href="/news">News</a>
       <a href="/starred">Starred</a>
       <a href="/metrics">Metrics</a>
+      {% if is_admin %}
       <a href="/users">Users</a>
       <a href="/admin">Admin</a>
+      {% endif %}
     </div>
     <div class="nav-auth">
-      {% block auth %}{% endblock %}
+      {% block auth %}
+      {% if !auth_name.is_empty() %}
+      <span class="auth-user">{{ auth_name }}</span>
+      <form method="POST" action="/logout"><button type="submit">Logout</button></form>
+      {% else %}
+      <a href="/login">Login</a>
+      {% endif %}
+      {% endblock %}
     </div>
   </nav>
   <main class="page-main">
@@ -43,6 +53,18 @@
   function showError(el, msg) {
     el.innerHTML = '<div class="flash-message flash-error">' + escapeHtml(msg) + '</div>';
   }
+  </script>
+  <script>
+  (function() {
+    var path = window.location.pathname;
+    var links = document.querySelectorAll('.nav-links a');
+    for (var i = 0; i < links.length; i++) {
+      var href = links[i].getAttribute('href');
+      if (href === '/' ? path === '/' : path === href || path.startsWith(href + '/')) {
+        links[i].classList.add('active');
+      }
+    }
+  })();
   </script>
   <script>
   // Tick any element carrying data-live-elapsed="<unix-epoch-seconds>" once

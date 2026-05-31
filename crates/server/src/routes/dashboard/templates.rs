@@ -240,7 +240,9 @@ pub(super) struct ProjectSetupTemplate {
 #[derive(Template)]
 #[template(path = "login.html")]
 pub(super) struct LoginTemplate {
-  pub(super) error: Option<String>,
+  pub(super) error:     Option<String>,
+  pub(super) is_admin:  bool,
+  pub(super) auth_name: String,
 }
 
 #[derive(Template)]

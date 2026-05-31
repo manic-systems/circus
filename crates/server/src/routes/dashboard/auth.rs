@@ -19,7 +19,11 @@ use super::templates::LoginTemplate;
 use crate::state::AppState;
 
 pub(super) async fn login_page() -> Html<String> {
-  let tmpl = LoginTemplate { error: None };
+  let tmpl = LoginTemplate {
+    error:     None,
+    is_admin:  false,
+    auth_name: String::new(),
+  };
   Html(
     tmpl
       .render()
@@ -94,7 +98,9 @@ pub(super) async fn login_action(
     .await;
 
     let tmpl = LoginTemplate {
-      error: Some("Invalid username or password".to_string()),
+      error:     Some("Invalid username or password".to_string()),
+      is_admin:  false,
+      auth_name: String::new(),
     };
     return (
       StatusCode::UNAUTHORIZED,
@@ -112,7 +118,9 @@ pub(super) async fn login_action(
     let token = token.trim();
     if token.is_empty() {
       let tmpl = LoginTemplate {
-        error: Some("API key is required".to_string()),
+        error:     Some("API key is required".to_string()),
+        is_admin:  false,
+        auth_name: String::new(),
       };
       return Html(
         tmpl
@@ -172,7 +180,9 @@ pub(super) async fn login_action(
       .await;
 
       let tmpl = LoginTemplate {
-        error: Some("Invalid API key".to_string()),
+        error:     Some("Invalid API key".to_string()),
+        is_admin:  false,
+        auth_name: String::new(),
       };
       Html(
         tmpl
@@ -183,9 +193,11 @@ pub(super) async fn login_action(
     }
   } else {
     let tmpl = LoginTemplate {
-      error: Some(
+      error:     Some(
         "Please provide either username/password or API key".to_string(),
       ),
+      is_admin:  false,
+      auth_name: String::new(),
     };
     Html(
       tmpl
