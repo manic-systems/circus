@@ -18,7 +18,14 @@ use uuid::Uuid;
 use super::{
   csrf::{check_csrf, csrf_from},
   pages::PageParams,
-  shared::{ApiKeyView, UserView, auth_name, is_admin},
+  shared::{
+    ApiKeyView,
+    DashboardPage,
+    UserView,
+    auth_name,
+    enforce_page_access,
+    is_admin,
+  },
   templates::{
     AdminTemplate,
     BuilderView,
@@ -270,7 +277,8 @@ pub(super) async fn users_page(
 pub(super) async fn news_page(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(&state.config.server, &extensions, DashboardPage::News)?;
   let items = circus_common::repo::news::list(&state.pool, 50, 0)
     .await
     .unwrap_or_default();
@@ -280,11 +288,11 @@ pub(super) async fn news_page(
     auth_name: auth_name(&extensions),
     csrf_token: csrf_from(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 #[derive(serde::Deserialize)]
@@ -354,6 +362,73 @@ pub struct NotificationCreateForm {
 #[derive(serde::Deserialize)]
 pub struct CsrfOnlyForm {
   pub csrf_token: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct EvaluationVisibilityForm {
+  pub hidden:     bool,
+  pub return_to:  Option<String>,
+  pub csrf_token: String,
+}
+
+fn safe_redirect_target(target: Option<String>, fallback: String) -> String {
+  target
+    .filter(|t| t.starts_with('/') && !t.starts_with("//"))
+    .unwrap_or(fallback)
+}
+
+pub(super) async fn jobset_delete(
+  State(state): State<AppState>,
+  Path(jobset_id): Path<Uuid>,
+  extensions: Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Result<Redirect, Response> {
+  if !is_admin(&extensions) {
+    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+  }
+  check_csrf(&extensions, &form.csrf_token)?;
+  let jobset = circus_common::repo::jobsets::get(&state.pool, jobset_id)
+    .await
+    .map_err(|e| {
+      (StatusCode::NOT_FOUND, format!("Jobset not found: {e}")).into_response()
+    })?;
+  let project_id = jobset.project_id;
+  circus_common::repo::jobsets::delete(&state.pool, jobset_id)
+    .await
+    .map_err(|e| {
+      (StatusCode::BAD_REQUEST, format!("Delete failed: {e}")).into_response()
+    })?;
+  Ok(Redirect::to(&format!("/project/{project_id}")))
+}
+
+pub(super) async fn evaluation_visibility(
+  State(state): State<AppState>,
+  Path(evaluation_id): Path<Uuid>,
+  extensions: Extensions,
+  Form(form): Form<EvaluationVisibilityForm>,
+) -> Result<Redirect, Response> {
+  if !is_admin(&extensions) {
+    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+  }
+  check_csrf(&extensions, &form.csrf_token)?;
+  circus_common::repo::evaluations::set_hidden(
+    &state.pool,
+    evaluation_id,
+    form.hidden,
+  )
+  .await
+  .map_err(|e| {
+    (
+      StatusCode::BAD_REQUEST,
+      format!("Visibility update failed: {e}"),
+    )
+      .into_response()
+  })?;
+  let target = safe_redirect_target(
+    form.return_to,
+    format!("/evaluation/{evaluation_id}"),
+  );
+  Ok(Redirect::to(&target))
 }
 
 pub(super) async fn notifications_page(
