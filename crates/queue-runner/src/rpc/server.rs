@@ -18,7 +18,6 @@ use std::{
   time::Instant,
 };
 
-use anyhow::Context as _;
 use capnp::capability::Promise;
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
 use circus_proto::{
@@ -29,6 +28,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
+use color_eyre::eyre::{Context as _, eyre};
 use parking_lot::RwLock;
 use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
@@ -110,7 +110,7 @@ impl ServerConfig {
   /// Returns the underlying error if TLS files are missing or invalid.
   pub fn from_user(
     cfg: &circus_common::config::RpcConfig,
-  ) -> anyhow::Result<Self> {
+  ) -> color_eyre::Result<Self> {
     let bind: SocketAddr = cfg
       .bind
       .parse()
@@ -177,7 +177,7 @@ pub async fn serve(
   cfg: ServerConfig,
   pool: Arc<AgentPool>,
   db_pool: PgPool,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let listener = TcpListener::bind(cfg.bind)
     .await
     .with_context(|| format!("bind {}", cfg.bind))?;
@@ -220,7 +220,7 @@ async fn serve_one(
   cfg: Arc<ServerConfig>,
   pool: Arc<AgentPool>,
   db_pool: PgPool,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let _ = socket.set_nodelay(true);
   tracing::info!(?peer, "incoming rpc connection");
 
@@ -664,8 +664,7 @@ async fn sign_fingerprint(
   nar_hash: &str,
   nar_size: i64,
   references: &[String],
-) -> anyhow::Result<String> {
-  use anyhow::Context as _;
+) -> color_eyre::Result<String> {
   use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
   use ring::signature::Ed25519KeyPair;
   let raw = tokio::fs::read_to_string(key_file)
@@ -674,20 +673,17 @@ async fn sign_fingerprint(
   let raw = raw.trim();
   let (name, secret_b64) = raw
     .split_once(':')
-    .ok_or_else(|| anyhow::anyhow!("signing key not in `name:base64` form"))?;
+    .ok_or_else(|| eyre!("signing key not in `name:base64` form"))?;
   let secret = B64
     .decode(secret_b64)
     .with_context(|| "signing key base64 decode")?;
   if secret.len() != 64 {
-    return Err(anyhow::anyhow!(
-      "signing key has {} bytes, expected 64",
-      secret.len()
-    ));
+    return Err(eyre!("signing key has {} bytes, expected 64", secret.len()));
   }
   // libsodium layout is `seed (32) || public key (32)`. ring wants the
   // seed alone.
   let key = Ed25519KeyPair::from_seed_unchecked(&secret[..32])
-    .map_err(|e| anyhow::anyhow!("ring rejected key seed: {e}"))?;
+    .map_err(|e| eyre!("ring rejected key seed: {e}"))?;
   let fingerprint = format!(
     "{store_path};{nar_hash};{nar_size};{}",
     references.join(",")

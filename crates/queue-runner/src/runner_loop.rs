@@ -72,7 +72,7 @@ pub async fn run(
   strict_errors: bool,
   failed_paths_cache: bool,
   unsupported_timeout: Option<Duration>,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let mut last_orphan_reset = tokio::time::Instant::now();
   let orphan_reset_interval = Duration::from_mins(1);
   reset_orphaned_builds(&pool).await;
@@ -416,7 +416,9 @@ pub async fn run(
       },
       Err(e) => {
         if strict_errors {
-          return Err(anyhow::anyhow!("Failed to fetch pending builds: {e}"));
+          return Err(color_eyre::eyre::eyre!(
+            "Failed to fetch pending builds: {e}"
+          ));
         }
         tracing::error!("Failed to fetch pending builds: {e}");
       },

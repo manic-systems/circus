@@ -20,7 +20,6 @@ use std::{
   time::Duration,
 };
 
-use anyhow::Context as _;
 use capnp::capability::Promise;
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
 use circus_proto::{
@@ -34,6 +33,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
+use color_eyre::eyre::{Context as _, eyre};
 use parking_lot::Mutex;
 use tokio::net::TcpStream;
 use tokio_util::{
@@ -56,7 +56,7 @@ use crate::{build, config::Agent, psi};
   clippy::future_not_send,
   reason = "capnp futures are not Send; agent uses a single-threaded runtime"
 )]
-pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
+pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
   let (host, port, want_tls) = parse_endpoint(&cfg.runner_url)?;
   tracing::info!(host = %host, port, want_tls, "dialing runner");
   let socket = TcpStream::connect((host.as_str(), port))
@@ -70,11 +70,11 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
   // by erasing through `Box<dyn>` and the tokio-util compat adapters.
   let mut rpc = if want_tls {
     let tls = cfg.tls.as_ref().ok_or_else(|| {
-      anyhow::anyhow!("circus+tls:// requested but [agent.tls] not configured")
+      eyre!("circus+tls:// requested but [agent.tls] not configured")
     })?;
     let connector = crate::tls::build_client_connector(tls)?;
     let server_name = rustls::pki_types::ServerName::try_from(host.clone())
-      .map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
+      .map_err(|e| eyre!("invalid server name {host}: {e}"))?;
     let stream = connector.connect(server_name, socket).await?;
     let (rh, wh) = tokio::io::split(stream);
     let network = twoparty::VatNetwork::new(
@@ -126,7 +126,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> anyhow::Result<()> {
   Ok(())
 }
 
-fn parse_endpoint(url: &str) -> anyhow::Result<(String, u16, bool)> {
+fn parse_endpoint(url: &str) -> color_eyre::Result<(String, u16, bool)> {
   let has_scheme = url.contains("://");
   let normalized = if has_scheme {
     url.to_owned()
@@ -138,21 +138,21 @@ fn parse_endpoint(url: &str) -> anyhow::Result<(String, u16, bool)> {
   let scheme = parsed.scheme();
   let tls = matches!(scheme, "circus+tls");
   if !matches!(scheme, "circus" | "circus+tls") {
-    return Err(anyhow::anyhow!("unsupported runner_url scheme: {scheme}"));
+    return Err(eyre!("unsupported runner_url scheme: {scheme}"));
   }
   let host = parsed
     .host_str()
-    .ok_or_else(|| anyhow::anyhow!("missing host in runner_url"))?
+    .ok_or_else(|| eyre!("missing host in runner_url"))?
     .to_owned();
   let port = parsed
     .port()
-    .ok_or_else(|| anyhow::anyhow!("missing port in runner_url"))?;
+    .ok_or_else(|| eyre!("missing port in runner_url"))?;
   Ok((host, port, tls))
 }
 
 async fn verify_runner_version(
   runner_cap: &runner::Client,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -166,7 +166,7 @@ async fn verify_runner_version(
   let payload = response.get().context("version response")?;
   let proto = payload.get_proto()?.to_str()?;
   if proto != PROTO_VERSION {
-    return Err(anyhow::anyhow!(
+    return Err(eyre!(
       "proto mismatch: runner={proto} agent={PROTO_VERSION}"
     ));
   }
@@ -178,7 +178,7 @@ async fn register(
   cfg: &Agent,
   machine_id: Uuid,
   local_builder: builder::Client,
-) -> anyhow::Result<agent_session::Client> {
+) -> color_eyre::Result<agent_session::Client> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -520,7 +520,7 @@ impl builder::Server for BuilderImpl {
 
 async fn report_result(
   sink: &result_sink::Client,
-  outcome: anyhow::Result<build::LocalResult>,
+  outcome: color_eyre::Result<build::LocalResult>,
 ) -> Result<(), capnp::Error> {
   #![expect(
     clippy::future_not_send,

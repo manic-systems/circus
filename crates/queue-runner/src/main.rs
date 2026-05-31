@@ -22,7 +22,8 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> color_eyre::Result<()> {
+  color_eyre::install()?;
   let cli = Cli::parse();
 
   let config = Config::load()?;

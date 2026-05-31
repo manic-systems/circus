@@ -17,7 +17,7 @@ impl Database {
   /// # Errors
   ///
   /// Returns error if connection fails or health check fails.
-  pub async fn new(config: DatabaseConfig) -> anyhow::Result<Self> {
+  pub async fn new(config: DatabaseConfig) -> color_eyre::Result<Self> {
     info!("Initializing database connection pool");
 
     let pool = PgPoolOptions::new()
@@ -48,13 +48,13 @@ impl Database {
   /// # Errors
   ///
   /// Returns error if query fails or returns unexpected result.
-  pub async fn health_check(pool: &PgPool) -> anyhow::Result<()> {
+  pub async fn health_check(pool: &PgPool) -> color_eyre::Result<()> {
     debug!("Performing database health check");
 
     let result: i32 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await?;
 
     if result != 1 {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Database health check failed: unexpected result"
       ));
     }
@@ -74,7 +74,9 @@ impl Database {
   /// # Errors
   ///
   /// Returns error if query fails.
-  pub async fn get_connection_info(&self) -> anyhow::Result<ConnectionInfo> {
+  pub async fn get_connection_info(
+    &self,
+  ) -> color_eyre::Result<ConnectionInfo> {
     let row = sqlx::query(
       r"
             SELECT 

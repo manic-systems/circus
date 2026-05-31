@@ -13,7 +13,7 @@ use circus_common::{
 };
 
 #[tokio::test]
-async fn test_database_connection_full() -> anyhow::Result<()> {
+async fn test_database_connection_full() -> color_eyre::Result<()> {
   // This test requires a running PostgreSQL instance
   // Skip if no database is available
   let config = DatabaseConfig {
@@ -53,7 +53,7 @@ async fn test_database_connection_full() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_config_loading() -> anyhow::Result<()> {
+fn test_config_loading() -> color_eyre::Result<()> {
   // Test default config loading
   let config = Config::load()?;
   assert!(config.validate().is_ok());
@@ -69,7 +69,7 @@ fn test_config_loading() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_config_validation() -> anyhow::Result<()> {
+fn test_config_validation() -> color_eyre::Result<()> {
   // Test valid config
   let base_config = Config::default();
   assert!(base_config.validate().is_ok());
@@ -107,7 +107,7 @@ fn test_config_validation() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_database_config_validation() -> anyhow::Result<()> {
+fn test_database_config_validation() -> color_eyre::Result<()> {
   // Test valid config
   let config = DatabaseConfig::default();
   assert!(config.validate().is_ok());
@@ -136,7 +136,7 @@ fn test_database_config_validation() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_config_serialization() -> anyhow::Result<()> {
+fn test_config_serialization() -> color_eyre::Result<()> {
   let config = Config::default();
 
   // Test TOML serialization

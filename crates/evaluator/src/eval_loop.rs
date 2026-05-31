@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use anyhow::Context;
 use chrono::Utc;
 use circus_common::{
   config::EvaluatorConfig,
@@ -17,6 +16,7 @@ use circus_common::{
   },
   repo,
 };
+use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
 use sqlx::PgPool;
 use tokio::sync::Notify;
@@ -33,7 +33,7 @@ pub async fn run(
   config: EvaluatorConfig,
   notifications_config: circus_common::config::NotificationsConfig,
   wakeup: Arc<Notify>,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let poll_interval = Duration::from_secs(config.poll_interval);
   let nix_timeout = Duration::from_secs(config.nix_timeout);
   let git_timeout = Duration::from_secs(config.git_timeout);
@@ -66,7 +66,7 @@ async fn run_cycle(
   notifications_config: &circus_common::config::NotificationsConfig,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let active = repo::jobsets::list_active(pool).await?;
   let active_by_id: HashMap<Uuid, ActiveJobset> =
     active.iter().cloned().map(|j| (j.id, j)).collect();
@@ -230,7 +230,7 @@ async fn evaluate_pending_eval(
   notifications_config: &circus_common::config::NotificationsConfig,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   // Claim the row atomically. If the row is no longer pending another
   // wakeup already handled it; bail out without doing the git fetch.
   let Some(claimed) =
@@ -271,7 +271,7 @@ async fn evaluate_pending_eval(
   )
   .await
   .map_err(|_| {
-    anyhow::anyhow!("Git operation timed out after {git_timeout:?}")
+    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
   })???;
 
   let inputs = repo::jobset_inputs::list_for_jobset(pool, jobset.id)
@@ -357,7 +357,7 @@ async fn run_nix_and_record_builds(
   config: &EvaluatorConfig,
   notifications_config: &circus_common::config::NotificationsConfig,
   nix_timeout: Duration,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   match crate::nix::evaluate(
     repo_path,
     &jobset.nix_expression,
@@ -442,7 +442,7 @@ async fn evaluate_jobset(
   notifications_config: &circus_common::config::NotificationsConfig,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let url = jobset.repository_url.clone();
   let work_dir = config.work_dir.clone();
   let project_name = jobset.project_name.clone();
@@ -470,7 +470,7 @@ async fn evaluate_jobset(
   )
   .await
   .map_err(|_| {
-    anyhow::anyhow!("Git operation timed out after {git_timeout:?}")
+    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
   })???;
 
   // Query jobset inputs
@@ -529,7 +529,7 @@ async fn evaluate_jobset(
       )
       .await?
       .ok_or_else(|| {
-        anyhow::anyhow!(
+        color_eyre::eyre::eyre!(
           "Evaluation conflict but not found: {}/{}",
           jobset.id,
           commit_hash
@@ -579,7 +579,7 @@ async fn evaluate_jobset(
       existing
     },
     Err(e) => {
-      return Err(anyhow::anyhow!(e)).with_context(|| {
+      return Err(color_eyre::eyre::eyre!(e)).with_context(|| {
         format!("failed to create evaluation for jobset {}", jobset.name)
       });
     },
@@ -721,7 +721,7 @@ async fn create_builds_from_eval(
   pool: &PgPool,
   eval_id: Uuid,
   eval_result: &crate::nix::EvalResult,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
   let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
 

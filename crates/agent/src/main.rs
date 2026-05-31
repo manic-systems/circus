@@ -16,7 +16,8 @@ struct Cli {
   config: Option<PathBuf>,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> color_eyre::Result<()> {
+  color_eyre::install()?;
   let cli = Cli::parse();
   tracing_subscriber::fmt()
     .with_env_filter(
@@ -44,7 +45,7 @@ fn main() -> anyhow::Result<()> {
 async fn run_supervisor(
   cfg: circus_agent::config::Agent,
   machine_id: Uuid,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   #![expect(clippy::infinite_loop, reason = "intentional reconnect loop")]
   #![expect(
     clippy::future_not_send,
@@ -67,7 +68,7 @@ async fn run_supervisor(
 /// Read or initialise the machine ID file. The runner uses this ID as the
 /// stable key into `builder_sessions` and the `AgentPool`, so it must
 /// outlive process restarts but be unique to this physical host.
-fn resolve_machine_id(cfg: &AgentConfig) -> anyhow::Result<Uuid> {
+fn resolve_machine_id(cfg: &AgentConfig) -> color_eyre::Result<Uuid> {
   let path = cfg
     .agent
     .machine_id_file

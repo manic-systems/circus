@@ -12,12 +12,12 @@ path = "src/main.rs"
 [dependencies]
 circus-proto.workspace = true
 
-anyhow.workspace             = true
 async-compression.workspace  = true
 capnp.workspace              = true
 capnp-futures.workspace      = true
 capnp-rpc.workspace          = true
 clap.workspace               = true
+color-eyre.workspace         = true
 config.workspace             = true
 futures.workspace            = true
 hex.workspace                = true

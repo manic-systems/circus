@@ -5,8 +5,8 @@
 
 use std::{io::BufReader, sync::Arc};
 
-use anyhow::Context as _;
 use circus_common::config::RpcTlsConfig;
+use color_eyre::eyre::{Context as _, eyre};
 use rustls::{RootCertStore, ServerConfig, server::WebPkiClientVerifier};
 use tokio_rustls::TlsAcceptor;
 
@@ -15,7 +15,7 @@ use tokio_rustls::TlsAcceptor;
 ///
 /// # Errors
 /// Returns any underlying IO or rustls error.
-pub fn build_acceptor(cfg: &RpcTlsConfig) -> anyhow::Result<TlsAcceptor> {
+pub fn build_acceptor(cfg: &RpcTlsConfig) -> color_eyre::Result<TlsAcceptor> {
   let cert_bytes = std::fs::read(&cfg.cert_file)
     .with_context(|| format!("read cert {}", cfg.cert_file.display()))?;
   let cert_chain: Vec<_> =
@@ -26,9 +26,7 @@ pub fn build_acceptor(cfg: &RpcTlsConfig) -> anyhow::Result<TlsAcceptor> {
     .with_context(|| format!("read key {}", cfg.key_file.display()))?;
   let key =
     rustls_pemfile::private_key(&mut BufReader::new(key_bytes.as_slice()))?
-      .ok_or_else(|| {
-        anyhow::anyhow!("no private key in {}", cfg.key_file.display())
-      })?;
+      .ok_or_else(|| eyre!("no private key in {}", cfg.key_file.display()))?;
 
   let server_cfg = if let Some(ca_path) = &cfg.client_ca {
     let ca_bytes = std::fs::read(ca_path)

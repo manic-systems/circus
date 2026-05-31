@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 /// # Errors
 ///
 /// Returns error if database operations or migrations fail.
-pub async fn run_migrations(database_url: &str) -> anyhow::Result<()> {
+pub async fn run_migrations(database_url: &str) -> color_eyre::Result<()> {
   info!("Starting database migrations");
 
   // Check if database exists, create if it doesn't
@@ -27,13 +27,15 @@ pub async fn run_migrations(database_url: &str) -> anyhow::Result<()> {
     },
     Err(e) => {
       error!("Failed to run database migrations: {}", e);
-      Err(anyhow::anyhow!("Migration failed: {e}"))
+      Err(color_eyre::eyre::eyre!("Migration failed: {e}"))
     },
   }
 }
 
 /// Creates a connection pool with proper configuration
-async fn create_connection_pool(database_url: &str) -> anyhow::Result<PgPool> {
+async fn create_connection_pool(
+  database_url: &str,
+) -> color_eyre::Result<PgPool> {
   let pool = PgPool::connect(database_url).await?;
 
   // Test the connection
@@ -47,7 +49,7 @@ async fn create_connection_pool(database_url: &str) -> anyhow::Result<PgPool> {
 /// # Errors
 ///
 /// Returns error if schema validation fails or required tables are missing.
-pub async fn validate_schema(pool: &PgPool) -> anyhow::Result<()> {
+pub async fn validate_schema(pool: &PgPool) -> color_eyre::Result<()> {
   info!("Validating database schema");
 
   for table in REQUIRED_TABLES {
@@ -60,7 +62,9 @@ pub async fn validate_schema(pool: &PgPool) -> anyhow::Result<()> {
     .await?;
 
     if result == 0 {
-      return Err(anyhow::anyhow!("Required table '{table}' does not exist"));
+      return Err(color_eyre::eyre::eyre!(
+        "Required table '{table}' does not exist"
+      ));
     }
   }
 
@@ -74,7 +78,9 @@ pub async fn validate_schema(pool: &PgPool) -> anyhow::Result<()> {
     .await?;
 
     if result == 0 {
-      return Err(anyhow::anyhow!("Required view '{view}' does not exist"));
+      return Err(color_eyre::eyre::eyre!(
+        "Required view '{view}' does not exist"
+      ));
     }
   }
 

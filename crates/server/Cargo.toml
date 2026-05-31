@@ -6,7 +6,6 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
-anyhow.workspace             = true
 askama.workspace             = true
 async-compression.workspace  = true
 async-stream.workspace       = true
@@ -14,6 +13,7 @@ axum.workspace               = true
 axum-extra.workspace         = true
 chrono.workspace             = true
 clap.workspace               = true
+color-eyre.workspace         = true
 config.workspace             = true
 dashmap.workspace            = true
 futures.workspace            = true

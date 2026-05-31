@@ -56,12 +56,12 @@ pub struct LocalResult {
 ///
 /// Returns the failure as a `LocalResult` with a non-success outcome rather
 /// than `Result::Err`. Only IO failures around spawning the child are
-/// raised as anyhow errors.
+/// raised as generic diagnostic errors.
 pub async fn run(
   opts: BuildOptions<'_>,
   log_sink: log_sink::Client,
   cancel: CancellationToken,
-) -> anyhow::Result<LocalResult> {
+) -> color_eyre::Result<LocalResult> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -86,11 +86,11 @@ pub async fn run(
   let stdout = child
     .stdout
     .take()
-    .ok_or_else(|| anyhow::anyhow!("child stdout missing"))?;
+    .ok_or_else(|| color_eyre::eyre::eyre!("child stdout missing"))?;
   let stderr = child
     .stderr
     .take()
-    .ok_or_else(|| anyhow::anyhow!("child stderr missing"))?;
+    .ok_or_else(|| color_eyre::eyre::eyre!("child stderr missing"))?;
 
   // Drive stdout and stderr in two independent tasks so that EOF on one
   // stream does not cause lines buffered in the other to be discarded.

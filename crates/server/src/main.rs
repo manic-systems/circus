@@ -46,7 +46,8 @@ async fn shutdown_signal() {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> color_eyre::Result<()> {
+  color_eyre::install()?;
   let config = Config::load()?;
   circus_common::init_tracing(&config.tracing);
 
@@ -77,7 +78,9 @@ async fn main() -> anyhow::Result<()> {
     .map(|pat| {
       regex::Regex::new(pat)
         .map(std::sync::Arc::new)
-        .map_err(|e| anyhow::anyhow!("Invalid email_validation_regex: {e}"))
+        .map_err(|e| {
+          color_eyre::eyre::eyre!("Invalid email_validation_regex: {e}")
+        })
     })
     .transpose()?;
 

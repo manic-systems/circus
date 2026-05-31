@@ -5,7 +5,7 @@ use circus_common::{config::DatabaseConfig, *};
 use sqlx::PgPool;
 
 #[tokio::test]
-async fn test_database_connection() -> anyhow::Result<()> {
+async fn test_database_connection() -> color_eyre::Result<()> {
   let config = DatabaseConfig {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
@@ -47,7 +47,7 @@ async fn test_database_connection() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_database_health_check() -> anyhow::Result<()> {
+async fn test_database_health_check() -> color_eyre::Result<()> {
   // Try to connect, skip test if database is not available
   let pool = match PgPool::connect(
     "postgresql://postgres:password@localhost/test",
@@ -72,7 +72,7 @@ async fn test_database_health_check() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_info() -> anyhow::Result<()> {
+async fn test_connection_info() -> color_eyre::Result<()> {
   // Try to connect, skip test if database is not available
   let pool = match PgPool::connect(
     "postgresql://postgres:password@localhost/test",
@@ -123,7 +123,7 @@ async fn test_connection_info() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_pool_stats() -> anyhow::Result<()> {
+async fn test_pool_stats() -> color_eyre::Result<()> {
   let db = match Database::new(DatabaseConfig {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
@@ -156,7 +156,7 @@ async fn test_pool_stats() -> anyhow::Result<()> {
 }
 
 #[sqlx::test]
-async fn test_database_config_validation() -> anyhow::Result<()> {
+async fn test_database_config_validation() -> color_eyre::Result<()> {
   // Valid config
   let config = DatabaseConfig {
     url:             "postgresql://user:pass@localhost/db".to_string(),

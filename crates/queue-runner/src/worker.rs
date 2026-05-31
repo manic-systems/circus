@@ -902,7 +902,7 @@ async fn run_build(
   extra_nix_args: Arc<Vec<String>>,
   agent_pool: Arc<crate::rpc::AgentPool>,
   heartbeat_ttl: Duration,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
   // Atomically claim the build
   let claimed = repo::builds::start(pool, build.id).await?;
   if claimed.is_none() {

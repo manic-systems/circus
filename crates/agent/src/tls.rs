@@ -4,6 +4,7 @@
 
 use std::{io::BufReader, sync::Arc};
 
+use color_eyre::eyre::eyre;
 use rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
 
@@ -15,7 +16,9 @@ use crate::config::TlsConfig;
 /// # Errors
 /// Returns the underlying IO/rustls error on missing files, malformed
 /// PEM, or unsupported key types.
-pub fn build_client_connector(cfg: &TlsConfig) -> anyhow::Result<TlsConnector> {
+pub fn build_client_connector(
+  cfg: &TlsConfig,
+) -> color_eyre::Result<TlsConnector> {
   let mut roots = RootCertStore::empty();
   let ca_bytes = std::fs::read(&cfg.ca_file)?;
   for cert in rustls_pemfile::certs(&mut BufReader::new(ca_bytes.as_slice())) {
@@ -31,9 +34,7 @@ pub fn build_client_connector(cfg: &TlsConfig) -> anyhow::Result<TlsConnector> {
   let key_bytes = std::fs::read(&cfg.key_file)?;
   let key =
     rustls_pemfile::private_key(&mut BufReader::new(key_bytes.as_slice()))?
-      .ok_or_else(|| {
-        anyhow::anyhow!("no private key in {}", cfg.key_file.display())
-      })?;
+      .ok_or_else(|| eyre!("no private key in {}", cfg.key_file.display()))?;
 
   let cfg = ClientConfig::builder()
     .with_root_certificates(roots)

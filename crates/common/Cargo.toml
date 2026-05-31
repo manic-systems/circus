@@ -6,11 +6,11 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
-anyhow.workspace             = true
 argon2.workspace             = true
 chrono.workspace             = true
 circus-migrations.workspace  = true
 clap.workspace               = true
+color-eyre.workspace         = true
 config.workspace             = true
 git2.workspace               = true
 hex.workspace                = true

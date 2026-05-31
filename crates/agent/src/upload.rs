@@ -28,12 +28,12 @@ use std::{
   time::Instant,
 };
 
-use anyhow::Context as _;
 use async_compression::{
   Level,
   tokio::bufread::{GzipEncoder, XzEncoder, ZstdEncoder},
 };
 use circus_proto::{nar_info, runner};
+use color_eyre::eyre::{Context as _, eyre};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use tokio::{
@@ -75,7 +75,7 @@ pub async fn upload_all(
   build_id: &str,
   compression: &str,
   outputs: &[ResolvedOutput],
-) -> anyhow::Result<UploadStats> {
+) -> color_eyre::Result<UploadStats> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -226,7 +226,7 @@ async fn upload_one(
   meta: &PathMetadata,
   slot: &PresignSlot,
   compression: &str,
-) -> anyhow::Result<UploadedBytes> {
+) -> color_eyre::Result<UploadedBytes> {
   // Spawn `nix-store --dump <path>` and keep its stdout as a streaming
   // AsyncRead. The PUT body reads from it on demand, so the NAR is
   // never materialised in agent memory.
@@ -240,7 +240,7 @@ async fn upload_one(
   let stdout = dump
     .stdout
     .take()
-    .ok_or_else(|| anyhow::anyhow!("dump stdout missing"))?;
+    .ok_or_else(|| eyre!("dump stdout missing"))?;
   let buffered = BufReader::new(stdout);
 
   let encoded: Pin<Box<dyn AsyncRead + Send>> = match compression {
@@ -248,7 +248,7 @@ async fn upload_one(
     "xz" => Box::pin(XzEncoder::with_quality(buffered, Level::Precise(6))),
     "gzip" => Box::pin(GzipEncoder::new(buffered)),
     "none" | "" => Box::pin(buffered),
-    other => return Err(anyhow::anyhow!("unsupported compression: {other}")),
+    other => return Err(eyre!("unsupported compression: {other}")),
   };
 
   // Tee the compressed bytes through a hasher + counter while reqwest
@@ -273,22 +273,20 @@ async fn upload_one(
   let status = resp.status();
   if !status.is_success() {
     let text = resp.text().await.unwrap_or_default();
-    return Err(anyhow::anyhow!("S3 PUT returned {status}: {text}"));
+    return Err(eyre!("S3 PUT returned {status}: {text}"));
   }
 
   // Drain the child. nix-store --dump on success returns 0 after EOF.
   let child_status = dump.wait().await?;
   if !child_status.success() {
-    return Err(anyhow::anyhow!(
-      "nix-store --dump exited with {child_status}"
-    ));
+    return Err(eyre!("nix-store --dump exited with {child_status}"));
   }
 
   // Finalise the rolling hash. `Mutex::into_inner` only works on the
   // unwrapped value; we take(...) to move it out from behind the Arc.
   let final_hash = {
     let inner = Arc::try_unwrap(hasher)
-      .map_err(|_| anyhow::anyhow!("hasher Arc still has live readers"))?
+      .map_err(|_| eyre!("hasher Arc still has live readers"))?
       .into_inner();
     inner.finalize()
   };
@@ -325,14 +323,14 @@ impl AsyncRead for HashingReader {
   }
 }
 
-async fn query_path_info(store_path: &str) -> anyhow::Result<PathMetadata> {
+async fn query_path_info(store_path: &str) -> color_eyre::Result<PathMetadata> {
   let out = Command::new("nix")
     .args(["path-info", "--json", "--closure-size", store_path])
     .output()
     .await
     .context("nix path-info")?;
   if !out.status.success() {
-    return Err(anyhow::anyhow!("nix path-info exited with {}", out.status));
+    return Err(eyre!("nix path-info exited with {}", out.status));
   }
   let v: serde_json::Value =
     serde_json::from_slice(&out.stdout).context("parse path-info json")?;
@@ -344,21 +342,21 @@ async fn query_path_info(store_path: &str) -> anyhow::Result<PathMetadata> {
       o.values()
         .next()
         .and_then(|v| v.as_object())
-        .ok_or_else(|| anyhow::anyhow!("empty path-info object"))?
+        .ok_or_else(|| eyre!("empty path-info object"))?
     },
     serde_json::Value::Array(arr) => {
       arr
         .first()
         .and_then(|v| v.as_object())
-        .ok_or_else(|| anyhow::anyhow!("empty path-info array"))?
+        .ok_or_else(|| eyre!("empty path-info array"))?
     },
-    _ => return Err(anyhow::anyhow!("unexpected path-info shape")),
+    _ => return Err(eyre!("unexpected path-info shape")),
   };
 
   let nar_hash = obj
     .get("narHash")
     .and_then(|v| v.as_str())
-    .ok_or_else(|| anyhow::anyhow!("missing narHash"))?
+    .ok_or_else(|| eyre!("missing narHash"))?
     .to_owned();
   let nar_size = obj
     .get("narSize")

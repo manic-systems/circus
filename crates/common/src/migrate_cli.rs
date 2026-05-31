@@ -50,7 +50,7 @@ pub enum Commands {
   clippy::print_stdout,
   reason = "CLI output is the primary user-facing interface"
 )]
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run() -> color_eyre::Result<()> {
   let cli = Cli::parse();
 
   // Initialize logging
@@ -78,12 +78,12 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 /// Validate that `name` is safe to use as part of a migration filename.
-fn validate_name(name: &str) -> anyhow::Result<()> {
+fn validate_name(name: &str) -> color_eyre::Result<()> {
   if name.is_empty() {
-    return Err(anyhow::anyhow!("Migration name must not be empty"));
+    return Err(color_eyre::eyre::eyre!("Migration name must not be empty"));
   }
   if name.len() > 80 {
-    return Err(anyhow::anyhow!(
+    return Err(color_eyre::eyre::eyre!(
       "Migration name too long ({} chars); keep it under 80",
       name.len()
     ));
@@ -92,7 +92,7 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     .chars()
     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
   if !ok {
-    return Err(anyhow::anyhow!(
+    return Err(color_eyre::eyre::eyre!(
       "Migration name must contain only ASCII alphanumerics, '_' or '-'; got: \
        {name}"
     ));
@@ -112,7 +112,7 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
 pub fn create_migration(
   output_dir: &Path,
   name: &str,
-) -> anyhow::Result<PathBuf> {
+) -> color_eyre::Result<PathBuf> {
   use std::fs;
 
   use chrono::Utc;

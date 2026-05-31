@@ -738,27 +738,27 @@ impl DatabaseConfig {
   /// # Errors
   ///
   /// Returns error if configuration is invalid.
-  pub fn validate(&self) -> anyhow::Result<()> {
+  pub fn validate(&self) -> color_eyre::Result<()> {
     if self.url.is_empty() {
-      return Err(anyhow::anyhow!("Database URL cannot be empty"));
+      return Err(color_eyre::eyre::eyre!("Database URL cannot be empty"));
     }
 
     if !self.url.starts_with("postgresql://")
       && !self.url.starts_with("postgres://")
     {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Database URL must start with postgresql:// or postgres://"
       ));
     }
 
     if self.max_connections == 0 {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Max database connections must be greater than 0"
       ));
     }
 
     if self.min_connections > self.max_connections {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Min database connections cannot exceed max connections"
       ));
     }
@@ -916,7 +916,7 @@ impl Config {
   /// # Errors
   ///
   /// Returns error if configuration loading or validation fails.
-  pub fn load() -> anyhow::Result<Self> {
+  pub fn load() -> color_eyre::Result<Self> {
     let mut settings = config_crate::Config::builder();
 
     // Load default configuration
@@ -961,60 +961,62 @@ impl Config {
   /// # Errors
   ///
   /// Returns error if any configuration section is invalid.
-  pub fn validate(&self) -> anyhow::Result<()> {
+  pub fn validate(&self) -> color_eyre::Result<()> {
     // Validate database URL
     if self.database.url.is_empty() {
-      return Err(anyhow::anyhow!("Database URL cannot be empty"));
+      return Err(color_eyre::eyre::eyre!("Database URL cannot be empty"));
     }
 
     if !self.database.url.starts_with("postgresql://")
       && !self.database.url.starts_with("postgres://")
     {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Database URL must start with postgresql:// or postgres://"
       ));
     }
 
     // Validate connection pool settings
     if self.database.max_connections == 0 {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Max database connections must be greater than 0"
       ));
     }
 
     if self.database.min_connections > self.database.max_connections {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Min database connections cannot exceed max connections"
       ));
     }
 
     // Validate server settings
     if self.server.port == 0 {
-      return Err(anyhow::anyhow!("Server port must be greater than 0"));
+      return Err(color_eyre::eyre::eyre!(
+        "Server port must be greater than 0"
+      ));
     }
 
     // Validate evaluator settings
     if self.evaluator.poll_interval == 0 {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Evaluator poll interval must be greater than 0"
       ));
     }
 
     // Validate queue runner settings
     if self.queue_runner.workers == 0 {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "Queue runner workers must be greater than 0"
       ));
     }
     if let Some(t) = self.queue_runner.psi_threshold
       && !(0.0..=100.0).contains(&t)
     {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "queue_runner.psi_threshold must be in [0.0, 100.0], got {t}"
       ));
     }
     if self.queue_runner.psi_check_timeout == 0 {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "queue_runner.psi_check_timeout must be greater than 0 seconds"
       ));
     }
@@ -1022,18 +1024,20 @@ impl Config {
     // Validate LDAP settings
     if let Some(ldap) = self.server.ldap.as_ref() {
       if ldap.url.is_empty() {
-        return Err(anyhow::anyhow!("server.ldap.url cannot be empty"));
+        return Err(color_eyre::eyre::eyre!("server.ldap.url cannot be empty"));
       }
       if ldap.base_dn.is_empty() {
-        return Err(anyhow::anyhow!("server.ldap.base_dn cannot be empty"));
+        return Err(color_eyre::eyre::eyre!(
+          "server.ldap.base_dn cannot be empty"
+        ));
       }
       if ldap.bind_dn_template.is_empty() {
-        return Err(anyhow::anyhow!(
+        return Err(color_eyre::eyre::eyre!(
           "server.ldap.bind_dn_template cannot be empty"
         ));
       }
       if !ldap.bind_dn_template.contains("{username}") {
-        return Err(anyhow::anyhow!(
+        return Err(color_eyre::eyre::eyre!(
           "server.ldap.bind_dn_template must contain the literal \
            '{{username}}' placeholder"
         ));
@@ -1042,14 +1046,14 @@ impl Config {
 
     // Validate GC config
     if self.gc.enabled && self.gc.gc_roots_dir.as_os_str().is_empty() {
-      return Err(anyhow::anyhow!(
+      return Err(color_eyre::eyre::eyre!(
         "GC roots directory cannot be empty when GC is enabled"
       ));
     }
 
     // Validate log config
     if self.logs.log_dir.as_os_str().is_empty() {
-      return Err(anyhow::anyhow!("Log directory cannot be empty"));
+      return Err(color_eyre::eyre::eyre!("Log directory cannot be empty"));
     }
 
     Ok(())

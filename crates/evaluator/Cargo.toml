@@ -6,9 +6,9 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
-anyhow.workspace             = true
 chrono.workspace             = true
 clap.workspace               = true
+color-eyre.workspace         = true
 config.workspace             = true
 futures.workspace            = true
 git2.workspace               = true
