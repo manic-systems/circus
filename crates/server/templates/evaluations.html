@@ -8,6 +8,11 @@
 <a href="/login">Login</a>
 {% endif %}
 {% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs">
+  <span class="current">Evaluations</span>
+</nav>
+{% endblock %}
 {% block content %}
 <h1>Evaluations</h1>
 {% if evals.is_empty() %}
@@ -19,7 +24,7 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Commit</th><th>Project</th><th>Jobset</th><th>Status</th><th>Time</th></tr>
+    <tr><th>Commit</th><th>Project</th><th>Jobset</th><th>Status</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for e in evals %}
@@ -27,8 +32,26 @@
       <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
       <td>{{ e.project_name }}</td>
       <td>{{ e.jobset_name }}</td>
-      <td><span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span></td>
+      <td>
+        <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
+        {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+      </td>
       <td>{{ e.time }}</td>
+      {% if is_admin %}
+      <td>
+        <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="return_to" value="/evaluations">
+          {% if e.hidden %}
+          <input type="hidden" name="hidden" value="false">
+          <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
+          {% else %}
+          <input type="hidden" name="hidden" value="true">
+          <button class="btn btn-small btn-outline" type="submit">Hide</button>
+          {% endif %}
+        </form>
+      </td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>

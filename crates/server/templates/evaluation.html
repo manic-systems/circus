@@ -12,13 +12,30 @@
 <nav class="breadcrumbs">
   <a href="/projects">Projects</a> <span class="sep">/</span>
   <a href="/project/{{ project_id }}">{{ project_name }}</a> <span class="sep">/</span>
+  <a href="/project/{{ project_id }}#jobsets">Jobsets</a> <span class="sep">/</span>
   <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a> <span class="sep">/</span>
+  <a href="/jobset/{{ jobset_id }}">Evaluations</a> <span class="sep">/</span>
   <span class="current">{{ eval.commit_short }}</span>
 </nav>
 {% endblock %}
 {% block content %}
 <h1>Evaluation {{ eval.commit_short }}</h1>
-<p><strong>Status:</strong> <span class="badge badge-{{ eval.status_class }}">{{ eval.status_text }}</span></p>
+{% if is_admin %}
+<div class="action-bar">
+  <form class="inline" method="POST" action="/evaluation/{{ eval.id }}/visibility">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="return_to" value="/evaluation/{{ eval.id }}">
+    {% if eval.hidden %}
+    <input type="hidden" name="hidden" value="false">
+    <button class="btn btn-small btn-secondary" type="submit">Unhide Evaluation</button>
+    {% else %}
+    <input type="hidden" name="hidden" value="true">
+    <button class="btn btn-small btn-outline" type="submit">Hide Evaluation</button>
+    {% endif %}
+  </form>
+</div>
+{% endif %}
+<p><strong>Status:</strong> <span class="badge badge-{{ eval.status_class }}">{{ eval.status_text }}</span>{% if eval.hidden %} <span class="badge badge-skipped">Hidden</span>{% endif %}</p>
 <p><strong>Commit:</strong> <code>{{ eval.commit_hash }}</code></p>
 <p><strong>Time:</strong> {{ eval.time }}</p>
 {% match eval.error_message %}

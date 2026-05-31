@@ -16,13 +16,18 @@ use uuid::Uuid;
 
 use super::{
   shared::{
+    DashboardPage,
     EvalSummaryView,
+    JobStatusCell,
+    JobStatusColumn,
+    JobStatusRow,
     ProjectSummaryView,
     QueueBuildView,
     StarredJobView,
     auth_name,
     build_view,
     build_view_with_context,
+    enforce_page_access,
     eval_badge,
     eval_view,
     eval_view_with_context,
@@ -37,6 +42,7 @@ use super::{
     EvaluationTemplate,
     EvaluationsTemplate,
     HomeTemplate,
+    JobsetJobsTemplate,
     JobsetTemplate,
     MetricsTemplate,
     ProjectSetupTemplate,
@@ -63,6 +69,20 @@ pub(super) struct BuildFilterParams {
   offset:   Option<i64>,
 }
 
+#[derive(serde::Deserialize)]
+pub(super) struct JobsetJobsParams {
+  show_inactive: Option<String>,
+}
+
+impl JobsetJobsParams {
+  fn show_inactive(&self) -> bool {
+    self
+      .show_inactive
+      .as_deref()
+      .is_some_and(|v| matches!(v, "1" | "true" | "yes" | "on"))
+  }
+}
+
 pub(super) fn format_elapsed(secs: i64) -> String {
   if secs < 60 {
     format!("{secs}s")
@@ -78,22 +98,28 @@ pub(super) fn format_elapsed(secs: i64) -> String {
 pub(super) async fn home(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(&state.config.server, &extensions, DashboardPage::Home)?;
+  let include_hidden = is_admin(&extensions);
   let build_stats = circus_common::repo::builds::get_stats(&state.pool)
     .await
     .unwrap_or_default();
   let builds = circus_common::repo::builds::list_recent(&state.pool, 10)
     .await
     .unwrap_or_default();
-  let evals = circus_common::repo::evaluations::list_filtered(
+  let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
     &state.pool,
     None,
     None,
     5,
     0,
+    include_hidden,
   )
   .await
   .unwrap_or_default();
+  let announcements = circus_common::repo::news::list(&state.pool, 3, 0)
+    .await
+    .unwrap_or_default();
 
   // Fetch project summaries
   let all_projects = circus_common::repo::projects::list(&state.pool, 10, 0)
@@ -111,15 +137,17 @@ pub(super) async fn home(
         .unwrap_or_default();
     let mut last_eval: Option<Evaluation> = None;
     for js in &jobsets {
-      let js_evals = circus_common::repo::evaluations::list_filtered(
-        &state.pool,
-        Some(js.id),
-        None,
-        1,
-        0,
-      )
-      .await
-      .unwrap_or_default();
+      let js_evals =
+        circus_common::repo::evaluations::list_filtered_with_visibility(
+          &state.pool,
+          Some(js.id),
+          None,
+          1,
+          0,
+          include_hidden,
+        )
+        .await
+        .unwrap_or_default();
       if let Some(e) = js_evals.into_iter().next()
         && last_eval
           .as_ref()
@@ -146,22 +174,23 @@ pub(super) async fn home(
   }
 
   let tmpl = HomeTemplate {
-    total_builds:     build_stats.total_builds.unwrap_or(0),
+    total_builds: build_stats.total_builds.unwrap_or(0),
     completed_builds: build_stats.completed_builds.unwrap_or(0),
-    failed_builds:    build_stats.failed_builds.unwrap_or(0),
-    running_builds:   build_stats.running_builds.unwrap_or(0),
-    pending_builds:   build_stats.pending_builds.unwrap_or(0),
-    recent_builds:    builds.iter().map(build_view).collect(),
-    recent_evals:     evals.iter().map(eval_view).collect(),
-    projects:         project_summaries,
-    is_admin:         is_admin(&extensions),
-    auth_name:        auth_name(&extensions),
+    failed_builds: build_stats.failed_builds.unwrap_or(0),
+    running_builds: build_stats.running_builds.unwrap_or(0),
+    pending_builds: build_stats.pending_builds.unwrap_or(0),
+    recent_builds: builds.iter().map(build_view).collect(),
+    recent_evals: evals.iter().map(eval_view).collect(),
+    projects: project_summaries,
+    announcements,
+    is_admin: is_admin(&extensions),
+    auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 // ---------- Projects / Project ----------
@@ -170,7 +199,12 @@ pub(super) async fn projects_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Projects,
+  )?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
   let items = circus_common::repo::projects::list(&state.pool, limit, offset)
@@ -194,21 +228,27 @@ pub(super) async fn projects_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 pub(super) async fn project_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Project,
+  )?;
+  let include_hidden = is_admin(&extensions);
   let Ok(project) = circus_common::repo::projects::get(&state.pool, id).await
   else {
-    return Html("Project not found".to_string());
+    return Ok(Html("Project not found".to_string()));
   };
   let jobsets =
     circus_common::repo::jobsets::list_for_project(&state.pool, id, 100, 0)
@@ -218,15 +258,17 @@ pub(super) async fn project_page(
   // Get evaluations for this project's jobsets
   let mut evals = Vec::new();
   for js in &jobsets {
-    let mut js_evals = circus_common::repo::evaluations::list_filtered(
-      &state.pool,
-      Some(js.id),
-      None,
-      5,
-      0,
-    )
-    .await
-    .unwrap_or_default();
+    let mut js_evals =
+      circus_common::repo::evaluations::list_filtered_with_visibility(
+        &state.pool,
+        Some(js.id),
+        None,
+        5,
+        0,
+        include_hidden,
+      )
+      .await
+      .unwrap_or_default();
     evals.append(&mut js_evals);
   }
   evals.sort_by_key(|e| std::cmp::Reverse(e.evaluation_time));
@@ -238,35 +280,43 @@ pub(super) async fn project_page(
     recent_evals: evals.iter().map(eval_view).collect(),
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 pub(super) async fn jobset_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Jobset,
+  )?;
+  let include_hidden = is_admin(&extensions);
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
   else {
-    return Html("Jobset not found".to_string());
+    return Ok(Html("Jobset not found".to_string()));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Html("Project not found".to_string());
+    return Ok(Html("Project not found".to_string()));
   };
 
-  let evals = circus_common::repo::evaluations::list_filtered(
+  let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
     &state.pool,
     Some(id),
     None,
     20,
     0,
+    include_hidden,
   )
   .await
   .unwrap_or_default();
@@ -316,6 +366,7 @@ pub(super) async fn jobset_page(
       succeeded,
       failed,
       pending,
+      hidden: e.hidden,
     });
   }
 
@@ -325,12 +376,136 @@ pub(super) async fn jobset_page(
     eval_summaries: summaries,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
+  ))
+}
+
+pub(super) async fn jobset_jobs_page(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  Query(params): Query<JobsetJobsParams>,
+  extensions: Extensions,
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::JobsetJobs,
+  )?;
+  let include_hidden = is_admin(&extensions);
+  let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
+  else {
+    return Ok(Html("Jobset not found".to_string()));
+  };
+  let Ok(project) =
+    circus_common::repo::projects::get(&state.pool, jobset.project_id).await
+  else {
+    return Ok(Html("Project not found".to_string()));
+  };
+
+  let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
+    &state.pool,
+    Some(id),
+    None,
+    20,
+    0,
+    include_hidden,
   )
+  .await
+  .unwrap_or_default();
+  let eval_ids: Vec<Uuid> = evals.iter().map(|e| e.id).collect();
+  let latest_eval_id = eval_ids.first().copied();
+  let builds = circus_common::repo::builds::list_for_jobset_evaluations(
+    &state.pool,
+    id,
+    &eval_ids,
+  )
+  .await
+  .unwrap_or_default();
+
+  let columns: Vec<JobStatusColumn> = evals
+    .iter()
+    .map(|e| {
+      let commit_short = if e.commit_hash.len() > 12 {
+        e.commit_hash[..12].to_string()
+      } else {
+        e.commit_hash.clone()
+      };
+      let hidden_suffix = if e.hidden { " (hidden)" } else { "" };
+      JobStatusColumn {
+        eval_id: e.id,
+        label:   e.evaluation_time.format("%m-%d %H:%M").to_string(),
+        title:   format!("{commit_short}{hidden_suffix}"),
+      }
+    })
+    .collect();
+
+  let mut builds_by_job: std::collections::BTreeMap<
+    String,
+    std::collections::HashMap<Uuid, circus_common::models::Build>,
+  > = std::collections::BTreeMap::new();
+  for build in builds {
+    builds_by_job
+      .entry(build.job_name.clone())
+      .or_default()
+      .insert(build.evaluation_id, build);
+  }
+
+  let show_inactive = params.show_inactive();
+  let mut rows = Vec::new();
+  for (job_name, by_eval) in builds_by_job {
+    let is_active =
+      latest_eval_id.is_some_and(|eval_id| by_eval.contains_key(&eval_id));
+    if !show_inactive && !is_active {
+      continue;
+    }
+    let cells = columns
+      .iter()
+      .map(|column| {
+        by_eval.get(&column.eval_id).map_or_else(
+          || {
+            JobStatusCell {
+              href:         String::new(),
+              status_text:  "-".to_string(),
+              status_class: "skipped".to_string(),
+            }
+          },
+          |build| {
+            let (status_text, status_class) = status_badge(build.status);
+            JobStatusCell {
+              href: format!("/build/{}", build.id),
+              status_text,
+              status_class,
+            }
+          },
+        )
+      })
+      .collect();
+    rows.push(JobStatusRow {
+      job_name,
+      is_active,
+      cells,
+    });
+  }
+
+  let tmpl = JobsetJobsTemplate {
+    project,
+    jobset,
+    columns,
+    rows,
+    show_inactive,
+    is_admin: is_admin(&extensions),
+    auth_name: auth_name(&extensions),
+  };
+  Ok(Html(
+    tmpl
+      .render()
+      .unwrap_or_else(|e| format!("Template error: {e}")),
+  ))
 }
 
 // ---------- Evaluations / Evaluation ----------
@@ -339,22 +514,33 @@ pub(super) async fn evaluations_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Evaluations,
+  )?;
+  let include_hidden = is_admin(&extensions);
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = circus_common::repo::evaluations::list_filtered(
+  let items = circus_common::repo::evaluations::list_filtered_with_visibility(
     &state.pool,
     None,
     None,
     limit,
     offset,
+    include_hidden,
   )
   .await
   .unwrap_or_default();
-  let total =
-    circus_common::repo::evaluations::count_filtered(&state.pool, None, None)
-      .await
-      .unwrap_or(0);
+  let total = circus_common::repo::evaluations::count_filtered_with_visibility(
+    &state.pool,
+    None,
+    None,
+    include_hidden,
+  )
+  .await
+  .unwrap_or(0);
 
   // Enrich evaluations with jobset/project names
   let mut enriched = Vec::new();
@@ -386,33 +572,45 @@ pub(super) async fn evaluations_page(
     total_pages,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 pub(super) async fn evaluation_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   extensions: Extensions,
-) -> Html<String> {
-  let Ok(eval) = circus_common::repo::evaluations::get(&state.pool, id).await
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Evaluation,
+  )?;
+  let include_hidden = is_admin(&extensions);
+  let Ok(eval) = circus_common::repo::evaluations::get_visible(
+    &state.pool,
+    id,
+    include_hidden,
+  )
+  .await
   else {
-    return Html("Evaluation not found".to_string());
+    return Ok(Html("Evaluation not found".to_string()));
   };
 
   let Ok(jobset) =
     circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
   else {
-    return Html("Jobset not found".to_string());
+    return Ok(Html("Jobset not found".to_string()));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Html("Project not found".to_string());
+    return Ok(Html("Project not found".to_string()));
   };
 
   let builds = circus_common::repo::builds::list_filtered(
@@ -477,12 +675,13 @@ pub(super) async fn evaluation_page(
     pending_count:   pending,
     is_admin:        is_admin(&extensions),
     auth_name:       auth_name(&extensions),
+    csrf_token:      super::csrf::csrf_from(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 // ---------- Builds / Build ----------
@@ -491,7 +690,12 @@ pub(super) async fn builds_page(
   State(state): State<AppState>,
   Query(params): Query<BuildFilterParams>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Builds,
+  )?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
   let items = circus_common::repo::builds::list_filtered(
@@ -587,38 +791,39 @@ pub(super) async fn builds_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 pub(super) async fn build_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(&state.config.server, &extensions, DashboardPage::Build)?;
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
   else {
-    return Html("Build not found".to_string());
+    return Ok(Html("Build not found".to_string()));
   };
 
   let Ok(eval) =
     circus_common::repo::evaluations::get(&state.pool, build.evaluation_id)
       .await
   else {
-    return Html("Evaluation not found".to_string());
+    return Ok(Html("Evaluation not found".to_string()));
   };
   let Ok(jobset) =
     circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
   else {
-    return Html("Jobset not found".to_string());
+    return Ok(Html("Jobset not found".to_string()));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Html("Project not found".to_string());
+    return Ok(Html("Project not found".to_string()));
   };
 
   let eval_commit_short = if eval.commit_hash.len() > 12 {
@@ -670,11 +875,11 @@ pub(super) async fn build_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 // ---------- Queue ----------
@@ -682,7 +887,8 @@ pub(super) async fn build_page(
 pub(super) async fn queue_page(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(&state.config.server, &extensions, DashboardPage::Queue)?;
   let running = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
@@ -775,11 +981,11 @@ pub(super) async fn queue_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 // ---------- Channels ----------
@@ -787,7 +993,12 @@ pub(super) async fn queue_page(
 pub(super) async fn channels_page(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Channels,
+  )?;
   let channels = circus_common::repo::channels::list_all(&state.pool)
     .await
     .unwrap_or_default();
@@ -797,21 +1008,26 @@ pub(super) async fn channels_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 pub(super) async fn channel_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Channel,
+  )?;
   let Ok(channel) = circus_common::repo::channels::get(&state.pool, id).await
   else {
-    return Html("Channel not found".to_string());
+    return Ok(Html("Channel not found".to_string()));
   };
 
   let builds = if let Some(eval_id) = channel.current_evaluation_id {
@@ -853,11 +1069,11 @@ pub(super) async fn channel_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 // ---------- Starred / Metrics / Setup wizard ----------
@@ -865,7 +1081,12 @@ pub(super) async fn channel_page(
 pub(super) async fn starred_page(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Html<String> {
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Starred,
+  )?;
   // Session login (User) or API-key auth (ApiKey with user_id) both count
   // as logged in. API keys without a bound user_id can't list starred jobs.
   let user = extensions.get::<circus_common::models::User>().cloned();
@@ -906,15 +1127,17 @@ pub(super) async fn starred_page(
       let (status_text, status_class, latest_build_id) =
         if let Some(js_id) = s.jobset_id {
           // Get latest evaluation for this jobset to find relevant builds
-          let evals = circus_common::repo::evaluations::list_filtered(
-            &state.pool,
-            Some(js_id),
-            None,
-            1,
-            0,
-          )
-          .await
-          .unwrap_or_default();
+          let evals =
+            circus_common::repo::evaluations::list_filtered_with_visibility(
+              &state.pool,
+              Some(js_id),
+              None,
+              1,
+              0,
+              is_admin(&extensions),
+            )
+            .await
+            .unwrap_or_default();
 
           let builds = if let Some(eval) = evals.first() {
             circus_common::repo::builds::list_filtered(
@@ -966,23 +1189,31 @@ pub(super) async fn starred_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
-pub(super) async fn metrics_page(extensions: Extensions) -> Html<String> {
+pub(super) async fn metrics_page(
+  State(state): State<AppState>,
+  extensions: Extensions,
+) -> Result<Html<String>, Response> {
+  enforce_page_access(
+    &state.config.server,
+    &extensions,
+    DashboardPage::Metrics,
+  )?;
   let tmpl = MetricsTemplate {
     is_admin:  is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Html(
+  Ok(Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
+  ))
 }
 
 pub(super) async fn project_setup_page(

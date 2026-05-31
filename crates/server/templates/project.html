@@ -31,7 +31,7 @@
 </div>
 {% endif %}
 
-<h2>Jobsets</h2>
+<h2 id="jobsets">Jobsets</h2>
 
 {% if is_admin %}
 <details>
@@ -74,7 +74,7 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Trigger</th><th>Interval</th></tr>
+    <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Trigger</th><th>Interval</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for j in jobsets %}
@@ -92,6 +92,14 @@
         {% endmatch %}
       </td>
       <td>{{ j.check_interval }}s</td>
+      {% if is_admin %}
+      <td>
+        <form class="inline" method="POST" action="/jobset/{{ j.id }}/delete" onsubmit="return confirm('Delete this jobset and all of its evaluations/builds?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn btn-danger btn-small" type="submit">Delete</button>
+        </form>
+      </td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>
@@ -99,21 +107,39 @@
 </div>
 {% endif %}
 
-<h2>Recent Evaluations</h2>
+<h2 id="evaluations">Recent Evaluations</h2>
 {% if recent_evals.is_empty() %}
 <div class="empty">No evaluations yet for this project.</div>
 {% else %}
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Commit</th><th>Status</th><th>Time</th></tr>
+    <tr><th>Commit</th><th>Status</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for e in recent_evals %}
     <tr>
       <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
-      <td><span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span></td>
+      <td>
+        <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
+        {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+      </td>
       <td>{{ e.time }}</td>
+      {% if is_admin %}
+      <td>
+        <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="return_to" value="/project/{{ project.id }}">
+          {% if e.hidden %}
+          <input type="hidden" name="hidden" value="false">
+          <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
+          {% else %}
+          <input type="hidden" name="hidden" value="true">
+          <button class="btn btn-small btn-outline" type="submit">Hide</button>
+          {% endif %}
+        </form>
+      </td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>

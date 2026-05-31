@@ -39,8 +39,17 @@ pub fn router() -> Router<AppState> {
       axum::routing::post(admin::notifications_delete),
     )
     .route("/jobset/{id}", get(pages::jobset_page))
+    .route("/jobset/{id}/jobs", get(pages::jobset_jobs_page))
+    .route(
+      "/jobset/{id}/delete",
+      axum::routing::post(admin::jobset_delete),
+    )
     .route("/evaluations", get(pages::evaluations_page))
     .route("/evaluation/{id}", get(pages::evaluation_page))
+    .route(
+      "/evaluation/{id}/visibility",
+      axum::routing::post(admin::evaluation_visibility),
+    )
     .route("/builds", get(pages::builds_page))
     .route("/build/{id}", get(pages::build_page))
     .route("/queue", get(pages::queue_page))
