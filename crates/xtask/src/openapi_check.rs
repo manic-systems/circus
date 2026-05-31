@@ -1,23 +1,4 @@
-//! `OpenAPI` drift detection.
-//!
-//! The hand-written `OpenAPI` document at
-//! `crates/server/src/routes/openapi.rs` is the source of truth for our
-//! published REST surface. It is easy for the document to drift when a
-//! handler is added or renamed without updating the JSON. This check
-//! parses route registrations from the source tree, normalizes them to
-//! `OpenAPI`-style paths, and compares against the documented set.
-//!
-//! Modules under `crates/server/src/routes/` are classified into:
-//!
-//! - **api**: nested under `/api/v1` in `routes/mod.rs`; must appear in the
-//!   `OpenAPI` document.
-//! - **public**: lives at the root, exposed to `OpenAPI` by policy (LDAP login,
-//!   channel manifests).
-//! - **excluded**: intentionally not in `OpenAPI` (cache speaks the Nix binary
-//!   cache protocol, dashboard is HTML, etc.).
-//!
-//! When the check fails, the report lists exactly which routes are missing
-//! from the document and which `OpenAPI` entries no longer match any route.
+//! `OpenAPI` validation and route coverage checks.
 
 use std::{
   collections::BTreeSet,
@@ -26,13 +7,17 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use color_eyre::{
+  Result,
+  eyre::{Context, bail},
+};
+use openapiv3::OpenAPI;
 use regex::Regex;
 
 /// Modules whose `.route("/...")` calls are mounted under `/api/v1`.
 /// Keep in sync with the `.merge(...)` block inside `routes::router`'s
 /// `.nest("/api/v1", ...)`.
-const API_MODULES: &[&str] = &[
+pub const API_MODULES: &[&str] = &[
   "admin",
   "auth",
   "builds",
@@ -46,40 +31,41 @@ const API_MODULES: &[&str] = &[
   "users",
 ];
 
-/// Public modules whose routes also belong in the `OpenAPI` document.
-const PUBLIC_DOCUMENTED_MODULES: &[&str] = &["channel_manifests", "ldap"];
-
-/// Modules whose routes are intentionally NOT in the `OpenAPI` document.
-/// Kept for documentation and policy review.
-#[allow(dead_code)]
-const EXCLUDED_MODULES: &[&str] = &[
+/// Public route modules that are also part of the generated API reference.
+const PUBLIC_DOCUMENTED_MODULES: &[&str] = &[
   "badges",
   "cache",
-  "dashboard",
+  "channel_manifests",
   "health",
+  "ldap",
   "metrics",
   "oauth",
   "openapi",
   "webhooks",
 ];
 
+pub fn workspace_root() -> Result<PathBuf> {
+  PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    .join("../..")
+    .canonicalize()
+    .context("finding workspace root")
+}
+
 pub fn run() -> Result<()> {
   #![expect(clippy::print_stdout, reason = "xtask CLI output is intentional")]
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    .join("../..")
-    .canonicalize()?;
-  let routes_dir = manifest_dir.join("crates/server/src/routes");
-  let openapi_src = routes_dir.join("openapi.rs");
+  let root = workspace_root()?;
+  let routes_dir = root.join("crates/server/src/routes");
+  let spec = openapi_document()?;
+  let documented = documented_paths(&spec);
 
-  let documented =
-    parse_openapi_paths(&openapi_src).context("parsing openapi.rs")?;
-
-  let mut registered: BTreeSet<String> = BTreeSet::new();
-  for module in API_MODULES.iter().chain(PUBLIC_DOCUMENTED_MODULES) {
+  let mut registered = BTreeSet::new();
+  for module in API_MODULES {
     let path = routes_dir.join(format!("{module}.rs"));
-    let routes = parse_routes_in_file(&path)
-      .with_context(|| format!("scanning routes in {}", path.display()))?;
-    registered.extend(routes);
+    registered.extend(parse_routes_in_file(&path, "/api/v1")?);
+  }
+  for module in PUBLIC_DOCUMENTED_MODULES {
+    let path = routes_dir.join(format!("{module}.rs"));
+    registered.extend(parse_routes_in_file(&path, "")?);
   }
 
   let missing_in_openapi: Vec<_> =
@@ -87,29 +73,25 @@ pub fn run() -> Result<()> {
   let stale_openapi: Vec<_> =
     documented.difference(&registered).cloned().collect();
 
-  // EXCLUDED_MODULES is informational: it documents what we know is in the
-  // server but intentionally absent from OpenAPI. We don't enforce that
-  // every excluded route lives in one of these modules, but listing them
-  // here makes the policy reviewable.
   if !missing_in_openapi.is_empty() || !stale_openapi.is_empty() {
     let mut msg = String::from("OpenAPI drift detected.\n");
     if !missing_in_openapi.is_empty() {
       msg.push_str("\nRoutes registered but not documented in openapi.rs:\n");
-      for r in &missing_in_openapi {
-        let _ = writeln!(msg, "  - {r}");
+      for route in &missing_in_openapi {
+        let _ = writeln!(msg, "  - {route}");
       }
     }
     if !stale_openapi.is_empty() {
       msg.push_str(
         "\nOpenAPI paths that no longer match any registered route:\n",
       );
-      for r in &stale_openapi {
-        let _ = writeln!(msg, "  - {r}");
+      for route in &stale_openapi {
+        let _ = writeln!(msg, "  - {route}");
       }
     }
     msg.push_str(
-      "\nFix by updating crates/server/src/routes/openapi.rs OR updating the \
-       route module / handler.\n",
+      "\nFix by updating crates/server/src/routes/openapi.rs and the route \
+       module together.\n",
     );
     bail!("{msg}");
   }
@@ -122,151 +104,86 @@ pub fn run() -> Result<()> {
   Ok(())
 }
 
-/// Parse `.route("/path", ...)` calls from a route module and return the set
-/// of fully-qualified, OpenAPI-style paths.
-///
-/// API modules are prefixed with `/api/v1`; public modules are not.
-pub fn parse_routes_in_file(path: &Path) -> Result<BTreeSet<String>> {
-  let module = path
-    .file_stem()
-    .and_then(|s| s.to_str())
-    .ok_or_else(|| anyhow!("invalid module path: {}", path.display()))?
-    .to_string();
+pub fn openapi_document() -> Result<OpenAPI> {
+  let mut value = circus_server::routes::openapi::document();
+  if let Some(object) = value.as_object_mut() {
+    // `openapiv3` models OpenAPI 3.0 schemas. Circus currently publishes a
+    // 3.1 document whose component schemas use 3.1 JSON Schema features such
+    // as `type: ["string", "null"]`. The route reference needs paths and
+    // operations only, so strip components before typed parsing.
+    object.remove("components");
+  }
+  serde_json::from_value(value).context("parsing server OpenAPI document")
+}
 
+fn documented_paths(spec: &OpenAPI) -> BTreeSet<String> {
+  spec
+    .operations()
+    .map(|(path, ..)| display_path(spec, path))
+    .collect()
+}
+
+fn parse_routes_in_file(path: &Path, prefix: &str) -> Result<BTreeSet<String>> {
   let body = fs::read_to_string(path)
     .with_context(|| format!("reading {}", path.display()))?;
-
-  // Match `.route("..."` or `.route(\n        "..."`.
-  #[expect(
-    clippy::expect_used,
-    reason = "static regex initializer - invalid regex would be a programming \
-              error"
-  )]
-  let route_re = Regex::new(r#"\.route\(\s*"([^"]+)""#).expect("valid regex");
-
-  let api = API_MODULES.contains(&module.as_str());
-  let public = PUBLIC_DOCUMENTED_MODULES.contains(&module.as_str());
-
-  if !api && !public {
-    // Excluded modules: return raw paths without prefix (caller may discard).
-    let mut out = BTreeSet::new();
-    for cap in route_re.captures_iter(&body) {
-      out.insert(normalize_path(&cap[1]));
-    }
-    return Ok(out);
-  }
-
-  let prefix = if api { "/api/v1" } else { "" };
+  let route_re =
+    Regex::new(r#"\.route\(\s*"([^"]+)""#).context("compiling route regex")?;
   let mut out = BTreeSet::new();
   for cap in route_re.captures_iter(&body) {
-    let raw = &cap[1];
-    let normalized = normalize_path(raw);
-    out.insert(format!("{prefix}{normalized}"));
+    let normalized = normalize_path(&cap[1]);
+    if prefix.is_empty() || normalized.starts_with("/api/") {
+      out.insert(normalized);
+    } else {
+      out.insert(format!("{prefix}{normalized}"));
+    }
   }
   Ok(out)
 }
 
-/// Axum 0.8 paths use `{name}` style placeholders, which matches `OpenAPI`
-/// style already, so no conversion is needed. We do trim trailing slashes
-/// (except for the root) to canonicalize.
-fn normalize_path(p: &str) -> String {
-  if p.len() > 1 && p.ends_with('/') {
-    p.trim_end_matches('/').to_string()
+pub fn display_path(spec: &OpenAPI, path: &str) -> String {
+  let normalized = normalize_path(path);
+  if is_absolute_public_path(&normalized) || normalized.starts_with("/api/") {
+    normalized
   } else {
-    p.to_string()
+    format!("{}{}", api_root(spec), normalized)
   }
 }
 
-/// Extract every top-level `"/path": { ... }` key from the `OpenAPI` document
-/// source by parsing the file's `json!(...)` literal naively. We don't
-/// actually run the Rust code; we extract the JSON-ish source between the
-/// `"paths": {` brace and its matching close, then scan keys.
-pub fn parse_openapi_paths(path: &Path) -> Result<BTreeSet<String>> {
-  let body = fs::read_to_string(path)
-    .with_context(|| format!("reading {}", path.display()))?;
+fn api_root(spec: &OpenAPI) -> &str {
+  spec
+    .servers
+    .first()
+    .map(|server| server.url.trim_end_matches('/'))
+    .filter(|url| !url.is_empty())
+    .unwrap_or("/api/v1")
+}
 
-  // Find the `"paths": {` marker, then walk braces to its match.
-  let marker = "\"paths\":";
-  let start = body
-    .find(marker)
-    .ok_or_else(|| anyhow!("openapi.rs missing \"paths\" object"))?;
-  let after_marker = &body[start + marker.len()..];
+fn is_absolute_public_path(path: &str) -> bool {
+  path == "/auth/ldap"
+    || path == "/health"
+    || path == "/prometheus"
+    || path.starts_with("/channel/")
+    || path.starts_with("/job/")
+    || path.starts_with("/nix-cache/")
+}
 
-  let open_idx = after_marker
-    .find('{')
-    .ok_or_else(|| anyhow!("openapi.rs malformed: no `{{` after `paths:`"))?;
-  let mut depth = 0i32;
-  let mut end = None;
-  for (i, b) in after_marker[open_idx..].bytes().enumerate() {
-    match b {
-      b'{' => depth += 1,
-      b'}' => {
-        depth -= 1;
-        if depth == 0 {
-          end = Some(open_idx + i);
-          break;
-        }
-      },
-      _ => {},
-    }
+fn normalize_path(path: &str) -> String {
+  if path.len() > 1 && path.ends_with('/') {
+    path.trim_end_matches('/').to_string()
+  } else {
+    path.to_string()
   }
-  let end = end.ok_or_else(|| {
-    anyhow!("openapi.rs malformed: unbalanced braces in `paths` object")
-  })?;
+}
 
-  let paths_block = &after_marker[open_idx + 1..end];
-
-  // Only match string keys that begin with `/` AND sit at the top level of
-  // this block. We track depth so we don't pull in nested keys like
-  // `"/builds": { "get": { ... "parameters": [ ... "name": "id" ...` etc.
-  let mut depth = 0i32;
-  let mut bracket_depth = 0i32;
-  let mut out = BTreeSet::new();
-  let bytes = paths_block.as_bytes();
-  let mut i = 0;
-  while i < bytes.len() {
-    let b = bytes[i];
-    match b {
-      b'{' => depth += 1,
-      b'}' => depth -= 1,
-      b'[' => bracket_depth += 1,
-      b']' => bracket_depth -= 1,
-      b'"' if depth == 0 && bracket_depth == 0 => {
-        // Read string literal until unescaped quote.
-        let key_start = i + 1;
-        let mut j = key_start;
-        while j < bytes.len() {
-          if bytes[j] == b'\\' {
-            j += 2;
-            continue;
-          }
-          if bytes[j] == b'"' {
-            break;
-          }
-          j += 1;
-        }
-        let key = &paths_block[key_start..j];
-        if key.starts_with('/') {
-          // Document paths in openapi.rs are written relative to the
-          // server URL `/api/v1`, so we re-prefix them to match registered
-          // route paths. Exception: explicitly-documented public paths
-          // (currently only LDAP login + channel_manifests) are listed
-          // with their absolute path; detect by checking for known
-          // prefixes.
-          let normalized =
-            if key.starts_with("/auth/ldap") || key.starts_with("/channel/") {
-              normalize_path(key)
-            } else {
-              format!("/api/v1{}", normalize_path(key))
-            };
-          out.insert(normalized);
-        }
-        i = j;
-      },
-      _ => {},
-    }
-    i += 1;
+pub fn method_rank(method: &str) -> usize {
+  match method {
+    "GET" => 0,
+    "HEAD" => 1,
+    "OPTIONS" => 2,
+    "POST" => 3,
+    "PUT" => 4,
+    "PATCH" => 5,
+    "DELETE" => 6,
+    _ => 99,
   }
-
-  Ok(out)
 }

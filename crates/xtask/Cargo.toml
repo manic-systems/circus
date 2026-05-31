@@ -10,15 +10,13 @@ publish              = false
 name = "xtask"
 path = "src/main.rs"
 
-# We deliberately do NOT depend on circus-server here. The drift check parses
-# route registrations from the source tree so it can run without compiling
-# the whole server crate (which pulls in a large dependency closure). When
-# we eventually move to generated OpenAPI via derive macros, that constraint
-# can be relaxed.
 [dependencies]
-anyhow.workspace = true
-clap.workspace   = true
-regex.workspace  = true
+circus-server.workspace = true
+clap.workspace          = true
+color-eyre.workspace    = true
+openapiv3.workspace     = true
+regex.workspace         = true
+serde_json.workspace    = true
 
 [lints]
 workspace = true

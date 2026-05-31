@@ -40,12 +40,15 @@ together.
 - **queue-runner** (`circus-queue-runner`): Build dispatch with semaphore-based
   worker pool
 - **agent** (`circus-agent`): Persistent build host that receives work over RPC
+- **admin CLI** (`circus-admin`): API-backed command line interface for common
+  administration tasks
 - **common** (`circus-common`): Shared types, database layer, configuration,
   validation
 - **proto** (`circus-proto`): Cap'n Proto schema and generated RPC bindings
 - **migrate-cli** (`circus-migrate`): Database migration CLI
 - **migrations** (`circus-migrations`): SQL migration files and runtime
-- **xtask** (`xtask`): Developer tooling (route drift checks)
+- **xtask** (`xtask`): Developer tooling (API docs generation and route drift
+  checks)
 
 ## Quick Start
 
@@ -105,32 +108,35 @@ without having to set up an account each time you spin up your VM.
 
 Log in to the dashboard at `http://localhost:3000/login` using the admin key.
 
-### Example API Calls
+### Example Admin CLI Calls
 
-Circus is designed as a server in mind, and the dashboard is a convenient
-wrapper around the API. If you are testing with new routes you may test them
-with curl without ever spinning up a browser:
+Circus is designed as a server, and the dashboard is a convenient wrapper around
+the API. For routine administration, prefer `circus-admin`; it provides tables,
+clear errors, and safer request construction than ad-hoc shell snippets.
 
 <!--markdownlint-disable MD013-->
 
 ```bash
 # Health check
-curl -s http://localhost:3000/health | jq
+circus-admin --url http://localhost:3000 health
+
+# Use an admin key for privileged commands
+export CIRCUS_URL=http://localhost:3000
+export CIRCUS_API_KEY=circus_demo_admin_key
+
+# System status
+circus-admin status
 
 # Create a project
-curl -s -X POST http://localhost:3000/api/v1/projects \
-  -H 'Authorization: Bearer circus_demo_admin_key' \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "my-project", "repository_url": "https://github.com/NixOS/nixpkgs"}' | jq
+circus-admin projects create \
+  --name my-project \
+  --repository-url https://github.com/NixOS/nixpkgs
 
 # List projects
-curl -s http://localhost:3000/api/v1/projects | jq
+circus-admin projects list
 
-# Try with read-only key (write should fail with 403)
-curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/projects \
-  -H 'Authorization: Bearer circus_demo_readonly_key' \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "should-fail", "repository_url": "https://example.com"}'
+# Create an additional read-only API key
+circus-admin api-keys create --name readonly-demo --role read-only
 ```
 
 <!--markdownlint-enable MD013-->
@@ -144,7 +150,7 @@ access to investigate server logs or make API calls.
 # Useful commands:
 $ systemctl status circus-server
 $ journalctl -u circus-server -f      # Live server logs
-$ curl -sf localhost:3000/health | jq # Health status
+$ circus-admin health                 # Health status
 $ curl -sf localhost:3000/prometheus  # Prometheus metrics
 ```
 
@@ -457,21 +463,16 @@ $ nix build --store ssh://<builder>
 when a build's `system` matches a configured remote builder. If no remote
 builder is available or all fail, it falls back to local execution.
 
-You can configure remote builders via the REST API:
+You can configure remote builders with `circus-admin`:
 
 ```bash
 # Create a remote builder
-curl -X POST http://localhost:3000/api/v1/admin/builders \
-  -H 'Authorization: Bearer <admin-key>' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "builder-1",
-    "ssh_uri": "builder-1.example.org",
-    "systems": ["x86_64-linux", "aarch64-linux"],
-    "max_jobs": 4,
-    "speed_factor": 1,
-    "enabled": true
-  }'
+CIRCUS_API_KEY=<admin-key> circus-admin builders add \
+  --name builder-1 \
+  --ssh-uri builder-1.example.org \
+  --systems x86_64-linux,aarch64-linux \
+  --max-jobs 4 \
+  --speed-factor 1
 ```
 
 Do note that this requires some SSH key setup. Namely.
@@ -551,8 +552,8 @@ $ echo "Admin API key: $CIRCUS_KEY"
 
 <!--markdownlint-enable MD013-->
 
-Subsequent keys can be created via the API or the admin dashboard using this
-initial admin key.
+Subsequent keys can be created with `circus-admin api-keys create` or the admin
+dashboard using this initial admin key.
 
 ### User Management
 
@@ -561,19 +562,15 @@ username/password and get a session cookie.
 
 #### Creating Users
 
-Users can be created via the API using an admin API key:
+Users can be created with `circus-admin` using an admin API key:
 
 ```bash
 # Create a new user
-curl -X POST http://localhost:3000/api/v1/users \
-  -H 'Authorization: Bearer circus_demo_admin_key' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "username": "developer",
-    "email": "dev@example.com",
-    "password": "secure-password-here",
-    "role": "admin"
-  }'
+CIRCUS_API_KEY=circus_demo_admin_key circus-admin users create \
+  --username developer \
+  --email dev@example.com \
+  --password secure-password-here \
+  --role admin
 ```
 
 #### User Roles
@@ -727,114 +724,20 @@ of a catastrophic failure. Build outputs live in the Nix store and are protected
 by GC roots under `gc.gc_roots_dir`. These do not need separate backup as long
 as derivation paths are retained in the database.
 
-## API Overview
+## API Reference
 
-All API endpoints are under `/api/v1`. Write operations require a Bearer token
-in the `Authorization` header. Read operations (GET) are public.
+The endpoint reference is generated into [docs/API.md](./API.md). Update it
+after route changes with:
 
-<!--markdownlint-disable MD013 -->
+```bash
+cargo run -p circus-xtask -- api-docs
+```
 
-| Method | Endpoint                                                   | Auth                  | Description                                                         |
-| ------ | ---------------------------------------------------------- | --------------------- | ------------------------------------------------------------------- |
-| GET    | `/health`                                                  | -                     | Health check with database status                                   |
-| GET    | `/prometheus`                                              | -                     | Prometheus metrics                                                  |
-| GET    | `/api/v1/projects`                                         | -                     | List projects (paginated)                                           |
-| POST   | `/api/v1/projects`                                         | admin/create-projects | Create project                                                      |
-| POST   | `/api/v1/projects/probe`                                   | admin                 | Probe repository URL                                                |
-| POST   | `/api/v1/projects/setup`                                   | admin                 | Setup project from template                                         |
-| GET    | `/api/v1/projects/{id}`                                    | -                     | Get project details                                                 |
-| PUT    | `/api/v1/projects/{id}`                                    | admin                 | Update project                                                      |
-| DELETE | `/api/v1/projects/{id}`                                    | admin                 | Delete project (cascades)                                           |
-| GET    | `/api/v1/projects/{id}/builds`                             | -                     | List builds for a project                                           |
-| GET    | `/api/v1/projects/{id}/jobsets`                            | -                     | List project jobsets                                                |
-| POST   | `/api/v1/projects/{id}/jobsets`                            | admin/create-projects | Create jobset                                                       |
-| GET    | `/api/v1/projects/{project_id}/jobsets/{id}`               | -                     | Get jobset                                                          |
-| PUT    | `/api/v1/projects/{project_id}/jobsets/{id}`               | admin                 | Update jobset                                                       |
-| DELETE | `/api/v1/projects/{project_id}/jobsets/{id}`               | admin                 | Delete jobset                                                       |
-| GET    | `/api/v1/projects/{project_id}/jobsets/{jid}/inputs`       | -                     | List jobset inputs                                                  |
-| POST   | `/api/v1/projects/{project_id}/jobsets/{jid}/inputs`       | admin                 | Create jobset input                                                 |
-| DELETE | `/api/v1/projects/{project_id}/jobsets/{jid}/inputs/{id}`  | admin                 | Delete jobset input                                                 |
-| GET    | `/api/v1/projects/{id}/webhooks`                           | -                     | List project webhooks                                               |
-| POST   | `/api/v1/projects/{id}/webhooks`                           | admin                 | Create project webhook                                              |
-| DELETE | `/api/v1/projects/{id}/webhooks/{webhook_id}`              | admin                 | Delete project webhook                                              |
-| GET    | `/api/v1/projects/{pid}/channels`                          | -                     | List project channels                                               |
-| GET    | `/api/v1/evaluations`                                      | -                     | List evaluations (filtered)                                         |
-| GET    | `/api/v1/evaluations/{id}`                                 | -                     | Get evaluation details                                              |
-| GET    | `/api/v1/evaluations/{id}/compare`                         | -                     | Compare evaluation with previous                                    |
-| POST   | `/api/v1/evaluations/trigger`                              | admin/eval-jobset     | Trigger evaluation                                                  |
-| GET    | `/api/v1/builds`                                           | -                     | List builds (filtered)                                              |
-| GET    | `/api/v1/builds/{id}`                                      | -                     | Get build details                                                   |
-| POST   | `/api/v1/builds/{id}/cancel`                               | admin/cancel-build    | Cancel build                                                        |
-| POST   | `/api/v1/builds/{id}/restart`                              | admin/restart-jobs    | Restart build                                                       |
-| POST   | `/api/v1/builds/{id}/bump`                                 | admin/bump-to-front   | Bump priority                                                       |
-| PUT    | `/api/v1/builds/{id}/keep/{value}`                         | admin                 | Set keep flag (protect from GC)                                     |
-| GET    | `/api/v1/builds/{id}/steps`                                | -                     | List build steps                                                    |
-| GET    | `/api/v1/builds/{id}/products`                             | -                     | List build products                                                 |
-| GET    | `/api/v1/builds/{build_id}/products/{product_id}/download` | -                     | Download build product                                              |
-| GET    | `/api/v1/builds/{id}/dependencies`                         | -                     | List build dependencies                                             |
-| GET    | `/api/v1/builds/{id}/dependents`                           | -                     | List builds depending on this one                                   |
-| GET    | `/api/v1/builds/{id}/constituents`                         | -                     | List build constituents (sub-derivations)                           |
-| GET    | `/api/v1/builds/{id}/log`                                  | -                     | Get build log                                                       |
-| GET    | `/api/v1/builds/{id}/log/stream`                           | -                     | Stream build log (SSE)                                              |
-| GET    | `/api/v1/builds/stats`                                     | -                     | Build statistics                                                    |
-| GET    | `/api/v1/builds/recent`                                    | -                     | Recent builds                                                       |
-| GET    | `/api/v1/channels`                                         | -                     | List channels                                                       |
-| GET    | `/api/v1/channels/{id}`                                    | -                     | Get channel                                                         |
-| POST   | `/api/v1/channels`                                         | admin                 | Create channel                                                      |
-| DELETE | `/api/v1/channels/{id}`                                    | admin                 | Delete channel                                                      |
-| GET    | `/api/v1/channels/{id}/nixexprs.tar.xz`                    | -                     | Download channel Nix expressions                                    |
-| POST   | `/api/v1/channels/{channel_id}/promote/{eval_id}`          | admin                 | Promote evaluation to channel                                       |
-| GET    | `/api/v1/api-keys`                                         | admin                 | List API keys                                                       |
-| POST   | `/api/v1/api-keys`                                         | admin                 | Create API key                                                      |
-| DELETE | `/api/v1/api-keys/{id}`                                    | admin                 | Delete API key                                                      |
-| GET    | `/api/v1/admin/builders`                                   | -                     | List remote builders                                                |
-| GET    | `/api/v1/admin/builders/{id}`                              | -                     | Get remote builder                                                  |
-| POST   | `/api/v1/admin/builders`                                   | admin                 | Create remote builder                                               |
-| PUT    | `/api/v1/admin/builders/{id}`                              | admin                 | Update remote builder                                               |
-| DELETE | `/api/v1/admin/builders/{id}`                              | admin                 | Delete remote builder                                               |
-| GET    | `/api/v1/admin/system`                                     | admin                 | System status                                                       |
-| GET    | `/api/v1/admin/notification-tasks`                         | admin                 | List notification tasks                                             |
-| POST   | `/api/v1/admin/notification-tasks/{id}/retry`              | admin                 | Retry failed notification                                           |
-| GET    | `/api/v1/admin/config`                                     | admin                 | Get current config file                                             |
-| PUT    | `/api/v1/admin/config`                                     | admin                 | Update declarative config file                                      |
-| GET    | `/api/v1/users`                                            | admin                 | List users                                                          |
-| POST   | `/api/v1/users`                                            | admin                 | Create user                                                         |
-| GET    | `/api/v1/users/{id}`                                       | admin                 | Get user details                                                    |
-| PUT    | `/api/v1/users/{id}`                                       | admin                 | Update user                                                         |
-| DELETE | `/api/v1/users/{id}`                                       | admin                 | Delete user                                                         |
-| GET    | `/api/v1/me`                                               | user/api key          | Get current user                                                    |
-| PUT    | `/api/v1/me`                                               | user                  | Update current user                                                 |
-| POST   | `/api/v1/me/password`                                      | user                  | Change password                                                     |
-| GET    | `/api/v1/me/starred-jobs`                                  | user                  | List starred jobs                                                   |
-| POST   | `/api/v1/me/starred-jobs`                                  | user                  | Star a job                                                          |
-| DELETE | `/api/v1/me/starred-jobs/{id}`                             | user                  | Unstar a job                                                        |
-| GET    | `/api/v1/search?q=`                                        | -                     | Search projects and builds                                          |
-| GET    | `/api/v1/search/quick?q=`                                  | -                     | Quick search (backward compatible)                                  |
-| GET    | `/api/v1/metrics/timeseries/builds`                        | -                     | Build counts timeseries                                             |
-| GET    | `/api/v1/metrics/timeseries/duration`                      | -                     | Build duration timeseries                                           |
-| GET    | `/api/v1/metrics/systems`                                  | -                     | Available build systems                                             |
-| POST   | `/api/v1/webhooks/{project_id}/github`                     | HMAC                  | GitHub webhook                                                      |
-| POST   | `/api/v1/webhooks/{project_id}/gitea`                      | HMAC                  | Gitea webhook                                                       |
-| POST   | `/api/v1/webhooks/{project_id}/forgejo`                    | HMAC                  | Forgejo webhook                                                     |
-| POST   | `/api/v1/webhooks/{project_id}/gitlab`                     | HMAC                  | GitLab webhook                                                      |
-| GET    | `/api/v1/auth/github`                                      | -                     | GitHub OAuth login                                                  |
-| GET    | `/api/v1/auth/github/callback`                             | -                     | GitHub OAuth callback                                               |
-| POST   | `/auth/ldap`                                               | -                     | LDAP authentication                                                 |
-| GET    | `/api/v1/news`                                             | -                     | List news items                                                     |
-| POST   | `/api/v1/news`                                             | admin                 | Create news item                                                    |
-| DELETE | `/api/v1/news/{id}`                                        | admin                 | Delete news item                                                    |
-| GET    | `/api/v1/openapi.json`                                     | -                     | OpenAPI specification (auto-generated)                              |
-| GET    | `/job/{project}/{jobset}/{job}/shield`                     | -                     | Build status shield (SVG)                                           |
-| GET    | `/job/{project}/{jobset}/{job}/badge`                      | -                     | Build status badge (SVG)                                            |
-| GET    | `/job/{project}/{jobset}/{job}/latest`                     | -                     | Latest successful build redirect                                    |
-| GET    | `/nix-cache/nix-cache-info`                                | -                     | Binary cache info                                                   |
-| GET    | `/nix-cache/{hash}`                                        | -                     | NAR info lookup (`.narinfo` accepted)                               |
-| GET    | `/nix-cache/nar/{hash}`                                    | -                     | NAR download (`.nar`, `.nar.zst`, `.nar.bz2`, `.nar.br`, `.nar.xz`) |
-| GET    | `/channel/{name}/git-revision`                             | -                     | Channel git revision                                                |
-| GET    | `/channel/{name}/binary-cache-url`                         | -                     | Channel binary cache URL                                            |
-| GET    | `/channel/{name}/store-paths.xz`                           | -                     | Channel store paths (compressed)                                    |
+Check for drift without rewriting the file:
 
-<!--markdownlint-enable MD013 -->
+```bash
+cargo run -p circus-xtask -- api-docs --check
+```
 
 ### Dashboard
 
@@ -887,9 +790,10 @@ $ cargo build -p circus-server
 $ cargo build -p circus-evaluator
 $ cargo build -p circus-queue-runner
 $ cargo build -p circus-agent
+$ cargo build -p circus-admin
 $ cargo build -p circus-common
 $ cargo build -p circus-proto
 $ cargo build -p circus-migrate-cli
 $ cargo build -p circus-migrations
-$ cargo build -p xtask
+$ cargo build -p circus-xtask
 ```

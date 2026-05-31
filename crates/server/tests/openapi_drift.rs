@@ -33,7 +33,17 @@ const API_MODULES: &[&str] = &[
   "users",
 ];
 
-const PUBLIC_DOCUMENTED_MODULES: &[&str] = &["channel_manifests", "ldap"];
+const PUBLIC_DOCUMENTED_MODULES: &[&str] = &[
+  "badges",
+  "cache",
+  "channel_manifests",
+  "health",
+  "ldap",
+  "metrics",
+  "oauth",
+  "openapi",
+  "webhooks",
+];
 
 fn routes_dir() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/routes")
@@ -114,12 +124,17 @@ fn parse_documented_paths() -> BTreeSet<String> {
         }
         let key = &block[key_start..j];
         if key.starts_with('/') {
-          let normalized =
-            if key.starts_with("/auth/ldap") || key.starts_with("/channel/") {
-              normalize_path(key)
-            } else {
-              format!("/api/v1{}", normalize_path(key))
-            };
+          let normalized = if key == "/auth/ldap"
+            || key == "/health"
+            || key == "/prometheus"
+            || key.starts_with("/channel/")
+            || key.starts_with("/job/")
+            || key.starts_with("/nix-cache/")
+          {
+            normalize_path(key)
+          } else {
+            format!("/api/v1{}", normalize_path(key))
+          };
           out.insert(normalized);
         }
         i = j;

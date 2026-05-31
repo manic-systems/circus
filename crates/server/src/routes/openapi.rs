@@ -5,11 +5,9 @@
 //! file, so update it alongside any breaking change to a request or
 //! response type. The dependency surface stays small in exchange.
 //!
-//! Coverage policy: every route registered under `/api/v1` has an entry,
-//! plus the public LDAP login and channel manifest endpoints. The cache
-//! NAR/narinfo endpoints are intentionally omitted because they speak
-//! the Nix binary cache protocol, not JSON, and clients of that protocol
-//! do not consult `OpenAPI` docs.
+//! Coverage policy: every HTTP route registered by `routes::router` has an
+//! entry except dashboard HTML pages and static assets. Binary/streaming
+//! endpoints are documented at the operation level even when they are not JSON.
 
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use serde_json::{Value, json};
@@ -17,7 +15,8 @@ use serde_json::{Value, json};
 use crate::state::AppState;
 
 #[allow(clippy::too_many_lines)]
-fn document() -> Value {
+#[must_use]
+pub fn document() -> Value {
   json!({
     "openapi": "3.1.0",
     "info": {
@@ -31,11 +30,7 @@ fn document() -> Value {
     ],
     "components": {
       "securitySchemes": {
-        "ApiKeyAuth": {
-          "type": "apiKey",
-          "in":   "header",
-          "name": "X-API-Key"
-        }
+        "ApiKeyAuth": { "type": "http", "scheme": "bearer" }
       },
       "schemas": {
         "Uuid":      { "type": "string", "format": "uuid" },
@@ -234,6 +229,82 @@ fn document() -> Value {
     },
     "security": [{ "ApiKeyAuth": [] }],
     "paths": {
+      "/health": {
+        "get": { "summary": "Health check with database and service status",
+          "responses": { "200": { "description": "Healthy" }, "503": { "description": "Degraded" } } }
+      },
+      "/prometheus": {
+        "get": { "summary": "Prometheus metrics exposition",
+          "responses": { "200": { "description": "Prometheus text format" } } }
+      },
+      "/openapi.json": {
+        "get": { "summary": "OpenAPI specification",
+          "responses": { "200": { "description": "OpenAPI document" } } }
+      },
+      "/auth/github": {
+        "get": { "summary": "Start GitHub OAuth login",
+          "responses": { "302": { "description": "Redirect to GitHub" } } }
+      },
+      "/auth/github/callback": {
+        "get": { "summary": "Complete GitHub OAuth login",
+          "responses": { "302": { "description": "Redirect to dashboard" } } }
+      },
+      "/metrics/timeseries/builds": {
+        "get": { "summary": "Build count time series",
+          "responses": { "200": { "description": "Build count buckets" } } }
+      },
+      "/metrics/timeseries/duration": {
+        "get": { "summary": "Build duration percentile time series",
+          "responses": { "200": { "description": "Duration percentile buckets" } } }
+      },
+      "/metrics/systems": {
+        "get": { "summary": "Build system distribution",
+          "responses": { "200": { "description": "System counts" } } }
+      },
+      "/webhooks/{project_id}/github": {
+        "post": { "summary": "GitHub webhook receiver",
+          "parameters": [{ "name": "project_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": { "200": { "description": "Webhook accepted" }, "401": { "description": "Invalid signature" } } }
+      },
+      "/webhooks/{project_id}/gitea": {
+        "post": { "summary": "Gitea webhook receiver",
+          "parameters": [{ "name": "project_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": { "200": { "description": "Webhook accepted" }, "401": { "description": "Invalid signature" } } }
+      },
+      "/webhooks/{project_id}/forgejo": {
+        "post": { "summary": "Forgejo webhook receiver",
+          "parameters": [{ "name": "project_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": { "200": { "description": "Webhook accepted" }, "401": { "description": "Invalid signature" } } }
+      },
+      "/webhooks/{project_id}/gitlab": {
+        "post": { "summary": "GitLab webhook receiver",
+          "parameters": [{ "name": "project_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": { "200": { "description": "Webhook accepted" }, "401": { "description": "Invalid token" } } }
+      },
+      "/job/{project}/{jobset}/{job}/shield": {
+        "get": { "summary": "Build status shield SVG",
+          "responses": { "200": { "description": "SVG badge" } } }
+      },
+      "/job/{project}/{jobset}/{job}/badge": {
+        "get": { "summary": "Build status badge SVG",
+          "responses": { "200": { "description": "SVG badge" } } }
+      },
+      "/job/{project}/{jobset}/{job}/latest": {
+        "get": { "summary": "Redirect to the latest successful build output",
+          "responses": { "302": { "description": "Redirect to build output" }, "404": { "description": "No successful build" } } }
+      },
+      "/nix-cache/nix-cache-info": {
+        "get": { "summary": "Nix binary cache metadata",
+          "responses": { "200": { "description": "nix-cache-info text" } } }
+      },
+      "/nix-cache/{hash}": {
+        "get": { "summary": "NAR info lookup",
+          "responses": { "200": { "description": "narinfo text" }, "404": { "description": "NAR not found" } } }
+      },
+      "/nix-cache/nar/{hash}": {
+        "get": { "summary": "NAR download",
+          "responses": { "200": { "description": "NAR stream" }, "404": { "description": "NAR not found" } } }
+      },
       "/projects": {
         "get":  { "summary": "List projects",
           "responses": { "200": { "description": "Array of projects",
