@@ -44,6 +44,7 @@ pub struct Evaluation {
   pub error_message:   Option<String>,
   pub inputs_hash:     Option<String>,
   pub trigger_kind:    EvaluationTriggerKind,
+  pub hidden:          bool,
   pub pr_number:       Option<i32>,
   pub pr_head_branch:  Option<String>,
   pub pr_base_branch:  Option<String>,
