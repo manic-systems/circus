@@ -25,7 +25,7 @@ testers.runNixOSTest {
     machine.wait_for_unit("postgresql.service")
 
     # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
-    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+    machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
     machine.wait_for_unit("circus-server.service")
 
@@ -37,7 +37,7 @@ testers.runNixOSTest {
     api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -45,13 +45,13 @@ testers.runNixOSTest {
     ro_token = "circus_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
     )
     ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
     with subtest("PostgreSQL LISTEN/NOTIFY triggers are installed"):
         result = machine.succeed(
-            "sudo -u circus psql -U circus -d circus -c \"SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_%_notify'\" -t"
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_%_notify'\" -t"
         )
         assert "trg_builds_insert_notify" in result, f"Missing trg_builds_insert_notify in: {result}"
         assert "trg_builds_status_notify" in result, f"Missing trg_builds_status_notify in: {result}"
@@ -355,7 +355,7 @@ testers.runNixOSTest {
     with subtest("Build with invalid drv_path fails and retries"):
         # Insert a build with an invalid drv_path via SQL
         machine.succeed(
-            "sudo -u postgres psql -d circus -c \""
+            "setpriv --reuid=postgres --regid=postgres --init-groups psql -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, priority, retry_count, max_retries, is_aggregate, signed) "
             f"VALUES (gen_random_uuid(), '{e2e_eval_id}', 'bad-build', '/nix/store/invalid-does-not-exist.drv', 'pending', 0, 0, 3, false, false);\""
         )
@@ -377,7 +377,7 @@ testers.runNixOSTest {
         # Insert a build directly via SQL and verify the queue-runner picks it up
         # reactively (within seconds, not waiting for the full poll interval)
         machine.succeed(
-            f"sudo -u circus psql -U circus -d circus -c \""
+            f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, priority, retry_count, max_retries, is_aggregate, signed) "
             f"VALUES (gen_random_uuid(), '{e2e_eval_id}', 'notify-build', '/nix/store/invalid-notify-test.drv', 'pending', 0, 0, 1, false, false);\""
         )
@@ -645,7 +645,7 @@ testers.runNixOSTest {
     with subtest("Webhook endpoint accepts valid GitHub push"):
         # Create a webhook config via SQL (no REST endpoint for creation)
         machine.succeed(
-            "sudo -u postgres psql -d circus -c \""
+            "setpriv --reuid=postgres --regid=postgres --init-groups psql -d circus -c \""
             "INSERT INTO webhook_configs (id, project_id, forge_type, secret_hash, enabled) "
             f"VALUES (gen_random_uuid(), '{e2e_project_id}', 'github', 'test-secret', true);\""
         )

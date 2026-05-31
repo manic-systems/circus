@@ -14,7 +14,16 @@ in {
     programs.git.enable = true;
     security.sudo.enable = true;
 
-    environment.systemPackages = with pkgs; [nix nix-eval-jobs zstd curl jq openssl python3];
+    environment.systemPackages = with pkgs; [
+      nix
+      nix-eval-jobs
+      zstd
+      curl
+      jq
+      openssl
+      python3
+      util-linux
+    ];
 
     nix = {
       settings.experimental-features = ["nix-command" "flakes" "auto-allocate-uids"];

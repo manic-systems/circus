@@ -49,7 +49,7 @@ pkgs.testers.nixosTest {
 
     # Wait for PostgreSQL
     machine.wait_for_unit("postgresql.service")
-    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+    machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
     # Wait for MinIO to be ready
     machine.wait_for_unit("minio.service")
@@ -67,7 +67,7 @@ pkgs.testers.nixosTest {
     api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 

@@ -25,7 +25,7 @@ testers.runNixOSTest {
     machine.wait_for_unit("postgresql.service")
 
     # Ensure PostgreSQL is actually ready to accept connections before circus-server starts
-    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+    machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
     machine.wait_for_unit("circus-server.service")
 
@@ -37,7 +37,7 @@ testers.runNixOSTest {
     api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -45,7 +45,7 @@ testers.runNixOSTest {
     ro_token = "circus_readonly_key"
     ro_hash = hashlib.sha256(ro_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('readonly', '{ro_hash}', 'read-only')\""
     )
     ro_header = f"-H 'Authorization: Bearer {ro_token}'"
 
@@ -225,7 +225,7 @@ testers.runNixOSTest {
     # Create a build via SQL since builds are normally created by the evaluator
     with subtest("Create test build via SQL"):
         machine.succeed(
-            "sudo -u circus psql -U circus -d circus -c \""
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', '{test_eval_id}', 'hello', '/nix/store/fake.drv', 'failed', 'x86_64-linux', 5, NOW())"
             "\""
@@ -260,7 +260,7 @@ testers.runNixOSTest {
     # Create a pending build to test bump
     with subtest("Create pending build for bump test"):
         machine.succeed(
-            "sudo -u circus psql -U circus -d circus -c \""
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('bbbbbbbb-cccc-dddd-eeee-ffffffffffff', '{test_eval_id}', 'world', '/nix/store/fake2.drv', 'pending', 'x86_64-linux', 5, NOW())"
             "\""
@@ -305,13 +305,13 @@ testers.runNixOSTest {
         second_eval_id = result.strip()
         # Add a build to the second evaluation
         machine.succeed(
-            "sudo -u circus psql -U circus -d circus -c \""
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa', '{second_eval_id}', 'hello', '/nix/store/changed.drv', 'pending', 'x86_64-linux', 5, NOW())"
             "\""
         )
         machine.succeed(
-            "sudo -u circus psql -U circus -d circus -c \""
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
             "INSERT INTO builds (id, evaluation_id, job_name, drv_path, status, system, priority, created_at) "
             f"VALUES ('dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb', '{second_eval_id}', 'new-pkg', '/nix/store/new.drv', 'pending', 'x86_64-linux', 5, NOW())"
             "\""
@@ -454,7 +454,7 @@ testers.runNixOSTest {
     with subtest("Delete remote builder with admin key"):
         # First clear the builder_id from builds that reference it
         machine.succeed(
-            "sudo -u circus psql -U circus -d circus -c "
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c "
             f"\"UPDATE builds SET builder_id = NULL WHERE builder_id = '{builder_id}'\""
         )
         # Now delete the builder
@@ -680,7 +680,7 @@ testers.runNixOSTest {
     cp_token = "circus_createprojects_key"
     cp_hash = hashlib.sha256(cp_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('creator', '{cp_hash}', 'create-projects')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('creator', '{cp_hash}', 'create-projects')\""
     )
     cp_header = f"-H 'Authorization: Bearer {cp_token}'"
 

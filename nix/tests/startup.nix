@@ -19,7 +19,7 @@ testers.runNixOSTest {
 
     # Ensure PostgreSQL is actually ready to accept connections
     # before circus-server starts. Not actually implied by the wait_for_unit
-    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+    machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
 
     machine.wait_for_unit("circus-server.service")
 

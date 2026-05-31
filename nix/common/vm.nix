@@ -32,7 +32,16 @@ in {
 
     # Ensure nix and zstd are available for cache endpoints.
     # python3 is needed by e2e webhook tests; harmless for other tests.
-    environment.systemPackages = with pkgs; [nix nix-eval-jobs zstd curl jq openssl python3];
+    environment.systemPackages = with pkgs; [
+      nix
+      nix-eval-jobs
+      zstd
+      curl
+      jq
+      openssl
+      python3
+      util-linux
+    ];
 
     nix = {
       # Enable Nix flakes and nix-command experimental features required by evaluator

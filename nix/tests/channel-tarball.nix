@@ -19,14 +19,14 @@ testers.runNixOSTest {
 
     machine.start()
     machine.wait_for_unit("postgresql.service")
-    machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+    machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
     machine.wait_for_unit("circus-server.service")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
     api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
-        f"sudo -u circus psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
+        f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \"INSERT INTO api_keys (name, key_hash, role) VALUES ('test', '{api_hash}', 'admin')\""
     )
     auth_header = f"-H 'Authorization: Bearer {api_token}'"
 
@@ -50,25 +50,25 @@ testers.runNixOSTest {
 
     # Create evaluation via SQL
     eval_id = machine.succeed(
-        "sudo -u circus psql -U circus -d circus -tA -c "
+        "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tA -c "
         "\"INSERT INTO evaluations (jobset_id, commit_hash, status) "
         f"VALUES ('{jobset_id}', 'abc123', 'completed') RETURNING id\" | head -1"
     ).strip()
 
     # Create succeeded builds with output paths
     machine.succeed(
-        "sudo -u circus psql -U circus -d circus -c "
+        "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c "
         "\"INSERT INTO builds (evaluation_id, job_name, drv_path, status, system, build_output_path) "
         f"VALUES ('{eval_id}', 'hello', '/nix/store/fake-hello.drv', 'succeeded', 'x86_64-linux', '/nix/store/aaaa-hello-1.0')\""
     )
     machine.succeed(
-        "sudo -u circus psql -U circus -d circus -c "
+        "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c "
         "\"INSERT INTO builds (evaluation_id, job_name, drv_path, status, system, build_output_path) "
         f"VALUES ('{eval_id}', 'world', '/nix/store/fake-world.drv', 'succeeded', 'x86_64-linux', '/nix/store/bbbb-world-2.0')\""
     )
     # A failed build should not appear in the tarball
     machine.succeed(
-        "sudo -u circus psql -U circus -d circus -c "
+        "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c "
         "\"INSERT INTO builds (evaluation_id, job_name, drv_path, status, system) "
         f"VALUES ('{eval_id}', 'broken', '/nix/store/fake-broken.drv', 'failed', 'x86_64-linux')\""
     )
