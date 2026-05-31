@@ -1,0 +1,65 @@
+name: API Docs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/api-docs.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/server/src/routes/**"
+      - "crates/server/tests/openapi_drift.rs"
+      - "crates/xtask/Cargo.toml"
+      - "crates/xtask/src/api_docs.rs"
+      - "crates/xtask/src/main.rs"
+      - "crates/xtask/src/openapi_check.rs"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: api-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update API Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Generate API docs
+        run: nix develop --command cargo run -p circus-xtask -- api-docs
+
+      - name: Check OpenAPI route coverage
+        run: nix develop --command cargo run -p circus-xtask -- openapi-check
+
+      - name: Refuse unexpected generated changes
+        run: git diff --exit-code -- . ":!docs/API.md"
+
+      - name: Detect API docs changes
+        id: api-docs-changes
+        run: |
+          if git diff --quiet -- docs/API.md; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Commit updated API docs
+        if: steps.api-docs-changes.outputs.changed == 'true'
+        run: |
+          git add docs/API.md
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "docs: update generated API reference"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
