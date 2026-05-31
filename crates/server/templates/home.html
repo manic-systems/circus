@@ -11,6 +11,20 @@
 {% block content %}
 <h1>Dashboard</h1>
 
+{% if !announcements.is_empty() %}
+<div class="announcement-stack">
+  {% for item in announcements %}
+  <article class="announcement-banner">
+    <div>
+      <h2>{{ item.title }}</h2>
+      <div class="announcement-content">{{ item.content }}</div>
+    </div>
+    <time>{{ item.created_at.format("%Y-%m-%d") }}</time>
+  </article>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="stats-grid">
   <div class="stat-card">
     <div class="stat-value">{{ total_builds }}</div>
