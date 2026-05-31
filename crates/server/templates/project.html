@@ -49,6 +49,13 @@
       <div class="form-group">
         <label><input type="checkbox" id="js-flake" checked> Flake mode</label>
       </div>
+      <div class="form-group">
+        <label for="js-trigger-mode">Trigger Mode</label>
+        <select id="js-trigger-mode">
+          <option value="source_change" selected>Source change</option>
+          <option value="interval">Interval rebuild</option>
+        </select>
+      </div>
       <button type="submit" class="btn">Add Jobset</button>
     </form>
     <div id="jobset-msg"></div>
@@ -67,7 +74,7 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Interval</th></tr>
+    <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Trigger</th><th>Interval</th></tr>
   </thead>
   <tbody>
     {% for j in jobsets %}
@@ -76,6 +83,14 @@
       <td><code>{{ j.nix_expression }}</code></td>
       <td>{% if j.flake_mode %}Yes{% else %}No{% endif %}</td>
       <td>{% if j.enabled %}Yes{% else %}No{% endif %}</td>
+      <td>
+        {% match j.trigger_mode %}
+          {% when circus_common::models::JobsetTriggerMode::SourceChange %}
+            Source change
+          {% when circus_common::models::JobsetTriggerMode::Interval %}
+            Interval rebuild
+        {% endmatch %}
+      </td>
       <td>{{ j.check_interval }}s</td>
     </tr>
     {% endfor %}
@@ -120,6 +135,7 @@ document.getElementById('create-jobset-form')?.addEventListener('submit', async 
         name: document.getElementById('js-name').value,
         nix_expression: document.getElementById('js-expr').value,
         flake_mode: document.getElementById('js-flake').checked,
+        trigger_mode: document.getElementById('js-trigger-mode').value,
       }),
     });
     if (!res.ok) {

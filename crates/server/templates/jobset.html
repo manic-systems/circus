@@ -36,6 +36,15 @@
         <span class="badge badge-running">One-at-a-Time</span>
     {% endmatch %}
   </dd>
+  <dt>Trigger mode</dt>
+  <dd>
+    {% match jobset.trigger_mode %}
+      {% when circus_common::models::JobsetTriggerMode::SourceChange %}
+        Source change
+      {% when circus_common::models::JobsetTriggerMode::Interval %}
+        Interval rebuild
+    {% endmatch %}
+  </dd>
   <dt>Check interval</dt>
   <dd>{{ jobset.check_interval }}s</dd>
   <dt>Last checked</dt>
@@ -65,7 +74,7 @@
 {% if eval_summaries.is_empty() %}
 <div class="empty">
   <div class="empty-title">No evaluations yet</div>
-  <div class="empty-hint">The evaluator will poll this jobset based on the check interval.</div>
+  <div class="empty-hint">The evaluator will schedule this jobset based on its trigger mode and check interval.</div>
 </div>
 {% else %}
 <div class="table-wrap">
