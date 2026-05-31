@@ -81,8 +81,11 @@ testers.runNixOSTest {
             '    packages.x86_64-linux.hello = derivation {\n'
             '      name = "circus-test-hello";\n'
             '      system = "x86_64-linux";\n'
-            '      builder = "/bin/sh";\n'
-            '      args = [ "-c" "echo hello > $out" ];\n'
+            '      builder = "builtin:fetchurl";\n'
+            '      url = "file://''${builtins.toFile "circus-test-hello.txt" "hello\\n"}";\n'
+            '      outputHashMode = "flat";\n'
+            '      outputHashAlgo = "sha256";\n'
+            '      outputHash = "sha256-WJG1tSLV3whtD/CxEPvZ0hu0/HFjrzTQgoai6Eb2vgM=";\n'
             "    };\n"
             "  };\n"
             "}\n"
@@ -182,8 +185,11 @@ testers.runNixOSTest {
             '    packages.x86_64-linux.hello = derivation {\n'
             '      name = "circus-test-hello-v2";\n'
             '      system = "x86_64-linux";\n'
-            '      builder = "/bin/sh";\n'
-            '      args = [ "-c" "echo hello-v2 > $out" ];\n'
+            '      builder = "builtin:fetchurl";\n'
+            '      url = "file://''${builtins.toFile "circus-test-hello-v2.txt" "hello-v2\\n"}";\n'
+            '      outputHashMode = "flat";\n'
+            '      outputHashAlgo = "sha256";\n'
+            '      outputHash = "sha256-vYDF6KcTi9E9DxDhNYvab5cnwma2kJ1LbJKTqxQewds=";\n'
             "    };\n"
             "  };\n"
             "}\n"
@@ -443,8 +449,11 @@ testers.runNixOSTest {
             '    packages.x86_64-linux.notify-test = derivation {\n'
             '      name = "circus-notify-test";\n'
             '      system = "x86_64-linux";\n'
-            '      builder = "/bin/sh";\n'
-            '      args = [ "-c" "echo notify-test > $out" ];\n'
+            '      builder = "builtin:fetchurl";\n'
+            '      url = "file://''${builtins.toFile "circus-notify-test.txt" "notify-test\\n"}";\n'
+            '      outputHashMode = "flat";\n'
+            '      outputHashAlgo = "sha256";\n'
+            '      outputHash = "sha256-Hn1LylShGbC8nYBcVc/lhiKT/ln+D7/riIO9yqOS+KM=";\n'
             "    };\n"
             "  };\n"
             "}\n"
@@ -492,8 +501,11 @@ testers.runNixOSTest {
             '    packages.x86_64-linux.sign-test = derivation {\n'
             '      name = "circus-sign-test";\n'
             '      system = "x86_64-linux";\n'
-            '      builder = "/bin/sh";\n'
-            '      args = [ "-c" "echo signed-build > $out" ];\n'
+            '      builder = "builtin:fetchurl";\n'
+            '      url = "file://''${builtins.toFile "circus-sign-test.txt" "signed-build\\n"}";\n'
+            '      outputHashMode = "flat";\n'
+            '      outputHashAlgo = "sha256";\n'
+            '      outputHash = "sha256-WJeL1+ZEM/tG2r2uI0U3m90moJ1p04R7i2bdJXykpO8=";\n'
             "    };\n"
             "  };\n"
             "}\n"
@@ -568,8 +580,11 @@ testers.runNixOSTest {
             '    packages.x86_64-linux.gc-test = derivation {\n'
             '      name = "circus-gc-test";\n'
             '      system = "x86_64-linux";\n'
-            '      builder = "/bin/sh";\n'
-            '      args = [ "-c" "echo gc-test > $out" ];\n'
+            '      builder = "builtin:fetchurl";\n'
+            '      url = "file://''${builtins.toFile "circus-gc-test.txt" "gc-test\\n"}";\n'
+            '      outputHashMode = "flat";\n'
+            '      outputHashAlgo = "sha256";\n'
+            '      outputHash = "sha256-OY18Hs8FOCjdwt+n0dgg2PgNHx3ScVZzCAOe3R6v2Bg=";\n'
             "    };\n"
             "  };\n"
             "}\n"
