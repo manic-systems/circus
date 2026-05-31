@@ -598,6 +598,18 @@ currently encouraged methods are:
 > Session cookies are valid for 24 hours and allow access to admin features
 > without re-entering credentials.
 
+Dashboard read pages are public by default. Operators can require a login or an
+administrator per page with `server.page_access`:
+
+```toml
+[server.page_access]
+evaluations = "authenticated"
+builds = "authenticated"
+metrics = "admin"
+```
+
+Supported access levels are `public`, `authenticated`, and `admin`.
+
 We also have **experimental** support for OAuth and LDAP authentication. You may
 test them at your disposal, but they are not recommended for production
 deployments. Report bugs!
@@ -743,7 +755,7 @@ cargo run -p circus-xtask -- api-docs --check
 
 The web dashboard is available at the root URL (`/`). Pages include:
 
-- `/` - Home: build stats, project overview, recent builds and evaluations
+- `/` - Home: announcements, build stats, project overview, recent builds and evaluations
 - `/login` - Session-based login (username/password or API key)
 - `/logout` - Log out and clear session
 - `/projects` - Project listing with create form (admin)
@@ -751,6 +763,7 @@ The web dashboard is available at the root URL (`/`). Pages include:
 - `/project/{id}` - Project detail with jobsets, add jobset form (admin)
 - `/project/{id}/notifications` - Notification config for project
 - `/jobset/{id}` - Jobset detail with evaluation history
+- `/jobset/{id}/jobs` - Jobset job status history
 - `/evaluations` - Evaluation listing with project/jobset context
 - `/evaluation/{id}` - Evaluation detail with build results
 - `/builds` - Build listing with status/system/job filters
