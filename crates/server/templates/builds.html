@@ -33,11 +33,13 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Job</th><th>Status</th><th>System</th><th>Created</th></tr>
+    <tr><th>Project</th><th>Jobset</th><th>Job</th><th>Status</th><th>System</th><th>Created</th></tr>
   </thead>
   <tbody>
     {% for b in builds %}
     <tr>
+      <td>{% match b.project_id %}{% when Some with (project_id) %}<a href="/project/{{ project_id }}">{{ b.project_name }}</a>{% when None %}-{% endmatch %}</td>
+      <td>{% match b.jobset_id %}{% when Some with (jobset_id) %}<a href="/jobset/{{ jobset_id }}">{{ b.jobset_name }}</a>{% when None %}-{% endmatch %}</td>
       <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
       <td><span class="badge badge-{{ b.status_class }}">{{ b.status_text }}</span></td>
       <td>{{ b.system }}</td>
