@@ -79,7 +79,7 @@ testers.runNixOSTest {
               heartbeat_ttl_secs = 30;
               auth_tokens = [
                 "${
-                  builtins.hashString "sha256" "demo-agent-token-please-rotate-uwu"
+                  builtins.hashString "sha256" "demo-agent-token-please-rotate"
                 }"
               ];
             };
