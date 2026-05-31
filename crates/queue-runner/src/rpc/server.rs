@@ -390,6 +390,9 @@ impl runner::Server for RunnerImpl {
       .await
       {
         tracing::warn!("upsert builder_session: {e}");
+        return Err(capnp::Error::failed(format!(
+          "builder session upsert failed: {e}"
+        )));
       }
 
       let (tx, rx) = mpsc::unbounded_channel::<DispatchCommand>();

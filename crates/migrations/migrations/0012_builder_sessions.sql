@@ -1,8 +1,9 @@
 -- Persistent record of a connected agent and its most recent heartbeat.
--- Rows are upserted by name on register, updated by heartbeats, and read by
--- the admin UI. The in-memory `AgentPool` is the source of truth for "is
--- this agent connected right now"; this table is the durable log so the UI
--- can show stats across restarts and so we have history for audit.
+-- Rows are upserted by machine_id on register, updated by heartbeats, and read
+-- by the admin UI. The operator-assigned name stays unique so the dashboard has
+-- a stable label. The in-memory `AgentPool` is the source of truth for "is this
+-- agent connected right now"; this table is the durable log so the UI can show
+-- stats across restarts and so we have history for audit.
 CREATE TABLE IF NOT EXISTS builder_sessions (
   -- Stable identity issued by the agent on first start, kept across
   -- reconnects. UUIDv4.
