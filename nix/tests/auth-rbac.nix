@@ -293,11 +293,22 @@ testers.runNixOSTest {
 
     # Dashboard page smoke tests
     with subtest("All dashboard pages return 200"):
-        pages = ["/", "/projects", "/evaluations", "/builds", "/queue", "/channels", "/admin", "/login"]
+        pages = ["/", "/projects", "/evaluations", "/builds", "/queue", "/channels", "/login"]
         for page in pages:
             code = machine.succeed(
                 f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:3000{page}"
             )
             assert code.strip() == "200", f"Page {page} returned {code.strip()}, expected 200"
+
+    with subtest("Admin dashboard requires admin auth"):
+        anon_code = machine.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/admin"
+        )
+        assert anon_code.strip() == "303", f"Expected anonymous /admin redirect, got {anon_code.strip()}"
+
+        admin_code = machine.succeed(
+            f"curl -s -o /dev/null -w '%{{http_code}}' {auth_header} http://127.0.0.1:3000/admin"
+        )
+        assert admin_code.strip() == "200", f"Expected admin /admin 200, got {admin_code.strip()}"
   '';
 }
