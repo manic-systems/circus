@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ jobset.name }} Jobs - circus{% endblock %}
+{% block auth %}
+{% if !auth_name.is_empty() %}
+<span class="auth-user">{{ auth_name }}</span>
+<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+{% else %}
+<a href="/login">Login</a>
+{% endif %}
+{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs">
+  <a href="/projects">Projects</a> <span class="sep">/</span>
+  <a href="/project/{{ project.id }}">{{ project.name }}</a> <span class="sep">/</span>
+  <a href="/project/{{ project.id }}#jobsets">Jobsets</a> <span class="sep">/</span>
+  <a href="/jobset/{{ jobset.id }}">{{ jobset.name }}</a> <span class="sep">/</span>
+  <span class="current">Jobs</span>
+</nav>
+{% endblock %}
+{% block content %}
+<h1>{{ jobset.name }}</h1>
+
+<nav class="tab-nav">
+  <a href="/jobset/{{ jobset.id }}">Evaluations</a>
+  <a class="active" href="/jobset/{{ jobset.id }}/jobs">Jobs</a>
+</nav>
+
+<div class="job-history-toolbar">
+  <label>
+    Search jobs
+    <input id="job-search" type="text" placeholder="job name">
+  </label>
+  {% if show_inactive %}
+  <a class="btn btn-small btn-secondary" href="/jobset/{{ jobset.id }}/jobs">Hide inactive jobs</a>
+  {% else %}
+  <a class="btn btn-small btn-secondary" href="/jobset/{{ jobset.id }}/jobs?show_inactive=true">Show inactive jobs</a>
+  {% endif %}
+</div>
+
+{% if columns.is_empty() %}
+<div class="empty">
+  <div class="empty-title">No evaluations yet</div>
+  <div class="empty-hint">Job status history will appear after this jobset evaluates.</div>
+</div>
+{% else if rows.is_empty() %}
+<div class="empty">
+  <div class="empty-title">No active jobs</div>
+  <div class="empty-hint">Use "Show inactive jobs" to include jobs missing from the latest evaluation.</div>
+</div>
+{% else %}
+<div class="table-wrap job-history-wrap">
+<table class="job-history-table">
+  <thead>
+    <tr>
+      <th class="job-history-name">Job</th>
+      {% for column in columns %}
+      <th class="job-history-eval" title="{{ column.title }}">
+        <a href="/evaluation/{{ column.eval_id }}">{{ column.label }}</a>
+      </th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr data-job-name="{{ row.job_name }}">
+      <td class="job-history-name">
+        <strong>{{ row.job_name }}</strong>
+        {% if !row.is_active %}<span class="badge badge-skipped">Inactive</span>{% endif %}
+      </td>
+      {% for cell in row.cells %}
+      <td class="job-history-cell">
+        {% if !cell.href.is_empty() %}
+        <a class="badge badge-{{ cell.status_class }}" href="{{ cell.href }}">{{ cell.status_text }}</a>
+        {% else %}
+        <span class="badge badge-{{ cell.status_class }}">{{ cell.status_text }}</span>
+        {% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function() {
+  var input = document.getElementById('job-search');
+  if (!input) return;
+  input.addEventListener('input', function() {
+    var query = input.value.toLowerCase();
+    var rows = document.querySelectorAll('[data-job-name]');
+    for (var i = 0; i < rows.length; i++) {
+      var name = rows[i].getAttribute('data-job-name').toLowerCase();
+      rows[i].style.display = name.indexOf(query) === -1 ? 'none' : '';
+    }
+  });
+})();
+</script>
+{% endblock %}

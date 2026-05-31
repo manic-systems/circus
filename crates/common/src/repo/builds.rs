@@ -99,6 +99,32 @@ pub async fn list_for_evaluation(
   .map_err(CiError::Database)
 }
 
+/// List builds for a jobset across a bounded set of evaluations.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_for_jobset_evaluations(
+  pool: &PgPool,
+  jobset_id: Uuid,
+  evaluation_ids: &[Uuid],
+) -> Result<Vec<Build>> {
+  if evaluation_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  sqlx::query_as::<_, Build>(
+    "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id \
+     WHERE e.jobset_id = $1 AND b.evaluation_id = ANY($2) ORDER BY b.job_name \
+     ASC, e.evaluation_time DESC",
+  )
+  .bind(jobset_id)
+  .bind(evaluation_ids)
+  .fetch_all(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
 /// List pending builds, prioritizing non-aggregate jobs.
 /// Returns up to `limit * worker_count` builds.
 ///
