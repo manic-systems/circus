@@ -23,6 +23,10 @@ testers.runNixOSTest {
     machine.wait_for_unit("circus-server.service")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
+    # The test seeds channel rows directly and uses fake repository URLs.
+    # Disable background evaluation/building so it cannot race the fixture.
+    machine.succeed("systemctl stop circus-evaluator.service circus-queue-runner.service")
+
     api_token = "circus_testkey123"
     api_hash = hashlib.sha256(api_token.encode()).hexdigest()
     machine.succeed(
@@ -123,7 +127,7 @@ testers.runNixOSTest {
 
     with subtest("default.nix contains succeeded builds"):
         machine.succeed("xz -d < /tmp/nixexprs.tar.xz | tar xf - -C /tmp")
-        content = machine.succeed("cat /tmp/default.nix")
+        content = machine.succeed("cat /tmp/channel/default.nix")
         assert "hello" in content, "Expected 'hello' job in default.nix"
         assert "world" in content, "Expected 'world' job in default.nix"
         assert "/nix/store/aaaa-hello-1.0" in content, \
@@ -132,16 +136,16 @@ testers.runNixOSTest {
             "Expected world output path in default.nix"
 
     with subtest("default.nix excludes failed builds"):
-        content = machine.succeed("cat /tmp/default.nix")
+        content = machine.succeed("cat /tmp/channel/default.nix")
         assert "broken" not in content, \
             "Failed build 'broken' should not appear in default.nix"
 
     with subtest("default.nix has mkFakeDerivation structure"):
-        content = machine.succeed("cat /tmp/default.nix")
+        content = machine.succeed("cat /tmp/channel/default.nix")
         assert "mkFakeDerivation" in content, \
             "Expected mkFakeDerivation helper in default.nix"
-        assert "builtin:fetchurl" in content, \
-            "Expected builtin:fetchurl in mkFakeDerivation"
+        assert "maybeStorePath" in content and "outPath" in content, \
+            "Expected store-path backed fake derivations in default.nix"
 
     with subtest("Nonexistent channel returns 404 for tarball"):
         code = machine.succeed(

@@ -32,6 +32,10 @@ testers.runNixOSTest {
     # Wait for the server to start listening
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
+    # This suite tests API CRUD over synthetic repos and drv paths. Keep the
+    # background workers from racing the assertions by evaluating/building them.
+    machine.succeed("systemctl stop circus-evaluator.service circus-queue-runner.service")
+
     # Seed an API key for write operations
     # Token: circus_testkey123 -> SHA-256 hash inserted into api_keys table
     api_token = "circus_testkey123"
