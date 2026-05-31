@@ -436,15 +436,17 @@ async fn evaluate_legacy(
 
 /// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)
 /// pairs. Structured derivation objects are emitted as a single job; plain
-/// attrsets are recursed into. Bare strings are only accepted when they already
-/// look like `.drv` store paths, so derivation metadata such as `type` or
-/// `name` never becomes a build by accident.
+/// attrsets are recursed into. Bare strings are accepted only when they look
+/// like Nix store paths; `nix eval --json` stringifies derivations to output
+/// paths, and the caller resolves those attrs back to buildable `.drv` paths.
+/// Non-store metadata such as `type` or `name` never becomes a build by
+/// accident.
 fn flatten_attrs(
   prefix: &str,
   value: &serde_json::Value,
 ) -> Vec<(String, String)> {
   match value {
-    serde_json::Value::String(s) if is_store_drv_path(s) => {
+    serde_json::Value::String(s) if is_store_path(s) => {
       vec![(prefix.to_string(), s.clone())]
     },
     serde_json::Value::Object(map) => {
@@ -476,10 +478,14 @@ fn flatten_attrs(
 }
 
 fn is_store_drv_path(value: &str) -> bool {
-  value.starts_with("/nix/store/")
+  is_store_path(value)
     && std::path::Path::new(value)
       .extension()
       .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
+}
+
+fn is_store_path(value: &str) -> bool {
+  value.starts_with("/nix/store/")
 }
 
 struct ShownDerivation {
@@ -595,8 +601,15 @@ async fn evaluate_with_nix_eval(
         shown.outputs,
         shown.input_drvs,
       )
-    } else {
+    } else if is_store_drv_path(&eval_path) {
       (eval_path, None, None, None)
+    } else {
+      tracing::warn!(
+        attr = %name,
+        eval_path = %eval_path,
+        "Skipping nix eval attr because it did not resolve to a drv path"
+      );
+      continue;
     };
 
     jobs.push(NixJob {
@@ -804,6 +817,30 @@ mod meta_tests {
       "legacy".to_string(),
       "/nix/store/def-legacy.drv".to_string(),
     )));
+  }
+
+  #[test]
+  fn flatten_attrs_emits_stringified_derivation_out_paths() {
+    let value = serde_json::json!({
+      "x86_64-linux": {
+        "hello": "/nix/store/def-hello"
+      },
+      "metadata": {
+        "type": "derivations",
+        "name": "not-a-job"
+      }
+    });
+
+    let jobs = flatten_attrs("", &value);
+
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(
+      jobs[0],
+      (
+        "x86_64-linux.hello".to_string(),
+        "/nix/store/def-hello".to_string(),
+      ),
+    );
   }
 
   #[test]
