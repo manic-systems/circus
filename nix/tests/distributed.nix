@@ -24,7 +24,7 @@ testers.runNixOSTest {
 
       programs.git.enable = true;
       security.sudo.enable = true;
-      environment.systemPackages = with pkgs; [curl jq openssl];
+      environment.systemPackages = with pkgs; [curl jq openssl util-linux];
 
       nix.settings.experimental-features = ["nix-command" "flakes"];
       nix.settings.substituters = lib.mkForce [];
@@ -134,7 +134,7 @@ testers.runNixOSTest {
 
     with subtest("Runner services come up"):
         runner.wait_for_unit("postgresql.service")
-        runner.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+        runner.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
         runner.wait_for_unit("circus-server.service")
         runner.wait_for_unit("circus-queue-runner.service")
         runner.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -146,7 +146,7 @@ testers.runNixOSTest {
         agent.wait_for_unit("circus-agent.service")
         # Agent registers within a couple of heartbeats.
         runner.wait_until_succeeds(
-            "sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND connected=TRUE\" | grep -qE '^ *1$'",
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND connected=TRUE\" | grep -qE '^ *1$'",
             timeout=30,
         )
 
@@ -181,14 +181,14 @@ testers.runNixOSTest {
 
     with subtest("Heartbeat keeps last_seen fresh"):
         runner.wait_until_succeeds(
-            "sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND last_seen > NOW() - INTERVAL '15 seconds'\" | grep -qE '^ *1$'",
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND last_seen > NOW() - INTERVAL '15 seconds'\" | grep -qE '^ *1$'",
             timeout=20,
         )
 
     with subtest("Stopping the agent flips connected to FALSE"):
         agent.systemctl("stop circus-agent.service")
         runner.wait_until_succeeds(
-            "sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND connected=FALSE\" | grep -qE '^ *1$'",
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND connected=FALSE\" | grep -qE '^ *1$'",
             timeout=30,
         )
 
@@ -202,7 +202,7 @@ testers.runNixOSTest {
     with subtest("Restarting the agent reconnects"):
         agent.systemctl("start circus-agent.service")
         runner.wait_until_succeeds(
-            "sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND connected=TRUE\" | grep -qE '^ *1$'",
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \"SELECT count(*) FROM builder_sessions WHERE name='agent-01' AND connected=TRUE\" | grep -qE '^ *1$'",
             timeout=30,
         )
         out = runner.succeed(

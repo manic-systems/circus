@@ -147,45 +147,45 @@ in
 
       machine.start()
       machine.wait_for_unit("postgresql.service")
-      machine.wait_until_succeeds("sudo -u circus psql -U circus -d circus -c 'SELECT 1'", timeout=30)
+      machine.wait_until_succeeds("setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c 'SELECT 1'", timeout=30)
       machine.wait_for_unit("circus-server.service")
       machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
 
       # DECLARATIVE USERS
       with subtest("Declarative users are created in database"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM users WHERE username LIKE 'decl-%'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM users WHERE username LIKE 'decl-%'\""
           )
           count = int(result.strip())
           assert count == 4, f"Expected 4 declarative users, got {count}"
 
       with subtest("Declarative admin user has admin role"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT role FROM users WHERE username = 'decl-admin'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT role FROM users WHERE username = 'decl-admin'\""
           )
           assert result.strip() == "admin", f"Expected admin role, got '{result.strip()}'"
 
       with subtest("Declarative regular users have read-only role"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT role FROM users WHERE username = 'decl-user'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT role FROM users WHERE username = 'decl-user'\""
           )
           assert result.strip() == "read-only", f"Expected read-only role, got '{result.strip()}'"
 
       with subtest("Declarative disabled user is disabled"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT enabled FROM users WHERE username = 'decl-disabled'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT enabled FROM users WHERE username = 'decl-disabled'\""
           )
           assert result.strip() == "f", f"Expected disabled (f), got '{result.strip()}'"
 
       with subtest("Declarative enabled users are enabled"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT enabled FROM users WHERE username = 'decl-admin'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT enabled FROM users WHERE username = 'decl-admin'\""
           )
           assert result.strip() == "t", f"Expected enabled (t), got '{result.strip()}'"
 
       with subtest("Declarative users have password hashes set"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT password_hash FROM users WHERE username = 'decl-admin'\""
           )
           # Argon2 hashes start with $argon2
           assert result.strip().startswith("$argon2"), f"Expected argon2 hash, got '{result.strip()[:20]}...'"
@@ -244,7 +244,7 @@ in
       # DECLARATIVE API KEYS
       with subtest("Declarative API keys are created"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM api_keys WHERE name LIKE 'decl-%'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM api_keys WHERE name LIKE 'decl-%'\""
           )
           count = int(result.strip())
           assert count == 2, f"Expected 2 declarative API keys, got {count}"
@@ -354,28 +354,28 @@ in
 
       with subtest("Disabled jobset is not in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'disabled-jobset'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'disabled-jobset'\""
           )
           count = int(result.strip())
           assert count == 0, f"Disabled jobset should not be in active_jobsets, got {count}"
 
       with subtest("Enabled jobsets are in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'enabled-jobset'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'enabled-jobset'\""
           )
           count = int(result.strip())
           assert count == 1, f"Enabled jobset should be in active_jobsets, got {count}"
 
       with subtest("One-shot jobset is in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneshot-jobset'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneshot-jobset'\""
           )
           count = int(result.strip())
           assert count == 1, f"One-shot jobset should be in active_jobsets, got {count}"
 
       with subtest("One-at-a-time jobset is in active_jobsets view"):
           result = machine.succeed(
-              "sudo -u circus psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneatatime-jobset'\""
+              "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -t -c \"SELECT COUNT(*) FROM active_jobsets WHERE name = 'oneatatime-jobset'\""
           )
           count = int(result.strip())
           assert count == 1, f"One-at-a-time jobset should be in active_jobsets, got {count}"
@@ -496,7 +496,7 @@ in
           # Join through evaluations since builds reference evaluation_id, not
           # jobset_id directly.
           off_builds = int(machine.succeed(
-              f"sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE e.jobset_id = '{off_jobset}'\""
+              f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \"SELECT count(*) FROM builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE e.jobset_id = '{off_jobset}'\""
           ).strip())
           assert off_builds == 0, f"Disabled jobset should have 0 builds, got {off_builds}"
 
@@ -520,7 +520,7 @@ in
 
       with subtest("API build list matches database build count for evaluation"):
           db_count = int(machine.succeed(
-              f"sudo -u circus psql -U circus -d circus -tAc \"SELECT count(*) FROM builds WHERE evaluation_id = '{eval_id}'\""
+              f"setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \"SELECT count(*) FROM builds WHERE evaluation_id = '{eval_id}'\""
           ).strip())
           api_count = int(machine.succeed(
               f"curl -sf 'http://127.0.0.1:3000/api/v1/builds?evaluation_id={eval_id}' "
