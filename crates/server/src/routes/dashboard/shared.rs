@@ -8,14 +8,13 @@
 
 #![allow(dead_code)]
 
-use axum::http::Extensions;
-use circus_common::models::{
-  ApiKey,
-  Build,
-  BuildStatus,
-  Evaluation,
-  EvaluationStatus,
-  User,
+use axum::{
+  http::Extensions,
+  response::{IntoResponse, Redirect, Response},
+};
+use circus_common::{
+  config::{PageAccessLevel, ServerConfig},
+  models::{ApiKey, Build, BuildStatus, Evaluation, EvaluationStatus, User},
 };
 use uuid::Uuid;
 
@@ -72,6 +71,7 @@ pub(super) struct EvalView {
   pub(super) status_class:  String,
   pub(super) time:          String,
   pub(super) error_message: Option<String>,
+  pub(super) hidden:        bool,
   pub(super) jobset_name:   String,
   pub(super) project_name:  String,
 }
@@ -85,6 +85,89 @@ pub(super) struct EvalSummaryView {
   pub(super) succeeded:    i64,
   pub(super) failed:       i64,
   pub(super) pending:      i64,
+  pub(super) hidden:       bool,
+}
+
+pub(super) struct JobStatusColumn {
+  pub(super) eval_id: Uuid,
+  pub(super) label:   String,
+  pub(super) title:   String,
+}
+
+pub(super) struct JobStatusCell {
+  pub(super) href:         String,
+  pub(super) status_text:  String,
+  pub(super) status_class: String,
+}
+
+pub(super) struct JobStatusRow {
+  pub(super) job_name:  String,
+  pub(super) is_active: bool,
+  pub(super) cells:     Vec<JobStatusCell>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum DashboardPage {
+  Home,
+  Projects,
+  Project,
+  Jobset,
+  JobsetJobs,
+  Evaluations,
+  Evaluation,
+  Builds,
+  Build,
+  Queue,
+  Channels,
+  Channel,
+  News,
+  Starred,
+  Metrics,
+}
+
+impl DashboardPage {
+  const fn access(self, config: &ServerConfig) -> PageAccessLevel {
+    let pages = &config.page_access;
+    match self {
+      Self::Home => pages.home,
+      Self::Projects => pages.projects,
+      Self::Project => pages.project,
+      Self::Jobset => pages.jobset,
+      Self::JobsetJobs => pages.jobset_jobs,
+      Self::Evaluations => pages.evaluations,
+      Self::Evaluation => pages.evaluation,
+      Self::Builds => pages.builds,
+      Self::Build => pages.build,
+      Self::Queue => pages.queue,
+      Self::Channels => pages.channels,
+      Self::Channel => pages.channel,
+      Self::News => pages.news,
+      Self::Starred => pages.starred,
+      Self::Metrics => pages.metrics,
+    }
+  }
+}
+
+pub(super) fn enforce_page_access(
+  config: &ServerConfig,
+  extensions: &Extensions,
+  page: DashboardPage,
+) -> Result<(), Response> {
+  let allowed = match page.access(config) {
+    PageAccessLevel::Public => true,
+    PageAccessLevel::Authenticated => is_authenticated(extensions),
+    PageAccessLevel::Admin => is_admin(extensions),
+  };
+  if allowed {
+    return Ok(());
+  }
+
+  let target = if is_authenticated(extensions) {
+    "/"
+  } else {
+    "/login"
+  };
+  Err(Redirect::to(target).into_response())
 }
 
 pub(super) struct ProjectSummaryView {
@@ -329,6 +412,7 @@ pub(super) fn eval_view(e: &Evaluation) -> EvalView {
     status_class:  class,
     time:          e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
     error_message: e.error_message.clone(),
+    hidden:        e.hidden,
     jobset_name:   String::new(),
     project_name:  String::new(),
   }
@@ -390,6 +474,10 @@ pub(super) fn is_admin(extensions: &Extensions) -> bool {
   extensions
     .get::<ApiKey>()
     .is_some_and(|k| k.role == "admin")
+}
+
+pub(super) fn is_authenticated(extensions: &Extensions) -> bool {
+  extensions.get::<User>().is_some() || extensions.get::<ApiKey>().is_some()
 }
 
 pub(super) fn auth_name(extensions: &Extensions) -> String {
