@@ -22,13 +22,15 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   };
   let flake_mode = input.flake_mode.unwrap_or(true);
   let check_interval = input.check_interval.unwrap_or(60);
+  let trigger_mode = input.trigger_mode.unwrap_or_default();
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
 
   sqlx::query_as::<_, Jobset>(
     "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-     flake_mode, check_interval, branch, scheduling_shares, state, keep_nr) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
+     flake_mode, check_interval, trigger_mode, branch, scheduling_shares, \
+     state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+     RETURNING *",
   )
   .bind(input.project_id)
   .bind(&input.name)
@@ -36,6 +38,7 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   .bind(enabled)
   .bind(flake_mode)
   .bind(check_interval)
+  .bind(trigger_mode.as_str())
   .bind(&input.branch)
   .bind(scheduling_shares)
   .bind(state.as_str())
@@ -149,6 +152,7 @@ pub async fn update(
   };
   let flake_mode = input.flake_mode.unwrap_or(existing.flake_mode);
   let check_interval = input.check_interval.unwrap_or(existing.check_interval);
+  let trigger_mode = input.trigger_mode.unwrap_or(existing.trigger_mode);
   let branch = input.branch.or(existing.branch);
   let scheduling_shares = input
     .scheduling_shares
@@ -157,14 +161,16 @@ pub async fn update(
 
   sqlx::query_as::<_, Jobset>(
     "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, \
-     flake_mode = $4, check_interval = $5, branch = $6, scheduling_shares = \
-     $7, state = $8, keep_nr = $9 WHERE id = $10 RETURNING *",
+     flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, \
+     scheduling_shares = $8, state = $9, keep_nr = $10 WHERE id = $11 \
+     RETURNING *",
   )
   .bind(&name)
   .bind(&nix_expression)
   .bind(enabled)
   .bind(flake_mode)
   .bind(check_interval)
+  .bind(trigger_mode.as_str())
   .bind(&branch)
   .bind(scheduling_shares)
   .bind(state.as_str())
@@ -218,18 +224,20 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   };
   let flake_mode = input.flake_mode.unwrap_or(true);
   let check_interval = input.check_interval.unwrap_or(60);
+  let trigger_mode = input.trigger_mode.unwrap_or_default();
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
 
   sqlx::query_as::<_, Jobset>(
     "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-     flake_mode, check_interval, branch, scheduling_shares, state, keep_nr) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT \
-     (project_id, name) DO UPDATE SET nix_expression = \
+     flake_mode, check_interval, trigger_mode, branch, scheduling_shares, \
+     state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON \
+     CONFLICT (project_id, name) DO UPDATE SET nix_expression = \
      EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = \
-     EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, branch = \
-     EXCLUDED.branch, scheduling_shares = EXCLUDED.scheduling_shares, state = \
-     EXCLUDED.state, keep_nr = EXCLUDED.keep_nr RETURNING *",
+     EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, \
+     trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, \
+     scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, \
+     keep_nr = EXCLUDED.keep_nr RETURNING *",
   )
   .bind(input.project_id)
   .bind(&input.name)
@@ -237,6 +245,7 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   .bind(enabled)
   .bind(flake_mode)
   .bind(check_interval)
+  .bind(trigger_mode.as_str())
   .bind(&input.branch)
   .bind(scheduling_shares)
   .bind(state.as_str())
@@ -301,6 +310,27 @@ pub async fn has_running_builds(
   let (count,): (i64,) = sqlx::query_as(
     "SELECT COUNT(*) FROM builds b JOIN evaluations e ON b.evaluation_id = \
      e.id WHERE e.jobset_id = $1 AND b.status = 'running'",
+  )
+  .bind(jobset_id)
+  .fetch_one(pool)
+  .await
+  .map_err(CiError::Database)?;
+  Ok(count > 0)
+}
+
+/// Check if a jobset has any active evaluation or unfinished build work.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn has_unfinished_work(
+  pool: &PgPool,
+  jobset_id: Uuid,
+) -> Result<bool> {
+  let (count,): (i64,) = sqlx::query_as(
+    "SELECT COUNT(*) FROM evaluations e LEFT JOIN builds b ON b.evaluation_id \
+     = e.id WHERE e.jobset_id = $1 AND (e.status IN ('pending', 'running') OR \
+     b.status IN ('pending', 'running'))",
   )
   .bind(jobset_id)
   .fetch_one(pool)

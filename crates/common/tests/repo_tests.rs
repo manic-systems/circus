@@ -50,6 +50,7 @@ async fn create_test_jobset(
     enabled: Some(true),
     flake_mode: None,
     check_interval: None,
+    trigger_mode: None,
     branch: None,
     scheduling_shares: None,
     state: None,
@@ -189,6 +190,7 @@ async fn test_jobset_crud() {
     enabled:           Some(true),
     flake_mode:        None,
     check_interval:    None,
+    trigger_mode:      None,
     branch:            None,
     scheduling_shares: None,
     state:             None,
@@ -219,6 +221,7 @@ async fn test_jobset_crud() {
     enabled:           Some(false),
     flake_mode:        None,
     check_interval:    None,
+    trigger_mode:      None,
     branch:            None,
     scheduling_shares: None,
     state:             None,
@@ -236,6 +239,85 @@ async fn test_jobset_crud() {
 
   // Cleanup
   let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_interval_evaluations_can_repeat_commit() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "interval-eval").await;
+  let jobset = repo::jobsets::create(&pool, CreateJobset {
+    project_id:        project.id,
+    name:              "interval".to_string(),
+    nix_expression:    "packages".to_string(),
+    enabled:           Some(true),
+    flake_mode:        None,
+    check_interval:    Some(60),
+    trigger_mode:      Some(JobsetTriggerMode::Interval),
+    branch:            None,
+    scheduling_shares: None,
+    state:             None,
+    keep_nr:           None,
+  })
+  .await
+  .expect("create interval jobset");
+
+  let commit_hash = format!("abc123{}", uuid::Uuid::new_v4().simple());
+  let first = repo::evaluations::create_interval(&pool, CreateEvaluation {
+    jobset_id:      jobset.id,
+    commit_hash:    commit_hash.clone(),
+    pr_number:      None,
+    pr_head_branch: None,
+    pr_base_branch: None,
+    pr_action:      None,
+  })
+  .await
+  .expect("create first interval evaluation");
+  let second = repo::evaluations::create_interval(&pool, CreateEvaluation {
+    jobset_id:      jobset.id,
+    commit_hash:    commit_hash.clone(),
+    pr_number:      None,
+    pr_head_branch: None,
+    pr_base_branch: None,
+    pr_action:      None,
+  })
+  .await
+  .expect("create second interval evaluation");
+
+  assert_ne!(first.id, second.id);
+  assert_eq!(first.trigger_kind, EvaluationTriggerKind::Interval);
+  assert_eq!(second.trigger_kind, EvaluationTriggerKind::Interval);
+  assert_eq!(first.status, EvaluationStatus::Running);
+  assert_eq!(second.status, EvaluationStatus::Running);
+
+  let source_commit = commit_hash.clone();
+  let source_result = repo::evaluations::create(&pool, CreateEvaluation {
+    jobset_id:      jobset.id,
+    commit_hash:    source_commit.clone(),
+    pr_number:      None,
+    pr_head_branch: None,
+    pr_base_branch: None,
+    pr_action:      None,
+  })
+  .await;
+  assert!(source_result.is_ok());
+
+  let manual_duplicate =
+    repo::evaluations::create_manual(&pool, CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    source_commit,
+      pr_number:      None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action:      None,
+    })
+    .await;
+  assert!(matches!(
+    manual_duplicate,
+    Err(circus_common::CiError::Conflict(_))
+  ));
 }
 
 #[tokio::test]
