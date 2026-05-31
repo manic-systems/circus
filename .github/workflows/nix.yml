@@ -47,7 +47,7 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - name: Restore cached paths
         id: cache-store-restore
-        uses: nix-community/cache-nix-action@7
+        uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
