@@ -13,6 +13,7 @@ use circus_common::{
     EvaluationStatus,
     JobsetInput,
     JobsetState,
+    JobsetTriggerMode,
   },
   repo,
 };
@@ -85,17 +86,33 @@ async fn run_cycle(
         Vec::new()
       });
 
-  let pending_jobset_ids: std::collections::HashSet<Uuid> =
-    pending.iter().map(|e| e.jobset_id).collect();
+  let mut pending_jobset_ids: std::collections::HashSet<Uuid> =
+    std::collections::HashSet::new();
+  let mut pending_tasks: Vec<(Evaluation, ActiveJobset)> = Vec::new();
 
-  let pending_tasks: Vec<(Evaluation, ActiveJobset)> = pending
-    .into_iter()
-    .filter_map(|eval| {
-      active_by_id
-        .get(&eval.jobset_id)
-        .map(|js| (eval, js.clone()))
-    })
-    .collect();
+  for eval in pending {
+    let Some(jobset) = active_by_id.get(&eval.jobset_id) else {
+      continue;
+    };
+
+    if jobset.trigger_mode.accepts_source_triggers() {
+      pending_jobset_ids.insert(eval.jobset_id);
+      pending_tasks.push((eval, jobset.clone()));
+    } else {
+      let msg = "jobset trigger_mode is interval; source/manual pending \
+                 evaluations are disabled";
+      if let Err(e) = repo::evaluations::update_status(
+        pool,
+        eval.id,
+        EvaluationStatus::Failed,
+        Some(msg),
+      )
+      .await
+      {
+        tracing::warn!(eval_id = %eval.id, "Failed to reject pending evaluation: {e}");
+      }
+    }
+  }
 
   if !pending_tasks.is_empty() {
     tracing::info!("Draining {} pending evaluation(s)", pending_tasks.len());
@@ -443,6 +460,17 @@ async fn evaluate_jobset(
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> color_eyre::Result<()> {
+  if jobset.trigger_mode == JobsetTriggerMode::Interval
+    && repo::jobsets::has_unfinished_work(pool, jobset.id).await?
+  {
+    tracing::debug!(
+      jobset = %jobset.name,
+      "Skipping interval evaluation while previous work is unfinished"
+    );
+    repo::jobsets::update_last_checked(pool, jobset.id).await?;
+    return Ok(());
+  }
+
   let url = jobset.repository_url.clone();
   let work_dir = config.work_dir.clone();
   let project_name = jobset.project_name.clone();
@@ -481,20 +509,22 @@ async fn evaluate_jobset(
   // Compute inputs hash for eval caching (commit + all input values/revisions)
   let inputs_hash = compute_inputs_hash(&commit_hash, &inputs);
 
-  // Skip re-evaluation when the same (commit, inputs) hash already
-  // produced a completed evaluation.
-  if let Ok(Some(cached)) =
-    repo::evaluations::get_by_inputs_hash(pool, jobset.id, &inputs_hash).await
-  {
-    tracing::debug!(
-        jobset = %jobset.name,
-        commit = %commit_hash,
-        cached_eval = %cached.id,
-        "Inputs unchanged (hash: {}), skipping evaluation",
-        &inputs_hash[..16],
-    );
-    repo::jobsets::update_last_checked(pool, jobset.id).await?;
-    return Ok(());
+  // Source-change jobsets only rebuild when source/input state changes.
+  // Interval jobsets intentionally create a fresh run every due tick.
+  if jobset.trigger_mode == JobsetTriggerMode::SourceChange {
+    if let Ok(Some(cached)) =
+      repo::evaluations::get_by_inputs_hash(pool, jobset.id, &inputs_hash).await
+    {
+      tracing::debug!(
+          jobset = %jobset.name,
+          commit = %commit_hash,
+          cached_eval = %cached.id,
+          "Inputs unchanged (hash: {}), skipping evaluation",
+          &inputs_hash[..16],
+      );
+      repo::jobsets::update_last_checked(pool, jobset.id).await?;
+      return Ok(());
+    }
   }
 
   tracing::info!(
@@ -505,16 +535,22 @@ async fn evaluate_jobset(
 
   // Create evaluation record. If it already exists (race condition), fetch the
   // existing one and continue. Only update status if it's still pending.
-  let eval = match repo::evaluations::create(pool, CreateEvaluation {
+  let create_eval = CreateEvaluation {
     jobset_id:      jobset.id,
     commit_hash:    commit_hash.clone(),
     pr_number:      None,
     pr_head_branch: None,
     pr_base_branch: None,
     pr_action:      None,
-  })
-  .await
-  {
+  };
+
+  let eval_result = if jobset.trigger_mode == JobsetTriggerMode::Interval {
+    repo::evaluations::create_interval(pool, create_eval).await
+  } else {
+    repo::evaluations::create_running_source_change(pool, create_eval).await
+  };
+
+  let eval = match eval_result {
     Ok(eval) => eval,
     Err(CiError::Conflict(_)) => {
       tracing::info!(
@@ -575,6 +611,22 @@ async fn evaluate_jobset(
            jobset={} commit={}",
           jobset.name, commit_hash
         );
+      } else if existing.status == EvaluationStatus::Running {
+        tracing::info!(
+          jobset = %jobset.name,
+          commit = %commit_hash,
+          eval_id = %existing.id,
+          "Evaluation is already running, skipping duplicate poll"
+        );
+        if let Err(e) =
+          repo::jobsets::update_last_checked(pool, jobset.id).await
+        {
+          tracing::warn!(
+            jobset = %jobset.name,
+            "Failed to update last_checked_at: {e}"
+          );
+        }
+        return Ok(());
       }
       existing
     },
@@ -866,6 +918,10 @@ async fn sync_repo_declarative_config(
 
   for js in &config.jobsets {
     let state = js.state.as_deref().map(JobsetState::from_config_str);
+    let trigger_mode = js
+      .trigger_mode
+      .as_deref()
+      .map(JobsetTriggerMode::from_config_str);
 
     let input = CreateJobset {
       project_id,
@@ -874,6 +930,7 @@ async fn sync_repo_declarative_config(
       enabled: Some(js.enabled),
       flake_mode: Some(js.flake_mode),
       check_interval: Some(js.check_interval),
+      trigger_mode,
       branch: js.branch.clone(),
       scheduling_shares: Some(js.scheduling_shares),
       state,

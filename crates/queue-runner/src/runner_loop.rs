@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use circus_common::{
   config::HotConfig,
-  models::{Build, BuildStatus, JobsetState},
+  models::{Build, BuildStatus, EvaluationTriggerKind, JobsetState},
   repo,
 };
 use sqlx::PgPool;
@@ -56,6 +56,20 @@ async fn get_project_for_build(
   let jobset = repo::jobsets::get(pool, eval.jobset_id).await.ok()?;
   let project = repo::projects::get(pool, jobset.project_id).await.ok()?;
   Some((project, eval.commit_hash))
+}
+
+async fn is_interval_rebuild(pool: &PgPool, build: &Build) -> bool {
+  match repo::evaluations::get(pool, build.evaluation_id).await {
+    Ok(eval) => eval.trigger_kind == EvaluationTriggerKind::Interval,
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build.id,
+        evaluation_id = %build.evaluation_id,
+        "Failed to load evaluation trigger kind: {e}"
+      );
+      false
+    },
+  }
 }
 
 /// Main queue runner loop. Polls for pending builds and dispatches them to
@@ -114,6 +128,8 @@ pub async fn run(
           tracing::info!("Found {} pending builds", builds.len());
         }
         for build in builds {
+          let interval_rebuild = is_interval_rebuild(&pool, &build).await;
+
           // Aggregate builds: check if all constituents are done
           if build.is_aggregate {
             match repo::build_dependencies::all_deps_completed(&pool, build.id)
@@ -178,40 +194,46 @@ pub async fn run(
           }
 
           // Derivation deduplication: reuse result if same drv was already
-          // built
-          match repo::builds::get_completed_by_drv_path(&pool, &build.drv_path)
+          // built. Interval rebuilds explicitly bypass this so the queued run
+          // reaches a builder instead of becoming an immediate cached success.
+          if !interval_rebuild {
+            match repo::builds::get_completed_by_drv_path(
+              &pool,
+              &build.drv_path,
+            )
             .await
-          {
-            Ok(Some(existing)) if existing.id != build.id => {
-              tracing::info!(
-                  build_id = %build.id,
-                  existing_id = %existing.id,
-                  drv = %build.drv_path,
-                  "Dedup: reusing result from existing build"
-              );
-              if let Err(e) = repo::builds::start(&pool, build.id).await {
-                tracing::warn!(build_id = %build.id, "Failed to start dedup build: {e}");
-              }
-              if let Err(e) = repo::builds::complete(
-                &pool,
-                build.id,
-                BuildStatus::Succeeded,
-                existing.log_path.as_deref(),
-                existing.build_output_path.as_deref(),
-                None,
-              )
-              .await
-              {
-                tracing::warn!(build_id = %build.id, "Failed to complete dedup build: {e}");
-              }
-              continue;
-            },
-            _ => {},
+            {
+              Ok(Some(existing)) if existing.id != build.id => {
+                tracing::info!(
+                    build_id = %build.id,
+                    existing_id = %existing.id,
+                    drv = %build.drv_path,
+                    "Dedup: reusing result from existing build"
+                );
+                if let Err(e) = repo::builds::start(&pool, build.id).await {
+                  tracing::warn!(build_id = %build.id, "Failed to start dedup build: {e}");
+                }
+                if let Err(e) = repo::builds::complete(
+                  &pool,
+                  build.id,
+                  BuildStatus::Succeeded,
+                  existing.log_path.as_deref(),
+                  existing.build_output_path.as_deref(),
+                  None,
+                )
+                .await
+                {
+                  tracing::warn!(build_id = %build.id, "Failed to complete dedup build: {e}");
+                }
+                continue;
+              },
+              _ => {},
+            }
           }
 
           // FOD store check: if the output already exists in the Nix store,
           // mark as succeeded without running the full build.
-          let fod_output = if build.is_fod {
+          let fod_output = if build.is_fod && !interval_rebuild {
             if let Some(cached) = fod_output_cache.get(&build.drv_path) {
               cached.clone()
             } else {
@@ -258,7 +280,8 @@ pub async fn run(
           }
 
           // Failed paths cache: skip known-failing derivations
-          if failed_paths_cache
+          if !interval_rebuild
+            && failed_paths_cache
             && matches!(
               repo::failed_paths_cache::is_cached_failure(
                 &pool,
