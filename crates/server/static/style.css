@@ -323,6 +323,34 @@ h3 {
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
 }
+
+.announcement-stack {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.announcement-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1rem;
+  background: var(--accent-bg);
+  border: 1px solid rgb(99 102 241 / 0.25);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+}
+.announcement-banner h2 {
+  margin: 0 0 0.25rem;
+}
+.announcement-banner time {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+.announcement-content {
+  color: var(--fg-secondary);
+  white-space: pre-wrap;
+}
 .split-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -428,6 +456,63 @@ tbody tr:hover {
 
 .table-responsive {
   overflow-x: auto;
+}
+
+.job-history-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.job-history-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.job-history-toolbar input {
+  height: 2rem;
+  min-width: 18rem;
+  padding: 0 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+}
+.job-history-wrap {
+  max-height: 70vh;
+}
+.job-history-table {
+  width: max-content;
+  min-width: 100%;
+}
+.job-history-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.job-history-name {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  min-width: 18rem;
+  background: var(--surface);
+}
+th.job-history-name {
+  background: var(--bg-subtle);
+}
+.job-history-eval {
+  min-width: 6.5rem;
+  white-space: nowrap;
+}
+.job-history-cell {
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* Badges / Status */
@@ -1163,6 +1248,16 @@ details summary:hover {
   }
   .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+  .announcement-banner {
+    flex-direction: column;
+  }
+  .job-history-toolbar {
+    align-items: stretch;
+  }
+  .job-history-toolbar input {
+    min-width: 0;
+    width: 100%;
   }
   .metrics-grid {
     grid-template-columns: 1fr;
