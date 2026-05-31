@@ -422,8 +422,11 @@ in
               '    packages.x86_64-linux.decl-hello = derivation {\n'
               '      name = "circus-decl-hello";\n'
               '      system = "x86_64-linux";\n'
-              '      builder = "/bin/sh";\n'
-              '      args = [ "-c" "echo decl-hello > $out" ];\n'
+              '      builder = "builtin:fetchurl";\n'
+              '      url = "file://''${builtins.toFile "circus-decl-hello.txt" "decl-hello\\n"}";\n'
+              '      outputHashMode = "flat";\n'
+              '      outputHashAlgo = "sha256";\n'
+              '      outputHash = "sha256-ylOjsPfiNcq4JP6ymjuznSWCOexiNs04HYyDSAM6nxg=";\n'
               "    };\n"
               "  };\n"
               "}\n"
