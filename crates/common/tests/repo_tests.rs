@@ -321,6 +321,52 @@ async fn test_interval_evaluations_can_repeat_commit() {
 }
 
 #[tokio::test]
+async fn test_hidden_evaluations_are_filtered_from_default_lists() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "hidden-eval").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  repo::evaluations::set_hidden(&pool, eval.id, true)
+    .await
+    .expect("hide evaluation");
+
+  let visible =
+    repo::evaluations::list_filtered(&pool, Some(jobset.id), None, 10, 0)
+      .await
+      .expect("list visible evaluations");
+  assert!(!visible.iter().any(|e| e.id == eval.id));
+
+  let with_hidden = repo::evaluations::list_filtered_with_visibility(
+    &pool,
+    Some(jobset.id),
+    None,
+    10,
+    0,
+    true,
+  )
+  .await
+  .expect("list evaluations including hidden");
+  assert!(with_hidden.iter().any(|e| e.id == eval.id && e.hidden));
+
+  assert!(
+    repo::evaluations::get_visible(&pool, eval.id, false)
+      .await
+      .is_err()
+  );
+  assert!(
+    repo::evaluations::get_visible(&pool, eval.id, true)
+      .await
+      .is_ok()
+  );
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
 async fn test_evaluation_and_build_lifecycle() {
   let Some(pool) = get_pool().await else {
     return;

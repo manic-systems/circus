@@ -150,7 +150,8 @@ pub fn document() -> Value {
             "commit_hash":     { "type": "string" },
             "evaluation_time": { "$ref": "#/components/schemas/Timestamp" },
             "status":          { "type": "string" },
-            "trigger_kind":    { "type": "string", "enum": ["source_change", "manual", "interval"] }
+            "trigger_kind":    { "type": "string", "enum": ["source_change", "manual", "interval"] },
+            "hidden":          { "type": "boolean" }
           }
         },
         "Channel": {

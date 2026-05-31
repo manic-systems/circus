@@ -133,6 +133,27 @@ pub async fn get(pool: &PgPool, id: Uuid) -> Result<Evaluation> {
     .ok_or_else(|| CiError::NotFound(format!("Evaluation {id} not found")))
 }
 
+/// Get an evaluation by ID, optionally allowing hidden rows.
+///
+/// # Errors
+///
+/// Returns error if database query fails or evaluation not found.
+pub async fn get_visible(
+  pool: &PgPool,
+  id: Uuid,
+  include_hidden: bool,
+) -> Result<Evaluation> {
+  sqlx::query_as::<_, Evaluation>(
+    "SELECT * FROM evaluations WHERE id = $1 AND ($2::boolean OR hidden = \
+     false)",
+  )
+  .bind(id)
+  .bind(include_hidden)
+  .fetch_optional(pool)
+  .await?
+  .ok_or_else(|| CiError::NotFound(format!("Evaluation {id} not found")))
+}
+
 /// List all evaluations for a jobset.
 ///
 /// # Errors
@@ -165,15 +186,33 @@ pub async fn list_filtered(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Evaluation>> {
+  list_filtered_with_visibility(pool, jobset_id, status, limit, offset, false)
+    .await
+}
+
+/// List evaluations with optional filters, optionally including hidden rows.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_filtered_with_visibility(
+  pool: &PgPool,
+  jobset_id: Option<Uuid>,
+  status: Option<&str>,
+  limit: i64,
+  offset: i64,
+  include_hidden: bool,
+) -> Result<Vec<Evaluation>> {
   sqlx::query_as::<_, Evaluation>(
     "SELECT * FROM evaluations WHERE ($1::uuid IS NULL OR jobset_id = $1) AND \
-     ($2::text IS NULL OR status = $2) ORDER BY evaluation_time DESC LIMIT $3 \
-     OFFSET $4",
+     ($2::text IS NULL OR status = $2) AND ($5::boolean OR hidden = false) \
+     ORDER BY evaluation_time DESC LIMIT $3 OFFSET $4",
   )
   .bind(jobset_id)
   .bind(status)
   .bind(limit)
   .bind(offset)
+  .bind(include_hidden)
   .fetch_all(pool)
   .await
   .map_err(CiError::Database)
@@ -189,16 +228,56 @@ pub async fn count_filtered(
   jobset_id: Option<Uuid>,
   status: Option<&str>,
 ) -> Result<i64> {
+  count_filtered_with_visibility(pool, jobset_id, status, false).await
+}
+
+/// Count evaluations matching filter criteria, optionally including hidden
+/// rows.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn count_filtered_with_visibility(
+  pool: &PgPool,
+  jobset_id: Option<Uuid>,
+  status: Option<&str>,
+  include_hidden: bool,
+) -> Result<i64> {
   let row: (i64,) = sqlx::query_as(
     "SELECT COUNT(*) FROM evaluations WHERE ($1::uuid IS NULL OR jobset_id = \
-     $1) AND ($2::text IS NULL OR status = $2)",
+     $1) AND ($2::text IS NULL OR status = $2) AND ($3::boolean OR hidden = \
+     false)",
   )
   .bind(jobset_id)
   .bind(status)
+  .bind(include_hidden)
   .fetch_one(pool)
   .await
   .map_err(CiError::Database)?;
   Ok(row.0)
+}
+
+/// Hide or unhide an evaluation in dashboard listings.
+///
+/// Hidden evaluations remain in the database and continue to count for build
+/// history, but non-admin dashboard/API views omit them.
+///
+/// # Errors
+///
+/// Returns error if database update fails or evaluation not found.
+pub async fn set_hidden(
+  pool: &PgPool,
+  id: Uuid,
+  hidden: bool,
+) -> Result<Evaluation> {
+  sqlx::query_as::<_, Evaluation>(
+    "UPDATE evaluations SET hidden = $1 WHERE id = $2 RETURNING *",
+  )
+  .bind(hidden)
+  .bind(id)
+  .fetch_optional(pool)
+  .await?
+  .ok_or_else(|| CiError::NotFound(format!("Evaluation {id} not found")))
 }
 
 /// Atomically transition an evaluation from `pending` to `running`.

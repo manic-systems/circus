@@ -21,6 +21,15 @@ use uuid::Uuid;
 
 use crate::{auth_middleware::RequireRoles, error::ApiError, state::AppState};
 
+fn extensions_is_admin(extensions: &Extensions) -> bool {
+  if let Some(user) = extensions.get::<circus_common::models::User>() {
+    return user.role == "admin";
+  }
+  extensions
+    .get::<circus_common::models::ApiKey>()
+    .is_some_and(|key| key.role == "admin")
+}
+
 #[derive(Debug, Deserialize)]
 struct ListEvaluationsParams {
   jobset_id: Option<Uuid>,
@@ -32,26 +41,30 @@ struct ListEvaluationsParams {
 async fn list_evaluations(
   State(state): State<AppState>,
   Query(params): Query<ListEvaluationsParams>,
+  extensions: Extensions,
 ) -> Result<Json<PaginatedResponse<Evaluation>>, ApiError> {
+  let include_hidden = extensions_is_admin(&extensions);
   let pagination = PaginationParams {
     limit:  params.limit,
     offset: params.offset,
   };
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let items = circus_common::repo::evaluations::list_filtered(
+  let items = circus_common::repo::evaluations::list_filtered_with_visibility(
     &state.pool,
     params.jobset_id,
     params.status.as_deref(),
     limit,
     offset,
+    include_hidden,
   )
   .await
   .map_err(ApiError)?;
-  let total = circus_common::repo::evaluations::count_filtered(
+  let total = circus_common::repo::evaluations::count_filtered_with_visibility(
     &state.pool,
     params.jobset_id,
     params.status.as_deref(),
+    include_hidden,
   )
   .await
   .map_err(ApiError)?;
@@ -66,10 +79,15 @@ async fn list_evaluations(
 async fn get_evaluation(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
+  extensions: Extensions,
 ) -> Result<Json<Evaluation>, ApiError> {
-  let evaluation = circus_common::repo::evaluations::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let evaluation = circus_common::repo::evaluations::get_visible(
+    &state.pool,
+    id,
+    extensions_is_admin(&extensions),
+  )
+  .await
+  .map_err(ApiError)?;
   Ok(Json(evaluation))
 }
 
