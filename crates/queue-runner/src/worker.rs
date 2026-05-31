@@ -18,6 +18,7 @@ use circus_common::{
     BuildStatus,
     CreateBuildProduct,
     CreateBuildStep,
+    EvaluationTriggerKind,
     metric_names,
     metric_units,
   },
@@ -262,6 +263,31 @@ async fn get_project_for_build(
   let jobset = repo::jobsets::get(pool, eval.jobset_id).await.ok()?;
   let project = repo::projects::get(pool, jobset.project_id).await.ok()?;
   Some((project, eval.commit_hash))
+}
+
+async fn is_interval_rebuild(pool: &PgPool, build: &Build) -> bool {
+  match repo::evaluations::get(pool, build.evaluation_id).await {
+    Ok(eval) => eval.trigger_kind == EvaluationTriggerKind::Interval,
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build.id,
+        evaluation_id = %build.evaluation_id,
+        "Failed to load evaluation trigger kind: {e}"
+      );
+      false
+    },
+  }
+}
+
+fn nix_args_for_build(
+  base_args: &[String],
+  interval_rebuild: bool,
+) -> Vec<String> {
+  let mut args = base_args.to_vec();
+  if interval_rebuild && !args.iter().any(|arg| arg == "--rebuild") {
+    args.push("--rebuild".to_string());
+  }
+  args
 }
 
 async fn dispatch_build_finished_notification(
@@ -929,6 +955,10 @@ async fn run_build(
     &normalized_drv_path
   };
 
+  let interval_rebuild = is_interval_rebuild(pool, build).await;
+  let build_extra_nix_args =
+    nix_args_for_build(&extra_nix_args, interval_rebuild);
+
   // Dispatch build started notification
   if let Some((project, commit_hash)) =
     get_project_for_build(pool, &claimed_build).await
@@ -949,7 +979,14 @@ async fn run_build(
   let step = repo::build_steps::create(pool, CreateBuildStep {
     build_id:    build.id,
     step_number: 1,
-    command:     format!("nix build --no-link --print-out-paths {drv_path}"),
+    command:     if build_extra_nix_args.is_empty() {
+      format!("nix build --no-link --print-out-paths {drv_path}")
+    } else {
+      format!(
+        "nix build --no-link --print-out-paths {} {drv_path}",
+        build_extra_nix_args.join(" ")
+      )
+    },
   })
   .await?;
 
@@ -979,7 +1016,7 @@ async fn run_build(
       psi_threshold,
       heartbeat_ttl,
       &scheduling_strategy,
-      &extra_nix_args,
+      &build_extra_nix_args,
       cache_upload_enabled_s3,
       &cache_upload_config.compression,
     )
@@ -997,7 +1034,7 @@ async fn run_build(
       psi_threshold,
       psi_check_timeout,
       &psi_cache,
-      &extra_nix_args,
+      &build_extra_nix_args,
     )
     .await
     {
@@ -1008,7 +1045,7 @@ async fn run_build(
         work_dir,
         timeout,
         Some(&live_log_path),
-        &extra_nix_args,
+        &build_extra_nix_args,
       )
       .await
     }
@@ -1018,7 +1055,7 @@ async fn run_build(
       work_dir,
       timeout,
       Some(&live_log_path),
-      &extra_nix_args,
+      &build_extra_nix_args,
     )
     .await
   };
@@ -1424,5 +1461,23 @@ mod tests {
     assert!(result.contains("use-path-style=true"));
     // Verify params are joined with &
     assert_eq!(result.matches('&').count(), 2);
+  }
+
+  #[test]
+  fn test_nix_args_for_interval_rebuild_adds_rebuild() {
+    let args = nix_args_for_build(&["--print-build-logs".to_string()], true);
+    assert_eq!(args, vec!["--print-build-logs", "--rebuild"]);
+  }
+
+  #[test]
+  fn test_nix_args_for_interval_rebuild_does_not_duplicate() {
+    let args = nix_args_for_build(&["--rebuild".to_string()], true);
+    assert_eq!(args, vec!["--rebuild"]);
+  }
+
+  #[test]
+  fn test_nix_args_for_source_build_keeps_base_args() {
+    let args = nix_args_for_build(&["--print-build-logs".to_string()], false);
+    assert_eq!(args, vec!["--print-build-logs"]);
   }
 }
