@@ -457,6 +457,8 @@ fn build_s3_store_uri(
   let Some(cfg) = config else {
     return base_uri.to_string();
   };
+  let base_uri =
+    circus_common::s3::s3_store_uri_with_prefix(base_uri, Some(cfg));
 
   let mut params: Vec<(&str, &str)> = Vec::new();
 
@@ -473,7 +475,7 @@ fn build_s3_store_uri(
   }
 
   if params.is_empty() {
-    return base_uri.to_string();
+    return base_uri;
   }
 
   let query = params
@@ -485,6 +487,19 @@ fn build_s3_store_uri(
     .join("&");
 
   format!("{base_uri}?{query}")
+}
+
+fn presigned_s3_upload_available(config: &CacheUploadConfig) -> bool {
+  if !config.enabled {
+    return false;
+  }
+  let Some(store_uri) = config.store_uri.as_deref() else {
+    return false;
+  };
+  let Some(s3_config) = config.s3.as_ref() else {
+    return false;
+  };
+  circus_common::s3::Presigner::from_config(store_uri, s3_config).is_some()
 }
 
 /// Dispatch the build to a connected agent if one matches. Returns
@@ -631,11 +646,10 @@ async fn try_agent_dispatch(
 
   for (meta, snap) in candidates {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    // Honour the runner's cache-upload config: a configured S3 store_uri
-    // (`s3://bucket`) flips the agent into the presigned-upload path
-    // post-build. Other store types continue to use the existing
-    // post-build `nix copy --to ...` flow. The compression the agent
-    // applies is whatever the runner advertises so the narinfo matches.
+    // Honour the runner's cache-upload config: only a fully presignable S3
+    // store flips the agent into the presigned-upload path post-build. Other
+    // store types, or S3 configs without explicit signing credentials, continue
+    // to use the existing post-build `nix copy --to ...` flow.
     let presigned_upload = cache_upload_enabled_s3.then(|| {
       crate::rpc::pool::PresignedUpload {
         compression: cache_upload_compression.to_owned(),
@@ -1019,11 +1033,8 @@ async fn run_build(
   // The agent path is preferred because heartbeats give the runner live
   // load + PSI; the SSH path is a fallback for hosts that do not run
   // `circus-agent`.
-  let cache_upload_enabled_s3 = cache_upload_config.enabled
-    && cache_upload_config
-      .store_uri
-      .as_deref()
-      .is_some_and(|u| u.starts_with("s3://"));
+  let cache_upload_enabled_s3 =
+    presigned_s3_upload_available(cache_upload_config);
   let result = if let Some(system) = build.system.as_deref() {
     if let Some(r) = try_agent_dispatch(
       &agent_pool,
@@ -1427,7 +1438,7 @@ async fn run_build(
 
 #[cfg(test)]
 mod tests {
-  use circus_common::config::S3CacheConfig;
+  use circus_common::config::{CacheUploadConfig, S3CacheConfig};
 
   use super::*;
 
@@ -1452,6 +1463,39 @@ mod tests {
     };
     let result = build_s3_store_uri("s3://my-bucket", Some(&cfg));
     assert_eq!(result, "s3://my-bucket?region=us-east-1");
+  }
+
+  #[test]
+  fn test_build_s3_store_uri_with_prefix() {
+    let cfg = S3CacheConfig {
+      prefix: Some("nix-cache".to_string()),
+      ..Default::default()
+    };
+    let result = build_s3_store_uri("s3://my-bucket/root", Some(&cfg));
+    assert_eq!(result, "s3://my-bucket/root/nix-cache");
+  }
+
+  #[test]
+  fn test_presigned_s3_upload_requires_explicit_credentials() {
+    let missing_credentials = CacheUploadConfig {
+      enabled: true,
+      store_uri: Some("s3://my-bucket".to_string()),
+      s3: Some(S3CacheConfig::default()),
+      ..Default::default()
+    };
+    assert!(!presigned_s3_upload_available(&missing_credentials));
+
+    let ready = CacheUploadConfig {
+      enabled: true,
+      store_uri: Some("s3://my-bucket".to_string()),
+      s3: Some(S3CacheConfig {
+        access_key_id: Some("AKIA".to_string()),
+        secret_access_key: Some("secret".to_string()),
+        ..Default::default()
+      }),
+      ..Default::default()
+    };
+    assert!(presigned_s3_upload_available(&ready));
   }
 
   #[test]

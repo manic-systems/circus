@@ -113,6 +113,25 @@ pub async fn get_by_hash_part(
   .ok_or_else(|| CiError::NotFound(format!("narinfo for hash {hash_part}")))
 }
 
+/// Lookup by the narinfo `URL` field, e.g. `nar/<hash>.nar.zst`.
+///
+/// This is used by the server's `/nix-cache/nar/...` route to resolve NARs
+/// uploaded by agents through the presigned S3 flow.
+///
+/// # Errors
+/// Same as [`get`].
+pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
+  sqlx::query_as::<_, NarInfo>(
+    "SELECT * FROM narinfo_cache WHERE url = $1 ORDER BY updated_at DESC \
+     LIMIT 1",
+  )
+  .bind(url)
+  .fetch_optional(pool)
+  .await
+  .map_err(CiError::Database)?
+  .ok_or_else(|| CiError::NotFound(format!("narinfo for URL {url}")))
+}
+
 /// Total rows. Cheap for admin and metrics surfaces.
 ///
 /// # Errors

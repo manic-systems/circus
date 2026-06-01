@@ -17,6 +17,7 @@ pub mod repo;
 pub mod bootstrap;
 pub mod nix_probe;
 pub mod roles;
+pub mod s3;
 pub mod service_heartbeat;
 pub mod tracing_init;
 pub mod validate;

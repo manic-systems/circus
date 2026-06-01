@@ -1,13 +1,14 @@
 use std::{
   pin::Pin,
   task::{Context, Poll},
+  time::Duration,
 };
 
 use axum::{
   Router,
   body::Body,
   extract::{Path, State},
-  http::StatusCode,
+  http::{HeaderValue, StatusCode, header},
   response::{IntoResponse, Response},
   routing::get,
 };
@@ -17,6 +18,9 @@ use tokio::{
 };
 
 use crate::{error::ApiError, state::AppState};
+
+const S3_GET_PRESIGN_EXPIRY: Duration = Duration::from_hours(1);
+const MAX_NAR_OBJECT_NAME_LEN: usize = 512;
 
 /// Extract the first path info entry from `nix path-info --json` output,
 /// handling both the old array format (`[{"path":...}]`) and the new
@@ -283,6 +287,57 @@ fn render_narinfo_row(
   s
 }
 
+fn uploaded_nar_presigner(
+  config: &circus_common::config::Config,
+) -> Option<circus_common::s3::Presigner> {
+  let uri = config.cache_upload.store_uri.as_deref()?;
+  let s3 = config.cache_upload.s3.as_ref()?;
+  circus_common::s3::Presigner::from_config(uri, s3)
+}
+
+fn is_valid_nar_object_name(name: &str) -> bool {
+  !name.is_empty()
+    && name.len() <= MAX_NAR_OBJECT_NAME_LEN
+    && name.contains(".nar")
+    && name.bytes().all(|b| {
+      matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.')
+    })
+}
+
+async fn redirect_uploaded_nar(
+  state: &AppState,
+  object_name: &str,
+) -> Result<Option<Response>, ApiError> {
+  if !is_valid_nar_object_name(object_name) {
+    return Ok(None);
+  }
+
+  let url = format!("nar/{object_name}");
+  match circus_common::repo::narinfo_cache::get_by_url(&state.pool, &url).await
+  {
+    Ok(row) => {
+      let Some(presigner) = uploaded_nar_presigner(&state.config) else {
+        tracing::warn!(
+          url = %row.url,
+          "uploaded NAR exists but cache_upload S3 presigning is not configured"
+        );
+        return Ok(Some(StatusCode::NOT_FOUND.into_response()));
+      };
+
+      let signed_url = presigner.presign_get(&row.url, S3_GET_PRESIGN_EXPIRY);
+      let Ok(location) = HeaderValue::from_str(&signed_url) else {
+        tracing::warn!(url = %row.url, "failed to construct S3 redirect URL");
+        return Ok(Some(StatusCode::NOT_FOUND.into_response()));
+      };
+      let mut response = StatusCode::TEMPORARY_REDIRECT.into_response();
+      response.headers_mut().insert(header::LOCATION, location);
+      Ok(Some(response))
+    },
+    Err(circus_common::CiError::NotFound(_)) => Ok(None),
+    Err(e) => Err(ApiError(e)),
+  }
+}
+
 /// Sign narinfo using nix store sign command
 async fn sign_narinfo(narinfo: &str, key_file: &std::path::Path) -> String {
   let store_path = narinfo
@@ -441,6 +496,8 @@ async fn serve_nar_combined(
     Option<(&'static str, &'static [&'static str])>,
   ) = if let Some(s) = hash.strip_suffix(".nar.zst") {
     (s, "application/zstd", Some(("zstd", &["-c"])))
+  } else if let Some(s) = hash.strip_suffix(".nar.gz") {
+    (s, "application/gzip", Some(("gzip", &["-c"])))
   } else if let Some(s) = hash.strip_suffix(".nar.bz2") {
     (s, "application/x-bzip2", Some(("bzip2", &["-c"])))
   } else if let Some(s) = hash.strip_suffix(".nar.br") {
@@ -452,6 +509,10 @@ async fn serve_nar_combined(
   } else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
+
+  if let Some(response) = redirect_uploaded_nar(&state, &hash).await? {
+    return Ok(response);
+  }
 
   if !circus_common::validate::is_valid_nix_hash(stripped) {
     return Ok(StatusCode::NOT_FOUND.into_response());
