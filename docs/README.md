@@ -1,35 +1,49 @@
 # Circus
 
 [design document]: ./DESIGN.md
+[Hydra]: https://github.com/nixos/hydra
+[discussions tab]: https://github.com/manic-systems/circus/discussions/landing
 
-Circus is a Rust-based continuous integration system built from the ground up
-for Nix-based projects with quick, easy deployments and long-term reliability in
-mind with a special emphasis on declarative configuration and distributed builds
-for mortals. It follows Hydra's three-daemon architecture while addressing its
-operational pain points: performance, maintainability, and declarative
-configuration.
+Circus is a fast, modular continuous integration system built from the ground up
+in Rust for Nix-based projects for quick, easy deployments for mortals and
+long-term reliability in mind with a special emphasis on declarative
+configuration, and robust distributed builds without any fuss. It used to follow
+[Hydra]'s three-daemon architecture, but the design has diverged since. Still,
+Circus addresses the original pain points with Hydra in the areas of
+performance, maintainability, and easy, declarative setups.
+
+Our goal with Circus is to have an "all in one" Nix CI option that can be
+maintained long-term with ease, and without compromising from performance while
+allowing deployed anywhere, anytime _without friction_ for any user or team of
+any size. Feature requests, feedback and constructive criticism are welcome in
+preparing Circus for long-term adoption. If you feel overwhelmed by the
+documentation at any time, please head to the [discussions tab] to ask your
+questions directly.
 
 > [!NOTE]
-> Until 1.0.0 is tagged and released, Circus should be considered _heavily work
-> in progress_. As you'll appreciate it's not very simple to build a futureproof
-> CI system, and documentation is still lacking in some areas until we have the
-> time to sit down and apply the polish it deserves. So to the answer to your
-> burning question of _"should I deploy this in production"_ is a very big
-> _maybe_. _Yes_, this is going to be good. _No_, it's not quite there yet.
+> Until 1.0.0 is tagged and released (or, alternatively, this note is removed),
+> Circus should be considered **heavily work in progress**. As you'll appreciate
+> it is _not very easy_ to build a futureproof CI system, and documentation is
+> still lacking in some areas until we have the time to sit down and apply the
+> polish it deserves. So to the answer to your burning question of _"should I
+> deploy this in production"_ is a very big _maybe_. _Yes_, this is going to be
+> good. _No_, it's not quite there yet. We would, however, be delighted to
+> receive your feedback and bug reports.
 >
 > Please create an issue if you notice an obvious inaccuracy or a critical error
 > that breaks your setup. While we cannot guarantee a quick response, we would
 > appreciate the heads-up. PRs are also very welcome for issues that you've
 > noticed, and would like to fix.
 
-The project is named "Circus" because it has "CI" in the name, and well, CI is
-for clowns. Hope this answers your other question.
+The project is named "Circus" because it has "CI" in the name, and well, _CI is
+for clowns_. Hope this answers your other burning question.
 
 ## Architecture
 
-Circus follows Hydra's three-daemon model with a shared PostgreSQL database. The
-server handles the API and dashboard, the evaluator polls repositories and runs
-Nix evaluations, and the queue-runner dispatches builds to workers. See the
+Circus, after everything, Hydra's three-daemon model (with the addition of
+optional distributed agents) with a shared PostgreSQL database. The server
+handles the API and dashboard, the evaluator polls repositories and runs Nix
+evaluations, and the queue-runner dispatches builds to workers. See the
 [design document] for architectural details, data flow, and how the pieces fit
 together.
 
@@ -50,763 +64,101 @@ together.
 - **xtask** (`xtask`): Developer tooling (API docs generation and route drift
   checks)
 
-## Quick Start
+## Documentation
 
-1. Enter dev shell and start PostgreSQL:
+[INSTALL.md]: ./INSTALL.md
+[USAGE.md]: ./USAGE.md
+[DISTRIBUTED.md]: ./DISTRIBUTED.md
 
-   ```bash
-   nix develop
-   initdb -D /tmp/circus-pg
-   pg_ctl -D /tmp/circus-pg start
-   createuser circus
-   createdb -O circus circus
-   ```
+[COMPARISON.md]
 
-2. Run migrations:
+Circus documentation is split into different documents, detailing different
+aspects of its usage. Quickstart options, demo VM usage, configuration, database
+setup, NixOS module usage, authentication bootstrapping, monitoring, backup and
+source installation instructions for local testing live in the [INSTALL.md]
+document. You may also find general, day-to-day usage for end users and
+administrators in [USAGE.md]. Additionally, protocol overview and usage
+instructions for _distributed_ build setups as an **experimental** feature of
+Circus can be found in [DISTRIBUTED.md].
 
-   ```bash
-   cargo run --bin circus-migrate -- up postgresql://circus@localhost/circus
-   ```
+For developers (and more technically inclined users) a design overview is
+maintained at [DESIGN.md], which contains architechture, data flow, rationale
+and more. If you're interested in a comparison, [COMPARISON.md] holds a somewhat
+up-to-date document detailing the weaknesses and strengths of Circus compared to
+Hydra. Worth noting that Hydra has picked up steam again, and evolved since the
+time of writing for this document.
 
-3. Start the server:
+- [API.md](./API.md): generated REST API endpoint reference. Running servers
+  also expose the same machine-readable OpenAPI document at
+  `/api/v1/openapi.json`.
 
-   ```bash
-   CIRCUS_DATABASE__URL=postgresql://circus@localhost/circus cargo run --bin circus-server
-   ```
+Please create an issue if you notice inaccuracies, or have some questions that
+you think is worth answering in the documentation for future reference.
 
-4. Open `http://localhost:3000` in your browser.
+## Hacking
 
-## Demo VM
+Circus is built with Rust, using 1.95.0 and 2024 edition features. For an
+optimal development experience, using Nix is your best bet. The
+[Nix flake](../flake.nix) contains a development shell providing the necessary
+toolchain. For a consistent experience, Nix is encouraged. Otherwise ensure that
+you have at least Rust 1.95.0.
 
-A self-contained NixOS VM is available for trying Circus without any manual
-setup. It runs `circus-server` with PostgreSQL, seeds demo API keys, and
-forwards port 3000 to the host.
+### Building Circus
 
-### Running
-
-```bash
-# Build the demo VM
-$ nix build .#demo-vm
-
-# Run the demo VM
-$ ./result/bin/run-circus-demo-vm
-```
-
-The VM boots to a serial console (no graphical display). Once the boot
-completes, the server is reachable from your host at `http://localhost:3000`.
-
-### Pre-seeded Credentials
-
-To make the testing process easier, an admin key and a read-only API key are
-pre-seeded in the demo VM. This should let you test a majority of features
-without having to set up an account each time you spin up your VM.
-
-| Key                        | Role        | Use for                      |
-| -------------------------- | ----------- | ---------------------------- |
-| `circus_demo_admin_key`    | `admin`     | Full access, dashboard login |
-| `circus_demo_readonly_key` | `read-only` | Read-only API access         |
-
-Log in to the dashboard at `http://localhost:3000/login` using the admin key.
-
-### Example Admin CLI Calls
-
-Circus is designed as a server, and the dashboard is a convenient wrapper around
-the API. For routine administration, prefer `circus-admin`; it provides tables,
-clear errors, and safer request construction than ad-hoc shell snippets.
-
-<!--markdownlint-disable MD013-->
+To build Circus, ensure you have the correct Rust version installed on your
+system. On systems with Nix, run `nix develop` or use the provided
+[Cade](https://github.com/manic-systems/cade) configuration:
 
 ```bash
-# Health check
-circus-admin --url http://localhost:3000 health
-
-# Use an admin key for privileged commands
-export CIRCUS_URL=http://localhost:3000
-export CIRCUS_API_KEY=circus_demo_admin_key
-
-# System status
-circus-admin status
-
-# Create a project
-circus-admin projects create \
-  --name my-project \
-  --repository-url https://github.com/NixOS/nixpkgs
-
-# List projects
-circus-admin projects list
-
-# Create an additional read-only API key
-circus-admin api-keys create --name readonly-demo --role read-only
+# Permit Cade to load the flake
+$ cade allow
 ```
 
-<!--markdownlint-enable MD013-->
-
-### Inside the VM
-
-The serial console auto-logs in as root. While in the VM, you may use the TTY
-access to investigate server logs or make API calls.
+Then proceed with the typical Rust workflow:
 
 ```bash
-# Useful commands:
-$ systemctl status circus-server
-$ journalctl -u circus-server -f      # Live server logs
-$ circus-admin health                 # Health status
-$ curl -sf localhost:3000/prometheus  # Prometheus metrics
+# Build all crates
+cargo build --workspace
+
+# Run all tests using cargo-nextest; it is provided by the dev shell
+cargo nextest run
+
+# Type-check only
+cargo check
 ```
 
-Press `Ctrl-a x` to shut down QEMU.
+Alternatively build and test a specific crate:
 
-### VM Options
-
-The VM uses QEMU user-mode networking. If port 3000 conflicts on your host, you
-can override the QEMU options:
+Build a specific crate:
 
 ```bash
-QEMU_NET_OPTS="hostfwd=tcp::8080-:3000" ./result/bin/run-circus-demo-vm
+# Build, e.g., circus-server:
+$ cargo build -p circus-server
+$ cargo nextest run -p circus-server
 ```
 
-This makes the dashboard available at `http://localhost:8080` instead.
-
-## Configuration
-
-Circus reads configuration from a TOML file with environment variable overrides.
-The override hierarchy is as follows:
-
-1. Compiled defaults
-2. `circus.toml` in working directory
-3. File at `CIRCUS_CONFIG_FILE` env var
-4. `CIRCUS_*` env vars (`__` as nested separator, e.g. `CIRCUS_DATABASE__URL`)
-
-See `circus.toml` in the repository root for the full schema with comments.
-
-### Configuration Reference
-
-A somewhat maintained list of configuration options. Might be outdated during
-development.
-
-<!--markdownlint-disable MD013 -->
-
-| Section         | Key                          | Default                                             | Description                                      |
-| --------------- | ---------------------------- | --------------------------------------------------- | ------------------------------------------------ |
-| `database`      | `url`                        | `postgresql://circus:password@localhost/circus`     | PostgreSQL connection URL                        |
-| `database`      | `max_connections`            | `20`                                                | Maximum connection pool size                     |
-| `database`      | `min_connections`            | `5`                                                 | Minimum idle connections                         |
-| `database`      | `connect_timeout`            | `30`                                                | Connection timeout (seconds)                     |
-| `database`      | `idle_timeout`               | `600`                                               | Idle connection timeout (seconds)                |
-| `database`      | `max_lifetime`               | `1800`                                              | Maximum connection lifetime (seconds)            |
-| `server`        | `host`                       | `127.0.0.1`                                         | HTTP listen address                              |
-| `server`        | `port`                       | `3000`                                              | HTTP listen port                                 |
-| `server`        | `request_timeout`            | `30`                                                | Per-request timeout (seconds)                    |
-| `server`        | `max_body_size`              | `10485760`                                          | Maximum request body size (10 MB)                |
-| `server`        | `api_key`                    | none                                                | Optional legacy API key (prefer DB keys)         |
-| `server`        | `cors_permissive`            | `false`                                             | Allow all CORS origins                           |
-| `server`        | `allowed_origins`            | `[]`                                                | Allowed CORS origins list                        |
-| `server`        | `force_secure_cookies`       | `false`                                             | Force Secure flag on cookies (HTTPS proxy)       |
-| `server`        | `rate_limit_rps`             | none                                                | Requests per second limit per IP                 |
-| `server`        | `rate_limit_burst`           | none                                                | Burst size for rate limiting                     |
-| `server`        | `allowed_url_schemes`        | `[]`                                                | Allowed URL schemes for repo URLs                |
-| `server`        | `ldap.url`                   | none                                                | LDAP server URL                                  |
-| `server`        | `ldap.bind_dn_template`      | none                                                | LDAP bind DN template (`{username}` placeholder) |
-| `server`        | `ldap.base_dn`               | none                                                | LDAP base DN for user searches                   |
-| `server`        | `ldap.tls_ca_cert`           | none                                                | Custom CA cert for LDAP TLS                      |
-| `server`        | `email_validation_regex`     | none                                                | Custom regex for email validation                |
-| `evaluator`     | `poll_interval`              | `60`                                                | Seconds between git poll cycles                  |
-| `evaluator`     | `git_timeout`                | `600`                                               | Git operation timeout (seconds)                  |
-| `evaluator`     | `nix_timeout`                | `1800`                                              | Nix evaluation timeout (seconds)                 |
-| `evaluator`     | `max_concurrent_evals`       | `4`                                                 | Maximum concurrent evaluations                   |
-| `evaluator`     | `work_dir`                   | `/tmp/circus-evaluator`                             | Working directory for clones                     |
-| `evaluator`     | `restrict_eval`              | `true`                                              | Pass `--option restrict-eval true` to Nix        |
-| `evaluator`     | `allow_ifd`                  | `false`                                             | Allow import-from-derivation                     |
-| `evaluator`     | `strict_errors`              | `false`                                             | Abort on first evaluation cycle error            |
-| `queue_runner`  | `workers`                    | `4`                                                 | Concurrent build slots                           |
-| `queue_runner`  | `poll_interval`              | `5`                                                 | Seconds between build queue polls                |
-| `queue_runner`  | `build_timeout`              | `3600`                                              | Per-build timeout (seconds)                      |
-| `queue_runner`  | `work_dir`                   | `/tmp/circus-queue-runner`                          | Working directory for builds                     |
-| `queue_runner`  | `strict_errors`              | `false`                                             | Abort on first runner loop error                 |
-| `queue_runner`  | `failed_paths_cache`         | `true`                                              | Cache failed derivation paths                    |
-| `queue_runner`  | `failed_paths_ttl`           | `86400`                                             | TTL for failed paths cache (seconds)             |
-| `queue_runner`  | `unsupported_timeout`        | none                                                | Timeout for unsupported system builds            |
-| `queue_runner`  | `scheduling_strategy`        | `speed_factor_only`                                 | Builder selection strategy                       |
-| `queue_runner`  | `psi_threshold`              | none                                                | PSI pressure threshold (skip builders)           |
-| `queue_runner`  | `psi_check_timeout`          | `5`                                                 | SSH PSI check timeout (seconds)                  |
-| `queue_runner`  | `extra_nix_build_args`       | `[]`                                                | Extra arguments passed to `nix build`            |
-| `queue_runner`  | `rpc.bind`                   | none                                                | Cap'n Proto RPC listen address                   |
-| `queue_runner`  | `rpc.auth_tokens`            | `[]`                                                | Valid authentication tokens for agents           |
-| `queue_runner`  | `rpc.max_connections`        | `16`                                                | Maximum concurrent agent connections             |
-| `queue_runner`  | `rpc.presign_expiry_secs`    | `3600`                                              | Presigned URL expiry (seconds)                   |
-| `queue_runner`  | `rpc.tls`                    | none                                                | TLS configuration for RPC endpoint               |
-| `queue_runner`  | `rpc.heartbeat_ttl_secs`     | `30`                                                | Agent heartbeat TTL before marking unavailable   |
-| `gc`            | `enabled`                    | `true`                                              | Manage GC roots for build outputs                |
-| `gc`            | `gc_roots_dir`               | `/nix/var/nix/gcroots/per-user/circus/circus-roots` | GC roots directory                               |
-| `gc`            | `max_age_days`               | `30`                                                | Remove GC roots older than N days                |
-| `gc`            | `cleanup_interval`           | `3600`                                              | GC cleanup interval (seconds)                    |
-| `logs`          | `log_dir`                    | `/var/lib/circus/logs`                              | Build log storage directory                      |
-| `logs`          | `compress`                   | `false`                                             | Compress stored logs                             |
-| `cache`         | `enabled`                    | `true`                                              | Serve a Nix binary cache at `/nix-cache/`        |
-| `cache`         | `secret_key_file`            | none                                                | Signing key for binary cache                     |
-| `cache`         | `compression`                | `zstd`                                              | NAR compression algorithm                        |
-| `cache`         | `cache_url`                  | none                                                | Public cache URL for channel manifests           |
-| `signing`       | `enabled`                    | `false`                                             | Sign build outputs                               |
-| `signing`       | `key_file`                   | none                                                | Signing key file path                            |
-| `cache_upload`  | `enabled`                    | `false`                                             | Upload builds to external cache store            |
-| `cache_upload`  | `store_uri`                  | none                                                | Cache store URI (`s3://bucket/path`)             |
-| `cache_upload`  | `s3.region`                  | none                                                | AWS region                                       |
-| `cache_upload`  | `s3.prefix`                  | none                                                | Path prefix within bucket                        |
-| `cache_upload`  | `s3.endpoint_url`            | none                                                | S3-compatible endpoint URL                       |
-| `cache_upload`  | `s3.use_path_style`          | `false`                                             | Use path-style addressing                        |
-| `cache_upload`  | `upload_concurrency`         | `4`                                                 | Concurrent uploads per build                     |
-| `cache_upload`  | `upload_max_retries`         | `3`                                                 | Max retry attempts per path                      |
-| `cache_upload`  | `fail_build_on_upload_error` | `false`                                             | Mark build failed on upload error                |
-| `notifications` | `webhook_url`                | none                                                | HTTP endpoint for build status JSON              |
-| `notifications` | `github_token`               | none                                                | GitHub token for commit status updates           |
-| `notifications` | `gitea_url`                  | none                                                | Gitea/Forgejo instance URL                       |
-| `notifications` | `gitea_token`                | none                                                | Gitea/Forgejo API token                          |
-| `notifications` | `gitlab_url`                 | none                                                | GitLab instance URL                              |
-| `notifications` | `gitlab_token`               | none                                                | GitLab API token                                 |
-| `notifications` | `enable_retry_queue`         | `true`                                              | Persistent retry queue with backoff              |
-| `notifications` | `max_retry_attempts`         | `5`                                                 | Max notification retry attempts                  |
-| `notifications` | `retention_days`             | `7`                                                 | Retention for completed notification tasks       |
-| `notifications` | `retry_poll_interval`        | `5`                                                 | Retry poll interval (seconds)                    |
-| `notifications` | `email.smtp_host`            | none                                                | SMTP host for email notifications                |
-| `notifications` | `email.smtp_port`            | none                                                | SMTP port                                        |
-| `notifications` | `email.smtp_user`            | none                                                | SMTP username (optional)                         |
-| `notifications` | `email.smtp_password`        | none                                                | SMTP password (optional)                         |
-| `notifications` | `email.tls`                  | `false`                                             | Enable TLS for SMTP connection                   |
-| `notifications` | `email.from_address`         | none                                                | From address for notification emails             |
-| `notifications` | `email.to_addresses`         | `[]`                                                | Recipient addresses                              |
-| `notifications` | `slack.webhook_url`          | none                                                | Slack incoming webhook URL                       |
-| `notifications` | `slack.on_failure_only`      | `false`                                             | Only send Slack alerts on failure                |
-| `notifications` | `alerts.enabled`             | `false`                                             | Enable error-rate threshold alerts               |
-| `notifications` | `alerts.error_threshold`     | `0.5`                                               | Error rate threshold to trigger alert            |
-| `notifications` | `alerts.time_window_minutes` | `60`                                                | Time window for error rate calculation           |
-| `tracing`       | `level`                      | `info`                                              | Log level (trace/debug/info/warn/error)          |
-| `tracing`       | `format`                     | `compact`                                           | Log output format                                |
-| `tracing`       | `show_targets`               | `true`                                              | Show module path in log messages                 |
-| `tracing`       | `show_timestamps`            | `true`                                              | Show timestamps in log messages                  |
-| `oauth`         | `github.client_id`           | none                                                | GitHub OAuth App client ID                       |
-| `oauth`         | `github.client_secret`       | none                                                | GitHub OAuth App client secret                   |
-| `oauth`         | `github.redirect_uri`        | none                                                | OAuth redirect URI                               |
-| `declarative`   | `projects`                   | `[]`                                                | Declarative project definitions                  |
-| `declarative`   | `api_keys`                   | `[]`                                                | Declarative API key definitions                  |
-| `declarative`   | `users`                      | `[]`                                                | Declarative user definitions                     |
-| `declarative`   | `remote_builders`            | `[]`                                                | Declarative remote builder definitions           |
-| `nix`           | `store_dir`                  | `/nix/store`                                        | Nix store directory                              |
-
-<!--markdownlint-enable MD013 -->
-
-## Database
-
-Circus uses PostgreSQL with sqlx for compile-time query checking. Migrations
-live in `crates/migrations/migrations/` and are added usually when the database
-schema changes.
-
-```bash
-# Run pending migrations
-$ circus-migrate -- up <database_url>
-
-# Validate schema
-$ circus-migrate -- validate <database_url>
-
-# Create new migration file
-$  circus-migrate -- create <name>
-```
-
-Database tests gracefully skip when PostgreSQL is unavailable. To run the
-database tests, make sure you build the test VMs provided by the Nix flake.
-
-## Deploying on NixOS
-
-Circus, for the time being, only supports being deployed on NixOS systems. While
-it is possible to run on _any_ system with a Nix installation, it might be
-rather clunky. You're encouraged to provide documentation for alternative
-methods if you successfully run them.
-
-Circus ships a NixOS module at `nixosModules.default`. Minimal configuration:
-
-```nix
-{
-  inputs.circus.url = "github:manic-systems/circus";
-
-  outputs = { self, nixpkgs, circus, ... }: {
-    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-      modules = [
-        circus.nixosModules.default
-        {
-          services.circus = {
-            enable = true;
-            package = circus.packages.x86_64-linux.circus-server;
-            migratePackage = circus.packages.x86_64-linux.circus-migrate-cli;
-
-            server.enable = true;
-            # evaluator.enable = true;
-            # queueRunner.enable = true;
-          };
-        }
-      ];
-    };
-  };
-}
-```
-
-### Full Deployment Example
-
-A complete production configuration with all three daemons and NGINX reverse
-proxy:
-
-```nix
-{ config, pkgs, circus, ... }: {
-  services.circus = {
-    enable = true;
-    package = circus.packages.x86_64-linux.circus-server;
-    migratePackage = circus.packages.x86_64-linux.circus-migrate-cli;
-
-    server.enable = true;
-    evaluator.enable = true;
-    queueRunner.enable = true;
-
-    settings = {
-      database.url = "postgresql:///circus?host=/run/postgresql";
-      server.host = "127.0.0.1";
-      server.port = 3000;
-
-      # Security: enable when behind HTTPS reverse proxy
-      server.force_secure_cookies = true;
-      server.rate_limit_rps = 100;
-      server.rate_limit_burst = 20;
-
-      evaluator.poll_interval = 300;
-      evaluator.restrict_eval = true;
-      queue_runner.workers = 8;
-      queue_runner.build_timeout = 7200;
-
-      gc.enabled = true;
-      gc.max_age_days = 90;
-      cache.enabled = true;
-      logs.log_dir = "/var/lib/circus/logs";
-      logs.compress = true;
-    };
-  };
-
-  # Reverse proxy
-  services.nginx = {
-    enable = true;
-    virtualHosts."ci.example.org" = {
-      forceSSL = true;
-      enableACME = true;
-      locations."/" = {
-        proxyPass = "http://127.0.0.1:3000";
-        proxyWebsockets = true;
-        extraConfig = ''
-          # FIXME: you might choose to harden this part further
-          proxy_set_header X-Real-IP $remote_addr;
-          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $scheme;
-          client_max_body_size 50M;
-        '';
-      };
-    };
-  };
-
-  # Firewall
-  networking.firewall.allowedTCPPorts = [ 80 443 ];
-}
-```
-
-### Multi-Machine Deployment
-
-For larger or _distributed_ setups, you may choose to run the daemons on
-different machines sharing the same database. For example:
-
-- **Head node**: runs `circus-server` and `circus-evaluator`, has the PostgreSQL
-  database locally
-- **Builder machines**: run `circus-queue-runner`, connect to the head node's
-  database via `postgresql://circus@headnode/circus`
-
-On builder machines, set `database.createLocally = false` and provide the remote
-database URL:
-
-```nix
-{
-  services.circus = {
-    enable = true;
-    database.createLocally = false; # <- Set this
-    queueRunner.enable = true;
-
-    # Now configure the database
-    settings.database.url = "postgresql://circus@headnode.internal/circus";
-    settings.queue_runner.workers = 16;
-  };
-}
-```
-
-Ensure the PostgreSQL server on the head node allows connections from builder
-machines via `pg_hba.conf` (the NixOS `services.postgresql` module handles this
-with `authentication` settings).
-
-#### Remote Builders via SSH
-
-Circus supports an alternative deployment model where a single queue-runner
-dispatches builds to remote builder machines via SSH. In this setup:
-
-- **Head node**: runs `circus-server`, `circus-evaluator`, and **one**
-  `circus-queue-runner`
-- **Builder machines**: standard NixOS machines with SSH access and Nix
-  installed (no Circus software required)
-
-The queue-runner automatically attempts remote builds using:
-
-```bash
-# Builds are performed on the remote via --store
-$ nix build --store ssh://<builder>
-```
-
-when a build's `system` matches a configured remote builder. If no remote
-builder is available or all fail, it falls back to local execution.
-
-You can configure remote builders with `circus-admin`:
-
-```bash
-# Create a remote builder
-CIRCUS_API_KEY=<admin-key> circus-admin builders add \
-  --name builder-1 \
-  --ssh-uri builder-1.example.org \
-  --systems x86_64-linux,aarch64-linux \
-  --max-jobs 4 \
-  --speed-factor 1
-```
-
-Do note that this requires some SSH key setup. Namely.
-
-- The queue-runner machine needs SSH access to each builder (public key in
-  `~/.ssh/authorized_keys` on builders)
-- Use `ssh_key_file` in the builder config if using a non-default key
-- Add known host keys via `public_host_key` to prevent MITM warnings
-
-The queue-runner tracks builder health automatically: consecutive failures
-disable the builder with exponential backoff until it recovers.
-
-#### Persistent Agents
-
-Circus also supports a persistent agent deployment model where `circus-agent`
-processes run on builder machines and connect back to the queue-runner over
-Cap'n Proto RPC. This is the preferred path for clusters that want the runner to
-push work to hosts without per-build SSH setup.
-
-The agent connects, registers its capabilities (systems, features, speed
-factor), and waits for assignments. The runner dispatches builds to connected
-agents with matching system requirements and streams logs and results back. If
-the connection drops, the runner retries the build elsewhere on the next pass.
-
-You can run the agent with the NixOS module:
-
-```nix
-{
-  services.circus-agent = {
-    enable = true;
-    package = circus.packages.x86_64-linux.circus-agent;
-    settings.agent = {
-      name = "builder-1";
-      runner_url = "circus://headnode.internal";
-      systems = [ "x86_64-linux" "aarch64-linux" ];
-      max_jobs = 4;
-      speed_factor = 1;
-    };
-  };
-}
-```
-
-The agent authenticates with a shared token (configured via `rpc.auth_tokens` on
-the queue-runner side and `authTokenFile` on the agent side). See the
-[design document] for more details on the RPC protocol and distributed builds.
-
-## Authentication
-
-Circus supports several authentication methods:
-
-1. **API Keys** - Bearer token authentication for API access
-2. **User Accounts** - Username/password with session cookies for dashboard
-   access
-
-OAuth (GitHub) and LDAP are also supported as experimental methods. See the
-sections below for configuration details.
-
-### API Key Bootstrapping
-
-Circus uses SHA-256 hashed API keys stored in the `api_keys` table. To create
-the first admin key after initial deployment:
-
-<!--markdownlint-disable MD013-->
-
-```bash
-# Generate a key and its hash
-$ export CIRCUS_KEY="circus_$(openssl rand -hex 16)"
-$ export CIRCUS_HASH=$(echo -n "$CIRCUS_KEY" | sha256sum | cut -d' ' -f1)
-
-# Insert into the database
-$ sudo -u circus psql -U circus -d circus -c \
-  "INSERT INTO api_keys (name, key_hash, role) VALUES ('admin', '$CIRCUS_HASH', 'admin')"
-
-# Save the key (it cannot be recovered from the hash)
-$ echo "Admin API key: $CIRCUS_KEY"
-```
-
-<!--markdownlint-enable MD013-->
-
-Subsequent keys can be created with `circus-admin api-keys create` or the admin
-dashboard using this initial admin key.
-
-### User Management
-
-Circus supports user accounts for dashboard access. Users can authenticate with
-username/password and get a session cookie.
-
-#### Creating Users
-
-Users can be created with `circus-admin` using an admin API key:
-
-```bash
-# Create a new user
-CIRCUS_API_KEY=circus_demo_admin_key circus-admin users create \
-  --username developer \
-  --email dev@example.com \
-  --password secure-password-here \
-  --role admin
-```
-
-#### User Roles
-
-Users can have roles that control their access level:
-
-| Role        | Description                          |
-| ----------- | ------------------------------------ |
-| `admin`     | Full access to all endpoints         |
-| `read-only` | Read-only access (GET requests only) |
-| `custom`    | See role-based permissions below     |
-
-Users inherit permissions from their role. The role can be set to any string for
-custom permission schemes.
-
-### Dashboard Login
-
-Circus supports several methods for logging in via the dashboard. The stable and
-currently encouraged methods are:
-
-- **API Key Login**: Enter your API key on the login page for a session cookie
-- **Username/Password**: Log in with user credentials for persistent sessions
-
-> [!TIP]
-> Session cookies are valid for 24 hours and allow access to admin features
-> without re-entering credentials.
-
-Dashboard read pages are public by default. Operators can require a login or an
-administrator per page with `server.page_access`:
-
-```toml
-[server.page_access]
-evaluations = "authenticated"
-builds = "authenticated"
-metrics = "admin"
-```
-
-Supported access levels are `public`, `authenticated`, and `admin`.
-
-We also have **experimental** support for OAuth and LDAP authentication. You may
-test them at your disposal, but they are not recommended for production
-deployments. Report bugs!
-
-#### OAuth Authentication (experimental)
-
-Circus supports GitHub OAuth for user login as an **experimental feature**. When
-configured, users can log in via GitHub and are automatically assigned a
-`read-only` role by default. Enable OAuth by setting the following in your
-configuration:
-
-```toml
-[oauth.github]
-client_id = "your-github-client-id"
-client_secret = "your-github-client-secret"
-redirect_uri = "https://ci.example.com/api/v1/auth/github/callback"
-```
-
-The OAuth flow:
-
-1. User visits `/api/v1/auth/github` which redirects to GitHub
-2. On successful authorization, GitHub redirects to
-   `/api/v1/auth/github/callback`
-3. Circus creates a session cookie and redirects to the dashboard
-
-#### LDAP Authentication (experimental)
-
-Circus supports LDAP bind-based authentication for dashboard login. Configure it
-under the `server.ldap` section:
-
-```toml
-[server.ldap]
-url = "ldaps://ldap.example.com:636"
-bind_dn_template = "uid={username},ou=users,dc=example,dc=com"
-base_dn = "dc=example,dc=com"
-tls_ca_cert = "/etc/ssl/certs/ca-certificates.crt"
-```
-
-The LDAP login endpoint is `POST /auth/ldap` which accepts `username` and
-`password` fields. On success, it creates a session cookie identical to the
-standard user login flow.
-
-#### Roles
-
-> [!NOTE]
-> Roles are an experimental feature designed to bring Circus on-par with
-> enterprise-grade Hydra deployments. The feature is currently unstable, and
-> might change at any given time. Do not rely on roles for the time being.
-
-| Role              | Permissions                          |
-| ----------------- | ------------------------------------ |
-| `admin`           | Full access to all endpoints         |
-| `read-only`       | Read-only access (GET requests only) |
-| `create-projects` | Create projects and jobsets          |
-| `eval-jobset`     | Trigger evaluations                  |
-| `cancel-build`    | Cancel builds                        |
-| `restart-jobs`    | Restart failed/completed builds      |
-| `bump-to-front`   | Bump build priority                  |
-
-## Monitoring
-
-Circus exposes a Prometheus-compatible metrics endpoint at `/prometheus`. The
-metrics provided are detailed below:
-
-### Available Metrics
-
-<!--markdownlint-disable MD013-->
-
-| Metric                                            | Type  | Description                       |
-| ------------------------------------------------- | ----- | --------------------------------- |
-| `circus_builds_total{status="succeeded"}`         | gauge | Succeeded builds                  |
-| `circus_builds_total{status="failed"}`            | gauge | Failed builds                     |
-| `circus_builds_total{status="running"}`           | gauge | Currently running builds          |
-| `circus_builds_total{status="pending"}`           | gauge | Currently pending builds          |
-| `circus_builds_total{status="all"}`               | gauge | Total builds (all statuses)       |
-| `circus_builds_avg_duration_seconds`              | gauge | Average build duration in seconds |
-| `circus_builds_duration_seconds{quantile="0.5"}`  | gauge | Median build duration (p50)       |
-| `circus_builds_duration_seconds{quantile="0.95"}` | gauge | p95 build duration                |
-| `circus_builds_duration_seconds{quantile="0.99"}` | gauge | p99 build duration                |
-| `circus_evaluations_total`                        | gauge | Total number of evaluations       |
-| `circus_evaluations_by_status{status="..."}`      | gauge | Evaluations grouped by status     |
-| `circus_queue_depth`                              | gauge | Number of pending builds in queue |
-| `circus_projects_total`                           | gauge | Total number of projects          |
-| `circus_channels_total`                           | gauge | Total number of channels          |
-| `circus_remote_builders_active`                   | gauge | Currently active remote builders  |
-| `circus_project_builds_completed{project="..."}`  | gauge | Completed builds per project      |
-| `circus_project_builds_failed{project="..."}`     | gauge | Failed builds per project         |
-
-<!--markdownlint-enable MD013-->
-
-### Prometheus Configuration
-
-```yaml
-scrape_configs:
-  - job_name: "circus-ci"
-    static_configs:
-      - targets: ["ci.example.org:3000"]
-    metrics_path: "/prometheus"
-    scrape_interval: 30s
-```
-
-## Backup & Restore
-
-Until Circus reaches 1.0.0, you're encouraged to take regular backups. You can
-do this with a Systemd timer or manually via `pg_dump` in your terminal. To back
-up Circus' state stored in PostgreSQL:
-
-```bash
-# Create a backup
-$ pg_dump -U circus circus > circus-backup-$(date +%Y%m%d).sql
-```
-
-To restore:
-
-```bash
-# Restore a backup
-$ psql -U circus circus < circus-backup-20250101.sql
-```
-
-Build logs are stored in the filesystem at the configured `logs.log_dir`
-(default: `/var/lib/circus/logs`). You are generally encouraged to include this
-directory in your backup strategy to ensure more seamless recoveries in the case
-of a catastrophic failure. Build outputs live in the Nix store and are protected
-by GC roots under `gc.gc_roots_dir`. These do not need separate backup as long
-as derivation paths are retained in the database.
-
-## API Reference
+### API Reference Updates
 
 The endpoint reference is generated into [docs/API.md](./API.md). Update it
 after route changes with:
 
 ```bash
-cargo run -p circus-xtask -- api-docs
+# Run api-docs task to generate 'docs/API.md'
+$ cargo run -p circus-xtask -- api-docs
 ```
 
-Check for drift without rewriting the file:
+Or alternatively, check for drift without rewriting the file:
 
 ```bash
 cargo run -p circus-xtask -- api-docs --check
 ```
 
-### Dashboard
+## License
 
-The web dashboard is available at the root URL (`/`). Pages include:
+<!--markdownlint-disable MD059-->
 
-- `/` - Home: announcements, build stats, project overview, recent builds and evaluations
-- `/login` - Session-based login (username/password or API key)
-- `/logout` - Log out and clear session
-- `/projects` - Project listing with create form (admin)
-- `/projects/new` - Project setup wizard
-- `/project/{id}` - Project detail with jobsets, add jobset form (admin)
-- `/project/{id}/notifications` - Notification config for project
-- `/jobset/{id}` - Jobset detail with evaluation history
-- `/jobset/{id}/jobs` - Jobset job status history
-- `/evaluations` - Evaluation listing with project/jobset context
-- `/evaluation/{id}` - Evaluation detail with build results
-- `/builds` - Build listing with status/system/job filters
-- `/build/{id}` - Build detail with steps, products, logs
-- `/queue` - Current queue (pending + running builds)
-- `/channels` - Channel listing
-- `/channel/{id}` - Channel detail
-- `/news` - News and announcements
-- `/admin` - System status, API keys, remote builders, user management
-- `/users` - User management (admin)
-- `/starred` - Starred builds list
-- `/metrics` - Metrics dashboard page
+This project is made available under Mozilla Public License (MPL) version 2.0.
+See [LICENSE](../LICENSE) for more details on the exact conditions. An online
+copy is provided [here](https://www.mozilla.org/en-US/MPL/2.0/).
 
-## Hacking
-
-### Building a Circus
-
-```bash
-# Enter dev shell
-$ nix develop
-
-# Build all crates
-$ cargo build
-
-# Run all tests (uses nextest; dev shell includes cargo-nextest)
-$ cargo nextest run
-
-# Type-check only
-$ cargo check
-```
-
-Build a specific crate:
-
-```bash
-# Specify a crate to build if packaging individual crates separately.
-$ cargo build -p circus-server
-$ cargo build -p circus-evaluator
-$ cargo build -p circus-queue-runner
-$ cargo build -p circus-agent
-$ cargo build -p circus-admin
-$ cargo build -p circus-common
-$ cargo build -p circus-proto
-$ cargo build -p circus-migrate-cli
-$ cargo build -p circus-migrations
-$ cargo build -p circus-xtask
-```
+<!--markdownlint-enable MD059-->
