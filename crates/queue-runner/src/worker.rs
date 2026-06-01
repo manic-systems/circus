@@ -503,6 +503,7 @@ async fn try_agent_dispatch(
   extra_nix_args: &[String],
   cache_upload_enabled_s3: bool,
   cache_upload_compression: &str,
+  fail_build_on_upload_error: bool,
 ) -> Option<crate::builder::BuildResult> {
   use std::time::Instant;
 
@@ -628,8 +629,12 @@ async fn try_agent_dispatch(
     // post-build. Other store types continue to use the existing
     // post-build `nix copy --to ...` flow. The compression the agent
     // applies is whatever the runner advertises so the narinfo matches.
-    let presigned_upload =
-      cache_upload_enabled_s3.then(|| cache_upload_compression.to_owned());
+    let presigned_upload = cache_upload_enabled_s3.then(|| {
+      crate::rpc::pool::PresignedUpload {
+        compression: cache_upload_compression.to_owned(),
+        fail_build_on_upload_error,
+      }
+    });
 
     let cmd = crate::rpc::pool::DispatchCommand {
       build_id: build.id,
@@ -1019,6 +1024,7 @@ async fn run_build(
       &build_extra_nix_args,
       cache_upload_enabled_s3,
       &cache_upload_config.compression,
+      cache_upload_config.fail_build_on_upload_error,
     )
     .await
     {

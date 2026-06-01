@@ -92,6 +92,11 @@ The schema is in `crates/proto/schema/circus.capnp`. The interfaces are:
 interface Runner {
   register @0 (info :AgentInfo, builder :Builder) -> (session :AgentSession);
   version @1 () -> (proto :Text, server :Text);
+  requestPresignedUrls @2 (machineId :Text, buildId :Text,
+                            request :List(PresignedNarRequest))
+                       -> (responses :List(PresignedNarResponse));
+  notifyUploadComplete @3 (machineId :Text, buildId :Text, narInfo :NarInfo)
+                       -> ();
 }
 
 interface Builder {
@@ -129,22 +134,30 @@ The flow is as follows
 4. Agent writes log lines via `log.write(chunk)` and ends with `log.close()`. On
    completion it calls `result.report(BuildResult)`. Both sinks are server-side
    capabilities the runner created and passed down; on the runner side `write`
-   appends to the live log file, `report` writes the result to PostgreSQL and
-   re-queues `BuildStepUpdate` for the notification system.
+   appends to the live log file and independently enforces the per-build log cap,
+   while `report` accepts exactly one final result before waking the scheduler.
 5. The agent calls `session.heartbeat(ping)` every N seconds with load averages,
    memory, store/build-dir free, current job count, and PSI (`cpuAvg10`,
    `memAvg10`, `ioAvg10`). The runner uses these to gate subsequent dispatch
    decisions.
-6. When the connection drops, capnp-rpc drops the `Builder` capability.
-   `AgentPool` notices on the next dispatch attempt and falls back to the next
-   candidate. Any builds the disconnected agent had in flight are marked stuck
-   and reset to `pending` by the orphan sweeper (already implemented at
-   `crates/queue-runner/src/runner_loop.rs`).
+6. When the connection drops, capnp-rpc drops the `Builder` capability. The pool
+   removes the connection only if it is still the live generation for that
+   `machineId`, so a stale disconnect cannot evict a replacement connection.
+   `AgentPool` notices closed dispatch channels on the next dispatch attempt and
+   falls back to the next candidate. Any builds the disconnected agent had in
+   flight are marked stuck and reset to `pending` by the orphan sweeper (already
+   implemented at `crates/queue-runner/src/runner_loop.rs`).
 7. `register` carries a bearer token. The runner SHA-256 hashes it and compares
    constant-time against `[queue_runner.rpc].auth_tokens` (hex digests). mTLS is
    optional; when the server config sets `tls.client_ca` and
    `tls.pin_cn = true`, the client certificate's Common Name must also equal the
    agent's registered `name`.
+8. If the runner's cache upload target is S3, `BuildAssignment.presignedUpload`
+   asks the agent to upload outputs directly. The agent requests PUT URLs for the
+   active `(machineId, buildId)` pair, streams each compressed NAR to S3, then
+   calls `notifyUploadComplete`. The runner verifies the upload was presigned for
+   that live build/path before persisting narinfo and clears the expected-upload
+   state when the build completes or disconnects.
 
 ## Scheduling
 
@@ -152,10 +165,9 @@ The scheduler runs inside the queue-runner's worker pool. For a pending build
 with a target `system`:
 
 1. Query candidate agents from `AgentPool::candidates_for(system)`:
-   `system in agent.systems` and `current_jobs < max_jobs`. Build-side
-   required-features matching is not yet wired (the `Build` model does not carry
-   the field; the SSH path's `mandatory_features` gating is the analogue that
-   will be reused once it lands).
+   `system in agent.systems` and `current_jobs < max_jobs`. Build-side required
+   features must be a subset of the agent's `supported_features`, and an agent's
+   `mandatory_features` must all be present on the build.
 2. Apply PSI gating. If `psi_threshold` is set, drop candidates whose most
    recent heartbeat has any of `cpuAvg10 / memAvg10 / ioAvg10` above the
    threshold. Heartbeats older than `heartbeat_ttl_secs` are treated as
@@ -206,6 +218,12 @@ bind               = "0.0.0.0:8443"
 auth_tokens        = [ "abcdef0123...sha256-of-the-raw-token" ]
 max_connections    = 256
 heartbeat_ttl_secs = 60
+
+[cache_upload]
+enabled                    = true
+store_uri                  = "s3://circus-cache"
+compression                = "zstd" # zstd, xz, gzip, none
+fail_build_on_upload_error = false  # true => agent uploadFailure fails build
 
 [queue_runner.rpc.tls]                           # optional; omit for plain TCP
 cert_file = "/var/lib/circus/tls/runner.crt"
@@ -260,7 +278,8 @@ matter of which service is running.
 - Bearer token authentication on `register`. Tokens are issued by the operator
   out of band. The runner stores SHA-256 hex digests in
   `[queue_runner.rpc].auth_tokens`; the agent sends the raw token and the runner
-  hashes + compares in constant time. The `builder_sessions` table has an
+  hashes + compares digest bytes in constant time. Config validation rejects
+  malformed token digests. The `builder_sessions` table has an
   `auth_token_hash` column reserved for per-agent tokens but no code path
   consults it yet.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
@@ -269,8 +288,18 @@ matter of which service is running.
   default when `client_ca` is set), the registering agent's `name` must equal
   the CN extracted from the verified client certificate.
 - Cap'n Proto framing is bounded by `capnp::message::ReaderOptions` defaults;
-  oversized messages are rejected at decode.
+  oversized messages are rejected at decode. Circus also enforces
+  application-level limits from `circus_proto::limits`: bounded registration
+  lists, bounded text fields, a maximum presign batch size, and a 1 MiB maximum
+  log chunk.
 - The runner caps per-build log size at `BuildAssignment.max_log_size` (passed
-  down from the worker pool) and aborts the build with
+  down from the worker pool) on both sides. The agent aborts the child with
   `BuildOutcome::BuildFailure` plus an explanatory `error_message` when the cap
-  is hit.
+  is hit; the runner-side `LogSink` rejects over-cap writes even if an agent is
+  faulty or malicious.
+- `ResultSink.report` is one-shot. A duplicate final result is rejected and does
+  not update agent success/failure counters a second time.
+- Presigned uploads are tied to the registered connection, active build ID, store
+  path, NAR hash, NAR size, compression and S3 object path. `notifyUploadComplete`
+  fails if any of those values differ from the presigned request, and pending
+  upload expectations are discarded when the dispatch finishes.

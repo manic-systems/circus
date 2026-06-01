@@ -133,6 +133,9 @@ struct PresignedUploadOpts {
   # "none" passes the NAR through unchanged.
   compression     @1 :Text;
   compressionLevel @2 :Int32;     # 0 = library default
+  # If true, upload failures turn the build into `uploadFailure`. If false,
+  # the build result can still be success and the upload error is diagnostic.
+  failBuildOnUploadError @3 :Bool;
 }
 
 enum StepStatus {

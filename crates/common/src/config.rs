@@ -485,7 +485,6 @@ pub struct SigningConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-#[derive(Default)]
 pub struct CacheUploadConfig {
   pub enabled:                    bool,
   pub store_uri:                  Option<String>,
@@ -523,6 +522,20 @@ const fn default_upload_retries() -> u32 {
   3
 }
 
+impl Default for CacheUploadConfig {
+  fn default() -> Self {
+    Self {
+      enabled:                    false,
+      store_uri:                  None,
+      s3:                         None,
+      upload_concurrency:         default_upload_concurrency(),
+      upload_max_retries:         default_upload_retries(),
+      fail_build_on_upload_error: false,
+      compression:                default_upload_compression(),
+    }
+  }
+}
+
 /// S3-specific cache configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -530,11 +543,13 @@ const fn default_upload_retries() -> u32 {
 pub struct S3CacheConfig {
   /// AWS region (e.g., "us-east-1")
   pub region:            Option<String>,
-  /// Path prefix within the bucket (e.g., "nix-cache/")
+  /// Path prefix within the bucket (e.g., "nix-cache/"). Combined with any
+  /// path already present in `cache_upload.store_uri`.
   pub prefix:            Option<String>,
-  /// AWS access key ID (optional - uses IAM role if not provided)
+  /// AWS access key ID. Required for presigned agent uploads and server-side
+  /// private S3 redirects; `nix copy` may still use ambient credentials.
   pub access_key_id:     Option<String>,
-  /// AWS secret access key (optional - uses IAM role if not provided)
+  /// AWS secret access key. Required when `access_key_id` is set.
   pub secret_access_key: Option<String>,
   /// Session token for temporary credentials (optional)
   pub session_token:     Option<String>,
@@ -1081,6 +1096,46 @@ impl Config {
         "queue_runner.psi_check_timeout must be greater than 0 seconds"
       ));
     }
+    if let Some(rpc) = self.queue_runner.rpc.as_ref() {
+      if rpc.max_connections == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.max_connections must be greater than 0"
+        ));
+      }
+      if rpc.heartbeat_ttl_secs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.heartbeat_ttl_secs must be greater than 0"
+        ));
+      }
+      if rpc.presign_expiry_secs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.presign_expiry_secs must be greater than 0"
+        ));
+      }
+      for (idx, token_hash) in rpc.auth_tokens.iter().enumerate() {
+        let decoded = hex::decode(token_hash).map_err(|e| {
+          color_eyre::eyre::eyre!(
+            "queue_runner.rpc.auth_tokens[{idx}] must be SHA-256 hex: {e}"
+          )
+        })?;
+        if decoded.len() != 32 {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got \
+             {}",
+            decoded.len()
+          ));
+        }
+      }
+    }
+    if !matches!(
+      self.cache_upload.compression.as_str(),
+      "zstd" | "xz" | "gzip" | "none"
+    ) {
+      return Err(color_eyre::eyre::eyre!(
+        "cache_upload.compression must be one of zstd, xz, gzip, none; got {}",
+        self.cache_upload.compression
+      ));
+    }
 
     // Validate LDAP settings
     if let Some(ldap) = self.server.ldap.as_ref() {
@@ -1377,7 +1432,7 @@ mod tests {
     assert_eq!(db_url, "postgresql://test:test@localhost/test");
     assert_eq!(server_port, "8080");
 
-    // SAFETY: ditto — cleaning up test state.
+    // SAFETY: ditto, cleaning up test state.
     unsafe {
       env::remove_var("CIRCUS_DATABASE__URL");
       env::remove_var("CIRCUS_SERVER__PORT");

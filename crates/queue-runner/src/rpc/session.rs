@@ -42,6 +42,11 @@ impl agent_session::Server for SessionImpl {
     let cpu_psi = pressure.get_cpu_avg10();
     let mem_psi = pressure.get_mem_avg10();
     let io_psi = pressure.get_io_avg10();
+    let current_jobs = ping.get_current_jobs();
+    let mem_total = ping.get_mem_total();
+    let mem_used = ping.get_mem_used();
+    let store_free = ping.get_store_free();
+    let build_dir_free = ping.get_build_dir_free();
 
     let snap = HeartbeatSnapshot {
       last_seen: Some(std::time::Instant::now()),
@@ -67,7 +72,8 @@ impl agent_session::Server for SessionImpl {
     if let Err(e) = sqlx::query(
       "UPDATE builder_sessions SET last_seen = NOW(), load1 = $2, load5 = $3, \
        load15 = $4, cpu_psi_avg10 = $5, mem_psi_avg10 = $6, io_psi_avg10 = \
-       $7, updated_at = NOW() WHERE machine_id = $1",
+       $7, current_jobs = $8, mem_total = $9, mem_used = $10, store_free = \
+       $11, build_dir_free = $12, updated_at = NOW() WHERE machine_id = $1",
     )
     .bind(machine_id)
     .bind(load1)
@@ -76,6 +82,11 @@ impl agent_session::Server for SessionImpl {
     .bind(cpu_psi)
     .bind(mem_psi)
     .bind(io_psi)
+    .bind(i32::try_from(current_jobs).unwrap_or(i32::MAX))
+    .bind(i64::try_from(mem_total).unwrap_or(i64::MAX))
+    .bind(i64::try_from(mem_used).unwrap_or(i64::MAX))
+    .bind(i64::try_from(store_free).unwrap_or(i64::MAX))
+    .bind(i64::try_from(build_dir_free).unwrap_or(i64::MAX))
     .execute(&db)
     .await
     {

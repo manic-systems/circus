@@ -144,6 +144,7 @@ pub async fn run(
   let mut error_message = String::new();
   let mut log_size_exceeded = false;
   let mut aborted = false;
+  let mut timed_out = false;
 
   let overall_deadline = if opts.build_timeout.is_zero() {
     None
@@ -154,10 +155,19 @@ pub async fn run(
 
   loop {
     let read_timeout = remaining_silent(&opts.max_silent_time, last_output);
+    let build_deadline_timeout = overall_deadline
+      .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+      .map(|remaining| remaining.max(Duration::from_millis(1)));
     let msg: Option<Result<String, String>> = tokio::select! {
       r = line_rx.recv() => r,
       () = sleep_opt(read_timeout) => {
         error_message = "max-silent-time exceeded".into();
+        let _ = child.start_kill();
+        break;
+      }
+      () = sleep_opt(build_deadline_timeout) => {
+        timed_out = true;
+        error_message = "build-timeout exceeded".into();
         let _ = child.start_kill();
         break;
       }
@@ -198,6 +208,7 @@ pub async fn run(
     if let Some(deadline) = overall_deadline
       && Instant::now() >= deadline
     {
+      timed_out = true;
       error_message = "build-timeout exceeded".into();
       let _ = child.start_kill();
       break;
@@ -232,9 +243,12 @@ pub async fn run(
   let _ = close_log(&log_sink).await;
 
   let exit_code = status.code().unwrap_or(-1);
-  let success = status.success() && !log_size_exceeded && !aborted;
+  let success =
+    status.success() && !log_size_exceeded && !aborted && !timed_out;
   let outcome = if success {
     circus_proto::BuildOutcome::Success
+  } else if timed_out {
+    circus_proto::BuildOutcome::TimedOut
   } else if aborted {
     circus_proto::BuildOutcome::Aborted
   } else {

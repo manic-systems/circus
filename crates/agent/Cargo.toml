@@ -21,6 +21,7 @@ color-eyre.workspace         = true
 config.workspace             = true
 futures.workspace            = true
 hex.workspace                = true
+libc.workspace               = true
 parking_lot.workspace        = true
 reqwest.workspace            = true
 rustls.workspace             = true
