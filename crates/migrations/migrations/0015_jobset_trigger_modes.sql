@@ -4,24 +4,22 @@
 -- polling only build when the source/input hash changes. interval creates a new
 -- evaluation/build set on every check_interval tick, even for the same commit.
 ALTER TABLE jobsets
-  ADD COLUMN trigger_mode VARCHAR(50) NOT NULL DEFAULT 'source_change' CHECK (
-    trigger_mode IN ('source_change', 'interval')
-  );
+ADD COLUMN trigger_mode VARCHAR(50) NOT NULL DEFAULT 'source_change' CHECK (trigger_mode IN ('source_change', 'interval'));
 
 ALTER TABLE evaluations
-  ADD COLUMN trigger_kind VARCHAR(50) NOT NULL DEFAULT 'source_change' CHECK (
-    trigger_kind IN ('source_change', 'manual', 'interval')
-  );
+ADD COLUMN trigger_kind VARCHAR(50) NOT NULL DEFAULT 'source_change' CHECK (
+  trigger_kind IN ('source_change', 'manual', 'interval')
+);
 
 -- Interval-triggered evaluations must be allowed to repeat the same commit.
 -- Source-change and manual triggers remain deduplicated like the original
 -- UNIQUE(jobset_id, commit_hash) constraint.
 ALTER TABLE evaluations
-  DROP CONSTRAINT IF EXISTS evaluations_jobset_id_commit_hash_key;
+DROP CONSTRAINT IF EXISTS evaluations_jobset_id_commit_hash_key;
 
-CREATE UNIQUE INDEX idx_evaluations_source_unique
-  ON evaluations (jobset_id, commit_hash)
-  WHERE trigger_kind <> 'interval';
+CREATE UNIQUE INDEX idx_evaluations_source_unique ON evaluations (jobset_id, commit_hash)
+WHERE
+  trigger_kind <> 'interval';
 
 CREATE OR REPLACE VIEW active_jobsets AS
 SELECT
