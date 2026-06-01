@@ -2,6 +2,7 @@
 
 use std::{
   collections::HashSet,
+  hash::BuildHasher,
   os::unix::fs::symlink,
   path::{Path, PathBuf},
   time::Duration,
@@ -17,12 +18,12 @@ use uuid::Uuid;
 /// # Errors
 ///
 /// Returns error if directory read fails.
-pub fn cleanup_old_roots(
+pub fn cleanup_old_roots<S1: BuildHasher, S2: BuildHasher, S3: BuildHasher>(
   roots_dir: &Path,
   max_age: Duration,
-  pinned_build_ids: &HashSet<Uuid>,
-  pinned_root_paths: &HashSet<PathBuf>,
-  pinned_output_paths: &HashSet<PathBuf>,
+  pinned_build_ids: &HashSet<Uuid, S1>,
+  pinned_root_paths: &HashSet<PathBuf, S2>,
+  pinned_output_paths: &HashSet<PathBuf, S3>,
 ) -> std::io::Result<u64> {
   if !roots_dir.exists() {
     return Ok(0);
@@ -67,12 +68,12 @@ pub fn cleanup_old_roots(
   Ok(count)
 }
 
-fn is_pinned_root(
+fn is_pinned_root<S1: BuildHasher, S2: BuildHasher, S3: BuildHasher>(
   entry_path: &Path,
   file_name: &std::ffi::OsStr,
-  pinned_build_ids: &HashSet<Uuid>,
-  pinned_root_paths: &HashSet<PathBuf>,
-  pinned_output_paths: &HashSet<PathBuf>,
+  pinned_build_ids: &HashSet<Uuid, S1>,
+  pinned_root_paths: &HashSet<PathBuf, S2>,
+  pinned_output_paths: &HashSet<PathBuf, S3>,
 ) -> bool {
   if pinned_root_paths.contains(entry_path) {
     debug!(root = %entry_path.display(), "Skipping pinned GC root by path");

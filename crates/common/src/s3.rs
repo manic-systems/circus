@@ -1,4 +1,5 @@
-//! Minimal AWS SigV4 presigning helpers for S3-compatible binary cache stores.
+//! Minimal AWS `SigV4` presigning helpers for S3-compatible binary cache
+//! stores.
 //!
 //! Circus uses this in two places:
 //!
@@ -424,7 +425,7 @@ mod tests {
     let url = presigner.presign_at(
       "GET",
       "nar/example.nar.zst",
-      Duration::from_secs(60),
+      Duration::from_mins(1),
       UNIX_EPOCH,
     );
 
