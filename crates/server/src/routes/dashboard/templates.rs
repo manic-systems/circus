@@ -2,13 +2,10 @@
 //! field-private from outside this module, but `pub(super)` for sibling
 //! handler modules. Each `#[derive(Template)]` macro looks for the
 //! `path = "..."` HTML template under the configured templates root.
-//!
-//! `allow(dead_code)` is module-wide because askama reads many struct
-//! fields from the macro-expanded `render()` impl, which rustc does not
-//! detect as a usage. The original monolithic dashboard.rs had the same
-//! allow at the crate-file level; we narrow it to where it's needed.
-
-#![allow(dead_code)]
+#![expect(
+  dead_code,
+  reason = "Askama templates read fields from generated render impls"
+)]
 
 use askama::Template;
 use circus_common::models::{
@@ -220,7 +217,6 @@ pub(super) struct BuilderView {
   pub(super) enabled:        bool,
   pub(super) current_builds: i64,
   pub(super) load_percent:   i64,
-  #[allow(dead_code)]
   pub(super) last_activity:  String,
 }
 
@@ -250,7 +246,6 @@ pub(super) struct AdminTemplate {
 
 #[derive(Template)]
 #[template(path = "project_setup.html")]
-#[allow(dead_code)]
 pub(super) struct ProjectSetupTemplate {
   pub(super) is_admin:  bool,
   pub(super) auth_name: String,
@@ -284,7 +279,6 @@ pub(super) struct UsersTemplate {
 pub(super) struct StarredTemplate {
   pub(super) starred_jobs: Vec<StarredJobView>,
   pub(super) is_logged_in: bool,
-  #[allow(dead_code)]
   pub(super) is_admin:     bool,
   pub(super) auth_name:    String,
 }

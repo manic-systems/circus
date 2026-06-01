@@ -55,7 +55,10 @@ pub struct WorkerPool {
 }
 
 impl WorkerPool {
-  #[allow(clippy::too_many_arguments)]
+  #[expect(
+    clippy::too_many_arguments,
+    reason = "constructor wires long-lived runner dependencies once at startup"
+  )]
   #[must_use]
   pub fn new(
     db_pool: PgPool,
@@ -488,7 +491,11 @@ fn build_s3_store_uri(
 /// `Some(BuildResult)` on definitive completion (succeeded *or* failed),
 /// `None` when no agent is eligible or the connection dropped before the
 /// result arrived. The caller falls through to SSH or local.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::too_many_arguments,
+  reason = "dispatch decision needs build metadata, live scheduler state, and \
+            cache policy"
+)]
 async fn try_agent_dispatch(
   agent_pool: &Arc<crate::rpc::AgentPool>,
   pool: &PgPool,
@@ -740,7 +747,11 @@ async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
 
 /// Try to run the build on a remote builder if one is available for the build's
 /// system.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::too_many_arguments,
+  reason = "SSH fallback needs the same scheduling and execution context as \
+            agent dispatch"
+)]
 async fn try_remote_build(
   pool: &PgPool,
   build: &Build,
@@ -910,7 +921,11 @@ async fn collect_metrics_and_alert(
 }
 
 #[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::too_many_arguments,
+  reason = "build execution coordinates database state, config, \
+            notifications, cache upload, and scheduler handles"
+)]
 #[expect(clippy::ref_option, reason = "used as fn parameter pattern")]
 #[expect(clippy::rc_buffer, reason = "extra args shared across calls")]
 async fn run_build(
