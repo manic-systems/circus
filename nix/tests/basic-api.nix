@@ -166,8 +166,6 @@ testers.runNixOSTest {
     # Prometheus endpoint
     with subtest("Prometheus endpoint returns prometheus format"):
         result = machine.succeed("curl -sf http://127.0.0.1:3000/prometheus")
-        machine.succeed(f"echo '{result[:1000]}' > /tmp/metrics.txt")
-        machine.succeed("echo 'PROMETHEUS OUTPUT:' && cat /tmp/metrics.txt")
         assert "circus_builds_total" in result, f"Missing circus_builds_total. Got: {result[:300]}"
         assert "circus_projects_total" in result, "Missing circus_projects_total in prometheus metrics"
         assert "circus_evaluations_total" in result, "Missing circus_evaluations_total in prometheus metrics"

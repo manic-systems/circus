@@ -306,49 +306,38 @@ in
           assert result.strip() == "First declarative project", f"Got '{result.strip()}'"
 
       # DECLARATIVE JOBSETS WITH STATES
+      decl_project_1_id = machine.succeed(
+          "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
+      ).strip()
+
       with subtest("Declarative project has all jobsets"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
           result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq '.items | length'"
+              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq '.items | length'"
           )
           count = int(result.strip())
           assert count == 4, f"Expected 4 jobsets, got {count}"
 
       with subtest("Enabled jobset has state 'enabled'"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
           result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq -r '.items[] | select(.name==\"enabled-jobset\") | .state'"
+              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq -r '.items[] | select(.name==\"enabled-jobset\") | .state'"
           )
           assert result.strip() == "enabled", f"Expected 'enabled', got '{result.strip()}'"
 
       with subtest("Disabled jobset has state 'disabled'"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
           result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq -r '.items[] | select(.name==\"disabled-jobset\") | .state'"
+              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq -r '.items[] | select(.name==\"disabled-jobset\") | .state'"
           )
           assert result.strip() == "disabled", f"Expected 'disabled', got '{result.strip()}'"
 
       with subtest("One-shot jobset has state 'one_shot'"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
           result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq -r '.items[] | select(.name==\"oneshot-jobset\") | .state'"
+              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq -r '.items[] | select(.name==\"oneshot-jobset\") | .state'"
           )
           assert result.strip() == "one_shot", f"Expected 'one_shot', got '{result.strip()}'"
 
       with subtest("One-at-a-time jobset has state 'one_at_a_time'"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
           result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq -r '.items[] | select(.name==\"oneatatime-jobset\") | .state'"
+              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq -r '.items[] | select(.name==\"oneatatime-jobset\") | .state'"
           )
           assert result.strip() == "one_at_a_time", f"Expected 'one_at_a_time', got '{result.strip()}'"
 
@@ -381,11 +370,8 @@ in
           assert count == 1, f"One-at-a-time jobset should be in active_jobsets, got {count}"
 
       with subtest("Jobset check_interval is correctly set"):
-          project_id = machine.succeed(
-              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
-          ).strip()
           result = machine.succeed(
-              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets | jq -r '.items[] | select(.name==\"oneatatime-jobset\") | .check_interval'"
+              f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq -r '.items[] | select(.name==\"oneatatime-jobset\") | .check_interval'"
           )
           assert result.strip() == "60", f"Expected check_interval 60, got '{result.strip()}'"
 
