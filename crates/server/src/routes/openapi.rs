@@ -668,6 +668,19 @@ pub fn document() -> Value {
           "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
           "responses": { "202": { "description": "Retry scheduled" } } }
       },
+      "/admin/pinned-build-products": {
+        "get": { "summary": "List build products protected by kept builds",
+          "parameters": [
+            { "name": "limit",  "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
+            { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0 } }
+          ],
+          "responses": { "200": { "description": "Pinned build products page" } } }
+      },
+      "/admin/pinned-builds/{id}/unpin": {
+        "post": { "summary": "Clear keep for a build and make its products GC-eligible",
+          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": { "200": { "description": "Updated build" } } }
+      },
       "/news": {
         "get":  { "summary": "List news/announcement entries",
           "responses": { "200": { "description": "Array of news items" } } },
