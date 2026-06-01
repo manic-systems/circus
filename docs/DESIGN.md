@@ -260,7 +260,7 @@ pushed branch matches.
 
 ## Authentication and Security
 
-Circus supports three authentication methods:
+Circus supports four authentication methods:
 
 - **API keys**: Bearer tokens stored as SHA-256 hashes. Used for API access and
   dashboard login. Keys carry a role (admin, read-only, or custom granular
@@ -286,15 +286,18 @@ The server enforces several security measures:
 
 Circus serves a Nix-compatible binary cache at `/nix-cache/`. It supports the
 full narinfo protocol: clients request `.narinfo` files by hash, and the server
-responds with a signed redirect to the NAR download URL or serves the NAR
-directly.
+returns a relative NAR URL under `/nix-cache/nar/`.
 
-NAR compression is configurable (zstd, bzip2, brotli, xz, or none). The server
-can optionally sign narinfo files with a Nix secret key.
+> [!TIP]
+> NAR compression is configurable (zstd, bzip2, brotli, xz, or none). The server
+> can optionally sign narinfo files with a Nix secret key.
 
 Build outputs can also be uploaded to an external cache store (typically S3)
 after a successful build. The agent supports direct presigned S3 upload, and the
-queue-runner can fall back to `nix copy` for SSH builders.
+queue-runner can fall back to `nix copy` for SSH builders. Agent-uploaded
+narinfo is persisted in the database; when clients request one of those NARs
+through Circus, the server redirects to a short-lived signed S3 GET URL using
+the same bucket and prefix rules as upload.
 
 Channels provide promoted evaluation outputs for consumers. Each channel tracks
 a git revision, a binary cache URL, and a store path listing. The server exposes
