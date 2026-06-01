@@ -134,8 +134,9 @@ The flow is as follows
 4. Agent writes log lines via `log.write(chunk)` and ends with `log.close()`. On
    completion it calls `result.report(BuildResult)`. Both sinks are server-side
    capabilities the runner created and passed down; on the runner side `write`
-   appends to the live log file and independently enforces the per-build log cap,
-   while `report` accepts exactly one final result before waking the scheduler.
+   appends to the live log file and independently enforces the per-build log
+   cap, while `report` accepts exactly one final result before waking the
+   scheduler.
 5. The agent calls `session.heartbeat(ping)` every N seconds with load averages,
    memory, store/build-dir free, current job count, and PSI (`cpuAvg10`,
    `memAvg10`, `ioAvg10`). The runner uses these to gate subsequent dispatch
@@ -152,11 +153,13 @@ The flow is as follows
    optional; when the server config sets `tls.client_ca` and
    `tls.pin_cn = true`, the client certificate's Common Name must also equal the
    agent's registered `name`.
-8. If the runner's cache upload target is S3, `BuildAssignment.presignedUpload`
-   asks the agent to upload outputs directly. The agent requests PUT URLs for the
-   active `(machineId, buildId)` pair, streams each compressed NAR to S3, then
-   calls `notifyUploadComplete`. The runner verifies the upload was presigned for
-   that live build/path before persisting narinfo and clears the expected-upload
+8. If the runner's cache upload target is S3 and explicit presigning credentials
+   are configured, `BuildAssignment.presignedUpload` asks the agent to upload
+   outputs directly. The agent requests PUT URLs for the active
+   `(machineId,
+   buildId)` pair, streams each compressed NAR to S3, then calls
+   `notifyUploadComplete`. The runner verifies the upload was presigned for that
+   live build/path before persisting narinfo and clears the expected-upload
    state when the build completes or disconnects.
 
 ## Scheduling
@@ -221,9 +224,15 @@ heartbeat_ttl_secs = 60
 
 [cache_upload]
 enabled                    = true
-store_uri                  = "s3://circus-cache"
+store_uri                  = "s3://circus-cache/root"
 compression                = "zstd" # zstd, xz, gzip, none
 fail_build_on_upload_error = false  # true => agent uploadFailure fails build
+
+[cache_upload.s3]
+region            = "us-east-1"
+prefix            = "nix-cache" # objects are written below root/nix-cache/
+access_key_id     = "..."
+secret_access_key = "..."
 
 [queue_runner.rpc.tls]                           # optional; omit for plain TCP
 cert_file = "/var/lib/circus/tls/runner.crt"
@@ -231,6 +240,11 @@ key_file  = "/var/lib/circus/tls/runner.key"
 client_ca = "/var/lib/circus/tls/clients.ca.crt" # presence => mTLS required
 pin_cn    = true                                 # CN must equal agent.name
 ```
+
+> [!NOTE]
+> Agent uploads store NARs in S3 and persist the corresponding narinfo in the
+> database. Cache consumers still use the Circus `/nix-cache/` URL; NAR
+> downloads are redirected to short-lived signed S3 GET URLs by the server.
 
 ```toml
 # circus-agent.toml on each builder host
@@ -279,9 +293,8 @@ matter of which service is running.
   out of band. The runner stores SHA-256 hex digests in
   `[queue_runner.rpc].auth_tokens`; the agent sends the raw token and the runner
   hashes + compares digest bytes in constant time. Config validation rejects
-  malformed token digests. The `builder_sessions` table has an
-  `auth_token_hash` column reserved for per-agent tokens but no code path
-  consults it yet.
+  malformed token digests. The `builder_sessions` table has an `auth_token_hash`
+  column reserved for per-agent tokens but no code path consults it yet.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
   `[queue_runner.rpc].tls`; setting `client_ca` switches the acceptor to
   `WebPkiClientVerifier` so client certs are required. With `pin_cn = true` (the
@@ -299,7 +312,8 @@ matter of which service is running.
   faulty or malicious.
 - `ResultSink.report` is one-shot. A duplicate final result is rejected and does
   not update agent success/failure counters a second time.
-- Presigned uploads are tied to the registered connection, active build ID, store
-  path, NAR hash, NAR size, compression and S3 object path. `notifyUploadComplete`
-  fails if any of those values differ from the presigned request, and pending
-  upload expectations are discarded when the dispatch finishes.
+- Presigned uploads are tied to the registered connection, active build ID,
+  store path, NAR hash, NAR size, compression and S3 object path.
+  `notifyUploadComplete` fails if any of those values differ from the presigned
+  request, and pending upload expectations are discarded when the dispatch
+  finishes.
