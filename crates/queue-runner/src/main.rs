@@ -255,7 +255,7 @@ async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
   loop {
     tokio::time::sleep(interval).await;
 
-    let pinned = match repo::builds::list_pinned_ids(&pool).await {
+    let pinned_build_ids = match repo::builds::list_pinned_ids(&pool).await {
       Ok(ids) => ids,
       Err(e) => {
         tracing::warn!("Failed to fetch pinned build IDs for GC: {e}");
@@ -263,8 +263,36 @@ async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
       },
     };
 
-    match gc_roots::cleanup_old_roots(&gc_config.gc_roots_dir, max_age, &pinned)
-    {
+    let (pinned_root_paths, pinned_output_paths) =
+      match repo::build_products::list_pinned_for_gc(&pool).await {
+        Ok(products) => {
+          let root_paths = products
+            .iter()
+            .filter_map(|product| product.gc_root_path.as_deref())
+            .map(std::path::PathBuf::from)
+            .collect();
+          let output_paths = products
+            .iter()
+            .map(|product| std::path::PathBuf::from(&product.path))
+            .collect();
+          (root_paths, output_paths)
+        },
+        Err(e) => {
+          tracing::warn!("Failed to fetch pinned build products for GC: {e}");
+          (
+            std::collections::HashSet::new(),
+            std::collections::HashSet::new(),
+          )
+        },
+      };
+
+    match gc_roots::cleanup_old_roots(
+      &gc_config.gc_roots_dir,
+      max_age,
+      &pinned_build_ids,
+      &pinned_root_paths,
+      &pinned_output_paths,
+    ) {
       Ok(count) if count > 0 => {
         tracing::info!(count, "Cleaned up old GC roots");
         // Optionally run nix-collect-garbage

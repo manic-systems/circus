@@ -5,9 +5,11 @@ use axum::{
   routing::{get, post},
 };
 use circus_common::{
+  PaginatedResponse,
   Validate,
   audit::AuditEntry,
   models::{
+    Build,
     CreateRemoteBuilder,
     NotificationTask,
     RemoteBuilder,
@@ -242,6 +244,67 @@ async fn retry_notification_task(
   Ok(Json(task))
 }
 
+#[derive(Debug, Deserialize)]
+struct PinnedProductsQuery {
+  #[serde(default)]
+  limit:  Option<i64>,
+  #[serde(default)]
+  offset: Option<i64>,
+}
+
+async fn list_pinned_build_products(
+  _auth: RequireAdmin,
+  State(state): State<AppState>,
+  Query(q): Query<PinnedProductsQuery>,
+) -> Result<
+  Json<
+    PaginatedResponse<circus_common::repo::build_products::PinnedBuildProduct>,
+  >,
+  ApiError,
+> {
+  let limit = q.limit.unwrap_or(100).clamp(1, 500);
+  let offset = q.offset.unwrap_or(0).max(0);
+  let items = circus_common::repo::build_products::list_pinned(
+    &state.pool,
+    limit,
+    offset,
+  )
+  .await
+  .map_err(ApiError)?;
+  let total = circus_common::repo::build_products::count_pinned(&state.pool)
+    .await
+    .map_err(ApiError)?;
+
+  Ok(Json(PaginatedResponse {
+    items,
+    total,
+    limit,
+    offset,
+  }))
+}
+
+async fn unpin_build(
+  auth: RequireAdmin,
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+) -> Result<Json<Build>, ApiError> {
+  let build = circus_common::repo::builds::set_keep(&state.pool, id, false)
+    .await
+    .map_err(ApiError)?;
+
+  crate::audit::record_for_key(
+    &state.pool,
+    &auth.0,
+    "BUILD_UNPIN",
+    Some("build"),
+    Some(&id.to_string()),
+    serde_json::json!({ "job_name": &build.job_name }),
+  )
+  .await;
+
+  Ok(Json(build))
+}
+
 #[derive(Debug, Serialize)]
 struct ConfigFileResponse {
   path:             String,
@@ -384,6 +447,11 @@ pub fn router() -> Router<AppState> {
       "/admin/notification-tasks/{id}/retry",
       post(retry_notification_task),
     )
+    .route(
+      "/admin/pinned-build-products",
+      get(list_pinned_build_products),
+    )
+    .route("/admin/pinned-builds/{id}/unpin", post(unpin_build))
     .route(
       "/admin/config",
       get(get_config_file).put(update_config_file),

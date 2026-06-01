@@ -32,6 +32,7 @@ use super::{
     NewsTemplate,
     NotificationTaskView,
     NotificationsTemplate,
+    PinnedOutputView,
     UsersTemplate,
   },
 };
@@ -181,6 +182,28 @@ pub(super) async fn admin_page(
         }
       })
       .collect();
+  let pinned_outputs =
+    circus_common::repo::build_products::list_pinned(pool, 100, 0)
+      .await
+      .unwrap_or_default()
+      .into_iter()
+      .map(|product| {
+        PinnedOutputView {
+          build_id:           product.build_id,
+          product_id:         product.product_id,
+          job_name:           product.job_name,
+          system:             product.system,
+          status:             product.status.to_string(),
+          product_name:       product.product_name,
+          path:               product.path,
+          gc_root_path:       product.gc_root_path.unwrap_or_default(),
+          product_created_at: product
+            .product_created_at
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+        }
+      })
+      .collect();
   let config_path = std::env::var("CIRCUS_CONFIG_FILE")
     .unwrap_or_else(|_| "circus.toml".to_string());
   let config_contents = tokio::fs::read_to_string(&config_path)
@@ -192,6 +215,7 @@ pub(super) async fn admin_page(
     builders,
     api_keys,
     notification_tasks,
+    pinned_outputs,
     config_path,
     config_contents,
     is_admin: is_admin(&extensions),

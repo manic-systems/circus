@@ -1,10 +1,26 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
   error::{CiError, Result},
-  models::{BuildProduct, CreateBuildProduct},
+  models::{BuildProduct, BuildStatus, CreateBuildProduct},
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PinnedBuildProduct {
+  pub build_id:           Uuid,
+  pub job_name:           String,
+  pub system:             String,
+  pub status:             BuildStatus,
+  pub build_created_at:   DateTime<Utc>,
+  pub product_id:         Uuid,
+  pub product_name:       String,
+  pub path:               String,
+  pub gc_root_path:       Option<String>,
+  pub product_created_at: DateTime<Utc>,
+}
 
 /// Create a build product record.
 ///
@@ -60,6 +76,66 @@ pub async fn list_for_build(
     "SELECT * FROM build_products WHERE build_id = $1 ORDER BY created_at ASC",
   )
   .bind(build_id)
+  .fetch_all(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
+/// List products whose build has `keep = true`.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_pinned(
+  pool: &PgPool,
+  limit: i64,
+  offset: i64,
+) -> Result<Vec<PinnedBuildProduct>> {
+  sqlx::query_as::<_, PinnedBuildProduct>(
+    "SELECT b.id AS build_id, b.job_name, b.system, b.status, b.created_at AS \
+     build_created_at, bp.id AS product_id, bp.name AS product_name, bp.path, \
+     bp.gc_root_path, bp.created_at AS product_created_at FROM builds b JOIN \
+     build_products bp ON bp.build_id = b.id WHERE b.keep = true ORDER BY \
+     b.created_at DESC, bp.created_at ASC LIMIT $1 OFFSET $2",
+  )
+  .bind(limit)
+  .bind(offset)
+  .fetch_all(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
+/// Count products whose build has `keep = true`.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn count_pinned(pool: &PgPool) -> Result<i64> {
+  let (count,): (i64,) = sqlx::query_as(
+    "SELECT COUNT(*) FROM builds b JOIN build_products bp ON bp.build_id = \
+     b.id WHERE b.keep = true",
+  )
+  .fetch_one(pool)
+  .await
+  .map_err(CiError::Database)?;
+  Ok(count)
+}
+
+/// List pinned products without pagination for GC preservation.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_pinned_for_gc(
+  pool: &PgPool,
+) -> Result<Vec<PinnedBuildProduct>> {
+  sqlx::query_as::<_, PinnedBuildProduct>(
+    "SELECT b.id AS build_id, b.job_name, b.system, b.status, b.created_at AS \
+     build_created_at, bp.id AS product_id, bp.name AS product_name, bp.path, \
+     bp.gc_root_path, bp.created_at AS product_created_at FROM builds b JOIN \
+     build_products bp ON bp.build_id = b.id WHERE b.keep = true ORDER BY \
+     b.created_at DESC, bp.created_at ASC",
+  )
   .fetch_all(pool)
   .await
   .map_err(CiError::Database)

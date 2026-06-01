@@ -231,6 +231,18 @@ pub(super) struct NotificationTaskView {
   pub(super) created_at:        String,
 }
 
+pub(super) struct PinnedOutputView {
+  pub(super) build_id:           Uuid,
+  pub(super) product_id:         Uuid,
+  pub(super) job_name:           String,
+  pub(super) system:             String,
+  pub(super) status:             String,
+  pub(super) product_name:       String,
+  pub(super) path:               String,
+  pub(super) gc_root_path:       String,
+  pub(super) product_created_at: String,
+}
+
 #[derive(Template)]
 #[template(path = "admin.html")]
 pub(super) struct AdminTemplate {
@@ -238,6 +250,7 @@ pub(super) struct AdminTemplate {
   pub(super) builders:           Vec<BuilderView>,
   pub(super) api_keys:           Vec<ApiKeyView>,
   pub(super) notification_tasks: Vec<NotificationTaskView>,
+  pub(super) pinned_outputs:     Vec<PinnedOutputView>,
   pub(super) config_path:        String,
   pub(super) config_contents:    String,
   pub(super) is_admin:           bool,

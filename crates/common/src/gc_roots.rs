@@ -11,16 +11,18 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Remove GC root symlinks with mtime older than `max_age`. Returns count
-/// removed. Symlinks whose filename matches a UUID in `pinned_build_ids` are
-/// skipped regardless of age.
+/// removed. Roots are skipped when they belong to a kept build, match a
+/// recorded pinned root path, or point at a recorded pinned output path.
 ///
 /// # Errors
 ///
 /// Returns error if directory read fails.
-pub fn cleanup_old_roots<S: std::hash::BuildHasher>(
+pub fn cleanup_old_roots(
   roots_dir: &Path,
   max_age: Duration,
-  pinned_build_ids: &HashSet<Uuid, S>,
+  pinned_build_ids: &HashSet<Uuid>,
+  pinned_root_paths: &HashSet<PathBuf>,
+  pinned_output_paths: &HashSet<PathBuf>,
 ) -> std::io::Result<u64> {
   if !roots_dir.exists() {
     return Ok(0);
@@ -32,12 +34,14 @@ pub fn cleanup_old_roots<S: std::hash::BuildHasher>(
   for entry in std::fs::read_dir(roots_dir)? {
     let entry = entry?;
 
-    // Check if this root is pinned (filename is a build UUID with keep=true)
-    if let Some(name) = entry.file_name().to_str()
-      && let Ok(build_id) = name.parse::<Uuid>()
-      && pinned_build_ids.contains(&build_id)
-    {
-      debug!(build_id = %build_id, "Skipping pinned GC root");
+    let entry_path = entry.path();
+    if is_pinned_root(
+      &entry_path,
+      &entry.file_name(),
+      pinned_build_ids,
+      pinned_root_paths,
+      pinned_output_paths,
+    ) {
       continue;
     }
 
@@ -52,11 +56,8 @@ pub fn cleanup_old_roots<S: std::hash::BuildHasher>(
     if let Ok(age) = now.duration_since(modified)
       && age > max_age
     {
-      if let Err(e) = std::fs::remove_file(entry.path()) {
-        warn!(
-          "Failed to remove old GC root {}: {e}",
-          entry.path().display()
-        );
+      if let Err(e) = std::fs::remove_file(&entry_path) {
+        warn!("Failed to remove old GC root {}: {e}", entry_path.display());
       } else {
         count += 1;
       }
@@ -64,6 +65,36 @@ pub fn cleanup_old_roots<S: std::hash::BuildHasher>(
   }
 
   Ok(count)
+}
+
+fn is_pinned_root(
+  entry_path: &Path,
+  file_name: &std::ffi::OsStr,
+  pinned_build_ids: &HashSet<Uuid>,
+  pinned_root_paths: &HashSet<PathBuf>,
+  pinned_output_paths: &HashSet<PathBuf>,
+) -> bool {
+  if pinned_root_paths.contains(entry_path) {
+    debug!(root = %entry_path.display(), "Skipping pinned GC root by path");
+    return true;
+  }
+
+  if let Some(name) = file_name.to_str()
+    && let Ok(build_id) = name.parse::<Uuid>()
+    && pinned_build_ids.contains(&build_id)
+  {
+    debug!(build_id = %build_id, "Skipping pinned GC root by build ID");
+    return true;
+  }
+
+  if let Ok(target) = std::fs::read_link(entry_path)
+    && pinned_output_paths.contains(&target)
+  {
+    debug!(root = %entry_path.display(), target = %target.display(), "Skipping pinned GC root by target");
+    return true;
+  }
+
+  false
 }
 
 pub struct GcRoots {

@@ -24,6 +24,36 @@
 </div>
 
 {% if is_admin %}
+<h2>Pinned Build Outputs</h2>
+{% if pinned_outputs.is_empty() %}
+<div class="empty">
+  <div class="empty-title">No pinned build outputs</div>
+  <div class="empty-hint">Builds marked keep=true will appear here with their recorded GC roots.</div>
+</div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Build</th><th>Output</th><th>System</th><th>Status</th><th>Store Path</th><th>GC Root</th><th>Recorded</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for output in pinned_outputs %}
+    <tr>
+      <td><a href="/build/{{ output.build_id }}">{{ output.job_name }}</a></td>
+      <td>{{ output.product_name }}</td>
+      <td>{{ output.system }}</td>
+      <td>{{ output.status }}</td>
+      <td><code>{{ output.path }}</code></td>
+      <td>{% if !output.gc_root_path.is_empty() %}<code>{{ output.gc_root_path }}</code>{% else %}-{% endif %}</td>
+      <td>{{ output.product_created_at }}</td>
+      <td><button class="btn btn-danger btn-small" onclick="unpinBuild('{{ output.build_id }}')">Unpin Build</button></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
 <h2>API Keys</h2>
 <details>
   <summary>Create API Key</summary>
@@ -243,6 +273,19 @@ async function retryNotificationTask(id) {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || err.message || 'Failed to retry notification task');
+    }
+    window.location.reload();
+  } catch(err) {
+    alert(escapeHtml(err.message));
+  }
+}
+async function unpinBuild(id) {
+  if (!confirm('Unpin this build? All of its outputs become eligible for GC once their roots age out.')) return;
+  try {
+    const res = await fetch('/api/v1/admin/pinned-builds/' + id + '/unpin', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || err.message || 'Failed to unpin build');
     }
     window.location.reload();
   } catch(err) {
