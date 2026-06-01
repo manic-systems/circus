@@ -33,6 +33,8 @@ a user or admin session. Mutating requests require
 | PUT | `/api/v1/admin/config` | Replace the server config file | 200 |
 | GET | `/api/v1/admin/notification-tasks` | List pending notification delivery tasks | 200 |
 | POST | `/api/v1/admin/notification-tasks/{id}/retry` | Retry a notification delivery task | 202 |
+| GET | `/api/v1/admin/pinned-build-products` | List build products protected by kept builds | 200 |
+| POST | `/api/v1/admin/pinned-builds/{id}/unpin` | Clear keep for a build and make its products GC-eligible | 200 |
 | GET | `/api/v1/admin/system` | System status | 200 |
 | GET | `/api/v1/api-keys` | List API keys | 200 |
 | POST | `/api/v1/api-keys` | Create an API key | 200 |
