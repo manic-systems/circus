@@ -1009,6 +1009,12 @@ async fn run_build(
 
   tracing::info!(build_id = %build.id, job = %build.job_name, "Starting build");
 
+  // Clear stale steps from a prior requeued attempt.
+  sqlx::query("DELETE FROM build_steps WHERE build_id = $1")
+    .bind(build.id)
+    .execute(pool)
+    .await?;
+
   // Create a build step record
   let step = repo::build_steps::create(pool, CreateBuildStep {
     build_id:    build.id,
@@ -1340,11 +1346,6 @@ async fn run_build(
               max = build.max_retries,
               "Build failed, scheduling retry"
           );
-          // Clean up old build steps before retry
-          sqlx::query("DELETE FROM build_steps WHERE build_id = $1")
-            .bind(build.id)
-            .execute(pool)
-            .await?;
           sqlx::query(
             "UPDATE builds SET status = 'pending', started_at = NULL, \
              retry_count = retry_count + 1, completed_at = NULL WHERE id = $1",
