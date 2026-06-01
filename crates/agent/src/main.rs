@@ -7,6 +7,7 @@ use std::{path::PathBuf, time::Duration};
 
 use circus_agent::{config::AgentConfig, session};
 use clap::Parser;
+use color_eyre::eyre::{Result, eyre};
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -16,8 +17,14 @@ struct Cli {
   config: Option<PathBuf>,
 }
 
-fn main() -> color_eyre::Result<()> {
+fn main() -> Result<()> {
   color_eyre::install()?;
+
+  // Use ring for tls.
+  rustls::crypto::ring::default_provider()
+    .install_default()
+    .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
+
   let cli = Cli::parse();
   tracing_subscriber::fmt()
     .with_env_filter(
@@ -45,7 +52,7 @@ fn main() -> color_eyre::Result<()> {
 async fn run_supervisor(
   cfg: circus_agent::config::Agent,
   machine_id: Uuid,
-) -> color_eyre::Result<()> {
+) -> Result<()> {
   #![expect(clippy::infinite_loop, reason = "intentional reconnect loop")]
   #![expect(
     clippy::future_not_send,
@@ -68,7 +75,7 @@ async fn run_supervisor(
 /// Read or initialise the machine ID file. The runner uses this ID as the
 /// stable key into `builder_sessions` and the `AgentPool`, so it must
 /// outlive process restarts but be unique to this physical host.
-fn resolve_machine_id(cfg: &AgentConfig) -> color_eyre::Result<Uuid> {
+fn resolve_machine_id(cfg: &AgentConfig) -> Result<Uuid> {
   let path = cfg
     .agent
     .machine_id_file
