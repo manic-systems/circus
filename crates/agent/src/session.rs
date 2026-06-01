@@ -12,7 +12,9 @@
 
 use std::{
   collections::HashMap,
+  ffi::CString,
   fmt::Write,
+  path::{Path, PathBuf},
   sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -118,6 +120,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
   let heartbeat_join = spawn_heartbeat(
     session,
     Duration::from_secs(cfg.heartbeat_interval_secs.max(1)),
+    cfg.work_dir.clone(),
   );
 
   let _ = rpc_join.await;
@@ -245,13 +248,14 @@ fn num_cpus() -> usize {
 fn spawn_heartbeat(
   session: agent_session::Client,
   interval: Duration,
+  work_dir: PathBuf,
 ) -> tokio::task::JoinHandle<()> {
   tokio::task::spawn_local(async move {
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
       ticker.tick().await;
-      if let Err(e) = send_heartbeat(&session).await {
+      if let Err(e) = send_heartbeat(&session, &work_dir).await {
         tracing::warn!("heartbeat failed: {e}; ending loop");
         break;
       }
@@ -261,6 +265,7 @@ fn spawn_heartbeat(
 
 async fn send_heartbeat(
   session: &agent_session::Client,
+  work_dir: &Path,
 ) -> Result<(), capnp::Error> {
   #![expect(
     clippy::future_not_send,
@@ -273,6 +278,11 @@ async fn send_heartbeat(
   ping.set_load5(load.1);
   ping.set_load15(load.2);
   ping.set_current_jobs(JOB_COUNTER.load(Ordering::Relaxed));
+  let mem = read_meminfo();
+  ping.set_mem_total(mem.0);
+  ping.set_mem_used(mem.1);
+  ping.set_store_free(fs_available_bytes(Path::new("/nix/store")));
+  ping.set_build_dir_free(fs_available_bytes(work_dir));
 
   let snap = psi::read();
   let mut p: pressure_state::Builder = ping.reborrow().init_pressure();
@@ -296,6 +306,47 @@ fn read_loadavg() -> (f32, f32, f32) {
   let b = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
   let c = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
   (a, b, c)
+}
+
+fn read_meminfo() -> (u64, u64) {
+  let Ok(s) = std::fs::read_to_string("/proc/meminfo") else {
+    return (0, 0);
+  };
+  let mut total = 0_u64;
+  let mut available = 0_u64;
+  for line in s.lines() {
+    if let Some(value) = line.strip_prefix("MemTotal:") {
+      total = parse_meminfo_kib(value);
+    } else if let Some(value) = line.strip_prefix("MemAvailable:") {
+      available = parse_meminfo_kib(value);
+    }
+  }
+  (total, total.saturating_sub(available))
+}
+
+fn parse_meminfo_kib(value: &str) -> u64 {
+  value
+    .split_whitespace()
+    .next()
+    .and_then(|v| v.parse::<u64>().ok())
+    .unwrap_or(0)
+    .saturating_mul(1024)
+}
+
+fn fs_available_bytes(path: &Path) -> u64 {
+  let Some(path) = path.to_str().and_then(|p| CString::new(p).ok()) else {
+    return 0;
+  };
+  let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+  // SAFETY: `path` is a valid NUL-terminated C string and `stat` points to
+  // writable memory for libc to initialise.
+  let rc = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
+  if rc != 0 {
+    return 0;
+  }
+  // SAFETY: `statvfs` returned success, so the output struct is initialised.
+  let stat = unsafe { stat.assume_init() };
+  stat.f_bavail.saturating_mul(stat.f_frsize)
 }
 
 /// Process-global counter for concurrent builds. Bumped on `assign`,
@@ -383,6 +434,11 @@ impl builder::Server for BuilderImpl {
           None
         }
       };
+      let fail_build_on_upload_error = job
+        .get_presigned_upload()
+        .is_ok_and(
+          circus_proto::presigned_upload_opts::Reader::get_fail_build_on_upload_error,
+        );
       let log: log_sink::Client = pr.get_log()?;
       let result: result_sink::Client = pr.get_result()?;
 
@@ -393,6 +449,11 @@ impl builder::Server for BuilderImpl {
           return Err(capnp::Error::failed(
             "agent at max_jobs; refusing assignment".into(),
           ));
+        }
+        if g.contains_key(&build_id) {
+          return Err(capnp::Error::failed(format!(
+            "build_id {build_id} is already running"
+          )));
         }
         g.insert(build_id, cancel.clone());
       }
@@ -442,8 +503,10 @@ impl builder::Server for BuilderImpl {
                   local.error_message.push('\n');
                 }
                 local.error_message.push_str(msg.trim_end());
-                local.outcome = circus_proto::BuildOutcome::UploadFailure;
-                local.exit_code = 1;
+                if fail_build_on_upload_error {
+                  local.outcome = circus_proto::BuildOutcome::UploadFailure;
+                  local.exit_code = 1;
+                }
               }
               tracing::info!(
                 %build_id,
@@ -459,6 +522,10 @@ impl builder::Server for BuilderImpl {
                 local.error_message.push('\n');
               }
               let _ = write!(local.error_message, "upload: {e}");
+              if fail_build_on_upload_error {
+                local.outcome = circus_proto::BuildOutcome::UploadFailure;
+                local.exit_code = 1;
+              }
             },
           }
         }
