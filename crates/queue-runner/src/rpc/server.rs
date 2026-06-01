@@ -24,6 +24,7 @@ use circus_proto::{
   PROTO_VERSION,
   agent_session,
   builder,
+  limits,
   log_sink,
   result_sink,
   runner,
@@ -93,6 +94,12 @@ struct ExpectedUpload {
   nar_path:    String,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RegisteredAgent {
+  machine_id:    Uuid,
+  connection_id: Uuid,
+}
+
 #[derive(Clone)]
 pub struct TlsState {
   pub acceptor: TlsAcceptor,
@@ -115,6 +122,7 @@ impl ServerConfig {
       .bind
       .parse()
       .with_context(|| format!("parse bind {}", cfg.bind))?;
+    validate_token_hashes(&cfg.auth_tokens)?;
     let tls = match &cfg.tls {
       None => None,
       Some(tcfg) => {
@@ -165,6 +173,12 @@ impl ServerConfig {
       self.upload_compression.clone_from(&cache_cfg.compression);
     }
     self
+  }
+
+  fn forget_uploads_for(&self, machine_id: Uuid, build_id: Uuid) {
+    self.active_uploads.lock().retain(|key, _| {
+      key.machine_id != machine_id || key.build_id != build_id
+    });
   }
 }
 
@@ -224,7 +238,7 @@ async fn serve_one(
   let _ = socket.set_nodelay(true);
   tracing::info!(?peer, "incoming rpc connection");
 
-  let registered_machine: Arc<parking_lot::Mutex<Option<Uuid>>> =
+  let registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>> =
     Arc::new(parking_lot::Mutex::new(None));
   let registered_for_cleanup = Arc::clone(&registered_machine);
 
@@ -268,13 +282,24 @@ async fn serve_one(
     rpc.await
   };
 
-  let registered_machine_id = *registered_for_cleanup.lock();
-  if let Some(machine_id) = registered_machine_id {
-    pool.remove(&machine_id);
-    if let Err(e) = mark_disconnected(&db_pool, machine_id).await {
-      tracing::warn!(%machine_id, "failed to mark disconnected: {e}");
+  let registered = *registered_for_cleanup.lock();
+  if let Some(registered) = registered {
+    let machine_id = registered.machine_id;
+    if pool
+      .remove_if_connection(&machine_id, registered.connection_id)
+      .is_some()
+    {
+      if let Err(e) = mark_disconnected(&db_pool, machine_id).await {
+        tracing::warn!(%machine_id, "failed to mark disconnected: {e}");
+      }
+      tracing::info!(%machine_id, "agent connection closed");
+    } else {
+      tracing::debug!(
+        %machine_id,
+        connection_id = %registered.connection_id,
+        "stale agent connection closed after replacement"
+      );
     }
-    tracing::info!(%machine_id, "agent connection closed");
   }
   rpc_result?;
   Ok(())
@@ -317,7 +342,7 @@ struct RunnerImpl {
   cfg:                Arc<ServerConfig>,
   pool:               Arc<AgentPool>,
   db_pool:            PgPool,
-  registered_machine: Arc<parking_lot::Mutex<Option<Uuid>>>,
+  registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>>,
   /// CN extracted from the peer certificate when mTLS is enforced; `None`
   /// when TLS is off or `client_ca` was not set.
   pinned_cn:          Option<String>,
@@ -352,6 +377,12 @@ impl runner::Server for RunnerImpl {
         )));
       }
       let token = info.get_auth_token()?.to_str()?;
+      validate_text_len(
+        "agent.auth_token",
+        token,
+        1,
+        limits::MAX_AUTH_TOKEN_LEN,
+      )?;
       if !verify_token(&cfg.token_hashes, token) {
         tracing::warn!(name = %name, "bad auth token from agent");
         return Err(capnp::Error::failed("auth failed".into()));
@@ -368,12 +399,50 @@ impl runner::Server for RunnerImpl {
         return Err(capnp::Error::failed("CN/name mismatch".into()));
       }
 
-      let systems = read_text_list(info.get_systems()?)?;
-      let supported = read_text_list(info.get_supported_features()?)?;
-      let mandatory = read_text_list(info.get_mandatory_features()?)?;
+      validate_text_len("agent.name", &name, 1, limits::MAX_AGENT_NAME_LEN)?;
+      validate_text_len(
+        "agent.hostname",
+        &hostname,
+        1,
+        limits::MAX_HOSTNAME_LEN,
+      )?;
+
+      let systems = read_bounded_text_list(
+        info.get_systems()?,
+        "systems",
+        limits::MAX_SYSTEMS,
+        limits::MAX_FEATURE_LEN,
+      )?;
+      let supported = read_bounded_text_list(
+        info.get_supported_features()?,
+        "supported_features",
+        limits::MAX_FEATURES,
+        limits::MAX_FEATURE_LEN,
+      )?;
+      let mandatory = read_bounded_text_list(
+        info.get_mandatory_features()?,
+        "mandatory_features",
+        limits::MAX_FEATURES,
+        limits::MAX_FEATURE_LEN,
+      )?;
       let speed = info.get_speed_factor();
       let cpu = info.get_cpu_count();
       let maxj = info.get_max_jobs();
+      validate_agent_capacity(&systems, speed, cpu, maxj)?;
+
+      let connection_id = Uuid::new_v4();
+      {
+        let mut slot = registered_slot.lock();
+        if slot.is_some() {
+          return Err(capnp::Error::failed(
+            "connection is already registered".into(),
+          ));
+        }
+        *slot = Some(RegisteredAgent {
+          machine_id,
+          connection_id,
+        });
+      }
 
       if let Err(e) = upsert_session(
         &db_pool,
@@ -389,6 +458,7 @@ impl runner::Server for RunnerImpl {
       )
       .await
       {
+        *registered_slot.lock() = None;
         tracing::warn!("upsert builder_session: {e}");
         return Err(capnp::Error::failed(format!(
           "builder session upsert failed: {e}"
@@ -398,6 +468,7 @@ impl runner::Server for RunnerImpl {
       let (tx, rx) = mpsc::unbounded_channel::<DispatchCommand>();
       let meta = Arc::new(AgentMeta {
         machine_id,
+        connection_id,
         name: name.clone(),
         hostname,
         systems,
@@ -412,13 +483,21 @@ impl runner::Server for RunnerImpl {
         registered_at: Instant::now(),
         tx,
       });
-      pool.insert(Arc::clone(&meta));
-      *registered_slot.lock() = Some(machine_id);
+      if let Some(previous) = pool.insert(Arc::clone(&meta)) {
+        tracing::warn!(
+          name = %name,
+          %machine_id,
+          old_connection_id = %previous.connection_id,
+          %connection_id,
+          "agent registration replaced an existing live connection"
+        );
+      }
       tracing::info!(name = %name, ?machine_id, "agent registered");
 
       tokio::task::spawn_local(run_dispatch_pump(
         builder_cap,
         Arc::clone(&meta),
+        Arc::clone(&cfg),
         db_pool.clone(),
         rx,
       ));
@@ -458,12 +537,20 @@ impl runner::Server for RunnerImpl {
       let build_id =
         parse_uuid_param(pr.get_build_id()?.to_str()?, "build_id")?;
       let req_list = pr.get_request()?;
+      if req_list.len() > limits::MAX_PRESIGNED_URL_REQUESTS {
+        return Err(capnp::Error::failed(format!(
+          "too many presigned URL requests: {} > {}",
+          req_list.len(),
+          limits::MAX_PRESIGNED_URL_REQUESTS
+        )));
+      }
       let presigner = self.cfg.presigner.clone();
       let expiry = self.cfg.presign_expiry;
       let compression = self.cfg.upload_compression.clone();
+      validate_upload_compression(&compression)?;
 
       let registered = *self.registered_machine.lock();
-      if registered != Some(machine_id) {
+      if registered.map(|r| r.machine_id) != Some(machine_id) {
         return Err(capnp::Error::failed(
           "machine_id does not match registered session".into(),
         ));
@@ -487,6 +574,13 @@ impl runner::Server for RunnerImpl {
         let mut slot = out.reborrow().get(i as u32);
         slot.set_store_path(store_path.as_str());
         slot.set_compression(compression.as_str());
+        if let Err(e) = validate_store_path(&store_path)
+          .and_then(|()| validate_hash_text("nar_hash", &nar_hash))
+        {
+          let msg = e.to_string();
+          slot.set_error_message(msg.as_str());
+          continue;
+        }
         let Some(p) = presigner.as_ref() else {
           slot.set_error_message("runner has no S3 presigner configured");
           continue;
@@ -497,7 +591,7 @@ impl runner::Server for RunnerImpl {
         // `Compression:` field to decompress, but operators and S3-level
         // tooling rely on the extension being accurate.
         let ext = compression_ext(&compression);
-        let key = format!("nar/{}.{}", short_hash(&nar_hash), ext);
+        let key = format!("nar/{}.{}", hash_key_segment(&nar_hash), ext);
         let url = p.presign_put(&key, expiry);
         slot.set_nar_url(url.as_str());
         slot.set_nar_path(key.as_str());
@@ -560,8 +654,18 @@ impl runner::Server for RunnerImpl {
         (!s.is_empty()).then(|| s.to_owned())
       };
 
+      validate_store_path(&store_path)?;
+      validate_hash_text("nar_hash", &nar_hash)?;
+      if !file_hash.is_empty() {
+        validate_hash_text("file_hash", &file_hash)?;
+      }
+      validate_upload_compression(&compression)?;
+      for reference in &references {
+        validate_store_path(reference)?;
+      }
+
       let registered = *self.registered_machine.lock();
-      if registered != Some(machine_id) {
+      if registered.map(|r| r.machine_id) != Some(machine_id) {
         return Err(capnp::Error::failed(
           "machine_id does not match registered session".into(),
         ));
@@ -708,19 +812,39 @@ fn compression_ext(compression: &str) -> &'static str {
   }
 }
 
-/// Extract the bytes after `sha256:` or `sha256-` from a nar hash.
-/// this as the key segment so we don't have to base64-decode here. Falls
-/// back to the input if the prefix isn't recognised.
-fn short_hash(h: &str) -> String {
+/// Extract a URL/S3-key safe segment from a NAR hash.
+///
+/// Normal Nix hashes use base32 (`sha256:...`) or SRI base64
+/// (`sha256-...`). A compromised agent can send arbitrary text here, so
+/// never copy the string into an object key without sanitising it first.
+fn hash_key_segment(h: &str) -> String {
   for prefix in ["sha256:", "sha256-"] {
     if let Some(rest) = h.strip_prefix(prefix) {
-      return rest
-        .trim_end_matches('=')
-        .replace('/', "_")
-        .replace('+', "-");
+      let cleaned = sanitise_key_segment(rest.trim_end_matches('='));
+      if !cleaned.is_empty() {
+        return cleaned;
+      }
     }
   }
-  h.to_owned()
+  let cleaned = sanitise_key_segment(h);
+  if cleaned.is_empty() {
+    hex::encode(Sha256::digest(h.as_bytes()))
+  } else {
+    cleaned
+  }
+}
+
+fn sanitise_key_segment(value: &str) -> String {
+  value
+    .chars()
+    .filter_map(|c| {
+      match c {
+        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' => Some(c),
+        '/' | '+' => Some('_'),
+        _ => None,
+      }
+    })
+    .collect()
 }
 
 /// Pull from the dispatch channel forever, sending each command through
@@ -729,6 +853,7 @@ fn short_hash(h: &str) -> String {
 async fn run_dispatch_pump(
   builder_cap: builder::Client,
   meta: Arc<AgentMeta>,
+  cfg: Arc<ServerConfig>,
   db_pool: PgPool,
   mut rx: mpsc::UnboundedReceiver<DispatchCommand>,
 ) {
@@ -736,14 +861,21 @@ async fn run_dispatch_pump(
     meta.current_jobs.fetch_add(1, Ordering::Relaxed);
     let machine_id = meta.machine_id;
     let pool = db_pool.clone();
+    let cfg = Arc::clone(&cfg);
     let builder_cap = builder_cap.clone();
     let current_jobs_counter = Arc::clone(&meta.current_jobs);
     let meta_for_task = Arc::clone(&meta);
 
     tokio::task::spawn_local(async move {
-      let outcome =
-        dispatch_one(&builder_cap, &cmd, &pool, machine_id, &meta_for_task)
-          .await;
+      let outcome = dispatch_one(
+        &builder_cap,
+        &cmd,
+        &pool,
+        &cfg,
+        machine_id,
+        &meta_for_task,
+      )
+      .await;
       current_jobs_counter.fetch_sub(1, Ordering::Relaxed);
       let _ = cmd.completion.send(outcome);
       tracing::debug!(%machine_id, build_id = %cmd.build_id, "dispatch finished");
@@ -756,12 +888,13 @@ async fn dispatch_one(
   builder_cap: &builder::Client,
   cmd: &DispatchCommand,
   pool: &PgPool,
+  cfg: &ServerConfig,
   machine_id: Uuid,
   meta: &AgentMeta,
 ) -> DispatchResult {
   meta.active_builds.write().insert(cmd.build_id);
   let (done_tx, done_rx) = oneshot::channel::<BuildOutcomeKind>();
-  let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone());
+  let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone(), cmd.max_log_size);
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
   let result_sink_impl = ResultSinkImpl {
     pool: pool.clone(),
@@ -787,11 +920,12 @@ async fn dispatch_one(
       for (i, a) in cmd.extra_args.iter().enumerate() {
         args.set(i as u32, a.as_str());
       }
-      if let Some(compression) = cmd.presigned_upload.as_ref() {
+      if let Some(upload) = cmd.presigned_upload.as_ref() {
         let mut opts = job.reborrow().init_presigned_upload();
         opts.set_upload_debug_info(false);
-        opts.set_compression(compression.as_str());
+        opts.set_compression(upload.compression.as_str());
         opts.set_compression_level(0);
+        opts.set_fail_build_on_upload_error(upload.fail_build_on_upload_error);
       }
     }
     p.set_log(log_cap);
@@ -801,6 +935,7 @@ async fn dispatch_one(
   if let Err(e) = req.send().promise.await {
     tracing::warn!(build_id = %cmd.build_id, "assign call failed: {e}");
     meta.active_builds.write().remove(&cmd.build_id);
+    cfg.forget_uploads_for(machine_id, cmd.build_id);
     return DispatchResult::Disconnected;
   }
 
@@ -814,6 +949,7 @@ async fn dispatch_one(
     Err(_) => DispatchResult::Disconnected,
   };
   meta.active_builds.write().remove(&cmd.build_id);
+  cfg.forget_uploads_for(machine_id, cmd.build_id);
   out
 }
 
@@ -822,13 +958,113 @@ fn parse_uuid_param(value: &str, name: &str) -> Result<Uuid, capnp::Error> {
     .map_err(|e| capnp::Error::failed(format!("bad {name}: {e}")))
 }
 
-fn read_text_list(
+fn read_bounded_text_list(
   list: capnp::text_list::Reader<'_>,
+  field: &str,
+  max_items: u32,
+  max_item_len: usize,
 ) -> Result<Vec<String>, capnp::Error> {
+  if list.len() > max_items {
+    return Err(capnp::Error::failed(format!(
+      "{field} has too many entries: {} > {max_items}",
+      list.len()
+    )));
+  }
   list
     .iter()
-    .map(|t| -> Result<String, capnp::Error> { Ok(t?.to_str()?.to_owned()) })
+    .enumerate()
+    .map(|(idx, t)| -> Result<String, capnp::Error> {
+      let value = t?.to_str()?.to_owned();
+      let item_field = format!("{field}[{idx}]");
+      validate_text_len(&item_field, &value, 1, max_item_len)?;
+      Ok(value)
+    })
     .collect()
+}
+
+fn validate_agent_capacity(
+  systems: &[String],
+  speed: f32,
+  cpu: u32,
+  max_jobs: u32,
+) -> Result<(), capnp::Error> {
+  if systems.is_empty() {
+    return Err(capnp::Error::failed(
+      "agent must advertise at least one system".into(),
+    ));
+  }
+  if !speed.is_finite() || speed <= 0.0 {
+    return Err(capnp::Error::failed(format!(
+      "agent speed_factor must be finite and positive, got {speed}"
+    )));
+  }
+  if cpu == 0 {
+    return Err(capnp::Error::failed(
+      "agent cpu_count must be greater than 0".into(),
+    ));
+  }
+  if max_jobs == 0 {
+    return Err(capnp::Error::failed(
+      "agent max_jobs must be greater than 0".into(),
+    ));
+  }
+  Ok(())
+}
+
+fn validate_text_len(
+  field: &str,
+  value: &str,
+  min: usize,
+  max: usize,
+) -> Result<(), capnp::Error> {
+  let len = value.len();
+  if len < min || len > max || value.chars().any(char::is_control) {
+    return Err(capnp::Error::failed(format!(
+      "{field} length/control validation failed: len={len}, expected \
+       {min}..={max}"
+    )));
+  }
+  Ok(())
+}
+
+fn validate_store_path(path: &str) -> Result<(), capnp::Error> {
+  validate_text_len("store_path", path, 1, limits::MAX_STORE_PATH_LEN)?;
+  if path == "/nix/store/"
+    || !circus_common::validate::is_valid_store_path(path, "/nix/store")
+  {
+    return Err(capnp::Error::failed(format!("invalid store path: {path}")));
+  }
+  Ok(())
+}
+
+fn validate_hash_text(field: &str, hash: &str) -> Result<(), capnp::Error> {
+  validate_text_len(field, hash, 1, limits::MAX_HASH_LEN)
+}
+
+fn validate_upload_compression(compression: &str) -> Result<(), capnp::Error> {
+  match compression {
+    "zstd" | "xz" | "gzip" | "none" => Ok(()),
+    other => {
+      Err(capnp::Error::failed(format!(
+        "unsupported upload compression: {other}"
+      )))
+    },
+  }
+}
+
+fn validate_token_hashes(hashes: &[String]) -> color_eyre::Result<()> {
+  for (idx, hash) in hashes.iter().enumerate() {
+    let decoded = hex::decode(hash.trim()).with_context(|| {
+      format!("queue_runner.rpc.auth_tokens[{idx}] is not hex")
+    })?;
+    if decoded.len() != 32 {
+      return Err(eyre!(
+        "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got {}",
+        decoded.len()
+      ));
+    }
+  }
+  Ok(())
 }
 
 fn verify_token(allowed: &[String], token: &str) -> bool {
@@ -837,10 +1073,16 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
   }
   let mut hasher = Sha256::new();
   hasher.update(token.as_bytes());
-  let digest = hex::encode(hasher.finalize());
-  allowed
-    .iter()
-    .any(|a| bool::from(a.as_bytes().ct_eq(digest.as_bytes())))
+  let digest = hasher.finalize();
+  let mut matched = 0_u8;
+  for allowed_hash in allowed {
+    if let Ok(decoded) = hex::decode(allowed_hash.trim())
+      && decoded.len() == digest.len()
+    {
+      matched |= decoded.as_slice().ct_eq(&digest[..]).unwrap_u8();
+    }
+  }
+  matched == 1
 }
 
 #[expect(clippy::too_many_arguments, reason = "DB upsert needs all fields")]
@@ -896,4 +1138,36 @@ async fn mark_disconnected(
   .execute(pool)
   .await?;
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn verify_token_accepts_configured_sha256_digest() {
+    let token = "correct horse battery staple";
+    let digest = hex::encode(Sha256::digest(token.as_bytes()));
+    assert!(verify_token(&[digest], token));
+  }
+
+  #[test]
+  fn verify_token_rejects_invalid_or_different_digest() {
+    let digest = hex::encode(Sha256::digest(b"other"));
+    assert!(!verify_token(&["not-hex".into(), digest], "token"));
+  }
+
+  #[test]
+  fn hash_key_segment_never_preserves_path_separators() {
+    assert_eq!(hash_key_segment("sha256:abc/def+ghi="), "abc_def_ghi");
+    assert_eq!(hash_key_segment("../../evil"), ".._.._evil");
+  }
+
+  #[test]
+  fn validate_store_path_rejects_prefix_only_and_traversal() {
+    assert!(validate_store_path("/nix/store/abc123-package").is_ok());
+    assert!(validate_store_path("/nix/store/").is_err());
+    assert!(validate_store_path("/nix/store/abc..def").is_err());
+    assert!(validate_store_path("/tmp/not-store").is_err());
+  }
 }

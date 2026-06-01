@@ -485,7 +485,6 @@ pub struct SigningConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-#[derive(Default)]
 pub struct CacheUploadConfig {
   pub enabled:                    bool,
   pub store_uri:                  Option<String>,
@@ -521,6 +520,20 @@ fn default_upload_compression() -> String {
 
 const fn default_upload_retries() -> u32 {
   3
+}
+
+impl Default for CacheUploadConfig {
+  fn default() -> Self {
+    Self {
+      enabled:                    false,
+      store_uri:                  None,
+      s3:                         None,
+      upload_concurrency:         default_upload_concurrency(),
+      upload_max_retries:         default_upload_retries(),
+      fail_build_on_upload_error: false,
+      compression:                default_upload_compression(),
+    }
+  }
 }
 
 /// S3-specific cache configuration.
@@ -1079,6 +1092,46 @@ impl Config {
     if self.queue_runner.psi_check_timeout == 0 {
       return Err(color_eyre::eyre::eyre!(
         "queue_runner.psi_check_timeout must be greater than 0 seconds"
+      ));
+    }
+    if let Some(rpc) = self.queue_runner.rpc.as_ref() {
+      if rpc.max_connections == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.max_connections must be greater than 0"
+        ));
+      }
+      if rpc.heartbeat_ttl_secs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.heartbeat_ttl_secs must be greater than 0"
+        ));
+      }
+      if rpc.presign_expiry_secs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.presign_expiry_secs must be greater than 0"
+        ));
+      }
+      for (idx, token_hash) in rpc.auth_tokens.iter().enumerate() {
+        let decoded = hex::decode(token_hash).map_err(|e| {
+          color_eyre::eyre::eyre!(
+            "queue_runner.rpc.auth_tokens[{idx}] must be SHA-256 hex: {e}"
+          )
+        })?;
+        if decoded.len() != 32 {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got \
+             {}",
+            decoded.len()
+          ));
+        }
+      }
+    }
+    if !matches!(
+      self.cache_upload.compression.as_str(),
+      "zstd" | "xz" | "gzip" | "none"
+    ) {
+      return Err(color_eyre::eyre::eyre!(
+        "cache_upload.compression must be one of zstd, xz, gzip, none; got {}",
+        self.cache_upload.compression
       ));
     }
 

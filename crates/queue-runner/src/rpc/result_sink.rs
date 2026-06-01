@@ -65,6 +65,11 @@ impl result_sink::Server for ResultSinkImpl {
       };
 
       let succeeded = matches!(kind, BuildOutcomeKind::Success);
+      let Some(tx) = done.lock().await.take() else {
+        return Err(capnp::Error::failed(
+          "build result already reported".into(),
+        ));
+      };
       if let Err(e) =
         repo::builder_sessions::record_outcome(&pool, machine_id, succeeded)
           .await
@@ -72,10 +77,7 @@ impl result_sink::Server for ResultSinkImpl {
         tracing::warn!(%machine_id, "failed to record outcome: {e}");
       }
 
-      let done_opt = done.lock().await.take();
-      if let Some(tx) = done_opt {
-        let _ = tx.send(kind);
-      }
+      let _ = tx.send(kind);
       Ok(())
     })
   }

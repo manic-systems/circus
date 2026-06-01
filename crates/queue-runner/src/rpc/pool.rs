@@ -40,11 +40,17 @@ pub struct DispatchCommand {
   /// via a presigned URL minted by the runner. `None` disables it; the
   /// runner's own `nix copy --to s3://...` post-build path stays in
   /// charge.
-  pub presigned_upload: Option<String>,
+  pub presigned_upload: Option<PresignedUpload>,
   /// Completion signal: the per-connection task sends the outcome here
   /// after the agent reports via `ResultSink`. Some scheduler errors are
   /// also surfaced here (queue full, connection closed mid-dispatch).
   pub completion:       tokio::sync::oneshot::Sender<DispatchResult>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PresignedUpload {
+  pub compression:                String,
+  pub fail_build_on_upload_error: bool,
 }
 
 #[derive(Debug)]
@@ -63,6 +69,7 @@ pub enum DispatchResult {
 /// scheduler. Send + Sync.
 pub struct AgentMeta {
   pub machine_id:         Uuid,
+  pub connection_id:      Uuid,
   pub name:               String,
   pub hostname:           String,
   pub systems:            Vec<String>,
@@ -137,12 +144,28 @@ impl AgentPool {
     Arc::new(Self::default())
   }
 
-  pub fn insert(&self, meta: Arc<AgentMeta>) {
-    self.inner.write().insert(meta.machine_id, meta);
+  pub fn insert(&self, meta: Arc<AgentMeta>) -> Option<Arc<AgentMeta>> {
+    self.inner.write().insert(meta.machine_id, meta)
   }
 
   pub fn remove(&self, machine_id: &Uuid) -> Option<Arc<AgentMeta>> {
     self.inner.write().remove(machine_id)
+  }
+
+  pub fn remove_if_connection(
+    &self,
+    machine_id: &Uuid,
+    connection_id: Uuid,
+  ) -> Option<Arc<AgentMeta>> {
+    let mut guard = self.inner.write();
+    if guard
+      .get(machine_id)
+      .is_some_and(|meta| meta.connection_id == connection_id)
+    {
+      guard.remove(machine_id)
+    } else {
+      None
+    }
   }
 
   #[must_use]
@@ -212,5 +235,58 @@ fn snapshot(m: &AgentMeta, current_jobs: u32) -> AgentSnapshot {
     max_jobs: m.max_jobs,
     current_jobs,
     heartbeat: hb,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn meta(machine_id: Uuid, connection_id: Uuid) -> Arc<AgentMeta> {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    Arc::new(AgentMeta {
+      machine_id,
+      connection_id,
+      name: "agent".into(),
+      hostname: "host".into(),
+      systems: vec!["x86_64-linux".into()],
+      supported_features: Vec::new(),
+      mandatory_features: Vec::new(),
+      speed_factor: 1.0,
+      cpu_count: 1,
+      max_jobs: 1,
+      current_jobs: Arc::new(AtomicU32::new(0)),
+      active_builds: RwLock::new(HashSet::new()),
+      heartbeat: RwLock::new(HeartbeatSnapshot::default()),
+      registered_at: Instant::now(),
+      tx,
+    })
+  }
+
+  #[test]
+  fn stale_connection_cannot_remove_replacement() {
+    let pool = AgentPool::default();
+    let machine_id = Uuid::new_v4();
+    let old_connection = Uuid::new_v4();
+    let new_connection = Uuid::new_v4();
+
+    assert!(pool.insert(meta(machine_id, old_connection)).is_none());
+    assert!(pool.insert(meta(machine_id, new_connection)).is_some());
+
+    assert!(
+      pool
+        .remove_if_connection(&machine_id, old_connection)
+        .is_none()
+    );
+    assert_eq!(
+      pool.get(&machine_id).map(|m| m.connection_id),
+      Some(new_connection)
+    );
+    assert!(
+      pool
+        .remove_if_connection(&machine_id, new_connection)
+        .is_some()
+    );
+    assert!(pool.get(&machine_id).is_none());
   }
 }
