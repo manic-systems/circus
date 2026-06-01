@@ -22,7 +22,6 @@ struct WebhookResponse {
   message:  String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GithubPushPayload {
   #[serde(alias = "ref")]
@@ -31,14 +30,12 @@ struct GithubPushPayload {
   repository: Option<GithubRepo>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GithubRepo {
   clone_url: Option<String>,
   html_url:  Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GithubPullRequestPayload {
   action:       Option<String>,
@@ -46,7 +43,6 @@ struct GithubPullRequestPayload {
   pull_request: Option<GithubPullRequest>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GithubPullRequest {
   head:  Option<GithubPrRef>,
@@ -54,7 +50,6 @@ struct GithubPullRequest {
   draft: Option<bool>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GithubPrRef {
   sha:      Option<String>,
@@ -62,7 +57,6 @@ struct GithubPrRef {
   ref_name: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GiteaPushPayload {
   #[serde(alias = "ref")]
@@ -71,14 +65,12 @@ struct GiteaPushPayload {
   repository: Option<GiteaRepo>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GiteaRepo {
   clone_url: Option<String>,
   html_url:  Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GitLabPushPayload {
   #[serde(alias = "ref")]
@@ -88,7 +80,6 @@ struct GitLabPushPayload {
   project:      Option<GitLabProject>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GitLabProject {
   id:                  Option<i64>,
@@ -97,7 +88,6 @@ struct GitLabProject {
   git_http_url:        Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GitLabMergeRequestPayload {
   object_kind:       Option<String>,
@@ -105,7 +95,6 @@ struct GitLabMergeRequestPayload {
   project:           Option<GitLabProject>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GitLabMergeRequestAttributes {
   iid:              Option<u64>,
@@ -118,10 +107,37 @@ struct GitLabMergeRequestAttributes {
   draft:            Option<bool>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GitLabCommit {
   id: Option<String>,
+}
+
+fn trace_webhook_repo(
+  forge: &str,
+  project_id: Uuid,
+  clone_url: Option<&str>,
+  html_url: Option<&str>,
+) {
+  tracing::debug!(
+    forge,
+    %project_id,
+    clone_url,
+    html_url,
+    "webhook payload repository"
+  );
+}
+
+fn trace_gitlab_project(project_id: Uuid, project: Option<&GitLabProject>) {
+  if let Some(project) = project {
+    tracing::debug!(
+      %project_id,
+      gitlab_project_id = ?project.id,
+      path_with_namespace = ?project.path_with_namespace,
+      web_url = ?project.web_url,
+      git_http_url = ?project.git_http_url,
+      "GitLab webhook payload project"
+    );
+  }
 }
 
 /// Strip the `refs/heads/` prefix from a git ref. Returns the original
@@ -245,6 +261,14 @@ async fn handle_github_push(
         "Invalid payload: {e}"
       )))
     })?;
+  if let Some(repo) = payload.repository.as_ref() {
+    trace_webhook_repo(
+      "github",
+      project_id,
+      repo.clone_url.as_deref(),
+      repo.html_url.as_deref(),
+    );
+  }
 
   let commit = payload.after.unwrap_or_default();
   if commit.is_empty() || commit == "0000000000000000000000000000000000000000" {
@@ -486,6 +510,14 @@ async fn handle_gitea_push(
         "Invalid payload: {e}"
       )))
     })?;
+  if let Some(repo) = payload.repository.as_ref() {
+    trace_webhook_repo(
+      forge_type,
+      project_id,
+      repo.clone_url.as_deref(),
+      repo.html_url.as_deref(),
+    );
+  }
 
   let commit = payload.after.unwrap_or_default();
   if commit.is_empty() || commit == "0000000000000000000000000000000000000000" {
@@ -624,6 +656,7 @@ async fn handle_gitlab_push(
         "Invalid GitLab push payload: {e}"
       )))
     })?;
+  trace_gitlab_project(project_id, payload.project.as_ref());
 
   // Use checkout_sha (the actual commit checked out) or fall back to after
   let commit = payload.checkout_sha.or(payload.after).unwrap_or_default();
@@ -691,6 +724,19 @@ async fn handle_gitlab_merge_request(
         "Invalid GitLab MR payload: {e}"
       )))
     })?;
+  trace_gitlab_project(project_id, payload.project.as_ref());
+
+  if let Some(kind) = payload.object_kind.as_deref()
+    && kind != "merge_request"
+  {
+    return Ok((
+      StatusCode::OK,
+      Json(WebhookResponse {
+        accepted: true,
+        message:  format!("Ignored GitLab object kind: {kind}"),
+      }),
+    ));
+  }
 
   let Some(attrs) = payload.object_attributes else {
     return Ok((
@@ -709,6 +755,18 @@ async fn handle_gitlab_merge_request(
       Json(WebhookResponse {
         accepted: true,
         message:  "Draft/WIP merge request, skipping".to_string(),
+      }),
+    ));
+  }
+
+  if let Some(state) = attrs.state.as_deref()
+    && state != "opened"
+  {
+    return Ok((
+      StatusCode::OK,
+      Json(WebhookResponse {
+        accepted: true,
+        message:  format!("Ignored MR state: {state}"),
       }),
     ));
   }

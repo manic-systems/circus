@@ -232,8 +232,6 @@ async fn probe_repository(
 struct SetupJobsetInput {
   name:           String,
   nix_expression: String,
-  #[allow(dead_code)]
-  description:    Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

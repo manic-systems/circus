@@ -364,7 +364,11 @@ fn log_disk_space(work_dir: &std::path::Path, jobset_name: &str) {
 /// and mark the eval row Completed or Failed. Used by both the branch-tip
 /// path (`evaluate_jobset`) and the push-driven path
 /// (`evaluate_pending_eval`).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::too_many_arguments,
+  reason = "shared evaluation back-half needs both persisted eval state and \
+            runtime configs"
+)]
 async fn run_nix_and_record_builds(
   pool: &PgPool,
   jobset: &ActiveJobset,
@@ -511,20 +515,19 @@ async fn evaluate_jobset(
 
   // Source-change jobsets only rebuild when source/input state changes.
   // Interval jobsets intentionally create a fresh run every due tick.
-  if jobset.trigger_mode == JobsetTriggerMode::SourceChange {
-    if let Ok(Some(cached)) =
+  if jobset.trigger_mode == JobsetTriggerMode::SourceChange
+    && let Ok(Some(cached)) =
       repo::evaluations::get_by_inputs_hash(pool, jobset.id, &inputs_hash).await
-    {
-      tracing::debug!(
-          jobset = %jobset.name,
-          commit = %commit_hash,
-          cached_eval = %cached.id,
-          "Inputs unchanged (hash: {}), skipping evaluation",
-          &inputs_hash[..16],
-      );
-      repo::jobsets::update_last_checked(pool, jobset.id).await?;
-      return Ok(());
-    }
+  {
+    tracing::debug!(
+        jobset = %jobset.name,
+        commit = %commit_hash,
+        cached_eval = %cached.id,
+        "Inputs unchanged (hash: {}), skipping evaluation",
+        &inputs_hash[..16],
+    );
+    repo::jobsets::update_last_checked(pool, jobset.id).await?;
+    return Ok(());
   }
 
   tracing::info!(
