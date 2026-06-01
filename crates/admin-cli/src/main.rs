@@ -74,6 +74,11 @@ enum Command {
     #[command(subcommand)]
     command: NotificationCommand,
   },
+  /// Inspect or unpin kept build outputs.
+  PinnedOutputs {
+    #[command(subcommand)]
+    command: PinnedOutputCommand,
+  },
   /// Show the audit log.
   Audit {
     #[arg(long, default_value_t = 50)]
@@ -192,6 +197,13 @@ enum BuilderCommand {
   Disable { id: String },
   /// Remove a remote builder.
   Remove { id: String },
+  /// List builder agent sessions.
+  Sessions {
+    #[arg(long)]
+    connected: bool,
+  },
+  /// Show one builder agent session by machine id.
+  Session { machine_id: String },
 }
 
 #[derive(Subcommand)]
@@ -259,6 +271,19 @@ enum NotificationCommand {
   List,
   /// Retry a failed notification task.
   Retry { id: String },
+}
+
+#[derive(Subcommand)]
+enum PinnedOutputCommand {
+  /// List pinned build outputs.
+  List {
+    #[arg(long, default_value_t = 100)]
+    limit:  u32,
+    #[arg(long, default_value_t = 0)]
+    offset: u32,
+  },
+  /// Clear the keep flag for a build and make its outputs GC-eligible.
+  Unpin { build_id: String },
 }
 
 #[derive(Subcommand)]
@@ -401,6 +426,9 @@ async fn main() -> Result<()> {
     },
     Command::Notifications { command } => {
       notifications(&api, cli.json, command).await
+    },
+    Command::PinnedOutputs { command } => {
+      pinned_outputs(&api, cli.json, command).await
     },
     Command::Audit { limit, offset } => {
       audit(&api, cli.json, limit, offset).await
@@ -753,6 +781,30 @@ async fn builders(
       }
       println!("Removed builder {id}");
     },
+    BuilderCommand::Sessions { connected } => {
+      let path = if connected {
+        "api/v1/admin/builders/sessions/connected"
+      } else {
+        "api/v1/admin/builders/sessions"
+      };
+      let response = api.get(path, true).await?;
+      if json_output {
+        return print_json(&response);
+      }
+      print_builder_sessions(&response);
+    },
+    BuilderCommand::Session { machine_id } => {
+      let response = api
+        .get(
+          &format!("api/v1/admin/builders/sessions/{machine_id}"),
+          true,
+        )
+        .await?;
+      if json_output {
+        return print_json(&response);
+      }
+      print_builder_sessions(&response);
+    },
   }
   Ok(())
 }
@@ -983,6 +1035,46 @@ async fn notifications(
   Ok(())
 }
 
+async fn pinned_outputs(
+  api: &ApiClient,
+  json_output: bool,
+  command: PinnedOutputCommand,
+) -> Result<()> {
+  match command {
+    PinnedOutputCommand::List { limit, offset } => {
+      let response = api
+        .get(
+          &with_query("api/v1/admin/pinned-build-products", &[
+            ("limit", limit.to_string()),
+            ("offset", offset.to_string()),
+          ]),
+          true,
+        )
+        .await?;
+      if json_output {
+        return print_json(&response);
+      }
+      print_pinned_outputs(&response);
+      print_page(&response);
+    },
+    PinnedOutputCommand::Unpin { build_id } => {
+      let response = api
+        .post(
+          &format!("api/v1/admin/pinned-builds/{build_id}/unpin"),
+          json!({}),
+          true,
+        )
+        .await?;
+      if json_output {
+        return print_json(&response);
+      }
+      println!("Unpinned build {build_id}");
+      print_builds(&response);
+    },
+  }
+  Ok(())
+}
+
 async fn audit(
   api: &ApiClient,
   json_output: bool,
@@ -1101,6 +1193,59 @@ fn print_builders(value: &Value) {
           field(builder, "max_jobs"),
           field(builder, "speed_factor"),
           field(builder, "enabled"),
+        ]
+      })
+      .collect::<Vec<_>>(),
+  );
+}
+
+fn print_builder_sessions(value: &Value) {
+  print_table(
+    &[
+      "Machine",
+      "Name",
+      "Host",
+      "Systems",
+      "Jobs",
+      "Load",
+      "Connected",
+      "Last Seen",
+    ],
+    &items(value)
+      .iter()
+      .map(|session| {
+        vec![
+          field(session, "machine_id"),
+          field(session, "name"),
+          field(session, "hostname"),
+          field(session, "systems"),
+          format!(
+            "{}/{}",
+            field(session, "current_jobs"),
+            field(session, "max_jobs")
+          ),
+          field(session, "load1"),
+          field(session, "connected"),
+          field(session, "last_seen"),
+        ]
+      })
+      .collect::<Vec<_>>(),
+  );
+}
+
+fn print_pinned_outputs(value: &Value) {
+  print_table(
+    &["Build", "Job", "System", "Status", "Product", "Root"],
+    &items(value)
+      .iter()
+      .map(|product| {
+        vec![
+          field(product, "build_id"),
+          field(product, "job_name"),
+          field(product, "system"),
+          field(product, "status"),
+          field(product, "product_name"),
+          short(&field(product, "gc_root_path"), 80),
         ]
       })
       .collect::<Vec<_>>(),
