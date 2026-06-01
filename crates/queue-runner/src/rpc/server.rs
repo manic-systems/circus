@@ -732,17 +732,19 @@ impl runner::Server for RunnerImpl {
 
       if let Err(e) = circus_common::repo::narinfo_cache::upsert(
         &db_pool,
-        &store_path,
-        &nar_hash,
-        nar_size,
-        file_hash_opt,
-        file_size_opt,
-        &compression,
-        &url,
-        deriver.as_deref(),
-        &references,
-        signed_sig.as_deref(),
-        ca.as_deref(),
+        circus_common::repo::narinfo_cache::UpsertNarInfo {
+          store_path: &store_path,
+          nar_hash: &nar_hash,
+          nar_size,
+          file_hash: file_hash_opt,
+          file_size: file_size_opt,
+          compression: &compression,
+          url: &url,
+          deriver: deriver.as_deref(),
+          references: &references,
+          sig: signed_sig.as_deref(),
+          ca: ca.as_deref(),
+        },
       )
       .await
       {

@@ -29,25 +29,25 @@ pub struct NarInfo {
   pub updated_at:  DateTime<Utc>,
 }
 
+pub struct UpsertNarInfo<'a> {
+  pub store_path:  &'a str,
+  pub nar_hash:    &'a str,
+  pub nar_size:    i64,
+  pub file_hash:   Option<&'a str>,
+  pub file_size:   Option<i64>,
+  pub compression: &'a str,
+  pub url:         &'a str,
+  pub deriver:     Option<&'a str>,
+  pub references:  &'a [String],
+  pub sig:         Option<&'a str>,
+  pub ca:          Option<&'a str>,
+}
+
 /// Insert or replace the narinfo for one store path.
 ///
 /// # Errors
 /// Returns the underlying sqlx error.
-#[allow(clippy::too_many_arguments)]
-pub async fn upsert(
-  pool: &PgPool,
-  store_path: &str,
-  nar_hash: &str,
-  nar_size: i64,
-  file_hash: Option<&str>,
-  file_size: Option<i64>,
-  compression: &str,
-  url: &str,
-  deriver: Option<&str>,
-  references: &[String],
-  sig: Option<&str>,
-  ca: Option<&str>,
-) -> Result<()> {
+pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   sqlx::query(
     "INSERT INTO narinfo_cache (store_path, nar_hash, nar_size, file_hash, \
      file_size, compression, url, deriver, \"references\", sig, ca, \
@@ -59,17 +59,17 @@ pub async fn upsert(
      EXCLUDED.\"references\", sig = EXCLUDED.sig, ca = EXCLUDED.ca, \
      updated_at = NOW()",
   )
-  .bind(store_path)
-  .bind(nar_hash)
-  .bind(nar_size)
-  .bind(file_hash)
-  .bind(file_size)
-  .bind(compression)
-  .bind(url)
-  .bind(deriver)
-  .bind(references)
-  .bind(sig)
-  .bind(ca)
+  .bind(info.store_path)
+  .bind(info.nar_hash)
+  .bind(info.nar_size)
+  .bind(info.file_hash)
+  .bind(info.file_size)
+  .bind(info.compression)
+  .bind(info.url)
+  .bind(info.deriver)
+  .bind(info.references)
+  .bind(info.sig)
+  .bind(info.ca)
   .execute(pool)
   .await
   .map_err(CiError::Database)?;

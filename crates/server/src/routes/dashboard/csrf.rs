@@ -13,7 +13,11 @@ pub(super) fn csrf_from(extensions: &Extensions) -> String {
     .unwrap_or_default()
 }
 
-#[allow(clippy::result_large_err)]
+#[expect(
+  clippy::result_large_err,
+  reason = "dashboard handlers return axum Response directly; boxing would \
+            add noise at call sites"
+)]
 pub(super) fn check_csrf(
   extensions: &Extensions,
   submitted: &str,

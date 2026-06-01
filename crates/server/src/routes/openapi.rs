@@ -14,7 +14,11 @@ use serde_json::{Value, json};
 
 use crate::state::AppState;
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+  clippy::too_many_lines,
+  reason = "single hand-written OpenAPI document keeps route/schema drift \
+            reviewable"
+)]
 #[must_use]
 pub fn document() -> Value {
   json!({
@@ -718,7 +722,6 @@ pub fn document() -> Value {
   })
 }
 
-#[allow(clippy::unused_async)]
 async fn openapi_spec() -> impl IntoResponse {
   (
     StatusCode::OK,

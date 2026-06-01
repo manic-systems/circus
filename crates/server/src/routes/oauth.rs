@@ -59,7 +59,6 @@ pub struct OAuthCallbackParams {
 struct GitHubUserResponse {
   id:         i64,
   login:      String,
-  #[allow(dead_code)]
   avatar_url: Option<String>,
 }
 
@@ -231,6 +230,12 @@ async fn github_callback(
         "Failed to parse GitHub user: {e}"
       )))
     })?;
+  tracing::debug!(
+    github_id = user_info.id,
+    github_login = %user_info.login,
+    avatar_url = user_info.avatar_url.as_deref(),
+    "GitHub OAuth user profile"
+  );
 
   // Fetch user emails
   let emails_response = state

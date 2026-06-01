@@ -34,11 +34,11 @@ pub mod limits {
 
 pub mod circus_capnp {
   #![allow(
+    warnings,
     clippy::all,
     clippy::nursery,
     clippy::pedantic,
     clippy::restriction,
-    warnings,
     reason = "Generated Cap'n Proto bindings are not hand-maintained Rust"
   )]
 

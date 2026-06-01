@@ -2,11 +2,6 @@
 //! auth helpers shared across all dashboard handlers. Everything here is
 //! `pub(super)` so sibling modules (auth, admin, pages, ...) can use them
 //! without re-exporting them at the dashboard module's external surface.
-//!
-//! `allow(dead_code)` is needed because askama template fields are read
-//! via the derive-generated `render()` impl, which rustc does not detect.
-
-#![allow(dead_code)]
 
 use axum::{
   http::Extensions,
@@ -153,6 +148,12 @@ pub(super) fn enforce_page_access(
   extensions: &Extensions,
   page: DashboardPage,
 ) -> Result<(), Response> {
+  #![expect(
+    clippy::result_large_err,
+    reason = "Dashboard handlers return axum Response directly; boxing would \
+              add noise at every call site"
+  )]
+
   let allowed = match page.access(config) {
     PageAccessLevel::Public => true,
     PageAccessLevel::Authenticated => is_authenticated(extensions),
