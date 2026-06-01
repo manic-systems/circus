@@ -150,13 +150,14 @@
 {% block scripts %}
 {% if is_admin %}
 <script>
+const CSRF_TOKEN = '{{ csrf_token }}';
 document.getElementById('create-jobset-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = document.getElementById('jobset-msg');
   try {
     const res = await fetch('/api/v1/projects/{{ project.id }}/jobsets', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({
         name: document.getElementById('js-name').value,
         nix_expression: document.getElementById('js-expr').value,
@@ -176,7 +177,7 @@ document.getElementById('create-jobset-form')?.addEventListener('submit', async 
 async function deleteProject() {
   if (!confirm('Delete this project and all its data?')) return;
   try {
-    const res = await fetch('/api/v1/projects/{{ project.id }}', { method: 'DELETE' });
+    const res = await fetch('/api/v1/projects/{{ project.id }}', { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || err.message || 'Failed to delete project');

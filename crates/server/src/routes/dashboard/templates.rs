@@ -61,6 +61,7 @@ pub(super) struct ProjectsTemplate {
   pub(super) total_pages: i64,
   pub(super) is_admin:    bool,
   pub(super) auth_name:   String,
+  pub(super) csrf_token:  String,
 }
 
 #[derive(Template)]
@@ -246,22 +247,26 @@ pub(super) struct PinnedOutputView {
 #[derive(Template)]
 #[template(path = "admin.html")]
 pub(super) struct AdminTemplate {
-  pub(super) status:             SystemStatus,
-  pub(super) builders:           Vec<BuilderView>,
-  pub(super) api_keys:           Vec<ApiKeyView>,
-  pub(super) notification_tasks: Vec<NotificationTaskView>,
-  pub(super) pinned_outputs:     Vec<PinnedOutputView>,
-  pub(super) config_path:        String,
-  pub(super) config_contents:    String,
-  pub(super) is_admin:           bool,
-  pub(super) auth_name:          String,
+  pub(super) status:                  SystemStatus,
+  pub(super) builders:                Vec<BuilderView>,
+  pub(super) api_keys:                Vec<ApiKeyView>,
+  pub(super) notification_tasks:      Vec<NotificationTaskView>,
+  pub(super) pinned_outputs:          Vec<PinnedOutputView>,
+  pub(super) config_path:             String,
+  pub(super) config_contents:         String,
+  pub(super) config_editable:         bool,
+  pub(super) config_read_only_reason: String,
+  pub(super) is_admin:                bool,
+  pub(super) auth_name:               String,
+  pub(super) csrf_token:              String,
 }
 
 #[derive(Template)]
 #[template(path = "project_setup.html")]
 pub(super) struct ProjectSetupTemplate {
-  pub(super) is_admin:  bool,
-  pub(super) auth_name: String,
+  pub(super) is_admin:   bool,
+  pub(super) auth_name:  String,
+  pub(super) csrf_token: String,
 }
 
 #[derive(Template)]
@@ -285,6 +290,7 @@ pub(super) struct UsersTemplate {
   pub(super) total_pages: i64,
   pub(super) is_admin:    bool,
   pub(super) auth_name:   String,
+  pub(super) csrf_token:  String,
 }
 
 #[derive(Template)]
@@ -294,6 +300,7 @@ pub(super) struct StarredTemplate {
   pub(super) is_logged_in: bool,
   pub(super) is_admin:     bool,
   pub(super) auth_name:    String,
+  pub(super) csrf_token:   String,
 }
 
 #[derive(Template)]

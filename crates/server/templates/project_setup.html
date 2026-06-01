@@ -79,6 +79,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
+const CSRF_TOKEN = '{{ csrf_token }}';
 let probeResult = null;
 
 function showSpinner(el, msg) {
@@ -102,7 +103,7 @@ async function probeRepo() {
   try {
     const resp = await fetch('/api/v1/projects/probe', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({ repository_url: url }),
     });
     if (!resp.ok) {
@@ -225,7 +226,7 @@ async function createProject() {
   try {
     const resp = await fetch('/api/v1/projects/setup', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({
         repository_url: url,
         name: name,

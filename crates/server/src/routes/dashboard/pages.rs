@@ -227,6 +227,7 @@ pub(super) async fn projects_page(
     total_pages,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
   };
   Ok(Html(
     tmpl
@@ -1188,6 +1189,7 @@ pub(super) async fn starred_page(
     is_logged_in,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
   };
   Ok(Html(
     tmpl
@@ -1229,8 +1231,9 @@ pub(super) async fn project_setup_page(
   }
 
   let tmpl = ProjectSetupTemplate {
-    is_admin:  is_admin(&extensions),
-    auth_name: auth_name(&extensions),
+    is_admin:   is_admin(&extensions),
+    auth_name:  auth_name(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
   };
   Ok(Html(
     tmpl

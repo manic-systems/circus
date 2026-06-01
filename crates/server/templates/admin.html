@@ -112,14 +112,19 @@
 {% if is_admin %}
 <h2>Configuration</h2>
 <details>
-  <summary>Edit {{ config_path }}</summary>
+  <summary>{% if config_editable %}Edit{% else %}View{% endif %} {{ config_path }}</summary>
   <div class="form-card">
+    {% if !config_editable %}
+    <div class="flash-message flash-warning">{{ config_read_only_reason }}</div>
+    {% endif %}
     <form id="config-form">
       <div class="form-group">
         <label for="config-contents">TOML</label>
-        <textarea id="config-contents" rows="18" spellcheck="false">{{ config_contents }}</textarea>
+        <textarea id="config-contents" rows="18" spellcheck="false"{% if !config_editable %} readonly{% endif %}>{{ config_contents }}</textarea>
       </div>
+      {% if config_editable %}
       <button type="submit" class="btn">Save Configuration</button>
+      {% endif %}
     </form>
     <div id="config-msg"></div>
   </div>
@@ -231,13 +236,14 @@
 {% block scripts %}
 {% if is_admin %}
 <script>
+const CSRF_TOKEN = '{{ csrf_token }}';
 document.getElementById('create-key-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = document.getElementById('key-msg');
   try {
     const res = await fetch('/api/v1/api-keys', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({
         name: document.getElementById('key-name').value,
         role: document.getElementById('key-role').value,
@@ -257,7 +263,7 @@ document.getElementById('create-key-form')?.addEventListener('submit', async (e)
 async function deleteKey(id) {
   if (!confirm('Delete this API key?')) return;
   try {
-    const res = await fetch('/api/v1/api-keys/' + id, { method: 'DELETE' });
+    const res = await fetch('/api/v1/api-keys/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || err.message || 'Failed to delete key');
@@ -269,7 +275,7 @@ async function deleteKey(id) {
 }
 async function retryNotificationTask(id) {
   try {
-    const res = await fetch('/api/v1/admin/notification-tasks/' + id + '/retry', { method: 'POST' });
+    const res = await fetch('/api/v1/admin/notification-tasks/' + id + '/retry', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || err.message || 'Failed to retry notification task');
@@ -282,7 +288,7 @@ async function retryNotificationTask(id) {
 async function unpinBuild(id) {
   if (!confirm('Unpin this build? All of its outputs become eligible for GC once their roots age out.')) return;
   try {
-    const res = await fetch('/api/v1/admin/pinned-builds/' + id + '/unpin', { method: 'POST' });
+    const res = await fetch('/api/v1/admin/pinned-builds/' + id + '/unpin', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || err.message || 'Failed to unpin build');
@@ -294,11 +300,14 @@ async function unpinBuild(id) {
 }
 document.getElementById('config-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
+  {% if !config_editable %}
+  return;
+  {% endif %}
   const msg = document.getElementById('config-msg');
   try {
     const res = await fetch('/api/v1/admin/config', {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({ contents: document.getElementById('config-contents').value }),
     });
     const data = await res.json().catch(() => ({}));
@@ -316,7 +325,7 @@ document.getElementById('create-builder-form')?.addEventListener('submit', async
   try {
     const res = await fetch('/api/v1/admin/builders', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({
         name: document.getElementById('builder-name').value,
         ssh_uri: document.getElementById('builder-ssh').value,
@@ -337,7 +346,7 @@ async function toggleBuilder(id, enable) {
   try {
     const res = await fetch('/api/v1/admin/builders/' + id, {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({ enabled: enable }),
     });
     if (!res.ok) {
@@ -352,7 +361,7 @@ async function toggleBuilder(id, enable) {
 async function deleteBuilder(id) {
   if (!confirm('Delete this builder?')) return;
   try {
-    const res = await fetch('/api/v1/admin/builders/' + id, { method: 'DELETE' });
+    const res = await fetch('/api/v1/admin/builders/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || err.message || 'Failed to delete builder');

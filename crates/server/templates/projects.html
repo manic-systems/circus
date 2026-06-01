@@ -78,13 +78,14 @@
 {% block scripts %}
 {% if is_admin %}
 <script>
+const CSRF_TOKEN = '{{ csrf_token }}';
 document.getElementById('create-project-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = document.getElementById('project-msg');
   try {
     const res = await fetch('/api/v1/projects', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
       body: JSON.stringify({
         name: document.getElementById('project-name').value,
         repository_url: document.getElementById('project-repo').value,

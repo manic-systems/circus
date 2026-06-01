@@ -70,7 +70,9 @@ pub async fn require_api_key(
     }
   }
 
-  // Fall back to session cookie
+  // Fall back to session cookie. Mutating API requests authenticated by a
+  // browser session must carry the dashboard CSRF token. Bearer-token API calls
+  // are unaffected because they are not sent automatically by browsers.
   if let Some(cookie_header) = request
     .headers()
     .get("cookie")
@@ -82,6 +84,9 @@ pub async fn require_api_key(
     {
       // Check session expiry (24 hours)
       if session.created_at.elapsed() < std::time::Duration::from_hours(24) {
+        if !is_read && !valid_csrf_header(&state, &request, &session_id) {
+          return Err(StatusCode::FORBIDDEN);
+        }
         // Insert both user and session data
         if let Some(ref user) = session.user {
           request.extensions_mut().insert(user.clone());
@@ -102,6 +107,9 @@ pub async fn require_api_key(
     {
       // Check session expiry (24 hours)
       if session.created_at.elapsed() < std::time::Duration::from_hours(24) {
+        if !is_read && !valid_csrf_header(&state, &request, &session_id) {
+          return Err(StatusCode::FORBIDDEN);
+        }
         if let Some(ref api_key) = session.api_key {
           request.extensions_mut().insert(api_key.clone());
         }
@@ -119,6 +127,22 @@ pub async fn require_api_key(
   } else {
     Err(StatusCode::UNAUTHORIZED)
   }
+}
+
+fn valid_csrf_header(
+  state: &AppState,
+  request: &Request,
+  session_id: &str,
+) -> bool {
+  use subtle::ConstantTimeEq;
+  let expected = state.csrf_token_for(session_id);
+  request
+    .headers()
+    .get("x-csrf-token")
+    .and_then(|v| v.to_str().ok())
+    .is_some_and(|submitted| {
+      expected.as_bytes().ct_eq(submitted.as_bytes()).unwrap_u8() == 1
+    })
 }
 
 /// Extractor that requires an authenticated admin user.
