@@ -153,117 +153,118 @@ development; `circus.toml` remains the practical reference.
 
 <!-- markdownlint-disable MD013 -->
 
-| Section         | Key                          | Default                                             | Description                                      |
-| --------------- | ---------------------------- | --------------------------------------------------- | ------------------------------------------------ |
-| `database`      | `url`                        | `postgresql://circus:password@localhost/circus`     | PostgreSQL connection URL                        |
-| `database`      | `max_connections`            | `20`                                                | Maximum connection pool size                     |
-| `database`      | `min_connections`            | `5`                                                 | Minimum idle connections                         |
-| `database`      | `connect_timeout`            | `30`                                                | Connection timeout (seconds)                     |
-| `database`      | `idle_timeout`               | `600`                                               | Idle connection timeout (seconds)                |
-| `database`      | `max_lifetime`               | `1800`                                              | Maximum connection lifetime (seconds)            |
-| `server`        | `host`                       | `127.0.0.1`                                         | HTTP listen address                              |
-| `server`        | `port`                       | `3000`                                              | HTTP listen port                                 |
-| `server`        | `request_timeout`            | `30`                                                | Per-request timeout (seconds)                    |
-| `server`        | `max_body_size`              | `10485760`                                          | Maximum request body size (10 MB)                |
-| `server`        | `api_key`                    | none                                                | Optional legacy API key (prefer DB keys)         |
-| `server`        | `cors_permissive`            | `false`                                             | Allow all CORS origins                           |
-| `server`        | `allowed_origins`            | `[]`                                                | Allowed CORS origins list                        |
-| `server`        | `force_secure_cookies`       | `false`                                             | Force Secure flag on cookies (HTTPS proxy)       |
-| `server`        | `rate_limit_rps`             | none                                                | Requests per second limit per IP                 |
-| `server`        | `rate_limit_burst`           | none                                                | Burst size for rate limiting                     |
-| `server`        | `allowed_url_schemes`        | `[]`                                                | Allowed URL schemes for repository URLs          |
-| `server`        | `ldap.enabled`               | `true`                                              | Enable configured LDAP login                     |
-| `server`        | `ldap.url`                   | none                                                | LDAP server URL                                  |
-| `server`        | `ldap.bind_dn_template`      | none                                                | LDAP bind DN template (`{username}` placeholder) |
-| `server`        | `ldap.base_dn`               | none                                                | LDAP base DN for user searches                   |
-| `server`        | `ldap.tls_ca_cert`           | none                                                | Custom CA cert for LDAP TLS                      |
-| `server`        | `email_validation_regex`     | none                                                | Custom regex for email validation                |
+| Section              | Key                          | Default                                             | Description                                      |
+| -------------------- | ---------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| `database`           | `url`                        | `postgresql://circus:password@localhost/circus`     | PostgreSQL connection URL                        |
+| `database`           | `max_connections`            | `20`                                                | Maximum connection pool size                     |
+| `database`           | `min_connections`            | `5`                                                 | Minimum idle connections                         |
+| `database`           | `connect_timeout`            | `30`                                                | Connection timeout (seconds)                     |
+| `database`           | `idle_timeout`               | `600`                                               | Idle connection timeout (seconds)                |
+| `database`           | `max_lifetime`               | `1800`                                              | Maximum connection lifetime (seconds)            |
+| `server`             | `host`                       | `127.0.0.1`                                         | HTTP listen address                              |
+| `server`             | `port`                       | `3000`                                              | HTTP listen port                                 |
+| `server`             | `request_timeout`            | `30`                                                | Per-request timeout (seconds)                    |
+| `server`             | `max_body_size`              | `10485760`                                          | Maximum request body size (10 MB)                |
+| `server`             | `api_key`                    | none                                                | Optional legacy API key (prefer DB keys)         |
+| `server`             | `cors_permissive`            | `false`                                             | Allow all CORS origins                           |
+| `server`             | `allowed_origins`            | `[]`                                                | Allowed CORS origins list                        |
+| `server`             | `force_secure_cookies`       | `false`                                             | Force Secure flag on cookies (HTTPS proxy)       |
+| `server`             | `rate_limit_rps`             | none                                                | Requests per second limit per IP                 |
+| `server`             | `rate_limit_burst`           | none                                                | Burst size for rate limiting                     |
+| `server`             | `allowed_url_schemes`        | `[]`                                                | Allowed URL schemes for repository URLs          |
+| `server`             | `config_editor_enabled`      | `true`                                              | Allow admin config editing through API/dashboard |
+| `server`             | `ldap.enabled`               | `true`                                              | Enable configured LDAP login                     |
+| `server`             | `ldap.url`                   | none                                                | LDAP server URL                                  |
+| `server`             | `ldap.bind_dn_template`      | none                                                | LDAP bind DN template (`{username}` placeholder) |
+| `server`             | `ldap.base_dn`               | none                                                | LDAP base DN for user searches                   |
+| `server`             | `ldap.tls_ca_cert`           | none                                                | Custom CA cert for LDAP TLS                      |
+| `server`             | `email_validation_regex`     | none                                                | Custom regex for email validation                |
 | `server.page_access` | per page                     | public                                              | Dashboard page visibility policy                 |
-| `evaluator`     | `poll_interval`              | `60`                                                | Seconds between git poll cycles                  |
-| `evaluator`     | `git_timeout`                | `600`                                               | Git operation timeout (seconds)                  |
-| `evaluator`     | `nix_timeout`                | `1800`                                              | Nix evaluation timeout (seconds)                 |
-| `evaluator`     | `max_concurrent_evals`       | `4`                                                 | Maximum concurrent evaluations                   |
-| `evaluator`     | `work_dir`                   | `/tmp/circus-evaluator`                             | Working directory for clones                     |
-| `evaluator`     | `restrict_eval`              | `true`                                              | Pass `--option restrict-eval true` to Nix        |
-| `evaluator`     | `allow_ifd`                  | `false`                                             | Allow import-from-derivation                     |
-| `evaluator`     | `strict_errors`              | `false`                                             | Abort on first evaluation cycle error            |
-| `queue_runner`  | `workers`                    | `4`                                                 | Concurrent build slots                           |
-| `queue_runner`  | `poll_interval`              | `5`                                                 | Seconds between build queue polls                |
-| `queue_runner`  | `build_timeout`              | `3600`                                              | Per-build timeout (seconds)                      |
-| `queue_runner`  | `work_dir`                   | `/tmp/circus-queue-runner`                          | Working directory for builds                     |
-| `queue_runner`  | `strict_errors`              | `false`                                             | Abort on first runner loop error                 |
-| `queue_runner`  | `failed_paths_cache`         | `true`                                              | Cache failed derivation paths                    |
-| `queue_runner`  | `failed_paths_ttl`           | `86400`                                             | TTL for failed paths cache (seconds)             |
-| `queue_runner`  | `unsupported_timeout`        | none                                                | Timeout for unsupported system builds            |
-| `queue_runner`  | `scheduling_strategy`        | `speed_factor_only`                                 | Builder selection strategy                       |
-| `queue_runner`  | `psi_threshold`              | none                                                | PSI pressure threshold (skip builders)           |
-| `queue_runner`  | `psi_check_timeout`          | `5`                                                 | SSH PSI check timeout (seconds)                  |
-| `queue_runner`  | `extra_nix_build_args`       | `[]`                                                | Extra arguments passed to `nix build`            |
-| `queue_runner`  | `rpc.bind`                   | none                                                | Cap'n Proto RPC listen address                   |
-| `queue_runner`  | `rpc.auth_tokens`            | `[]`                                                | Valid authentication tokens for agents           |
-| `queue_runner`  | `rpc.max_connections`        | `256`                                               | Maximum concurrent agent connections             |
-| `queue_runner`  | `rpc.presign_expiry_secs`    | `3600`                                              | Presigned URL expiry (seconds)                   |
-| `queue_runner`  | `rpc.tls`                    | none                                                | TLS configuration for RPC endpoint               |
-| `queue_runner`  | `rpc.heartbeat_ttl_secs`     | `60`                                                | Agent heartbeat TTL before marking unavailable   |
-| `gc`            | `enabled`                    | `true`                                              | Manage GC roots for build outputs                |
-| `gc`            | `gc_roots_dir`               | `/nix/var/nix/gcroots/per-user/circus/circus-roots` | GC roots directory                               |
-| `gc`            | `max_age_days`               | `30`                                                | Remove GC roots older than N days                |
-| `gc`            | `cleanup_interval`           | `3600`                                              | GC cleanup interval (seconds)                    |
-| `logs`          | `log_dir`                    | `/var/lib/circus/logs`                              | Build log storage directory                      |
-| `logs`          | `compress`                   | `false`                                             | Compress stored logs                             |
-| `cache`         | `enabled`                    | `true`                                              | Serve a Nix binary cache at `/nix-cache/`        |
-| `cache`         | `secret_key_file`            | none                                                | Signing key for binary cache                     |
-| `cache`         | `compression`                | `zstd`                                              | NAR compression algorithm                        |
-| `cache`         | `cache_url`                  | none                                                | Public cache URL for channel manifests           |
-| `signing`       | `enabled`                    | `false`                                             | Sign build outputs                               |
-| `signing`       | `key_file`                   | none                                                | Signing key file path                            |
-| `cache_upload`  | `enabled`                    | `false`                                             | Upload builds to external cache store            |
-| `cache_upload`  | `store_uri`                  | none                                                | Cache store URI (`s3://bucket/path`)             |
-| `cache_upload`  | `s3.region`                  | none                                                | AWS region                                       |
-| `cache_upload`  | `s3.prefix`                  | none                                                | Extra path prefix within bucket                  |
-| `cache_upload`  | `s3.access_key_id`           | none                                                | Access key for presigned S3 uploads/redirects    |
-| `cache_upload`  | `s3.secret_access_key`       | none                                                | Secret key for presigned S3 uploads/redirects    |
-| `cache_upload`  | `s3.session_token`           | none                                                | Session token for temporary credentials          |
-| `cache_upload`  | `s3.endpoint_url`            | none                                                | S3-compatible endpoint URL                       |
-| `cache_upload`  | `s3.use_path_style`          | `false`                                             | Use path-style addressing                        |
-| `cache_upload`  | `upload_concurrency`         | `4`                                                 | Concurrent uploads per build                     |
-| `cache_upload`  | `upload_max_retries`         | `3`                                                 | Max retry attempts per path                      |
-| `cache_upload`  | `fail_build_on_upload_error` | `false`                                             | Mark build failed on upload error                |
-| `cache_upload`  | `compression`                | `zstd`                                              | Agent presigned-upload NAR compression           |
-| `notifications` | `webhook_url`                | none                                                | HTTP endpoint for build status JSON              |
-| `notifications` | `github_token`               | none                                                | GitHub token for commit status updates           |
-| `notifications` | `gitea_url`                  | none                                                | Gitea/Forgejo instance URL                       |
-| `notifications` | `gitea_token`                | none                                                | Gitea/Forgejo API token                          |
-| `notifications` | `gitlab_url`                 | none                                                | GitLab instance URL                              |
-| `notifications` | `gitlab_token`               | none                                                | GitLab API token                                 |
-| `notifications` | `enable_retry_queue`         | `true`                                              | Persistent retry queue with backoff              |
-| `notifications` | `max_retry_attempts`         | `5`                                                 | Max notification retry attempts                  |
-| `notifications` | `retention_days`             | `7`                                                 | Retention for completed notification tasks       |
-| `notifications` | `retry_poll_interval`        | `5`                                                 | Retry poll interval (seconds)                    |
-| `notifications` | `email.smtp_host`            | none                                                | SMTP host for email notifications                |
-| `notifications` | `email.smtp_port`            | none                                                | SMTP port                                        |
-| `notifications` | `email.smtp_user`            | none                                                | SMTP username (optional)                         |
-| `notifications` | `email.smtp_password`        | none                                                | SMTP password (optional)                         |
-| `notifications` | `email.tls`                  | `false`                                             | Enable TLS for SMTP connection                   |
-| `notifications` | `email.from_address`         | none                                                | From address for notification emails             |
-| `notifications` | `email.to_addresses`         | `[]`                                                | Recipient addresses                              |
-| `notifications` | `slack.webhook_url`          | none                                                | Slack incoming webhook URL                       |
-| `notifications` | `slack.on_failure_only`      | `false`                                             | Only send Slack alerts on failure                |
-| `notifications` | `alerts.enabled`             | `false`                                             | Enable error-rate threshold alerts               |
-| `notifications` | `alerts.error_threshold`     | `0.5`                                               | Error rate threshold to trigger alert            |
-| `notifications` | `alerts.time_window_minutes` | `60`                                                | Time window for error rate calculation           |
-| `tracing`       | `level`                      | `info`                                              | Log level (trace/debug/info/warn/error)          |
-| `tracing`       | `format`                     | `compact`                                           | Log output format                                |
-| `tracing`       | `show_targets`               | `true`                                              | Show module path in log messages                 |
-| `tracing`       | `show_timestamps`            | `true`                                              | Show timestamps in log messages                  |
-| `oauth`         | `github.client_id`           | none                                                | GitHub OAuth App client ID                       |
-| `oauth`         | `github.client_secret`       | none                                                | GitHub OAuth App client secret                   |
-| `oauth`         | `github.redirect_uri`        | none                                                | OAuth redirect URI                               |
-| `declarative`   | `projects`                   | `[]`                                                | Declarative project definitions                  |
-| `declarative`   | `api_keys`                   | `[]`                                                | Declarative API key definitions                  |
-| `declarative`   | `users`                      | `[]`                                                | Declarative user definitions                     |
-| `declarative`   | `remote_builders`            | `[]`                                                | Declarative remote builder definitions           |
-| `nix`           | `store_dir`                  | `/nix/store`                                        | Nix store directory                              |
+| `evaluator`          | `poll_interval`              | `60`                                                | Seconds between git poll cycles                  |
+| `evaluator`          | `git_timeout`                | `600`                                               | Git operation timeout (seconds)                  |
+| `evaluator`          | `nix_timeout`                | `1800`                                              | Nix evaluation timeout (seconds)                 |
+| `evaluator`          | `max_concurrent_evals`       | `4`                                                 | Maximum concurrent evaluations                   |
+| `evaluator`          | `work_dir`                   | `/tmp/circus-evaluator`                             | Working directory for clones                     |
+| `evaluator`          | `restrict_eval`              | `true`                                              | Pass `--option restrict-eval true` to Nix        |
+| `evaluator`          | `allow_ifd`                  | `false`                                             | Allow import-from-derivation                     |
+| `evaluator`          | `strict_errors`              | `false`                                             | Abort on first evaluation cycle error            |
+| `queue_runner`       | `workers`                    | `4`                                                 | Concurrent build slots                           |
+| `queue_runner`       | `poll_interval`              | `5`                                                 | Seconds between build queue polls                |
+| `queue_runner`       | `build_timeout`              | `3600`                                              | Per-build timeout (seconds)                      |
+| `queue_runner`       | `work_dir`                   | `/tmp/circus-queue-runner`                          | Working directory for builds                     |
+| `queue_runner`       | `strict_errors`              | `false`                                             | Abort on first runner loop error                 |
+| `queue_runner`       | `failed_paths_cache`         | `true`                                              | Cache failed derivation paths                    |
+| `queue_runner`       | `failed_paths_ttl`           | `86400`                                             | TTL for failed paths cache (seconds)             |
+| `queue_runner`       | `unsupported_timeout`        | none                                                | Timeout for unsupported system builds            |
+| `queue_runner`       | `scheduling_strategy`        | `speed_factor_only`                                 | Builder selection strategy                       |
+| `queue_runner`       | `psi_threshold`              | none                                                | PSI pressure threshold (skip builders)           |
+| `queue_runner`       | `psi_check_timeout`          | `5`                                                 | SSH PSI check timeout (seconds)                  |
+| `queue_runner`       | `extra_nix_build_args`       | `[]`                                                | Extra arguments passed to `nix build`            |
+| `queue_runner`       | `rpc.bind`                   | none                                                | Cap'n Proto RPC listen address                   |
+| `queue_runner`       | `rpc.auth_tokens`            | `[]`                                                | Valid authentication tokens for agents           |
+| `queue_runner`       | `rpc.max_connections`        | `256`                                               | Maximum concurrent agent connections             |
+| `queue_runner`       | `rpc.presign_expiry_secs`    | `3600`                                              | Presigned URL expiry (seconds)                   |
+| `queue_runner`       | `rpc.tls`                    | none                                                | TLS configuration for RPC endpoint               |
+| `queue_runner`       | `rpc.heartbeat_ttl_secs`     | `60`                                                | Agent heartbeat TTL before marking unavailable   |
+| `gc`                 | `enabled`                    | `true`                                              | Manage GC roots for build outputs                |
+| `gc`                 | `gc_roots_dir`               | `/nix/var/nix/gcroots/per-user/circus/circus-roots` | GC roots directory                               |
+| `gc`                 | `max_age_days`               | `30`                                                | Remove GC roots older than N days                |
+| `gc`                 | `cleanup_interval`           | `3600`                                              | GC cleanup interval (seconds)                    |
+| `logs`               | `log_dir`                    | `/var/lib/circus/logs`                              | Build log storage directory                      |
+| `logs`               | `compress`                   | `false`                                             | Compress stored logs                             |
+| `cache`              | `enabled`                    | `true`                                              | Serve a Nix binary cache at `/nix-cache/`        |
+| `cache`              | `secret_key_file`            | none                                                | Signing key for binary cache                     |
+| `cache`              | `compression`                | `zstd`                                              | NAR compression algorithm                        |
+| `cache`              | `cache_url`                  | none                                                | Public cache URL for channel manifests           |
+| `signing`            | `enabled`                    | `false`                                             | Sign build outputs                               |
+| `signing`            | `key_file`                   | none                                                | Signing key file path                            |
+| `cache_upload`       | `enabled`                    | `false`                                             | Upload builds to external cache store            |
+| `cache_upload`       | `store_uri`                  | none                                                | Cache store URI (`s3://bucket/path`)             |
+| `cache_upload`       | `s3.region`                  | none                                                | AWS region                                       |
+| `cache_upload`       | `s3.prefix`                  | none                                                | Extra path prefix within bucket                  |
+| `cache_upload`       | `s3.access_key_id`           | none                                                | Access key for presigned S3 uploads/redirects    |
+| `cache_upload`       | `s3.secret_access_key`       | none                                                | Secret key for presigned S3 uploads/redirects    |
+| `cache_upload`       | `s3.session_token`           | none                                                | Session token for temporary credentials          |
+| `cache_upload`       | `s3.endpoint_url`            | none                                                | S3-compatible endpoint URL                       |
+| `cache_upload`       | `s3.use_path_style`          | `false`                                             | Use path-style addressing                        |
+| `cache_upload`       | `upload_concurrency`         | `4`                                                 | Concurrent uploads per build                     |
+| `cache_upload`       | `upload_max_retries`         | `3`                                                 | Max retry attempts per path                      |
+| `cache_upload`       | `fail_build_on_upload_error` | `false`                                             | Mark build failed on upload error                |
+| `cache_upload`       | `compression`                | `zstd`                                              | Agent presigned-upload NAR compression           |
+| `notifications`      | `webhook_url`                | none                                                | HTTP endpoint for build status JSON              |
+| `notifications`      | `github_token`               | none                                                | GitHub token for commit status updates           |
+| `notifications`      | `gitea_url`                  | none                                                | Gitea/Forgejo instance URL                       |
+| `notifications`      | `gitea_token`                | none                                                | Gitea/Forgejo API token                          |
+| `notifications`      | `gitlab_url`                 | none                                                | GitLab instance URL                              |
+| `notifications`      | `gitlab_token`               | none                                                | GitLab API token                                 |
+| `notifications`      | `enable_retry_queue`         | `true`                                              | Persistent retry queue with backoff              |
+| `notifications`      | `max_retry_attempts`         | `5`                                                 | Max notification retry attempts                  |
+| `notifications`      | `retention_days`             | `7`                                                 | Retention for completed notification tasks       |
+| `notifications`      | `retry_poll_interval`        | `5`                                                 | Retry poll interval (seconds)                    |
+| `notifications`      | `email.smtp_host`            | none                                                | SMTP host for email notifications                |
+| `notifications`      | `email.smtp_port`            | none                                                | SMTP port                                        |
+| `notifications`      | `email.smtp_user`            | none                                                | SMTP username (optional)                         |
+| `notifications`      | `email.smtp_password`        | none                                                | SMTP password (optional)                         |
+| `notifications`      | `email.tls`                  | `false`                                             | Enable TLS for SMTP connection                   |
+| `notifications`      | `email.from_address`         | none                                                | From address for notification emails             |
+| `notifications`      | `email.to_addresses`         | `[]`                                                | Recipient addresses                              |
+| `notifications`      | `slack.webhook_url`          | none                                                | Slack incoming webhook URL                       |
+| `notifications`      | `slack.on_failure_only`      | `false`                                             | Only send Slack alerts on failure                |
+| `notifications`      | `alerts.enabled`             | `false`                                             | Enable error-rate threshold alerts               |
+| `notifications`      | `alerts.error_threshold`     | `0.5`                                               | Error rate threshold to trigger alert            |
+| `notifications`      | `alerts.time_window_minutes` | `60`                                                | Time window for error rate calculation           |
+| `tracing`            | `level`                      | `info`                                              | Log level (trace/debug/info/warn/error)          |
+| `tracing`            | `format`                     | `compact`                                           | Log output format                                |
+| `tracing`            | `show_targets`               | `true`                                              | Show module path in log messages                 |
+| `tracing`            | `show_timestamps`            | `true`                                              | Show timestamps in log messages                  |
+| `oauth`              | `github.client_id`           | none                                                | GitHub OAuth App client ID                       |
+| `oauth`              | `github.client_secret`       | none                                                | GitHub OAuth App client secret                   |
+| `oauth`              | `github.redirect_uri`        | none                                                | OAuth redirect URI                               |
+| `declarative`        | `projects`                   | `[]`                                                | Declarative project definitions                  |
+| `declarative`        | `api_keys`                   | `[]`                                                | Declarative API key definitions                  |
+| `declarative`        | `users`                      | `[]`                                                | Declarative user definitions                     |
+| `declarative`        | `remote_builders`            | `[]`                                                | Declarative remote builder definitions           |
+| `nix`                | `store_dir`                  | `/nix/store`                                        | Nix store directory                              |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -312,6 +313,11 @@ Admin-only pages such as `/admin`, `/users`, and project notification settings
 remain admin-only regardless of this policy. API endpoint authorization is
 separate from dashboard page visibility.
 
+> [!NOTE]
+> Set `server.config_editor_enabled = false` to make the admin config editor
+> read-only and reject `PUT /api/v1/admin/config`. The `GET` endpoint still
+> returns the default-backed effective config for inspection.
+
 ## Authentication Providers
 
 The dashboard login page always supports local username/password users and API
@@ -328,8 +334,8 @@ client_secret = "..."
 redirect_uri = "https://ci.example.org/api/v1/auth/github/callback"
 ```
 
-Users start that flow at `/api/v1/auth/github`. On first login, Circus creates or
-updates a read-only user record for the GitHub identity.
+Users start that flow at `/api/v1/auth/github`. On first login, Circus creates
+or updates a read-only user record for the GitHub identity.
 
 LDAP bind login is enabled through `[server.ldap]` and exposed at `/auth/ldap`:
 
