@@ -405,6 +405,12 @@ impl ApiClient {
 #[tokio::main]
 async fn main() -> Result<()> {
   color_eyre::install()?;
+
+  // Use ring for tls.
+  rustls::crypto::ring::default_provider()
+    .install_default()
+    .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
+
   let cli = Cli::parse();
   let base_url = cli
     .url

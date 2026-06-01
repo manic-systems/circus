@@ -48,6 +48,8 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
   color_eyre::install()?;
+  circus_common::install_crypto_provider()?;
+
   let config = Config::load()?;
   circus_common::init_tracing(&config.tracing);
 

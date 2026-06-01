@@ -60,7 +60,11 @@ parking_lot = "0.12.5"
 password-hash = { version = "0.6.1", features = [ "getrandom" ] }
 percent-encoding = "2.3.2"
 regex = "1.12.3"
-reqwest = { version = "0.13.4", default-features = false, features = [ "json", "rustls", "stream" ] }
+reqwest = { version = "0.13.4", default-features = false, features = [
+  "json",
+  "rustls-no-provider",
+  "stream",
+] }
 ring = "0.17.14"
 rustls = { version = "0.23.40", default-features = false, features = [ "ring", "std", "tls12" ] }
 rustls-pemfile = "2.2.0"
