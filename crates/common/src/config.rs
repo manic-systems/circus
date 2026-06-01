@@ -84,6 +84,9 @@ pub struct ServerConfig {
   pub ldap:                   Option<LdapConfig>,
   /// Dashboard page-level access policy.
   pub page_access:            PageAccessConfig,
+  /// Allow admins to read and replace the config file through the
+  /// dashboard/API.
+  pub config_editor_enabled:  bool,
 }
 
 #[derive(
@@ -864,6 +867,7 @@ impl Default for ServerConfig {
       email_validation_regex: None,
       ldap:                   None,
       page_access:            PageAccessConfig::default(),
+      config_editor_enabled:  true,
     }
   }
 }
@@ -987,6 +991,27 @@ impl HotConfig {
 }
 
 impl Config {
+  /// Parse a TOML config fragment after applying compiled defaults.
+  ///
+  /// This matches normal file loading semantics without environment overrides,
+  /// making it suitable for the admin config editor: partial config files are
+  /// expanded before validation and saving.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if TOML parsing, deserialization, or validation fails.
+  pub fn from_toml_with_defaults(contents: &str) -> color_eyre::Result<Self> {
+    let settings = config_crate::Config::builder()
+      .add_source(config_crate::Config::try_from(&Self::default())?)
+      .add_source(config_crate::File::from_str(
+        contents,
+        config_crate::FileFormat::Toml,
+      ));
+    let config = settings.build()?.try_deserialize::<Self>()?;
+    config.validate()?;
+    Ok(config)
+  }
+
   /// Load configuration from file and environment variables.
   ///
   /// # Errors

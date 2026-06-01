@@ -310,6 +310,8 @@ struct ConfigFileResponse {
   path:             String,
   contents:         String,
   requires_restart: bool,
+  editable:         bool,
+  read_only_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,10 +321,25 @@ struct UpdateConfigFile {
 
 async fn get_config_file(
   _auth: RequireAdmin,
+  State(state): State<AppState>,
 ) -> Result<Json<ConfigFileResponse>, ApiError> {
   let path = config_file_path();
   let contents = match tokio::fs::read_to_string(&path).await {
-    Ok(contents) => contents,
+    Ok(contents) => {
+      let parsed =
+        circus_common::config::Config::from_toml_with_defaults(&contents)
+          .map_err(|e| {
+            ApiError(circus_common::CiError::Validation(format!(
+              "Invalid TOML configuration in {}: {e}",
+              path.display()
+            )))
+          })?;
+      toml::to_string_pretty(&parsed).map_err(|e| {
+        ApiError(circus_common::CiError::Internal(format!(
+          "Failed to render effective configuration: {e}"
+        )))
+      })?
+    },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
       toml::to_string_pretty(&circus_common::config::Config::default())
         .map_err(|e| {
@@ -338,6 +355,10 @@ async fn get_config_file(
     path: path.display().to_string(),
     contents,
     requires_restart: true,
+    editable: state.config.server.config_editor_enabled,
+    read_only_reason: (!state.config.server.config_editor_enabled).then_some(
+      "Config editor is disabled by server configuration".to_string(),
+    ),
   }))
 }
 
@@ -346,19 +367,28 @@ async fn update_config_file(
   State(state): State<AppState>,
   Json(input): Json<UpdateConfigFile>,
 ) -> Result<Json<ConfigFileResponse>, ApiError> {
-  let parsed: circus_common::config::Config = toml::from_str(&input.contents)
-    .map_err(|e| {
-    ApiError(circus_common::CiError::Validation(format!(
-      "Invalid TOML configuration: {e}"
+  if !state.config.server.config_editor_enabled {
+    return Err(ApiError(circus_common::CiError::Forbidden(
+      "Config editor is disabled by server configuration".to_string(),
+    )));
+  }
+
+  let parsed =
+    circus_common::config::Config::from_toml_with_defaults(&input.contents)
+      .map_err(|e| {
+        ApiError(circus_common::CiError::Validation(format!(
+          "Invalid TOML configuration: {e}"
+        )))
+      })?;
+  let rendered = toml::to_string_pretty(&parsed).map_err(|e| {
+    ApiError(circus_common::CiError::Internal(format!(
+      "Failed to render configuration: {e}"
     )))
   })?;
-  parsed
-    .validate()
-    .map_err(|e| ApiError(circus_common::CiError::Validation(e.to_string())))?;
 
   let path = config_file_path();
   let tmp_path = path.with_extension("toml.tmp");
-  tokio::fs::write(&tmp_path, &input.contents)
+  tokio::fs::write(&tmp_path, &rendered)
     .await
     .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
   tokio::fs::rename(&tmp_path, &path)
@@ -374,15 +404,17 @@ async fn update_config_file(
     // Body of the config can contain secrets; record only its size and
     // checksum so the log stays useful without leaking credentials.
     serde_json::json!({
-      "bytes":  input.contents.len(),
+      "bytes":  rendered.len(),
     }),
   )
   .await;
 
   Ok(Json(ConfigFileResponse {
     path:             path.display().to_string(),
-    contents:         input.contents,
+    contents:         rendered,
     requires_restart: true,
+    editable:         true,
+    read_only_reason: None,
   }))
 }
 

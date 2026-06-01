@@ -206,9 +206,25 @@ pub(super) async fn admin_page(
       .collect();
   let config_path = std::env::var("CIRCUS_CONFIG_FILE")
     .unwrap_or_else(|_| "circus.toml".to_string());
-  let config_contents = tokio::fs::read_to_string(&config_path)
-    .await
-    .unwrap_or_default();
+  let config_contents = match tokio::fs::read_to_string(&config_path).await {
+    Ok(contents) => {
+      circus_common::config::Config::from_toml_with_defaults(&contents)
+        .ok()
+        .and_then(|config| toml::to_string_pretty(&config).ok())
+        .unwrap_or(contents)
+    },
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+      toml::to_string_pretty(&circus_common::config::Config::default())
+        .unwrap_or_default()
+    },
+    Err(_) => String::new(),
+  };
+  let config_editable = state.config.server.config_editor_enabled;
+  let config_read_only_reason = if config_editable {
+    String::new()
+  } else {
+    "Config editor is disabled by server configuration".to_string()
+  };
 
   let tmpl = AdminTemplate {
     status,
@@ -218,8 +234,11 @@ pub(super) async fn admin_page(
     pinned_outputs,
     config_path,
     config_contents,
+    config_editable,
+    config_read_only_reason,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
+    csrf_token: csrf_from(&extensions),
   };
   Ok(Html(
     tmpl
@@ -288,6 +307,7 @@ pub(super) async fn users_page(
     total_pages,
     is_admin: true, // Already checked above
     auth_name: auth_name(&extensions),
+    csrf_token: csrf_from(&extensions),
   };
   Ok(Html(
     tmpl
