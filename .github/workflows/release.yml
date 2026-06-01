@@ -1,0 +1,123 @@
+name: Tag and Release
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Format, Lint and Test"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Release
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    uses: manic-systems/workflows/.github/workflows/rust-release.yml@tmp
+    with:
+      # The reusable workflow marks semver tags with suffixes as prereleases.
+      # While the workspace version is `*-dev`, releases are intentionally
+      # published as GitHub prereleases.
+      stage: prepare
+
+  build-amd64:
+    name: Build ${{ matrix.binary }} (${{ matrix.suffix }})
+    needs: prepare
+    if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: circus-server
+            binary: circus-server
+            os: ubuntu-latest
+            suffix: server-linux-amd64
+          - package: circus-evaluator
+            binary: circus-evaluator
+            os: ubuntu-latest
+            suffix: evaluator-linux-amd64
+          - package: circus-queue-runner
+            binary: circus-queue-runner
+            os: ubuntu-latest
+            suffix: queue-runner-linux-amd64
+          - package: circus-agent
+            binary: circus-agent
+            os: ubuntu-latest
+            suffix: agent-linux-amd64
+          - package: circus-admin
+            binary: circus-admin
+            os: ubuntu-latest
+            suffix: admin-linux-amd64
+          - package: circus-migrate-cli
+            binary: circus-migrate
+            os: ubuntu-latest
+            suffix: migrate-linux-amd64
+    uses: manic-systems/workflows/.github/workflows/rust-build.yml@tmp
+    with:
+      upload: true
+      version: ${{ needs.prepare.outputs.version }}
+      os: ${{ matrix.os }}
+      build-command: nix build .#${{ matrix.package }} -L
+      binary-name: ${{ matrix.binary }}
+      asset-prefix: circus
+      suffix: ${{ matrix.suffix }}
+
+  build-arm64:
+    name: Build ${{ matrix.binary }} (${{ matrix.suffix }})
+    needs: prepare
+    if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - package: circus-server
+            binary: circus-server
+            os: ubuntu-24.04-arm
+            suffix: server-linux-arm64
+          - package: circus-evaluator
+            binary: circus-evaluator
+            os: ubuntu-24.04-arm
+            suffix: evaluator-linux-arm64
+          - package: circus-queue-runner
+            binary: circus-queue-runner
+            os: ubuntu-24.04-arm
+            suffix: queue-runner-linux-arm64
+          - package: circus-agent
+            binary: circus-agent
+            os: ubuntu-24.04-arm
+            suffix: agent-linux-arm64
+          - package: circus-admin
+            binary: circus-admin
+            os: ubuntu-24.04-arm
+            suffix: admin-linux-arm64
+          - package: circus-migrate-cli
+            binary: circus-migrate
+            os: ubuntu-24.04-arm
+            suffix: migrate-linux-arm64
+    uses: manic-systems/workflows/.github/workflows/rust-build.yml@tmp
+    with:
+      upload: true
+      version: ${{ needs.prepare.outputs.version }}
+      os: ${{ matrix.os }}
+      build-command: nix build .#${{ matrix.package }} -L
+      binary-name: ${{ matrix.binary }}
+      asset-prefix: circus
+      suffix: ${{ matrix.suffix }}
+
+  finalize:
+    name: Finalize Release
+    needs: [prepare, build-amd64, build-arm64]
+    if: ${{ needs.prepare.outputs.skip != 'true' && needs['build-amd64'].result == 'success' && needs['build-arm64'].result == 'success' }}
+    uses: manic-systems/workflows/.github/workflows/rust-release.yml@tmp
+    with:
+      stage: finalize
+      version: ${{ needs.prepare.outputs.version }}
+      asset-prefix: circus
