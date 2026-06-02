@@ -31,6 +31,7 @@ use super::shared::{
   StarredJobView,
   UserView,
 };
+use crate::permissions::UiPermissions;
 
 #[derive(Template)]
 #[template(path = "home.html")]
@@ -176,7 +177,7 @@ pub(super) struct QueueTemplate {
   pub(super) running_builds: Vec<QueueBuildView>,
   pub(super) pending_count:  i64,
   pub(super) running_count:  i64,
-  pub(super) can_bump:       bool,
+  pub(super) permissions:    UiPermissions,
   pub(super) csrf_token:     String,
   pub(super) is_admin:       bool,
   pub(super) auth_name:      String,

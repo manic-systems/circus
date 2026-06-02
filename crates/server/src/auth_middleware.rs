@@ -189,51 +189,6 @@ impl FromRequestParts<AppState> for RequireAdmin {
   }
 }
 
-/// Extractor that requires one of the specified roles (admin always passes).
-/// Use as: `RequireRoles::check(&extensions, &["cancel-build",
-/// "restart-jobs"])`
-pub struct RequireRoles;
-
-impl RequireRoles {
-  /// Check if the session has one of the allowed roles. Admin always passes.
-  ///
-  /// # Errors
-  ///
-  /// Returns unauthorized or forbidden status if authentication fails or role
-  /// is insufficient.
-  pub fn check(
-    extensions: &axum::http::Extensions,
-    allowed: &[&str],
-  ) -> Result<ApiKey, StatusCode> {
-    // Check for user first
-    if let Some(user) = extensions.get::<User>()
-      && (user.role == "admin" || allowed.contains(&user.role.as_str()))
-    {
-      return Ok(ApiKey {
-        id:           user.id,
-        name:         user.username.clone(),
-        key_hash:     String::new(),
-        role:         user.role.clone(),
-        created_at:   user.created_at,
-        last_used_at: user.last_login_at,
-        user_id:      Some(user.id),
-      });
-    }
-
-    // Fall back to API key
-    let key = extensions
-      .get::<ApiKey>()
-      .cloned()
-      .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    if key.role == "admin" || allowed.contains(&key.role.as_str()) {
-      Ok(key)
-    } else {
-      Err(StatusCode::FORBIDDEN)
-    }
-  }
-}
-
 /// Session extraction middleware for dashboard routes.
 /// Reads `circus_user_session` or `circus_session` cookie, or Bearer token (API
 /// key), and inserts User/ApiKey into extensions if valid.

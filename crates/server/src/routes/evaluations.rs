@@ -19,16 +19,11 @@ use circus_common::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{auth_middleware::RequireRoles, error::ApiError, state::AppState};
-
-fn extensions_is_admin(extensions: &Extensions) -> bool {
-  if let Some(user) = extensions.get::<circus_common::models::User>() {
-    return user.role == "admin";
-  }
-  extensions
-    .get::<circus_common::models::ApiKey>()
-    .is_some_and(|key| key.role == "admin")
-}
+use crate::{
+  error::ApiError,
+  permissions::{self, Permission},
+  state::AppState,
+};
 
 #[derive(Debug, Deserialize)]
 struct ListEvaluationsParams {
@@ -43,7 +38,7 @@ async fn list_evaluations(
   Query(params): Query<ListEvaluationsParams>,
   extensions: Extensions,
 ) -> Result<Json<PaginatedResponse<Evaluation>>, ApiError> {
-  let include_hidden = extensions_is_admin(&extensions);
+  let include_hidden = permissions::check(&extensions, Permission::Admin);
   let pagination = PaginationParams {
     limit:  params.limit,
     offset: params.offset,
@@ -84,7 +79,7 @@ async fn get_evaluation(
   let evaluation = circus_common::repo::evaluations::get_visible(
     &state.pool,
     id,
-    extensions_is_admin(&extensions),
+    permissions::check(&extensions, Permission::Admin),
   )
   .await
   .map_err(ApiError)?;
@@ -96,15 +91,7 @@ async fn trigger_evaluation(
   State(state): State<AppState>,
   Json(input): Json<CreateEvaluation>,
 ) -> Result<Json<Evaluation>, ApiError> {
-  RequireRoles::check(&extensions, &["eval-jobset"]).map_err(|s| {
-    ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
-    } else {
-      circus_common::CiError::Unauthorized(
-        "Authentication required".to_string(),
-      )
-    })
-  })?;
+  permissions::require_api(&extensions, Permission::EvalJobset)?;
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;

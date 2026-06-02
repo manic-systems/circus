@@ -23,7 +23,6 @@ use super::{
     DashboardPage,
     UserView,
     auth_name,
-    can_bump_to_front,
     enforce_page_access,
     is_admin,
   },
@@ -38,10 +37,14 @@ use super::{
     UsersTemplate,
   },
 };
-use crate::state::AppState;
+use crate::{
+  permissions::{self, Permission},
+  state::AppState,
+};
 
-// ---------- Admin overview ----------
-
+/// Render the admin overview at `/admin`: system status counters, builder
+/// load and last-activity, API keys, queued notification tasks, pinned
+/// build outputs, and the on-disk config editor when writes are enabled.
 pub(super) async fn admin_page(
   State(state): State<AppState>,
   extensions: Extensions,
@@ -275,8 +278,8 @@ pub(super) async fn admin_page(
   ))
 }
 
-// ---------- Users page ----------
-
+/// Render the user-management page at `/users`. Admin-only because the
+/// listing exposes emails and other account metadata.
 pub(super) async fn users_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
@@ -344,8 +347,8 @@ pub(super) async fn users_page(
   ))
 }
 
-// ---------- News ----------
-
+/// Render the news page at `/news`: list of recent announcements plus,
+/// for admins, the form to publish a new one.
 pub(super) async fn news_page(
   State(state): State<AppState>,
   extensions: Extensions,
@@ -422,8 +425,9 @@ pub(super) async fn news_delete(
   Redirect::to("/news").into_response()
 }
 
-// ---------- Project-scoped notification configs ----------
-
+/// Form payload for `POST /project/{id}/notifications`: the kind of
+/// notification (webhook, email, ...) and a JSON blob holding the
+/// kind-specific configuration.
 #[derive(serde::Deserialize)]
 pub struct NotificationCreateForm {
   pub notification_type: String,
@@ -644,15 +648,8 @@ pub(super) async fn queue_bump(
   extensions: Extensions,
   Form(form): Form<CsrfOnlyForm>,
 ) -> Result<Redirect, Response> {
-  if !can_bump_to_front(&extensions) {
-    return Err(
-      (
-        StatusCode::FORBIDDEN,
-        "Insufficient permissions to push build forward",
-      )
-        .into_response(),
-    );
-  }
+  permissions::require(&extensions, Permission::BumpToFront)
+    .map_err(|s| (s, "Insufficient permissions").into_response())?;
   check_csrf(&extensions, &form.csrf_token)?;
   let updated =
     circus_common::repo::builds::bump_priority(&state.pool, build_id, 10)

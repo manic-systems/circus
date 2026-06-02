@@ -56,7 +56,7 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>#</th><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Priority</th><th>Created</th>{% if can_bump %}<th></th>{% endif %}</tr>
+    <tr><th>#</th><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Priority</th><th>Created</th>{% if permissions.bump_to_front %}<th></th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for b in pending_builds %}
@@ -68,7 +68,7 @@
       <td>{{ b.system }}</td>
       <td>{{ b.priority }}</td>
       <td>{{ b.created_at }}</td>
-      {% if can_bump %}
+      {% if permissions.bump_to_front %}
       <td class="row-actions">
         <form method="POST" action="/build/{{ b.id }}/bump" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
