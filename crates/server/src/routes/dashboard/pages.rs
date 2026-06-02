@@ -920,6 +920,48 @@ pub(super) async fn queue_page(
   let builder_map: std::collections::HashMap<Uuid, String> =
     builders.into_iter().map(|b| (b.id, b.name)).collect();
 
+  // Resolve each evaluation_id appearing in either list to its
+  // (project_id, project_name, jobset_id, jobset_name). Cache so each unique
+  // evaluation costs at most one eval + jobset + project lookup, regardless of
+  // how many builds share it.
+  let mut context_by_eval: std::collections::HashMap<
+    Uuid,
+    (Uuid, String, Uuid, String),
+  > = std::collections::HashMap::new();
+  for b in running.iter().chain(pending.iter()) {
+    if context_by_eval.contains_key(&b.evaluation_id) {
+      continue;
+    }
+    let Ok(eval) =
+      circus_common::repo::evaluations::get(&state.pool, b.evaluation_id).await
+    else {
+      continue;
+    };
+    let Ok(jobset) =
+      circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
+    else {
+      continue;
+    };
+    let Ok(project) =
+      circus_common::repo::projects::get(&state.pool, jobset.project_id).await
+    else {
+      continue;
+    };
+    context_by_eval.insert(
+      b.evaluation_id,
+      (project.id, project.name, jobset.id, jobset.name),
+    );
+  }
+
+  let context_for = |b: &circus_common::models::Build| {
+    context_by_eval.get(&b.evaluation_id).map_or_else(
+      || (None, String::new(), None, String::new()),
+      |(pid, pname, jid, jname)| {
+        (Some(*pid), pname.clone(), Some(*jid), jname.clone())
+      },
+    )
+  };
+
   let running_count = running.len() as i64;
   let pending_count = pending.len() as i64;
 
@@ -933,9 +975,14 @@ pub(super) async fn queue_page(
       });
       let builder_name =
         b.builder_id.and_then(|id| builder_map.get(&id).cloned());
+      let (project_id, project_name, jobset_id, jobset_name) = context_for(b);
       QueueBuildView {
         id: b.id,
         job_name: b.job_name.clone(),
+        project_id,
+        project_name,
+        jobset_id,
+        jobset_name,
         system: b.system.clone().unwrap_or_else(|| "unknown".to_string()),
         created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
         started_at: b
@@ -956,20 +1003,22 @@ pub(super) async fn queue_page(
     .iter()
     .enumerate()
     .map(|(idx, b)| {
+      let (project_id, project_name, jobset_id, jobset_name) = context_for(b);
       QueueBuildView {
-        id:            b.id,
-        job_name:      b.job_name.clone(),
-        system:        b
-          .system
-          .clone()
-          .unwrap_or_else(|| "unknown".to_string()),
-        created_at:    b.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        started_at:    String::new(),
-        elapsed:       String::new(),
+        id: b.id,
+        job_name: b.job_name.clone(),
+        project_id,
+        project_name,
+        jobset_id,
+        jobset_name,
+        system: b.system.clone().unwrap_or_else(|| "unknown".to_string()),
+        created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        started_at: String::new(),
+        elapsed: String::new(),
         started_epoch: None,
-        priority:      b.priority,
-        builder_name:  None,
-        queue_pos:     (idx + 1) as i64,
+        priority: b.priority,
+        builder_name: None,
+        queue_pos: (idx + 1) as i64,
       }
     })
     .collect();

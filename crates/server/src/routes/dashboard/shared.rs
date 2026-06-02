@@ -45,6 +45,10 @@ pub(super) struct BuildView {
 pub(super) struct QueueBuildView {
   pub(super) id:            Uuid,
   pub(super) job_name:      String,
+  pub(super) project_id:    Option<Uuid>,
+  pub(super) project_name:  String,
+  pub(super) jobset_id:     Option<Uuid>,
+  pub(super) jobset_name:   String,
   pub(super) system:        String,
   pub(super) created_at:    String,
   pub(super) started_at:    String,
