@@ -11,7 +11,10 @@
 //!
 //! The public surface is just [`router`].
 
-use axum::{Router, routing::get};
+use axum::{
+  Router,
+  routing::{get, post},
+};
 
 use crate::state::AppState;
 
@@ -25,7 +28,7 @@ mod templates;
 pub fn router() -> Router<AppState> {
   Router::new()
     .route("/login", get(auth::login_page).post(auth::login_action))
-    .route("/logout", axum::routing::post(auth::logout_action))
+    .route("/logout", post(auth::logout_action))
     .route("/", get(pages::home))
     .route("/projects", get(pages::projects_page))
     .route("/projects/new", get(pages::project_setup_page))
@@ -36,28 +39,26 @@ pub fn router() -> Router<AppState> {
     )
     .route(
       "/project/{id}/notifications/{config_id}/delete",
-      axum::routing::post(admin::notifications_delete),
+      post(admin::notifications_delete),
     )
     .route("/jobset/{id}", get(pages::jobset_page))
     .route("/jobset/{id}/jobs", get(pages::jobset_jobs_page))
-    .route(
-      "/jobset/{id}/delete",
-      axum::routing::post(admin::jobset_delete),
-    )
+    .route("/jobset/{id}/delete", post(admin::jobset_delete))
     .route("/evaluations", get(pages::evaluations_page))
     .route("/evaluation/{id}", get(pages::evaluation_page))
     .route(
       "/evaluation/{id}/visibility",
-      axum::routing::post(admin::evaluation_visibility),
+      post(admin::evaluation_visibility),
     )
     .route("/builds", get(pages::builds_page))
     .route("/build/{id}", get(pages::build_page))
     .route("/build/{id}/log", get(pages::build_log))
     .route("/queue", get(pages::queue_page))
+    .route("/build/{id}/bump", post(admin::queue_bump))
     .route("/channels", get(pages::channels_page))
     .route("/channel/{id}", get(pages::channel_page))
     .route("/news", get(admin::news_page).post(admin::news_create))
-    .route("/news/{id}/delete", axum::routing::post(admin::news_delete))
+    .route("/news/{id}/delete", post(admin::news_delete))
     .route("/admin", get(admin::admin_page))
     .route("/users", get(admin::users_page))
     .route("/starred", get(pages::starred_page))

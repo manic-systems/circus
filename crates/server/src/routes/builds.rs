@@ -217,19 +217,14 @@ async fn bump_build(
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
   check_role(&extensions, &["bump-to-front"])?;
-  let build = sqlx::query_as::<_, Build>(
-    "UPDATE builds SET priority = priority + 10 WHERE id = $1 AND status = \
-     'pending' RETURNING *",
-  )
-  .bind(id)
-  .fetch_optional(&state.pool)
-  .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?
-  .ok_or_else(|| {
-    ApiError(circus_common::CiError::Validation(
-      "Build not found or not in pending state".to_string(),
-    ))
-  })?;
+  let build = circus_common::repo::builds::bump_priority(&state.pool, id, 10)
+    .await
+    .map_err(ApiError)?
+    .ok_or_else(|| {
+      ApiError(circus_common::CiError::Validation(
+        "Build not found or not in pending state".to_string(),
+      ))
+    })?;
 
   Ok(Json(build))
 }

@@ -30,6 +30,7 @@ use super::{
     build_view,
     build_view_with_context,
     decode_build_log,
+    can_bump_to_front,
     enforce_page_access,
     eval_badge,
     eval_view,
@@ -959,12 +960,12 @@ pub(super) async fn queue_page(
   )
   .await
   .unwrap_or_default();
-  let pending = circus_common::repo::builds::list_filtered(
+  // Order pending by the same key the queue runner uses (priority DESC,
+  // created_at ASC) so the displayed queue position matches what the
+  // scheduler will pick next, and a "Push forward" bump visibly moves
+  // the build up the list.
+  let pending = circus_common::repo::builds::list_pending_in_scheduler_order(
     &state.pool,
-    None,
-    Some("pending"),
-    None,
-    None,
     100,
     0,
   )
@@ -1099,6 +1100,8 @@ pub(super) async fn queue_page(
     running_builds,
     pending_count,
     running_count,
+    can_bump: can_bump_to_front(&extensions),
+    csrf_token: super::csrf::csrf_from(&extensions),
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };

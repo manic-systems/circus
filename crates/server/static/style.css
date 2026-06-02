@@ -800,6 +800,42 @@ th.job-history-name {
   opacity: 0.9;
 }
 
+/* Inline single-action forms inside table rows (e.g. queue push-forward) */
+.row-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.inline-form {
+  display: inline-block;
+  margin: 0;
+}
+.bump-button {
+  height: 1.75rem;
+  padding: 0 0.625rem;
+  background: var(--surface);
+  color: var(--fg-secondary, var(--fg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: inherit;
+  line-height: 1;
+  transition:
+    border-color 0.1s,
+    color 0.1s,
+    background 0.1s;
+}
+.bump-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.bump-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* Pagination */
 .pagination {
   display: flex;

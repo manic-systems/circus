@@ -23,6 +23,7 @@ use super::{
     DashboardPage,
     UserView,
     auth_name,
+    can_bump_to_front,
     enforce_page_access,
     is_admin,
   },
@@ -632,4 +633,42 @@ pub(super) async fn notifications_delete(
   Ok(Redirect::to(&format!(
     "/project/{project_id}/notifications"
   )))
+}
+
+/// Push a pending build forward in the queue. Mirrors the JSON
+/// `/builds/{id}/bump` API but accepts a session-authenticated form post
+/// and redirects back to the queue page so the new ordering is visible.
+pub(super) async fn queue_bump(
+  State(state): State<AppState>,
+  Path(build_id): Path<Uuid>,
+  extensions: Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Result<Redirect, Response> {
+  if !can_bump_to_front(&extensions) {
+    return Err(
+      (
+        StatusCode::FORBIDDEN,
+        "Insufficient permissions to push build forward",
+      )
+        .into_response(),
+    );
+  }
+  check_csrf(&extensions, &form.csrf_token)?;
+  let updated =
+    circus_common::repo::builds::bump_priority(&state.pool, build_id, 10)
+      .await
+      .map_err(|e| {
+        tracing::warn!(build_id = %build_id, "Bump failed: {e}");
+        (StatusCode::BAD_REQUEST, format!("Bump failed: {e}")).into_response()
+      })?;
+  if updated.is_none() {
+    return Err(
+      (
+        StatusCode::NOT_FOUND,
+        "Build not found or no longer pending",
+      )
+        .into_response(),
+    );
+  }
+  Ok(Redirect::to("/queue"))
 }

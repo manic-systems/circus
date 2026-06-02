@@ -464,6 +464,21 @@ pub(super) fn is_admin(extensions: &Extensions) -> bool {
     .is_some_and(|k| k.role == "admin")
 }
 
+/// True when the authenticated session may bump pending builds to the
+/// front of the queue. Admins always qualify; non-admin sessions need the
+/// `bump-to-front` role.
+pub(super) fn can_bump_to_front(extensions: &Extensions) -> bool {
+  if is_admin(extensions) {
+    return true;
+  }
+  if let Some(user) = extensions.get::<User>() {
+    return user.role == "bump-to-front";
+  }
+  extensions
+    .get::<ApiKey>()
+    .is_some_and(|k| k.role == "bump-to-front")
+}
+
 pub(super) fn is_authenticated(extensions: &Extensions) -> bool {
   extensions.get::<User>().is_some() || extensions.get::<ApiKey>().is_some()
 }
