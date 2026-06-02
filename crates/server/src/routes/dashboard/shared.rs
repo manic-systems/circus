@@ -14,6 +14,8 @@ use circus_common::{
 use circus_proto::nix_log::{self, LogLine};
 use uuid::Uuid;
 
+use crate::permissions::{self, Permission};
+
 // View models (pre-formatted for templates)
 
 pub(super) struct BuildView {
@@ -456,27 +458,7 @@ pub(super) fn eval_badge(s: &EvaluationStatus) -> (String, String) {
 }
 
 pub(super) fn is_admin(extensions: &Extensions) -> bool {
-  if let Some(user) = extensions.get::<User>() {
-    return user.role == "admin";
-  }
-  extensions
-    .get::<ApiKey>()
-    .is_some_and(|k| k.role == "admin")
-}
-
-/// True when the authenticated session may bump pending builds to the
-/// front of the queue. Admins always qualify; non-admin sessions need the
-/// `bump-to-front` role.
-pub(super) fn can_bump_to_front(extensions: &Extensions) -> bool {
-  if is_admin(extensions) {
-    return true;
-  }
-  if let Some(user) = extensions.get::<User>() {
-    return user.role == "bump-to-front";
-  }
-  extensions
-    .get::<ApiKey>()
-    .is_some_and(|k| k.role == "bump-to-front")
+  permissions::check(extensions, Permission::Admin)
 }
 
 pub(super) fn is_authenticated(extensions: &Extensions) -> bool {

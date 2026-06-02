@@ -17,26 +17,11 @@ use circus_common::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{auth_middleware::RequireRoles, error::ApiError, state::AppState};
-
-fn check_role(
-  extensions: &Extensions,
-  allowed: &[&str],
-) -> Result<(), ApiError> {
-  RequireRoles::check(extensions, allowed)
-    .map(|_| ())
-    .map_err(|s| {
-      ApiError(if s == StatusCode::FORBIDDEN {
-        circus_common::CiError::Forbidden(
-          "Insufficient permissions".to_string(),
-        )
-      } else {
-        circus_common::CiError::Unauthorized(
-          "Authentication required".to_string(),
-        )
-      })
-    })
-}
+use crate::{
+  error::ApiError,
+  permissions::{self, Permission},
+  state::AppState,
+};
 
 #[derive(Debug, Deserialize)]
 struct ListBuildsParams {
@@ -104,7 +89,7 @@ async fn cancel_build(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Build>>, ApiError> {
-  check_role(&extensions, &["cancel-build"])?;
+  permissions::require_api(&extensions, Permission::CancelBuild)?;
   let cancelled = circus_common::repo::builds::cancel_cascade(&state.pool, id)
     .await
     .map_err(ApiError)?;
@@ -197,7 +182,7 @@ async fn restart_build(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
-  check_role(&extensions, &["restart-jobs"])?;
+  permissions::require_api(&extensions, Permission::RestartJobs)?;
   let build = circus_common::repo::builds::restart(&state.pool, id)
     .await
     .map_err(ApiError)?;
@@ -216,7 +201,7 @@ async fn bump_build(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
-  check_role(&extensions, &["bump-to-front"])?;
+  permissions::require_api(&extensions, Permission::BumpToFront)?;
   let build = circus_common::repo::builds::bump_priority(&state.pool, id, 10)
     .await
     .map_err(ApiError)?

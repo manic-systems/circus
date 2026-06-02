@@ -30,7 +30,6 @@ use super::{
     build_view,
     build_view_with_context,
     decode_build_log,
-    can_bump_to_front,
     enforce_page_access,
     eval_badge,
     eval_view,
@@ -56,7 +55,7 @@ use super::{
     StarredTemplate,
   },
 };
-use crate::state::AppState;
+use crate::{permissions::UiPermissions, state::AppState};
 
 #[derive(serde::Deserialize)]
 pub(super) struct PageParams {
@@ -97,8 +96,9 @@ pub(super) fn format_elapsed(secs: i64) -> String {
   }
 }
 
-// ---------- Home ----------
-
+/// Render the dashboard landing page at `/`: aggregate build stats,
+/// recent builds and evaluations, project summaries with last-eval
+/// status, and announcements.
 pub(super) async fn home(
   State(state): State<AppState>,
   extensions: Extensions,
@@ -197,8 +197,7 @@ pub(super) async fn home(
   ))
 }
 
-// ---------- Projects / Project ----------
-
+/// Render the paginated project list at `/projects`.
 pub(super) async fn projects_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
@@ -528,8 +527,9 @@ pub(super) async fn jobset_jobs_page(
   ))
 }
 
-// ---------- Evaluations / Evaluation ----------
-
+/// Render the paginated evaluation list at `/evaluations`, enriched with
+/// the owning project and jobset names. Hidden evaluations are included
+/// only for admins.
 pub(super) async fn evaluations_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
@@ -696,8 +696,9 @@ pub(super) async fn evaluation_page(
   ))
 }
 
-// ---------- Builds / Build ----------
-
+/// Render the filterable build listing at `/builds`. Each row is
+/// enriched with its owning project and jobset; the filter form drives
+/// pagination via `BuildFilterParams`.
 pub(super) async fn builds_page(
   State(state): State<AppState>,
   Query(params): Query<BuildFilterParams>,
@@ -942,8 +943,10 @@ pub(super) async fn build_log(
   )
 }
 
-// ---------- Queue ----------
-
+/// Render the build queue at `/queue`: running builds with live elapsed
+/// timers, and pending builds in scheduler order. Each row carries its
+/// project and jobset, and pending rows expose a "push forward" form
+/// when the session's [`UiPermissions`] allow it.
 pub(super) async fn queue_page(
   State(state): State<AppState>,
   extensions: Extensions,
@@ -1100,7 +1103,7 @@ pub(super) async fn queue_page(
     running_builds,
     pending_count,
     running_count,
-    can_bump: can_bump_to_front(&extensions),
+    permissions: UiPermissions::from_extensions(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
@@ -1112,8 +1115,7 @@ pub(super) async fn queue_page(
   ))
 }
 
-// ---------- Channels ----------
-
+/// Render the list of all release channels at `/channels`.
 pub(super) async fn channels_page(
   State(state): State<AppState>,
   extensions: Extensions,
@@ -1200,8 +1202,8 @@ pub(super) async fn channel_page(
   ))
 }
 
-// ---------- Starred / Metrics / Setup wizard ----------
-
+/// Render `/starred`: the signed-in user's starred jobs with the latest
+/// build status for each. Anonymous visitors see an empty page.
 pub(super) async fn starred_page(
   State(state): State<AppState>,
   extensions: Extensions,

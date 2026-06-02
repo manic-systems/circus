@@ -22,8 +22,9 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-  auth_middleware::{RequireAdmin, RequireRoles},
+  auth_middleware::RequireAdmin,
   error::ApiError,
+  permissions::{self, Permission},
   state::AppState,
 };
 
@@ -52,15 +53,7 @@ async fn create_project(
   State(state): State<AppState>,
   Json(input): Json<CreateProject>,
 ) -> Result<Json<Project>, ApiError> {
-  RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
-    ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
-    } else {
-      circus_common::CiError::Unauthorized(
-        "Authentication required".to_string(),
-      )
-    })
-  })?;
+  permissions::require_api(&extensions, Permission::CreateProjects)?;
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
@@ -180,15 +173,7 @@ async fn create_project_jobset(
   Path(project_id): Path<Uuid>,
   Json(body): Json<CreateJobsetBody>,
 ) -> Result<Json<Jobset>, ApiError> {
-  RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
-    ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
-    } else {
-      circus_common::CiError::Unauthorized(
-        "Authentication required".to_string(),
-      )
-    })
-  })?;
+  permissions::require_api(&extensions, Permission::CreateProjects)?;
   let input = CreateJobset {
     project_id,
     name: body.name,
@@ -253,15 +238,7 @@ async fn setup_project(
   State(state): State<AppState>,
   Json(body): Json<SetupProjectRequest>,
 ) -> Result<Json<SetupProjectResponse>, ApiError> {
-  RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
-    ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
-    } else {
-      circus_common::CiError::Unauthorized(
-        "Authentication required".to_string(),
-      )
-    })
-  })?;
+  permissions::require_api(&extensions, Permission::CreateProjects)?;
 
   let create_project = CreateProject {
     name:           body.name,
@@ -334,15 +311,7 @@ async fn create_project_webhook(
   Path(project_id): Path<Uuid>,
   Json(body): Json<CreateWebhookBody>,
 ) -> Result<Json<WebhookConfig>, ApiError> {
-  RequireRoles::check(&extensions, &["create-projects"]).map_err(|s| {
-    ApiError(if s == axum::http::StatusCode::FORBIDDEN {
-      circus_common::CiError::Forbidden("Insufficient permissions".to_string())
-    } else {
-      circus_common::CiError::Unauthorized(
-        "Authentication required".to_string(),
-      )
-    })
-  })?;
+  permissions::require_api(&extensions, Permission::CreateProjects)?;
 
   // Validate forge type
   let valid_forges = ["github", "gitlab", "gitea", "forgejo"];
