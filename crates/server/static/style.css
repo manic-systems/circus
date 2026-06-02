@@ -371,6 +371,21 @@ h3 {
   padding: 0.875rem 1rem;
   box-shadow: var(--shadow-xs);
 }
+a.stat-card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.1s, box-shadow 0.1s, transform 0.1s;
+}
+a.stat-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+a.stat-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .stat-value {
   font-size: 1.625rem;
   font-weight: 700;

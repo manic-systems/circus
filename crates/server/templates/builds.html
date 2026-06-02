@@ -16,7 +16,7 @@
     <option value="">All</option>
     <option value="pending" {% if filter_status == "pending" %}selected{% endif %}>Pending</option>
     <option value="running" {% if filter_status == "running" %}selected{% endif %}>Running</option>
-    <option value="completed" {% if filter_status == "completed" %}selected{% endif %}>Completed</option>
+    <option value="succeeded" {% if filter_status == "succeeded" %}selected{% endif %}>Completed</option>
     <option value="failed" {% if filter_status == "failed" %}selected{% endif %}>Failed</option>
   </select></label>
   <label>System: <input type="text" name="system" value="{{ filter_system }}" placeholder="e.g. x86_64-linux"></label>

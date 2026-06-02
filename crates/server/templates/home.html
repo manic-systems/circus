@@ -26,26 +26,26 @@
 {% endif %}
 
 <div class="stats-grid">
-  <div class="stat-card">
+  <a class="stat-card" href="/builds">
     <div class="stat-value">{{ total_builds }}</div>
     <div class="stat-label">Total Builds</div>
-  </div>
-  <div class="stat-card">
+  </a>
+  <a class="stat-card" href="/builds?status=succeeded">
     <div class="stat-value stat-value-green">{{ completed_builds }}</div>
     <div class="stat-label">Completed</div>
-  </div>
-  <div class="stat-card">
+  </a>
+  <a class="stat-card" href="/builds?status=failed">
     <div class="stat-value stat-value-red">{{ failed_builds }}</div>
     <div class="stat-label">Failed</div>
-  </div>
-  <div class="stat-card">
+  </a>
+  <a class="stat-card" href="/builds?status=running">
     <div class="stat-value stat-value-yellow">{{ running_builds }}</div>
     <div class="stat-label">Running</div>
-  </div>
-  <div class="stat-card">
+  </a>
+  <a class="stat-card" href="/builds?status=pending">
     <div class="stat-value">{{ pending_builds }}</div>
     <div class="stat-label">Pending</div>
-  </div>
+  </a>
   {% let finished_builds = total_builds - running_builds - pending_builds %}
   {% if finished_builds > 0 %}
   <div class="stat-card">
