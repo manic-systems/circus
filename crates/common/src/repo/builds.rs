@@ -248,6 +248,58 @@ pub async fn complete(
   .ok_or_else(|| CiError::NotFound(format!("Build {id} not found")))
 }
 
+/// List pending builds in scheduler order: highest priority first, then
+/// oldest first. Mirrors the ordering the queue runner uses (minus the
+/// share-deficit factor, which depends on live worker counts) so the
+/// dashboard queue page can show builds in the order they will be picked.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_pending_in_scheduler_order(
+  pool: &PgPool,
+  limit: i64,
+  offset: i64,
+) -> Result<Vec<Build>> {
+  sqlx::query_as::<_, Build>(
+    "SELECT * FROM builds WHERE status = 'pending' ORDER BY priority DESC, \
+     created_at ASC LIMIT $1 OFFSET $2",
+  )
+  .bind(limit)
+  .bind(offset)
+  .fetch_all(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
+/// Atomically increment a pending build's priority by `delta`. The row is
+/// only updated if the build is still in the pending state, so a build
+/// the scheduler has already claimed is left alone.
+///
+/// # Returns
+///
+/// The updated `Build` row, or `None` if the build does not exist or is
+/// no longer pending.
+///
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn bump_priority(
+  pool: &PgPool,
+  id: Uuid,
+  delta: i32,
+) -> Result<Option<Build>> {
+  sqlx::query_as::<_, Build>(
+    "UPDATE builds SET priority = priority + $2 WHERE id = $1 AND status = \
+     'pending' RETURNING *",
+  )
+  .bind(id)
+  .bind(delta)
+  .fetch_optional(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
 /// List recent builds ordered by creation time.
 ///
 /// # Errors

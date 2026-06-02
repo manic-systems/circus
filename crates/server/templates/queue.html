@@ -56,7 +56,7 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>#</th><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Priority</th><th>Created</th></tr>
+    <tr><th>#</th><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Priority</th><th>Created</th>{% if can_bump %}<th></th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for b in pending_builds %}
@@ -68,6 +68,14 @@
       <td>{{ b.system }}</td>
       <td>{{ b.priority }}</td>
       <td>{{ b.created_at }}</td>
+      {% if can_bump %}
+      <td class="row-actions">
+        <form method="POST" action="/build/{{ b.id }}/bump" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="bump-button" title="Increase this build's priority so the scheduler picks it sooner">&uarr; Push forward</button>
+        </form>
+      </td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>
