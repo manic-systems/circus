@@ -1,7 +1,7 @@
 //! One-shot build executor. Spawns `nix-store --realise`, streams stdout
 //! and stderr through a `LogSink`, and assembles a `BuildResult` at exit.
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, VecDeque},
   process::Stdio,
   time::{Duration, Instant},
 };
@@ -16,13 +16,13 @@ use tokio_util::sync::CancellationToken;
 
 /// Per-build options handed down from the runner via the capnp schema.
 pub struct BuildOptions<'a> {
-  pub drv_path:         &'a str,
-  pub max_log_size:     u64,
-  pub max_silent_time:  Duration,
-  pub build_timeout:    Duration,
-  pub extra_args:       Vec<String>,
-  pub cache_url:        String,
-  pub cache_public_key: String,
+  pub drv_path:          &'a str,
+  pub max_log_size:      u64,
+  pub max_silent_time:   Duration,
+  pub build_timeout:     Duration,
+  pub extra_args:        Vec<String>,
+  pub cache_substituter: String,
+  pub cache_public_key:  String,
 }
 
 /// One output discovered after a successful realisation.
@@ -75,10 +75,10 @@ pub async fn run(
     opts.drv_path.into(),
   ];
   // Substitute the drv closure from the runner's cache.
-  if !opts.cache_url.is_empty() {
+  if !opts.cache_substituter.is_empty() {
     args.push("--option".into());
     args.push("extra-substituters".into());
-    args.push(opts.cache_url.clone());
+    args.push(opts.cache_substituter.clone());
     if !opts.cache_public_key.is_empty() {
       args.push("--option".into());
       args.push("extra-trusted-public-keys".into());
@@ -165,6 +165,7 @@ pub async fn run(
     Some(Instant::now() + opts.build_timeout)
   };
   let mut last_output = Instant::now();
+  let mut recent_msgs = VecDeque::<String>::with_capacity(32);
 
   loop {
     let read_timeout = remaining_silent(&opts.max_silent_time, last_output);
@@ -201,6 +202,12 @@ pub async fn run(
       Some(Ok(l)) => l,
     };
     last_output = Instant::now();
+    if let Some(m) = nix_log_msg(&line) {
+      if recent_msgs.len() == 32 {
+        recent_msgs.pop_front();
+      }
+      recent_msgs.push_back(m);
+    }
 
     if log_size_exceeded {
       continue;
@@ -258,6 +265,9 @@ pub async fn run(
   let exit_code = status.code().unwrap_or(-1);
   let success =
     status.success() && !log_size_exceeded && !aborted && !timed_out;
+  if !success && error_message.is_empty() {
+    error_message = summarize_failure(&recent_msgs);
+  }
   let outcome = if success {
     circus_proto::BuildOutcome::Success
   } else if timed_out {
@@ -341,6 +351,33 @@ async fn query_outputs(drv_path: &str) -> Vec<ResolvedOutput> {
         .collect()
     },
     _ => Vec::new(),
+  }
+}
+
+/// The human `msg` of a nix internal-json log line, if it is a message.
+fn nix_log_msg(line: &str) -> Option<String> {
+  let v = serde_json::from_str::<serde_json::Value>(
+    line.strip_prefix("@nix ")?.trim(),
+  )
+  .ok()?;
+  (v.get("action")?.as_str()? == "msg")
+    .then(|| v.get("msg")?.as_str().map(str::to_owned))?
+}
+
+/// Join the last few nix messages into a capped error summary.
+fn summarize_failure(msgs: &VecDeque<String>) -> String {
+  const MAX: usize = 4096;
+  let mut tail = msgs
+    .iter()
+    .rev()
+    .take(10)
+    .map(String::as_str)
+    .collect::<Vec<&str>>();
+  tail.reverse();
+  let s = tail.join("\n");
+  match s.char_indices().nth_back(MAX - 1) {
+    Some((cut, _)) => format!("…{}", &s[cut..]),
+    None => s,
   }
 }
 

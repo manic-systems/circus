@@ -136,6 +136,13 @@ impl ServerConfig {
         })
       },
     };
+    if cfg.cache_public_key.is_some() && cfg.cache_substituter.is_none() {
+      tracing::warn!(
+        "[queue_runner.rpc] cache_public_key is set without \
+         cache_substituter, this has no effect"
+      );
+    }
+
     Ok(Self {
       bind,
       token_hashes: cfg.auth_tokens.clone(),
@@ -921,7 +928,7 @@ async fn dispatch_one(
       job.set_drv_path(cmd.drv_path.as_str());
       // Where the agent substitutes the drv closure from.
       if let Some(url) = cfg.cache_substituter.as_deref() {
-        job.set_cache_url(url);
+        job.set_cache_substituter(url);
       }
       if let Some(key) = cfg.cache_public_key.as_deref() {
         job.set_cache_public_key(key);
