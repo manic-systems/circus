@@ -6,7 +6,7 @@ use std::{
   time::{Duration, Instant},
 };
 
-use circus_proto::log_sink;
+use circus_proto::{log_sink, nix_log};
 use tokio::{
   io::{AsyncBufReadExt, BufReader},
   process::Command,
@@ -202,11 +202,13 @@ pub async fn run(
       Some(Ok(l)) => l,
     };
     last_output = Instant::now();
-    if let Some(m) = nix_log_msg(&line) {
+    if let Some(nix_log::LogLine::Message { text, .. }) =
+      nix_log::parse_line(&line)
+    {
       if recent_msgs.len() == 32 {
         recent_msgs.pop_front();
       }
-      recent_msgs.push_back(m);
+      recent_msgs.push_back(text);
     }
 
     if log_size_exceeded {
@@ -352,16 +354,6 @@ async fn query_outputs(drv_path: &str) -> Vec<ResolvedOutput> {
     },
     _ => Vec::new(),
   }
-}
-
-/// The human `msg` of a nix internal-json log line, if it is a message.
-fn nix_log_msg(line: &str) -> Option<String> {
-  let v = serde_json::from_str::<serde_json::Value>(
-    line.strip_prefix("@nix ")?.trim(),
-  )
-  .ok()?;
-  (v.get("action")?.as_str()? == "msg")
-    .then(|| v.get("msg")?.as_str().map(str::to_owned))?
 }
 
 /// Join the last few nix messages into a capped error summary.

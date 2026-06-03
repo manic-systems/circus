@@ -12,6 +12,7 @@ async-stream.workspace       = true
 axum.workspace               = true
 axum-extra.workspace         = true
 chrono.workspace             = true
+circus-proto.workspace       = true
 clap.workspace               = true
 color-eyre.workspace         = true
 config.workspace             = true

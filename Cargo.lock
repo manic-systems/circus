@@ -666,6 +666,7 @@ dependencies = [
  "capnp-rpc",
  "capnpc",
  "futures",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -719,6 +720,7 @@ dependencies = [
  "axum-extra",
  "chrono",
  "circus-common",
+ "circus-proto",
  "clap",
  "color-eyre",
  "config",

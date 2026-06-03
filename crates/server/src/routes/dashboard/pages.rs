@@ -8,7 +8,7 @@
 use askama::Template;
 use axum::{
   extract::{Path, Query, State},
-  http::Extensions,
+  http::{Extensions, StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
 };
 use circus_common::models::{BuildStatus, Evaluation};
@@ -27,6 +27,7 @@ use super::{
     auth_name,
     build_view,
     build_view_with_context,
+    decode_build_log,
     enforce_page_access,
     eval_badge,
     eval_view,
@@ -873,6 +874,40 @@ pub(super) async fn build_page(
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
   ))
+}
+
+/// Serve a build's full log as plain text.
+pub(super) async fn build_log(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  extensions: Extensions,
+) -> Result<Response, Response> {
+  enforce_page_access(&state.config.server, &extensions, DashboardPage::Build)?;
+
+  let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
+  else {
+    return Ok((StatusCode::NOT_FOUND, "Build not found").into_response());
+  };
+
+  let Some(path) = build.log_path.as_deref().filter(|p| !p.is_empty()) else {
+    return Ok(
+      (StatusCode::NOT_FOUND, "No log for this build").into_response(),
+    );
+  };
+
+  let Ok(raw) = tokio::fs::read_to_string(path).await else {
+    return Ok(
+      (StatusCode::NOT_FOUND, "Log file is unavailable").into_response(),
+    );
+  };
+
+  Ok(
+    (
+      [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+      decode_build_log(&raw),
+    )
+      .into_response(),
+  )
 }
 
 // ---------- Queue ----------

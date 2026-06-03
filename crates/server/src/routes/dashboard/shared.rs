@@ -11,6 +11,7 @@ use circus_common::{
   config::{PageAccessLevel, ServerConfig},
   models::{ApiKey, Build, BuildStatus, Evaluation, EvaluationStatus, User},
 };
+use circus_proto::nix_log::{self, LogLine};
 use uuid::Uuid;
 
 // View models (pre-formatted for templates)
@@ -38,7 +39,7 @@ pub(super) struct BuildView {
   pub(super) output_path:   String,
   pub(super) error_message: String,
   pub(super) error_lines:   Vec<BuildErrorLine>,
-  pub(super) log_url:       String,
+  pub(super) has_log:       bool,
 }
 
 /// Queue page build info with elapsed time and builder details
@@ -220,6 +221,45 @@ pub(super) struct BuildErrorLine {
   pub(super) level: &'static str,
 }
 
+/// Strip ANSI/CSI escape sequences.
+fn strip_ansi(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  let mut chars = s.chars().peekable();
+  while let Some(c) = chars.next() {
+    if c == '\u{1b}' && chars.peek() == Some(&'[') {
+      chars.next();
+      for esc in chars.by_ref() {
+        if esc.is_ascii_alphabetic() {
+          break;
+        }
+      }
+    } else {
+      out.push(c);
+    }
+  }
+  out
+}
+
+/// Decode a stored `internal-json` build log into plain terminal text.
+pub(super) fn decode_build_log(raw: &str) -> String {
+  let mut out = String::with_capacity(raw.len());
+  for line in raw.lines() {
+    match nix_log::parse_line(line) {
+      Some(LogLine::Message { text, .. } | LogLine::Output { text }) => {
+        out.push_str(&strip_ansi(&text));
+        out.push('\n');
+      },
+      // Plain output is passed through
+      None if !nix_log::is_envelope(line) => {
+        out.push_str(&strip_ansi(line));
+        out.push('\n');
+      },
+      None => {},
+    }
+  }
+  out
+}
+
 /// Parse a build's `error_message` field into displayable lines.
 ///
 /// Queue-runner captures `nix build --log-format=internal-json` output, so the
@@ -229,24 +269,6 @@ pub(super) struct BuildErrorLine {
 /// strip ANSI codes, and tag a severity class. Anything that isn't a
 /// recognisable envelope is preserved as a single line.
 pub(super) fn parse_build_error(raw: &str) -> Vec<BuildErrorLine> {
-  fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-      if c == '\u{1b}' && chars.peek() == Some(&'[') {
-        chars.next();
-        for esc in chars.by_ref() {
-          if esc.is_ascii_alphabetic() {
-            break;
-          }
-        }
-      } else {
-        out.push(c);
-      }
-    }
-    out
-  }
-
   const fn classify(level: i64) -> &'static str {
     match level {
       0 => "error",
@@ -256,65 +278,26 @@ pub(super) fn parse_build_error(raw: &str) -> Vec<BuildErrorLine> {
     }
   }
 
-  let trimmed = raw.trim();
-  if trimmed.is_empty() {
-    return Vec::new();
-  }
-
   let mut lines = Vec::new();
-  // Split on the `@nix ` marker; the first segment is whatever preceded the
-  // first envelope (often empty or a plain prefix like "Error:").
-  let mut segments = trimmed.split("@nix ");
-  if let Some(prefix) = segments.next() {
-    let p = prefix.trim().trim_end_matches(':').trim();
-    if !p.is_empty() {
-      lines.push(BuildErrorLine {
-        text:  strip_ansi(p),
-        level: "info",
-      });
+  for line in raw.lines() {
+    let (text, level) = match nix_log::parse_line(line) {
+      Some(LogLine::Message { level, text }) => {
+        (strip_ansi(&text).trim().to_string(), classify(level))
+      },
+      Some(LogLine::Output { .. }) => continue,
+      None if nix_log::is_envelope(line) => continue,
+      None => {
+        (
+          // A plain line
+          strip_ansi(line).trim().trim_end_matches(':').trim().into(),
+          "info",
+        )
+      },
+    };
+    if !text.is_empty() {
+      lines.push(BuildErrorLine { text, level });
     }
   }
-
-  for seg in segments {
-    let seg = seg.trim();
-    if seg.is_empty() {
-      continue;
-    }
-    match serde_json::from_str::<serde_json::Value>(seg) {
-      Ok(v) => {
-        let action = v.get("action").and_then(|a| a.as_str()).unwrap_or("");
-        if action != "msg" {
-          continue;
-        }
-        let msg = v
-          .get("msg")
-          .and_then(|m| m.as_str())
-          .or_else(|| v.get("raw_msg").and_then(|m| m.as_str()))
-          .unwrap_or("");
-        let cleaned = strip_ansi(msg).trim().to_string();
-        if cleaned.is_empty() {
-          continue;
-        }
-        let level = v
-          .get("level")
-          .and_then(serde_json::Value::as_i64)
-          .unwrap_or(3);
-        lines.push(BuildErrorLine {
-          text:  cleaned,
-          level: classify(level),
-        });
-      },
-      Err(_) => {
-        // Not a parseable envelope; keep as a plain line so we never silently
-        // drop data the user might need.
-        lines.push(BuildErrorLine {
-          text:  strip_ansi(seg),
-          level: "info",
-        });
-      },
-    }
-  }
-
   lines
 }
 
@@ -383,7 +366,7 @@ pub(super) fn build_view(b: &Build) -> BuildView {
       .as_deref()
       .map(parse_build_error)
       .unwrap_or_default(),
-    log_url:       b.log_url.clone().unwrap_or_default(),
+    has_log:       b.log_path.as_deref().is_some_and(|p| !p.is_empty()),
   }
 }
 
@@ -501,10 +484,15 @@ mod tests {
 
   #[test]
   fn parse_build_error_extracts_msg_and_classifies_level() {
-    let raw = "@nix {\"action\":\"msg\",\"level\":0,\"msg\":\"\\u001b[31;\
-               1merror:\\u001b[0m boom\"} @nix \
-               {\"action\":\"msg\",\"level\":3,\"msg\":\"hello\"}";
-    let lines = parse_build_error(raw);
+    let raw = [
+      r#"@nix {"action":"msg","level":0,"msg":"error: boom"}"#,
+      r#"@nix {"action":"msg","level":3,"msg":"hello"}"#,
+    ]
+    .join(
+      "
+",
+    );
+    let lines = parse_build_error(&raw);
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0].text, "error: boom");
     assert_eq!(lines[0].level, "error");
@@ -513,11 +501,13 @@ mod tests {
   }
 
   #[test]
-  fn parse_build_error_preserves_non_envelope_prefix() {
-    let raw = "Error: @nix {\"action\":\"msg\",\"level\":0,\"msg\":\"boom\"}";
-    let lines = parse_build_error(raw);
+  fn parse_build_error_keeps_plain_lines() {
+    let raw =
+      ["Error:", r#"@nix {"action":"msg","level":0,"msg":"boom"}"#].join("\n");
+    let lines = parse_build_error(&raw);
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0].text, "Error");
+    assert_eq!(lines[0].text, "Error"); // trailing ':' trimmed
+    assert_eq!(lines[0].level, "info");
     assert_eq!(lines[1].text, "boom");
   }
 
@@ -529,10 +519,36 @@ mod tests {
 
   #[test]
   fn parse_build_error_skips_non_msg_actions() {
-    let raw = r#"@nix {"action":"start","id":1,"text":"x"} @nix {"action":"msg","level":1,"msg":"warn line"}"#;
-    let lines = parse_build_error(raw);
+    let raw = [
+      r#"@nix {"action":"start","id":1,"text":"x"}"#,
+      r#"@nix {"action":"msg","level":1,"msg":"warn line"}"#,
+    ]
+    .join("\n");
+    let lines = parse_build_error(&raw);
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].text, "warn line");
     assert_eq!(lines[0].level, "warn");
+  }
+
+  #[test]
+  fn decode_build_log_actually_decodes() {
+    let raw = [
+      r#"@nix {"action":"start","id":1}"#,
+      r#"@nix {"action":"result","id":1,"type":101,"fields":["cc -c main.c"]}"#,
+      r#"@nix {"action":"result","id":1,"type":105,"fields":[0,1]}"#,
+      r#"@nix {"action":"msg","level":0,"msg":"error: build failed"}"#,
+      "plain stdout line",
+      r#"@nix {"action":"stop","id":1}"#,
+    ]
+    .join("\n");
+
+    // 101 + msg kept
+    assert_eq!(
+      decode_build_log(&raw),
+      "cc -c main.c\nerror: build failed\nplain stdout line\n"
+    );
+
+    // ANSI escapes stripped
+    assert_eq!(decode_build_log("\x1b[1mbold\x1b[0m"), "bold\n");
   }
 }
