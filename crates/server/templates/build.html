@@ -72,8 +72,8 @@
   <pre class="error-log-raw">{{ build.error_message }}</pre>
 </section>
 {% endif %}
-{% if !build.log_url.is_empty() %}
-<p><a href="{{ build.log_url }}">View log</a></p>
+{% if build.has_log %}
+<p><a href="/build/{{ build.id }}/log">View full log</a></p>
 {% endif %}
 
 <h2>Reproduce This Build</h2>

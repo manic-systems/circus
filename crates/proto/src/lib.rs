@@ -32,6 +32,8 @@ pub mod limits {
   pub const MAX_LOG_CHUNK_BYTES: usize = 1024 * 1024;
 }
 
+pub mod nix_log;
+
 pub mod circus_capnp {
   #![allow(
     warnings,

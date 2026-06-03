@@ -10,6 +10,7 @@ capnp.workspace         = true
 capnp-futures.workspace = true
 capnp-rpc.workspace     = true
 futures.workspace       = true
+serde_json.workspace    = true
 thiserror.workspace     = true
 
 [build-dependencies]

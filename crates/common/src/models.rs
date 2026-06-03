@@ -186,7 +186,6 @@ pub struct Build {
   pub retry_count:                i32,
   pub max_retries:                i32,
   pub notification_pending_since: Option<DateTime<Utc>>,
-  pub log_url:                    Option<String>,
   pub created_at:                 DateTime<Utc>,
   pub outputs:                    Option<serde_json::Value>,
   pub is_aggregate:               bool,
