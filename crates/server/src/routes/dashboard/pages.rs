@@ -626,42 +626,34 @@ pub(super) async fn evaluation_page(
   .await
   .unwrap_or_default();
 
-  let succeeded = circus_common::repo::builds::count_filtered(
-    &state.pool,
-    Some(id),
-    Some("completed"),
-    None,
-    None,
-  )
-  .await
-  .unwrap_or(0);
-  let failed = circus_common::repo::builds::count_filtered(
-    &state.pool,
-    Some(id),
-    Some("failed"),
-    None,
-    None,
-  )
-  .await
-  .unwrap_or(0);
-  let running = circus_common::repo::builds::count_filtered(
-    &state.pool,
-    Some(id),
-    Some("running"),
-    None,
-    None,
-  )
-  .await
-  .unwrap_or(0);
-  let pending = circus_common::repo::builds::count_filtered(
-    &state.pool,
-    Some(id),
-    Some("pending"),
-    None,
-    None,
-  )
-  .await
-  .unwrap_or(0);
+  let succeeded = builds
+    .iter()
+    .filter(|b| b.status == BuildStatus::Succeeded)
+    .count() as i64;
+  let failed = builds
+    .iter()
+    .filter(|b| {
+      matches!(
+        b.status,
+        BuildStatus::Failed
+          | BuildStatus::DependencyFailed
+          | BuildStatus::FailedWithOutput
+          | BuildStatus::Timeout
+          | BuildStatus::CachedFailure
+          | BuildStatus::LogLimitExceeded
+          | BuildStatus::NarSizeLimitExceeded
+          | BuildStatus::NonDeterministic
+      )
+    })
+    .count() as i64;
+  let running = builds
+    .iter()
+    .filter(|b| b.status == BuildStatus::Running)
+    .count() as i64;
+  let pending = builds
+    .iter()
+    .filter(|b| b.status == BuildStatus::Pending)
+    .count() as i64;
 
   let tmpl = EvaluationTemplate {
     eval:            eval_view(&eval),
