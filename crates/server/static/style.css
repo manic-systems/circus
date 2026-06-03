@@ -1315,15 +1315,15 @@ details summary:hover {
   list-style: none;
   padding: 0;
   margin: 0;
-  border: 1px solid #e5d7d7;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fbf5f5;
+  background: var(--bg-subtle);
   max-height: 24rem;
   overflow-y: auto;
 }
 .error-log-line {
   padding: 0.3rem 0.75rem;
-  border-bottom: 1px solid #f0e4e4;
+  border-bottom: 1px solid var(--border-subtle);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   line-height: 1.45;
@@ -1334,26 +1334,26 @@ details summary:hover {
   border-bottom: 0;
 }
 .error-log-error {
-  color: #b42318;
-  background: #fef3f2;
+  color: var(--red-fg);
+  background: var(--red-bg);
 }
 .error-log-warn {
-  color: #92400e;
-  background: #fffaeb;
+  color: var(--amber-fg);
+  background: var(--amber-bg);
 }
 .error-log-notice {
-  color: #475467;
+  color: var(--fg-secondary);
 }
 .error-log-info {
-  color: #344054;
+  color: var(--fg);
 }
 .error-log-raw {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;
-  background: #fbf5f5;
-  border: 1px solid #e5d7d7;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.75rem;
   max-height: 24rem;
