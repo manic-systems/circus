@@ -119,11 +119,15 @@ in {
     };
     users.groups.circus-agent = {};
 
+    nix.settings.extra-trusted-users = ["circus-agent"];
+
     systemd.services.circus-agent = {
       description = "Circus distributed build agent";
       after = ["network-online.target" "nix-daemon.service"];
       wants = ["network-online.target"];
       wantedBy = ["multi-user.target"];
+
+      path = [config.nix.package];
 
       serviceConfig = {
         Type = "simple";

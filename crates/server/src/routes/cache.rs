@@ -62,14 +62,34 @@ async fn find_store_path(
     return Ok(path);
   }
 
-  sqlx::query_scalar(
+  let from_builds = sqlx::query_scalar(
     "SELECT build_output_path FROM builds WHERE build_output_path LIKE $1 \
      LIMIT 1",
   )
   .bind(&like_pattern)
   .fetch_optional(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+
+  if from_builds.is_some() {
+    return Ok(from_builds);
+  }
+
+  // Otherwise serve any local store path so agents can substitute assigned
+  // drv closures.
+  //
+  // FIXME: this shells out to `nix`, and needs the nix-command feature. We
+  // should bind to the Nix C/C++ API and call it directly instead.
+  let resolved = tokio::process::Command::new("nix")
+    .args(["store", "path-from-hash-part", hash])
+    .output()
+    .await
+    .ok()
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    .filter(|p| !p.is_empty());
+
+  Ok(resolved)
 }
 
 /// Serve `NARInfo` for a store path hash.

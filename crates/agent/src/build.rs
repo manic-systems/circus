@@ -16,11 +16,13 @@ use tokio_util::sync::CancellationToken;
 
 /// Per-build options handed down from the runner via the capnp schema.
 pub struct BuildOptions<'a> {
-  pub drv_path:        &'a str,
-  pub max_log_size:    u64,
-  pub max_silent_time: Duration,
-  pub build_timeout:   Duration,
-  pub extra_args:      Vec<String>,
+  pub drv_path:         &'a str,
+  pub max_log_size:     u64,
+  pub max_silent_time:  Duration,
+  pub build_timeout:    Duration,
+  pub extra_args:       Vec<String>,
+  pub cache_url:        String,
+  pub cache_public_key: String,
 }
 
 /// One output discovered after a successful realisation.
@@ -72,6 +74,17 @@ pub async fn run(
     "internal-json".into(),
     opts.drv_path.into(),
   ];
+  // Substitute the drv closure from the runner's cache.
+  if !opts.cache_url.is_empty() {
+    args.push("--option".into());
+    args.push("extra-substituters".into());
+    args.push(opts.cache_url.clone());
+    if !opts.cache_public_key.is_empty() {
+      args.push("--option".into());
+      args.push("extra-trusted-public-keys".into());
+      args.push(opts.cache_public_key.clone());
+    }
+  }
   args.extend(opts.extra_args.iter().cloned());
 
   let mut cmd = Command::new("nix-store");
