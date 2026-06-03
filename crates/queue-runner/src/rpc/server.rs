@@ -76,6 +76,10 @@ pub struct ServerConfig {
   /// `<key-name>:<base64-secret>`). When set, narinfo records are signed
   /// before persistence so cache fetchers see a trust-rooted entry.
   pub signing_key_file:   Option<std::path::PathBuf>,
+  /// Cache forwarded to agents so they can substitute drv closures.
+  pub cache_substituter:  Option<String>,
+  /// Key forwarded to agents so they can substitute drv closures.
+  pub cache_public_key:   Option<String>,
   active_uploads: Arc<parking_lot::Mutex<HashMap<UploadKey, ExpectedUpload>>>,
 }
 
@@ -141,6 +145,8 @@ impl ServerConfig {
       presign_expiry: std::time::Duration::from_secs(cfg.presign_expiry_secs),
       upload_compression: "zstd".to_owned(),
       signing_key_file: None,
+      cache_substituter: cfg.cache_substituter.clone(),
+      cache_public_key: cfg.cache_public_key.clone(),
       active_uploads: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     })
   }
@@ -913,6 +919,13 @@ async fn dispatch_one(
       let build_id_str = cmd.build_id.to_string();
       job.set_build_id(build_id_str.as_str());
       job.set_drv_path(cmd.drv_path.as_str());
+      // Where the agent substitutes the drv closure from.
+      if let Some(url) = cfg.cache_substituter.as_deref() {
+        job.set_cache_url(url);
+      }
+      if let Some(key) = cfg.cache_public_key.as_deref() {
+        job.set_cache_public_key(key);
+      }
       job.set_max_log_size(cmd.max_log_size);
       job.set_max_silent_time(cmd.max_silent_time);
       job.set_build_timeout(cmd.build_timeout);

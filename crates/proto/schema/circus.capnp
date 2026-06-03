@@ -122,6 +122,8 @@ struct BuildAssignment {
   # cache-upload path off; present switches the agent to upload directly to
   # the runner's configured S3 bucket via presigned URLs.
   presignedUpload @8 :PresignedUploadOpts;
+  cacheUrl        @9 :Text;       # Cache to substitute the drv closure from
+  cachePublicKey  @10 :Text;      # Key to trust for it
 }
 
 struct PresignedUploadOpts {

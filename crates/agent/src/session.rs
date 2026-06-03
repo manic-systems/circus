@@ -408,6 +408,8 @@ impl builder::Server for BuilderImpl {
       let build_id = Uuid::parse_str(&build_id_str)
         .map_err(|e| capnp::Error::failed(format!("bad build_id: {e}")))?;
       let drv_path = job.get_drv_path()?.to_str()?.to_owned();
+      let cache_url = job.get_cache_url()?.to_str()?.to_owned();
+      let cache_public_key = job.get_cache_public_key()?.to_str()?.to_owned();
       let max_log_size = job.get_max_log_size();
       let max_silent_time = job.get_max_silent_time();
       let build_timeout = job.get_build_timeout();
@@ -468,6 +470,8 @@ impl builder::Server for BuilderImpl {
             max_silent_time: Duration::from_secs(max_silent_time.into()),
             build_timeout: Duration::from_secs(build_timeout.into()),
             extra_args: extra,
+            cache_url,
+            cache_public_key,
           },
           log,
           cancel,
@@ -528,6 +532,26 @@ impl builder::Server for BuilderImpl {
               }
             },
           }
+        }
+
+        match &outcome {
+          Ok(r) if matches!(r.outcome, circus_proto::BuildOutcome::Success) => {
+            tracing::info!(
+              %build_id,
+              build_time_ms = r.build_time_ms,
+              "build succeeded"
+            );
+          },
+          Ok(r) => {
+            tracing::warn!(
+              %build_id,
+              outcome = ?r.outcome,
+              exit_code = r.exit_code,
+              error = %r.error_message,
+              "build failed"
+            );
+          },
+          Err(e) => tracing::error!(%build_id, "build run errored: {e}"),
         }
 
         if let Err(e) = report_result(&result, outcome).await {

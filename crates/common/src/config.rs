@@ -247,6 +247,14 @@ pub struct RpcConfig {
   /// agent from scheduling decisions.
   #[serde(default = "default_heartbeat_ttl_secs")]
   pub heartbeat_ttl_secs: u64,
+
+  /// Cache agents substitute drv closures from, forwarded to each agent.
+  #[serde(default)]
+  pub cache_substituter: Option<String>,
+
+  /// Public key to trust for `cache_substituter`.
+  #[serde(default)]
+  pub cache_public_key: Option<String>,
 }
 
 /// Server-side TLS material for the capnp-rpc endpoint. When `client_ca`
