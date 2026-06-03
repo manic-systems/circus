@@ -5,6 +5,8 @@
 //! These handlers do not mutate server state; they only render templates.
 //! Mutating admin actions live in `super::admin`.
 
+use std::collections::HashMap;
+
 use askama::Template;
 use axum::{
   extract::{Path, Query, State},
@@ -322,6 +324,21 @@ pub(super) async fn jobset_page(
   .await
   .unwrap_or_default();
 
+  let eval_ids: Vec<Uuid> = evals.iter().map(|e| e.id).collect();
+  let builds = circus_common::repo::builds::list_for_jobset_evaluations(
+    &state.pool,
+    id,
+    &eval_ids,
+  )
+  .await
+  .unwrap_or_default();
+
+  let mut builds_by_eval: HashMap<Uuid, Vec<&circus_common::models::Build>> =
+    HashMap::new();
+  for b in &builds {
+    builds_by_eval.entry(b.evaluation_id).or_default().push(b);
+  }
+
   let mut summaries = Vec::new();
   for e in &evals {
     let (text, class) = eval_badge(&e.status);
@@ -330,33 +347,33 @@ pub(super) async fn jobset_page(
     } else {
       e.commit_hash.clone()
     };
-    let succeeded = circus_common::repo::builds::count_filtered(
-      &state.pool,
-      Some(e.id),
-      Some("completed"),
-      None,
-      None,
-    )
-    .await
-    .unwrap_or(0);
-    let failed = circus_common::repo::builds::count_filtered(
-      &state.pool,
-      Some(e.id),
-      Some("failed"),
-      None,
-      None,
-    )
-    .await
-    .unwrap_or(0);
-    let pending = circus_common::repo::builds::count_filtered(
-      &state.pool,
-      Some(e.id),
-      Some("pending"),
-      None,
-      None,
-    )
-    .await
-    .unwrap_or(0);
+
+    let eval_builds =
+      builds_by_eval.get(&e.id).map_or_else(|| &[], Vec::as_slice);
+    let succeeded = eval_builds
+      .iter()
+      .filter(|b| b.status == BuildStatus::Succeeded)
+      .count() as i64;
+    let failed = eval_builds
+      .iter()
+      .filter(|b| {
+        matches!(
+          b.status,
+          BuildStatus::Failed
+            | BuildStatus::DependencyFailed
+            | BuildStatus::FailedWithOutput
+            | BuildStatus::Timeout
+            | BuildStatus::CachedFailure
+            | BuildStatus::LogLimitExceeded
+            | BuildStatus::NarSizeLimitExceeded
+            | BuildStatus::NonDeterministic
+        )
+      })
+      .count() as i64;
+    let pending = eval_builds
+      .iter()
+      .filter(|b| b.status == BuildStatus::Pending)
+      .count() as i64;
 
     summaries.push(EvalSummaryView {
       id: e.id,
