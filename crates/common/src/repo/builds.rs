@@ -126,15 +126,17 @@ pub async fn list_for_jobset_evaluations(
 }
 
 /// List pending builds, prioritizing non-aggregate jobs.
-/// Returns up to `limit * worker_count` builds.
+///
+/// `schedulable_capacity` is the fair-share denominator, so it needs to
+/// include agent slots as well as local workers.
 ///
 /// # Errors
 ///
-/// Returns error if database query fails.
+/// Returns an error if the database query fails.
 pub async fn list_pending(
   pool: &PgPool,
   limit: i64,
-  worker_count: i32,
+  schedulable_capacity: i32,
 ) -> Result<Vec<Build>> {
   sqlx::query_as::<_, Build>(
     "WITH running_counts AS ( SELECT e.jobset_id, COUNT(*) AS running FROM \
@@ -153,7 +155,7 @@ pub async fn list_pending(
      DESC, b.created_at ASC LIMIT $1",
   )
   .bind(limit)
-  .bind(worker_count)
+  .bind(schedulable_capacity)
   .fetch_all(pool)
   .await
   .map_err(CiError::Database)
@@ -196,11 +198,32 @@ pub async fn mark_started_notified(pool: &PgPool, id: Uuid) -> Result<bool> {
   Ok(claimed.is_some())
 }
 
+/// Return a running build to the pending queue without counting a retry.
+///
+/// Use this for infrastructure loss rather than build failure. The status
+/// guard protects builds that finished or were cancelled meanwhile.
+///
+/// # Errors
+///
+/// Returns an error if the database update fails.
+pub async fn requeue(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
+  sqlx::query_as::<_, Build>(
+    "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = \
+     NULL, completed_at = NULL WHERE id = $1 AND status = 'running' RETURNING \
+     * ), cleared AS ( DELETE FROM build_steps WHERE build_id = $1 AND EXISTS \
+     (SELECT 1 FROM bumped) ) SELECT * FROM bumped",
+  )
+  .bind(id)
+  .fetch_optional(pool)
+  .await
+  .map_err(CiError::Database)
+}
+
 /// Mark a build as completed with final status and outputs.
 ///
 /// # Errors
 ///
-/// Returns error if database update fails or build not found.
+/// Returns an error if the database update fails or the build was not found.
 pub async fn complete(
   pool: &PgPool,
   id: Uuid,

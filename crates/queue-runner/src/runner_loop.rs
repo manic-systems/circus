@@ -114,7 +114,10 @@ pub async fn run(
       )
     };
 
-    let wc = worker_pool.worker_count() as i32;
+    let capacity = crate::dispatch::scheduler_capacity(
+      worker_pool.agent_pool(),
+      worker_pool.worker_count(),
+    );
     // Cache `nix-store --query` results within a single cycle so we
     // don't shell out twice for the same FOD drv path across multiple
     // pending rows that share it.
@@ -122,7 +125,13 @@ pub async fn run(
       String,
       Option<String>,
     > = std::collections::HashMap::new();
-    match repo::builds::list_pending(&pool, 10, wc).await {
+    match repo::builds::list_pending(
+      &pool,
+      capacity.fetch_limit,
+      capacity.schedulable_capacity,
+    )
+    .await
+    {
       Ok(builds) => {
         if !builds.is_empty() {
           tracing::info!("Found {} pending builds", builds.len());
@@ -334,7 +343,7 @@ pub async fn run(
             },
           }
 
-          // Unsupported system timeout: abort builds with no available builders
+          // A full connected agent still means the system is supported.
           if let Some(timeout) = unsupported_timeout
             && let Some(system) = &build.system
           {
@@ -345,7 +354,10 @@ pub async fn run(
             )
             .await
             {
-              Ok(builders) if builders.is_empty() => {
+              Ok(builders)
+                if builders.is_empty()
+                  && !worker_pool.agent_pool().serves_system(system) =>
+              {
                 let timeout_at = build.created_at + timeout;
                 if chrono::Utc::now() > timeout_at {
                   tracing::info!(

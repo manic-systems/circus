@@ -26,6 +26,9 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+/// Upper bound on an agent's advertised `max_jobs`.
+pub const MAX_AGENT_MAX_JOBS: u32 = 670;
+
 /// One command queued from the scheduler to a connected agent.
 pub struct DispatchCommand {
   pub build_id:         Uuid,
@@ -41,6 +44,9 @@ pub struct DispatchCommand {
   /// runner's own `nix copy --to s3://...` post-build path stays in
   /// charge.
   pub presigned_upload: Option<PresignedUpload>,
+  /// Keep the agent slot reservation with the command so failed handoff and
+  /// connection-task cleanup use the same release path.
+  pub reservation:      SlotGuard,
   /// Completion signal: the per-connection task sends the outcome here
   /// after the agent reports via `ResultSink`. Some scheduler errors are
   /// also surfaced here (queue full, connection closed mid-dispatch).
@@ -65,8 +71,8 @@ pub enum DispatchResult {
   Disconnected,
 }
 
-/// Metadata side of an agent. Held in `AgentPool` and shared with the
-/// scheduler. Send + Sync.
+/// The metadata side of an agent. This is held in an [`AgentPool`] and shared
+/// with the scheduler.
 pub struct AgentMeta {
   pub machine_id:         Uuid,
   pub connection_id:      Uuid,
@@ -79,7 +85,7 @@ pub struct AgentMeta {
   pub cpu_count:          u32,
   pub max_jobs:           u32,
 
-  pub current_jobs:  Arc<AtomicU32>,
+  current_jobs:      Arc<AtomicU32>,
   pub active_builds: RwLock<HashSet<Uuid>>,
 
   pub heartbeat:     RwLock<HeartbeatSnapshot>,
@@ -87,6 +93,86 @@ pub struct AgentMeta {
 
   /// Hand-off into the connection task.
   pub tx: mpsc::UnboundedSender<DispatchCommand>,
+}
+
+impl AgentMeta {
+  /// Build agent metadata from registration data. `current_jobs` starts at
+  /// zero and is thereafter mutated only via [`Self::try_acquire_slot`].
+  #[must_use]
+  #[expect(
+    clippy::too_many_arguments,
+    reason = "fields come straight from the agent's registration record"
+  )]
+  pub fn new(
+    machine_id: Uuid,
+    connection_id: Uuid,
+    name: String,
+    hostname: String,
+    systems: Vec<String>,
+    supported_features: Vec<String>,
+    mandatory_features: Vec<String>,
+    speed_factor: f32,
+    cpu_count: u32,
+    max_jobs: u32,
+    tx: mpsc::UnboundedSender<DispatchCommand>,
+  ) -> Self {
+    Self {
+      machine_id,
+      connection_id,
+      name,
+      hostname,
+      systems,
+      supported_features,
+      mandatory_features,
+      speed_factor,
+      cpu_count,
+      max_jobs,
+      current_jobs: Arc::new(AtomicU32::new(0)),
+      active_builds: RwLock::new(HashSet::new()),
+      heartbeat: RwLock::new(HeartbeatSnapshot::default()),
+      registered_at: Instant::now(),
+      tx,
+    }
+  }
+
+  /// Returns [`None`] when the agent is already at
+  /// [`max_jobs`][`Self::max_jobs`].
+  ///
+  /// The guard moves into [`DispatchCommand`], keeping the slot held until
+  /// the send fails or the connection task finishes the build.
+  #[must_use]
+  pub fn try_acquire_slot(self: &Arc<Self>) -> Option<SlotGuard> {
+    let mut cur = self.current_jobs.load(Ordering::Relaxed);
+    loop {
+      if cur >= self.max_jobs {
+        return None;
+      }
+      match self.current_jobs.compare_exchange_weak(
+        cur,
+        cur + 1,
+        Ordering::AcqRel,
+        Ordering::Relaxed,
+      ) {
+        Ok(_) => {
+          return Some(SlotGuard {
+            meta: Arc::clone(self),
+          });
+        },
+        Err(actual) => cur = actual,
+      }
+    }
+  }
+}
+
+/// Releases one agent build slot when dropped.
+pub struct SlotGuard {
+  meta: Arc<AgentMeta>,
+}
+
+impl Drop for SlotGuard {
+  fn drop(&mut self) {
+    self.meta.current_jobs.fetch_sub(1, Ordering::AcqRel);
+  }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -211,6 +297,43 @@ impl AgentPool {
       .collect()
   }
 
+  /// Free build slots across connected agents. The scheduler uses this as the
+  /// per-cycle cap when fetching pending builds.
+  #[must_use]
+  pub fn total_free_slots(&self) -> u32 {
+    self
+      .inner
+      .read()
+      .values()
+      .map(|m| {
+        m.max_jobs
+          .saturating_sub(m.current_jobs.load(Ordering::Relaxed))
+      })
+      .fold(0u32, u32::saturating_add)
+  }
+
+  /// Whether any connected agent advertises `system`, regardless of current
+  /// load.
+  #[must_use]
+  pub fn serves_system(&self, system: &str) -> bool {
+    self
+      .inner
+      .read()
+      .values()
+      .any(|m| m.systems.iter().any(|s| s == system))
+  }
+
+  /// Total advertised build slots across connected agents.
+  #[must_use]
+  pub fn total_slots(&self) -> u32 {
+    self
+      .inner
+      .read()
+      .values()
+      .map(|m| m.max_jobs)
+      .fold(0u32, u32::saturating_add)
+  }
+
   #[must_use]
   pub fn len(&self) -> usize {
     self.inner.read().len()
@@ -242,25 +365,80 @@ fn snapshot(m: &AgentMeta, current_jobs: u32) -> AgentSnapshot {
 mod tests {
   use super::*;
 
-  fn meta(machine_id: Uuid, connection_id: Uuid) -> Arc<AgentMeta> {
+  fn meta_with(
+    machine_id: Uuid,
+    connection_id: Uuid,
+    max_jobs: u32,
+  ) -> Arc<AgentMeta> {
     let (tx, _rx) = mpsc::unbounded_channel();
-    Arc::new(AgentMeta {
+    Arc::new(AgentMeta::new(
       machine_id,
       connection_id,
-      name: "agent".into(),
-      hostname: "host".into(),
-      systems: vec!["x86_64-linux".into()],
-      supported_features: Vec::new(),
-      mandatory_features: Vec::new(),
-      speed_factor: 1.0,
-      cpu_count: 1,
-      max_jobs: 1,
-      current_jobs: Arc::new(AtomicU32::new(0)),
-      active_builds: RwLock::new(HashSet::new()),
-      heartbeat: RwLock::new(HeartbeatSnapshot::default()),
-      registered_at: Instant::now(),
+      format!("agent-{machine_id}"),
+      "host".into(),
+      vec!["x86_64-linux".into()],
+      Vec::new(),
+      Vec::new(),
+      1.0,
+      1,
+      max_jobs,
       tx,
-    })
+    ))
+  }
+
+  fn meta(machine_id: Uuid, connection_id: Uuid) -> Arc<AgentMeta> {
+    meta_with(machine_id, connection_id, 1)
+  }
+
+  #[test]
+  fn try_acquire_slot_respects_max_jobs() {
+    let m = meta_with(Uuid::new_v4(), Uuid::new_v4(), 3);
+    let g1 = m.try_acquire_slot();
+    let g2 = m.try_acquire_slot();
+    let g3 = m.try_acquire_slot();
+    assert!(g1.is_some() && g2.is_some() && g3.is_some());
+    assert!(m.try_acquire_slot().is_none(), "must not exceed max_jobs");
+    drop(g1);
+    let g4 = m.try_acquire_slot();
+    assert!(g4.is_some(), "dropping a guard frees exactly one slot");
+    assert!(m.try_acquire_slot().is_none());
+  }
+
+  #[test]
+  fn try_acquire_slot_no_oversubscribe_under_contention() {
+    let m = meta_with(Uuid::new_v4(), Uuid::new_v4(), 4);
+    let succeeded = std::sync::atomic::AtomicU32::new(0);
+
+    // Every thread holds its reservation until all have tried, so the count
+    // reflects the true concurrent maximum rather than churn.
+    let barrier = std::sync::Barrier::new(32);
+    std::thread::scope(|s| {
+      for _ in 0..32 {
+        s.spawn(|| {
+          let guard = m.try_acquire_slot();
+          if guard.is_some() {
+            succeeded.fetch_add(1, Ordering::Relaxed);
+          }
+          barrier.wait();
+        });
+      }
+    });
+    assert_eq!(succeeded.load(Ordering::Relaxed), 4);
+    assert_eq!(m.current_jobs.load(Ordering::Relaxed), 0);
+  }
+
+  #[test]
+  fn total_free_slots_sums_across_agents() {
+    let pool = AgentPool::default();
+    let a = meta_with(Uuid::new_v4(), Uuid::new_v4(), 4);
+    let b = meta_with(Uuid::new_v4(), Uuid::new_v4(), 2);
+    pool.insert(Arc::clone(&a));
+    pool.insert(Arc::clone(&b));
+    assert_eq!(pool.total_free_slots(), 6);
+    let ga = a.try_acquire_slot();
+    let gb = b.try_acquire_slot();
+    assert!(ga.is_some() && gb.is_some());
+    assert_eq!(pool.total_free_slots(), 4);
   }
 
   #[test]
