@@ -235,13 +235,11 @@ pub(super) async fn logout_action(
       } else {
         None
       }
-    })
-      && let Err(e) =
-        circus_common::repo::users::delete_session(&state.pool, &session_id)
-          .await
-      {
-        tracing::warn!("failed to delete user session during logout: {e}");
-      }
+    }) && let Err(e) =
+      circus_common::repo::users::delete_session(&state.pool, &session_id).await
+    {
+      tracing::warn!("failed to delete user session during logout: {e}");
+    }
 
     // Check for legacy API key session
     if let Some(session_id) = cookie_header.split(';').find_map(|pair| {

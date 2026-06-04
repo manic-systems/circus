@@ -28,6 +28,7 @@ use super::{
   },
   templates::{
     AdminTemplate,
+    AgentView,
     BuilderView,
     NewsTemplate,
     NotificationTaskView,
@@ -139,6 +140,31 @@ pub(super) async fn admin_page(
     })
     .collect();
 
+  // Fetch connected agents
+  let raw_sessions = circus_common::repo::builder_sessions::list(pool)
+    .await
+    .unwrap_or_default();
+  let agents = raw_sessions
+    .into_iter()
+    .map(|s| {
+      AgentView {
+        machine_id:       s.machine_id,
+        name:             s.name,
+        hostname:         s.hostname,
+        systems:          s.systems.join(", "),
+        max_jobs:         s.max_jobs,
+        current_jobs:     s.current_jobs,
+        connected:        s.connected,
+        builds_succeeded: s.builds_succeeded,
+        builds_failed:    s.builds_failed,
+        last_seen:        s.last_seen.map_or_else(
+          || "Never".to_string(),
+          |t| t.format("%Y-%m-%d %H:%M").to_string(),
+        ),
+      }
+    })
+    .collect::<Vec<AgentView>>();
+
   // Fetch API keys for admin view
   let keys = circus_common::repo::api_keys::list(pool)
     .await
@@ -229,6 +255,7 @@ pub(super) async fn admin_page(
   let tmpl = AdminTemplate {
     status,
     builders,
+    agents,
     api_keys,
     notification_tasks,
     pinned_outputs,

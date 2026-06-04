@@ -168,6 +168,38 @@
 </div>
 {% endif %}
 
+<h2>Agents</h2>
+{% if agents.is_empty() %}
+<div class="empty">
+  <div class="empty-title">No agents registered</div>
+  <div class="empty-hint">Agents connect and register themselves. They will appear here once connected.</div>
+</div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Host</th><th>Systems</th><th>Jobs</th><th>Status</th><th>Succeeded</th><th>Failed</th><th>Last Seen</th></tr>
+  </thead>
+  <tbody>
+    {% for a in agents %}
+    <tr>
+      <td>{{ a.name }}</td>
+      <td>{{ a.hostname }}</td>
+      <td>{{ a.systems }}</td>
+      <td>
+        {{ a.current_jobs }}/{{ a.max_jobs }}
+      </td>
+      <td>{% if a.connected %}<span class="badge badge-completed">Connected</span>{% else %}<span class="badge badge-failed">Disconnected</span>{% endif %}</td>
+      <td>{{ a.builds_succeeded }}</td>
+      <td>{{ a.builds_failed }}</td>
+      <td>{{ a.last_seen }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
 <h2>Remote Builders</h2>
 {% if is_admin %}
 <details>
