@@ -550,6 +550,25 @@ pub async fn set_builder(
   Ok(())
 }
 
+/// Set the `agent_machine_id` for a build.
+///
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn set_agent(
+  pool: &PgPool,
+  id: Uuid,
+  machine_id: Uuid,
+) -> Result<()> {
+  sqlx::query("UPDATE builds SET agent_machine_id = $1 WHERE id = $2")
+    .bind(machine_id)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(CiError::Database)?;
+  Ok(())
+}
+
 /// List constituent builds of an aggregate build.
 ///
 /// # Errors

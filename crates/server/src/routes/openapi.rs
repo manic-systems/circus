@@ -70,6 +70,7 @@ pub fn document() -> Value {
             "retry_count":       { "type": "integer" },
             "max_retries":       { "type": "integer" },
             "builder_id":        { "type": ["string", "null"], "format": "uuid" },
+            "agent_machine_id":  { "type": ["string", "null"], "format": "uuid" },
             "keep":              { "type": "boolean" },
             "created_at":        { "$ref": "#/components/schemas/Timestamp" },
             "started_at":        { "type": ["string", "null"], "format": "date-time" },

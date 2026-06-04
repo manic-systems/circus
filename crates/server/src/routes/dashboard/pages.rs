@@ -5,6 +5,8 @@
 //! These handlers do not mutate server state; they only render templates.
 //! Mutating admin actions live in `super::admin`.
 
+use std::collections::HashMap;
+
 use askama::Template;
 use axum::{
   extract::{Path, Query, State},
@@ -854,8 +856,22 @@ pub(super) async fn build_page(
     .map(build_view)
     .collect();
 
+  // Resolve who ran the build
+  let builder_label = if let Some(machine_id) = build.agent_machine_id {
+    circus_common::repo::builder_sessions::get(&state.pool, machine_id)
+      .await
+      .map_or_else(|_| "local".to_string(), |s| s.name)
+  } else if let Some(builder_id) = build.builder_id {
+    circus_common::repo::remote_builders::get(&state.pool, builder_id)
+      .await
+      .map_or_else(|_| "local".to_string(), |b| b.name)
+  } else {
+    "local".to_string()
+  };
+
   let tmpl = BuildTemplate {
     build: build_view(&build),
+    builder_label,
     steps,
     products,
     dependencies,
@@ -947,6 +963,14 @@ pub(super) async fn queue_page(
   let builder_map: std::collections::HashMap<Uuid, String> =
     builders.into_iter().map(|b| (b.id, b.name)).collect();
 
+  // Agent machine_id -> name map
+  let agent_map = circus_common::repo::builder_sessions::list(&state.pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|s| (s.machine_id, s.name))
+    .collect::<HashMap<Uuid, String>>();
+
   // Resolve each evaluation_id appearing in either list to its
   // (project_id, project_name, jobset_id, jobset_name). Cache so each unique
   // evaluation costs at most one eval + jobset + project lookup, regardless of
@@ -1000,8 +1024,13 @@ pub(super) async fn queue_page(
         let dur = chrono::Utc::now() - started;
         format_elapsed(dur.num_seconds())
       });
-      let builder_name =
-        b.builder_id.and_then(|id| builder_map.get(&id).cloned());
+      let builder_name = b
+        .builder_id
+        .and_then(|id| builder_map.get(&id).cloned())
+        .or_else(|| {
+          b.agent_machine_id
+            .and_then(|id| agent_map.get(&id).cloned())
+        });
       let (project_id, project_name, jobset_id, jobset_name) = context_for(b);
       QueueBuildView {
         id: b.id,

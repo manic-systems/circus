@@ -154,6 +154,7 @@ pub(super) struct BuildsTemplate {
 #[template(path = "build.html")]
 pub(super) struct BuildTemplate {
   pub(super) build:             BuildView,
+  pub(super) builder_label:     String,
   pub(super) steps:             Vec<BuildStep>,
   pub(super) products:          Vec<BuildProduct>,
   pub(super) dependencies:      Vec<BuildView>,

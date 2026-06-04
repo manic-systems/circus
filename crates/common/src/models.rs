@@ -191,6 +191,7 @@ pub struct Build {
   pub is_aggregate:               bool,
   pub constituents:               Option<serde_json::Value>,
   pub builder_id:                 Option<Uuid>,
+  pub agent_machine_id:           Option<Uuid>,
   pub signed:                     bool,
   pub keep:                       bool,
   pub is_fod:                     bool,

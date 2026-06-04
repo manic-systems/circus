@@ -685,6 +685,12 @@ async fn try_agent_dispatch(
     {
       tracing::debug!(name = %snap.name, "builder_sessions touch failed: {e}");
     }
+
+    if let Err(e) =
+      repo::builds::set_agent(pool, build.id, meta.machine_id).await
+    {
+      tracing::warn!(build_id = %build.id, name = %snap.name, "Failed to set agent_machine_id: {e}");
+    }
     tracing::info!(build_id = %build.id, agent = %snap.name, "dispatched to agent");
 
     match rx.await {
