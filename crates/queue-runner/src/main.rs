@@ -506,22 +506,15 @@ async fn notification_retry_loop(
   loop {
     tokio::time::sleep(poll_interval).await;
 
-    let tasks = match repo::notification_tasks::list_pending(&pool, 10).await {
+    let tasks = match repo::notification_tasks::claim_pending(&pool, 10).await {
       Ok(t) => t,
       Err(e) => {
-        tracing::warn!("Failed to fetch pending notification tasks: {e}");
+        tracing::warn!("Failed to claim pending notification tasks: {e}");
         continue;
       },
     };
 
     for task in tasks {
-      if let Err(e) =
-        repo::notification_tasks::mark_running(&pool, task.id).await
-      {
-        tracing::warn!(task_id = %task.id, "Failed to mark task as running: {e}");
-        continue;
-      }
-
       match circus_common::notifications::process_notification_task(&task).await
       {
         Ok(()) => {
@@ -533,7 +526,7 @@ async fn notification_retry_loop(
             tracing::info!(
                 task_id = %task.id,
                 notification_type = %task.notification_type,
-                attempts = task.attempts + 1,
+                attempts = task.attempts,
                 "Notification task completed"
             );
           }
@@ -546,7 +539,7 @@ async fn notification_retry_loop(
           {
             tracing::error!(task_id = %task.id, "Failed to update task status: {e}");
           } else {
-            let status_after = if task.attempts + 1 >= task.max_attempts {
+            let status_after = if task.attempts >= task.max_attempts {
               "failed permanently"
             } else {
               "scheduled for retry"
@@ -554,7 +547,7 @@ async fn notification_retry_loop(
             tracing::warn!(
                 task_id = %task.id,
                 notification_type = %task.notification_type,
-                attempts = task.attempts + 1,
+                attempts = task.attempts,
                 max_attempts = task.max_attempts,
                 error = %err,
                 status = status_after,

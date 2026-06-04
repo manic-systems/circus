@@ -58,6 +58,44 @@ pub async fn list_pending(
   Ok(tasks)
 }
 
+/// Atomically claim pending tasks that are ready for delivery.
+///
+/// This is safe for multiple retry workers: each worker locks a distinct set of
+/// rows and immediately marks them running in the same statement.
+///
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn claim_pending(
+  pool: &PgPool,
+  limit: i32,
+) -> Result<Vec<NotificationTask>> {
+  let tasks = sqlx::query_as::<_, NotificationTask>(
+    r"
+    WITH claimed AS (
+      SELECT id
+      FROM notification_tasks
+      WHERE status = 'pending'
+        AND next_retry_at <= NOW()
+      ORDER BY next_retry_at ASC
+      LIMIT $1
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE notification_tasks nt
+    SET status = 'running',
+        attempts = attempts + 1
+    FROM claimed
+    WHERE nt.id = claimed.id
+    RETURNING nt.*
+    ",
+  )
+  .bind(limit)
+  .fetch_all(pool)
+  .await?;
+
+  Ok(tasks)
+}
+
 /// List recent notification tasks for operator visibility.
 ///
 /// # Errors

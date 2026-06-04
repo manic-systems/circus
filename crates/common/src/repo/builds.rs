@@ -169,8 +169,10 @@ pub async fn list_pending(
 /// Returns error if database update fails.
 pub async fn start(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
   sqlx::query_as::<_, Build>(
-    "UPDATE builds SET status = 'running', started_at = NOW() WHERE id = $1 \
-     AND status = 'pending' RETURNING *",
+    "WITH candidate AS ( SELECT id FROM builds WHERE id = $1 AND status = \
+     'pending' FOR UPDATE SKIP LOCKED ) UPDATE builds SET status = 'running', \
+     started_at = NOW() FROM candidate WHERE builds.id = candidate.id \
+     RETURNING builds.*",
   )
   .bind(id)
   .fetch_optional(pool)
