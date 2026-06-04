@@ -1001,17 +1001,29 @@ async fn run_build(
     nix_args_for_build(&extra_nix_args, interval_rebuild);
 
   // Dispatch build started notification
+  // If the project lookup fails, leave the at-most-once marker untouched.
   if let Some((project, commit_hash)) =
     get_project_for_build(pool, &claimed_build).await
   {
-    circus_common::notifications::dispatch_build_started(
-      pool,
-      &claimed_build,
-      &project,
-      &commit_hash,
-      notifications_config,
-    )
-    .await;
+    match repo::builds::mark_started_notified(pool, build.id).await {
+      Ok(true) => {
+        circus_common::notifications::dispatch_build_started(
+          pool,
+          &claimed_build,
+          &project,
+          &commit_hash,
+          notifications_config,
+        )
+        .await;
+      },
+      Ok(false) => {},
+      Err(e) => {
+        tracing::warn!(
+          build_id = %build.id,
+          "failed to mark started_notified: {e}"
+        );
+      },
+    }
   }
 
   tracing::info!(build_id = %build.id, job = %build.job_name, "Starting build");
