@@ -103,18 +103,15 @@ impl WorkerPool {
     self.drain_token.cancel();
   }
 
-  /// Wait until all in-flight builds complete (semaphore fully available).
+  /// Wait until all active builds finish. Agent builds are included even
+  /// though they do not hold worker permits.
   pub async fn wait_for_drain(&self) {
-    // Acquire all permits = all workers idle
-    let workers = self.worker_count;
     let build_timeout = self.hot_config.read().await.build_timeout;
     let _ = tokio::time::timeout(
       Duration::from_secs(build_timeout.as_secs() + 60),
       async {
-        for _ in 0..workers {
-          if let Ok(permit) = self.semaphore.acquire().await {
-            permit.forget(); // don't release back
-          }
+        while !self.active_builds.is_empty() {
+          tokio::time::sleep(Duration::from_millis(100)).await;
         }
       },
     )
@@ -124,6 +121,11 @@ impl WorkerPool {
   #[must_use]
   pub const fn worker_count(&self) -> usize {
     self.worker_count
+  }
+
+  #[must_use]
+  pub const fn agent_pool(&self) -> &Arc<crate::rpc::AgentPool> {
+    &self.agent_pool
   }
 
   #[must_use]
@@ -160,10 +162,6 @@ impl WorkerPool {
 
     tokio::spawn(async move {
       let result = async {
-        let Ok(_permit) = semaphore.acquire().await else {
-          return;
-        };
-
         let (
           timeout,
           notifications_config,
@@ -196,6 +194,7 @@ impl WorkerPool {
           &cache_upload_config,
           &alert_manager,
           Arc::clone(&upload_semaphore),
+          Arc::clone(&semaphore),
           scheduling_strategy,
           psi_threshold,
           psi_check_timeout,
@@ -502,269 +501,6 @@ fn presigned_s3_upload_available(config: &CacheUploadConfig) -> bool {
   circus_common::s3::Presigner::from_config(store_uri, s3_config).is_some()
 }
 
-/// Dispatch the build to a connected agent if one matches. Returns
-/// `Some(BuildResult)` on definitive completion (succeeded *or* failed),
-/// `None` when no agent is eligible or the connection dropped before the
-/// result arrived. The caller falls through to SSH or local.
-#[expect(
-  clippy::too_many_arguments,
-  reason = "dispatch decision needs build metadata, live scheduler state, and \
-            cache policy"
-)]
-async fn try_agent_dispatch(
-  agent_pool: &Arc<crate::rpc::AgentPool>,
-  pool: &PgPool,
-  build: &Build,
-  system: &str,
-  drv_path: &str,
-  live_log_path: &std::path::Path,
-  timeout: Duration,
-  psi_threshold: Option<f64>,
-  heartbeat_ttl: Duration,
-  strategy: &circus_common::config::BuilderSchedulingStrategy,
-  extra_nix_args: &[String],
-  cache_upload_enabled_s3: bool,
-  cache_upload_compression: &str,
-  fail_build_on_upload_error: bool,
-) -> Option<crate::builder::BuildResult> {
-  use std::time::Instant;
-
-  use circus_common::config::BuilderSchedulingStrategy::{
-    CpuCoreCountWithSpeedFactor,
-    Dynamic,
-    SpeedFactorOnly,
-  };
-
-  let mut candidates = agent_pool.candidates_for(system);
-  if candidates.is_empty() {
-    return None;
-  }
-
-  // PSI gating from the most recent heartbeat. Missing or stale
-  // heartbeats are treated as "unknown" (do not penalise), matching the
-  // SSH-path semantics.
-  let now = Instant::now();
-  let cutoff = now.checked_sub(heartbeat_ttl);
-  if let Some(t) = psi_threshold {
-    let t = t as f32;
-    candidates.retain(|(_, snap)| {
-      let hb = snap.heartbeat;
-      let fresh = match (hb.last_seen, cutoff) {
-        (Some(seen), Some(cut)) => seen >= cut,
-        _ => true,
-      };
-      if !fresh {
-        return true;
-      }
-      hb.cpu_psi_avg10 <= t && hb.mem_psi_avg10 <= t && hb.io_psi_avg10 <= t
-    });
-  }
-  if candidates.is_empty() {
-    return None;
-  }
-
-  // Required-features gating. The drv declares
-  // `requiredSystemFeatures`; the evaluator persists them on the build
-  // row. An agent is eligible only if every required feature is in its
-  // `supported_features`. This is the build-side counterpart to the SSH
-  // path's `remote_builders.mandatory_features` gate.
-  if !build.required_features.is_empty() {
-    candidates.retain(|(_, snap)| {
-      build
-        .required_features
-        .iter()
-        .all(|f| snap.supported_features.iter().any(|s| s == f))
-    });
-    if candidates.is_empty() {
-      return None;
-    }
-  }
-  candidates.retain(|(_, snap)| {
-    snap
-      .mandatory_features
-      .iter()
-      .all(|f| build.required_features.iter().any(|required| required == f))
-  });
-  if candidates.is_empty() {
-    return None;
-  }
-
-  let mut eligible = Vec::with_capacity(candidates.len());
-  for candidate in candidates {
-    match repo::builder_sessions::is_schedulable(pool, candidate.0.machine_id)
-      .await
-    {
-      Ok(true) => eligible.push(candidate),
-      Ok(false) => {
-        tracing::debug!(
-          machine_id = %candidate.0.machine_id,
-          name = %candidate.1.name,
-          "skipping agent disabled by failure backoff"
-        );
-      },
-      Err(e) => {
-        tracing::warn!(
-          machine_id = %candidate.0.machine_id,
-          name = %candidate.1.name,
-          "failed to read agent backoff state: {e}"
-        );
-      },
-    }
-  }
-  let mut candidates = eligible;
-  if candidates.is_empty() {
-    return None;
-  }
-
-  // Ordering.
-  candidates.sort_by(|a, b| {
-    match strategy {
-      SpeedFactorOnly => {
-        b.1
-          .speed_factor
-          .partial_cmp(&a.1.speed_factor)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      },
-      CpuCoreCountWithSpeedFactor => {
-        let av = a.1.cpu_count as f32 * a.1.speed_factor;
-        let bv = b.1.cpu_count as f32 * b.1.speed_factor;
-        bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
-      },
-      Dynamic => {
-        // Weight by free slots so an idle agent wins over a partially
-        // loaded faster one. Falls back to speed_factor on a tie.
-        let free = |s: &crate::rpc::AgentSnapshot| -> f32 {
-          let slack = s.max_jobs.saturating_sub(s.current_jobs) as f32;
-          slack * s.speed_factor
-        };
-        free(&b.1)
-          .partial_cmp(&free(&a.1))
-          .unwrap_or(std::cmp::Ordering::Equal)
-      },
-    }
-  });
-
-  for (meta, snap) in candidates {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    // Honour the runner's cache-upload config: only a fully presignable S3
-    // store flips the agent into the presigned-upload path post-build. Other
-    // store types, or S3 configs without explicit signing credentials, continue
-    // to use the existing post-build `nix copy --to ...` flow.
-    let presigned_upload = cache_upload_enabled_s3.then(|| {
-      crate::rpc::pool::PresignedUpload {
-        compression: cache_upload_compression.to_owned(),
-        fail_build_on_upload_error,
-      }
-    });
-
-    let cmd = crate::rpc::pool::DispatchCommand {
-      build_id: build.id,
-      drv_path: drv_path.to_owned(),
-      max_log_size: 100 * 1024 * 1024,
-      max_silent_time: 0,
-      build_timeout: timeout.as_secs().try_into().unwrap_or(u32::MAX),
-      extra_args: extra_nix_args.to_vec(),
-      log_path: live_log_path.to_path_buf(),
-      presigned_upload,
-      completion: tx,
-    };
-    if meta.tx.send(cmd).is_err() {
-      tracing::warn!(name = %snap.name, "agent channel closed; falling through");
-      continue;
-    }
-    // Record the dispatch attempt against the builder_sessions row so
-    // the operator can see which agent ran which build without
-    // round-tripping the AgentPool. Failure here is non-fatal; the
-    // dispatch already happened.
-    if let Err(e) = sqlx::query(
-      "UPDATE builder_sessions SET updated_at = NOW() WHERE machine_id = $1",
-    )
-    .bind(meta.machine_id)
-    .execute(pool)
-    .await
-    {
-      tracing::debug!(name = %snap.name, "builder_sessions touch failed: {e}");
-    }
-
-    if let Err(e) =
-      repo::builds::set_agent(pool, build.id, meta.machine_id).await
-    {
-      tracing::warn!(build_id = %build.id, name = %snap.name, "Failed to set agent_machine_id: {e}");
-    }
-    tracing::info!(build_id = %build.id, agent = %snap.name, "dispatched to agent");
-
-    match rx.await {
-      Ok(crate::rpc::pool::DispatchResult::Succeeded) => {
-        let outputs = read_drv_outputs(drv_path).await;
-        return Some(crate::builder::BuildResult {
-          success:              true,
-          exit_code:            Some(0),
-          stdout:               String::new(),
-          stderr:               String::new(),
-          output_paths:         outputs,
-          sub_steps:            Vec::new(),
-          cache_upload_handled: cache_upload_enabled_s3,
-        });
-      },
-      Ok(crate::rpc::pool::DispatchResult::Failed(error_message)) => {
-        return Some(crate::builder::BuildResult {
-          success:              false,
-          exit_code:            Some(1),
-          stdout:               String::new(),
-          stderr:               error_message,
-          output_paths:         Vec::new(),
-          sub_steps:            Vec::new(),
-          cache_upload_handled: cache_upload_enabled_s3,
-        });
-      },
-      Ok(crate::rpc::pool::DispatchResult::TimedOut) => {
-        return Some(crate::builder::BuildResult {
-          success:              false,
-          exit_code:            Some(124),
-          stdout:               String::new(),
-          stderr:               "build timed out".into(),
-          output_paths:         Vec::new(),
-          sub_steps:            Vec::new(),
-          cache_upload_handled: cache_upload_enabled_s3,
-        });
-      },
-      Ok(crate::rpc::pool::DispatchResult::Aborted) => {
-        return Some(crate::builder::BuildResult {
-          success:              false,
-          exit_code:            Some(130),
-          stdout:               String::new(),
-          stderr:               "build aborted".into(),
-          output_paths:         Vec::new(),
-          sub_steps:            Vec::new(),
-          cache_upload_handled: cache_upload_enabled_s3,
-        });
-      },
-      Ok(crate::rpc::pool::DispatchResult::Disconnected) | Err(_) => {
-        tracing::warn!(name = %snap.name, "agent disconnected mid-build; trying next");
-      },
-    }
-  }
-  None
-}
-
-async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
-  let Ok(out) = tokio::process::Command::new("nix-store")
-    .args(["--query", "--outputs", drv_path])
-    .output()
-    .await
-  else {
-    return Vec::new();
-  };
-  if !out.status.success() {
-    return Vec::new();
-  }
-  String::from_utf8_lossy(&out.stdout)
-    .lines()
-    .map(|s| s.trim().to_owned())
-    .filter(|s| !s.is_empty())
-    .collect()
-}
-
 /// Try to run the build on a remote builder if one is available for the build's
 /// system.
 #[expect(
@@ -947,7 +683,61 @@ async fn collect_metrics_and_alert(
   }
 }
 
+/// Runs with a worker permit, trying configured SSH builders before local
+/// execution.
+#[expect(
+  clippy::too_many_arguments,
+  reason = "on-runner execution needs the full SSH/local scheduling context"
+)]
+async fn run_on_runner(
+  permit: tokio::sync::OwnedSemaphorePermit,
+  pool: &PgPool,
+  build: &Build,
+  drv_path: &str,
+  work_dir: &std::path::Path,
+  timeout: Duration,
+  live_log_path: &std::path::Path,
+  scheduling_strategy: &circus_common::config::BuilderSchedulingStrategy,
+  psi_threshold: Option<f64>,
+  psi_check_timeout: Duration,
+  psi_cache: &Arc<crate::psi::PsiCache>,
+  extra_nix_args: &[String],
+) -> circus_common::error::Result<crate::builder::BuildResult> {
+  let _permit = permit;
+  if build.system.is_some()
+    && let Some(r) = try_remote_build(
+      pool,
+      build,
+      drv_path,
+      work_dir,
+      timeout,
+      Some(live_log_path),
+      scheduling_strategy,
+      psi_threshold,
+      psi_check_timeout,
+      psi_cache,
+      extra_nix_args,
+    )
+    .await
+  {
+    return Ok(r);
+  }
+  crate::builder::run_nix_build(
+    drv_path,
+    work_dir,
+    timeout,
+    Some(live_log_path),
+    extra_nix_args,
+  )
+  .await
+}
+
 #[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
+#[expect(
+  clippy::significant_drop_tightening,
+  reason = "the execution reservation is held deliberately from before the DB \
+            claim until the build completes"
+)]
 #[expect(
   clippy::too_many_arguments,
   reason = "build execution coordinates database state, config, \
@@ -968,6 +758,7 @@ async fn run_build(
   cache_upload_config: &CacheUploadConfig,
   alert_manager: &Option<AlertManager>,
   upload_semaphore: Arc<Semaphore>,
+  worker_semaphore: Arc<Semaphore>,
   scheduling_strategy: circus_common::config::BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
@@ -976,15 +767,24 @@ async fn run_build(
   agent_pool: Arc<crate::rpc::AgentPool>,
   heartbeat_ttl: Duration,
 ) -> color_eyre::Result<()> {
-  // Atomically claim the build
-  let claimed = repo::builds::start(pool, build.id).await?;
-  if claimed.is_none() {
+  // Reserve capacity before claiming the build so `running` means execution
+  // can start immediately.
+  let venue = crate::dispatch::reserve_venue(
+    &agent_pool,
+    pool,
+    build,
+    build.system.as_deref(),
+    psi_threshold,
+    heartbeat_ttl,
+    &scheduling_strategy,
+    &worker_semaphore,
+  )
+  .await;
+
+  let Some(claimed_build) = repo::builds::start(pool, build.id).await? else {
     tracing::debug!(build_id = %build.id, "Build already claimed, skipping");
     return Ok(());
-  }
-
-  #[expect(clippy::expect_used, reason = "checked is_some() above")]
-  let claimed_build = claimed.expect("checked is_some() above");
+  };
 
   // Normalize drv_path: nix-eval-jobs always emits absolute store paths,
   // but manually-inserted or migrated rows may have bare filenames. Without
@@ -1060,67 +860,87 @@ async fn run_build(
     log_config.log_dir.join(format!("{}.active.log", build.id));
   let _ = tokio::fs::create_dir_all(&log_config.log_dir).await;
 
-  // Dispatch precedence: persistent agent -> SSH remote builder -> local.
-  // The agent path is preferred because heartbeats give the runner live
-  // load + PSI; the SSH path is a fallback for hosts that do not run
-  // `circus-agent`.
   let cache_upload_enabled_s3 =
     presigned_s3_upload_available(cache_upload_config);
-  let result = if let Some(system) = build.system.as_deref() {
-    if let Some(r) = try_agent_dispatch(
-      &agent_pool,
-      pool,
-      build,
-      system,
-      drv_path,
-      &live_log_path,
-      timeout,
-      psi_threshold,
-      heartbeat_ttl,
-      &scheduling_strategy,
-      &build_extra_nix_args,
-      cache_upload_enabled_s3,
-      &cache_upload_config.compression,
-      cache_upload_config.fail_build_on_upload_error,
-    )
-    .await
-    {
-      Ok(r)
-    } else if let Some(r) = try_remote_build(
-      pool,
-      build,
-      drv_path,
-      work_dir,
-      timeout,
-      Some(&live_log_path),
-      &scheduling_strategy,
-      psi_threshold,
-      psi_check_timeout,
-      &psi_cache,
-      &build_extra_nix_args,
-    )
-    .await
-    {
-      Ok(r)
-    } else {
-      crate::builder::run_nix_build(
+
+  let result = match venue {
+    crate::dispatch::ExecutionReservation::Agent { meta, snap, slot } => {
+      let opts = crate::dispatch::AgentDispatch {
+        timeout,
+        extra_nix_args: &build_extra_nix_args,
+        cache_upload_enabled_s3,
+        cache_upload_compression: &cache_upload_config.compression,
+        fail_build_on_upload_error: cache_upload_config
+          .fail_build_on_upload_error,
+      };
+      if let Some(r) = crate::dispatch::run_on_agent(
+        &meta,
+        &snap,
+        slot,
+        pool,
+        build,
+        drv_path,
+        &live_log_path,
+        &opts,
+      )
+      .await
+      {
+        Ok(r)
+      } else if let Ok(permit) =
+        Arc::clone(&worker_semaphore).try_acquire_owned()
+      {
+        run_on_runner(
+          permit,
+          pool,
+          build,
+          drv_path,
+          work_dir,
+          timeout,
+          &live_log_path,
+          &scheduling_strategy,
+          psi_threshold,
+          psi_check_timeout,
+          &psi_cache,
+          &build_extra_nix_args,
+        )
+        .await
+      } else {
+        // Only remove the live log when requeue succeeds. Cancelled or
+        // completed builds may still need it.
+        match repo::builds::requeue(pool, build.id).await {
+          Ok(Some(_)) => {
+            let _ = tokio::fs::remove_file(&live_log_path).await;
+          },
+          Ok(None) => {
+            tracing::debug!(
+              build_id = %build.id,
+              "build no longer running at requeue (cancelled or completed elsewhere)"
+            );
+          },
+          Err(e) => {
+            tracing::warn!(build_id = %build.id, "Failed to requeue after agent loss: {e}");
+          },
+        }
+        return Ok(());
+      }
+    },
+    crate::dispatch::ExecutionReservation::Runner(permit) => {
+      run_on_runner(
+        permit,
+        pool,
+        build,
         drv_path,
         work_dir,
         timeout,
-        Some(&live_log_path),
+        &live_log_path,
+        &scheduling_strategy,
+        psi_threshold,
+        psi_check_timeout,
+        &psi_cache,
         &build_extra_nix_args,
       )
       .await
-    }
-  } else {
-    crate::builder::run_nix_build(
-      drv_path,
-      work_dir,
-      timeout,
-      Some(&live_log_path),
-      &build_extra_nix_args,
-    )
-    .await
+    },
   };
 
   // Initialize log storage

@@ -9,13 +9,9 @@
 //! [`super::pool::AgentMeta`].
 
 use std::{
-  collections::{HashMap, HashSet},
+  collections::HashMap,
   net::SocketAddr,
-  sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
-  },
-  time::Instant,
+  sync::{Arc, Weak},
 };
 
 use capnp::capability::Promise;
@@ -30,7 +26,6 @@ use circus_proto::{
   runner,
 };
 use color_eyre::eyre::{Context as _, eyre};
-use parking_lot::RwLock;
 use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
 use subtle::ConstantTimeEq as _;
@@ -49,10 +44,11 @@ use x509_parser::prelude::FromDer;
 use super::{
   AgentPool,
   log_sink::LogSinkImpl,
-  pool::{AgentMeta, DispatchCommand, DispatchResult, HeartbeatSnapshot},
+  pool::{AgentMeta, DispatchCommand, DispatchResult},
   result_sink::{BuildOutcomeKind, ResultSinkImpl},
   session::SessionImpl,
 };
+use crate::rpc::pool::MAX_AGENT_MAX_JOBS;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -479,23 +475,19 @@ impl runner::Server for RunnerImpl {
       }
 
       let (tx, rx) = mpsc::unbounded_channel::<DispatchCommand>();
-      let meta = Arc::new(AgentMeta {
+      let meta = Arc::new(AgentMeta::new(
         machine_id,
         connection_id,
-        name: name.clone(),
+        name.clone(),
         hostname,
         systems,
-        supported_features: supported,
-        mandatory_features: mandatory,
-        speed_factor: speed,
-        cpu_count: cpu,
-        max_jobs: maxj,
-        current_jobs: Arc::new(AtomicU32::new(0)),
-        active_builds: RwLock::new(HashSet::new()),
-        heartbeat: RwLock::new(HeartbeatSnapshot::default()),
-        registered_at: Instant::now(),
+        supported,
+        mandatory,
+        speed,
+        cpu,
+        maxj,
         tx,
-      });
+      ));
       if let Some(previous) = pool.insert(Arc::clone(&meta)) {
         tracing::warn!(
           name = %name,
@@ -509,7 +501,7 @@ impl runner::Server for RunnerImpl {
 
       tokio::task::spawn_local(run_dispatch_pump(
         builder_cap,
-        Arc::clone(&meta),
+        Arc::downgrade(&meta),
         Arc::clone(&cfg),
         db_pool.clone(),
         rx,
@@ -862,23 +854,23 @@ fn sanitise_key_segment(value: &str) -> String {
     .collect()
 }
 
-/// Pull from the dispatch channel forever, sending each command through
-/// the held builder capability.
+/// The meta is [`Weak`] so that removing the agent drops the sender for `rx`.
 #[expect(clippy::future_not_send, reason = "capnp future")]
 async fn run_dispatch_pump(
   builder_cap: builder::Client,
-  meta: Arc<AgentMeta>,
+  meta: Weak<AgentMeta>,
   cfg: Arc<ServerConfig>,
   db_pool: PgPool,
   mut rx: mpsc::UnboundedReceiver<DispatchCommand>,
 ) {
   while let Some(cmd) = rx.recv().await {
-    meta.current_jobs.fetch_add(1, Ordering::Relaxed);
+    let Some(meta) = meta.upgrade() else {
+      break;
+    };
     let machine_id = meta.machine_id;
     let pool = db_pool.clone();
     let cfg = Arc::clone(&cfg);
     let builder_cap = builder_cap.clone();
-    let current_jobs_counter = Arc::clone(&meta.current_jobs);
     let meta_for_task = Arc::clone(&meta);
 
     tokio::task::spawn_local(async move {
@@ -891,9 +883,10 @@ async fn run_dispatch_pump(
         &meta_for_task,
       )
       .await;
-      current_jobs_counter.fetch_sub(1, Ordering::Relaxed);
+      let build_id = cmd.build_id;
       let _ = cmd.completion.send(outcome);
-      tracing::debug!(%machine_id, build_id = %cmd.build_id, "dispatch finished");
+      drop(cmd.reservation);
+      tracing::debug!(%machine_id, %build_id, "dispatch finished");
     });
   }
 }
@@ -1029,6 +1022,11 @@ fn validate_agent_capacity(
     return Err(capnp::Error::failed(
       "agent max_jobs must be greater than 0".into(),
     ));
+  }
+  if max_jobs > MAX_AGENT_MAX_JOBS {
+    return Err(capnp::Error::failed(format!(
+      "agent max_jobs {max_jobs} exceeds cap {MAX_AGENT_MAX_JOBS}",
+    )));
   }
   Ok(())
 }
