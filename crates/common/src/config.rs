@@ -257,10 +257,9 @@ pub struct RpcConfig {
   pub cache_public_key: Option<String>,
 }
 
-/// Server-side TLS material for the capnp-rpc endpoint. When `client_ca`
-/// is set the server requires mTLS and pins the client certificate's CN
-/// to the registered agent name; without it the server accepts any TLS
-/// client and authentication relies on the bearer token alone.
+/// Server-side TLS material for the capnp-rpc endpoint. When `client_ca` is
+/// set, the runner verifies any client cert an agent presents. Set
+/// `require_client_cert` to make that cert mandatory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcTlsConfig {
   pub cert_file:           PathBuf,
@@ -270,8 +269,8 @@ pub struct RpcTlsConfig {
   /// Pin a presented client cert name to the registering agent name.
   #[serde(default = "default_true")]
   pub pin_cn:              bool,
-  /// Require every agent to present a cert when `client_ca` is set.
-  #[serde(default = "default_true")]
+  /// Require client certs when `client_ca` is set.
+  #[serde(default)]
   pub require_client_cert: bool,
 }
 

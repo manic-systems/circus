@@ -322,8 +322,8 @@ struct PeerCertIdentity {
 
 /// Extract the pinning name from the peer's verified client certificate.
 ///
-/// rustls hands us the DER-encoded certificate chain; we only need the name
-/// of the leaf. Prefer DNS SANs and fall back to the Subject CN.
+/// rustls gives us the DER-encoded certificate chain, and we only need the
+/// leaf name. Prefer DNS SANs and fall back to the Subject CN.
 fn extract_peer_cert_identity(
   stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
 ) -> PeerCertIdentity {
