@@ -222,6 +222,19 @@ pub(super) struct BuilderView {
   pub(super) last_activity:  String,
 }
 
+pub(super) struct AgentView {
+  pub(super) machine_id:       Uuid,
+  pub(super) name:             String,
+  pub(super) hostname:         String,
+  pub(super) systems:          String,
+  pub(super) max_jobs:         i32,
+  pub(super) current_jobs:     i32,
+  pub(super) connected:        bool,
+  pub(super) builds_succeeded: i64,
+  pub(super) builds_failed:    i64,
+  pub(super) last_seen:        String,
+}
+
 pub(super) struct NotificationTaskView {
   pub(super) id:                Uuid,
   pub(super) notification_type: String,
@@ -250,6 +263,7 @@ pub(super) struct PinnedOutputView {
 pub(super) struct AdminTemplate {
   pub(super) status:                  SystemStatus,
   pub(super) builders:                Vec<BuilderView>,
+  pub(super) agents:                  Vec<AgentView>,
   pub(super) api_keys:                Vec<ApiKeyView>,
   pub(super) notification_tasks:      Vec<NotificationTaskView>,
   pub(super) pinned_outputs:          Vec<PinnedOutputView>,
