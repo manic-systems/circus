@@ -89,6 +89,21 @@ testers.runNixOSTest {
     with subtest("Cache returns 404 for valid but nonexistent hash"):
         machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/nix-cache/abcdefghijklmnopqrstuvwxyz012345.narinfo | grep -q 404")
 
+    with subtest("Cache serves only Circus-signed persisted narinfo"):
+        unsigned_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        signed_hash = "cccccccccccccccccccccccccccccccc"
+        machine.succeed(
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
+            "INSERT INTO narinfo_cache (store_path, nar_hash, nar_size, compression, url, \\\"references\\\", sig) VALUES "
+            "('/nix/store/" + unsigned_hash + "-unsigned-cache-test', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'none', 'nar/" + unsigned_hash + ".nar', '{}', NULL), "
+            "('/nix/store/" + signed_hash + "-signed-cache-test', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'none', 'nar/" + signed_hash + ".nar', '{}', 'circus-test-cache:sig')"
+            "\""
+        )
+        machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:3000/nix-cache/{unsigned_hash}.narinfo | grep -q 404")
+        signed_narinfo = machine.succeed(f"curl -sf http://127.0.0.1:3000/nix-cache/{signed_hash}.narinfo")
+        assert "StorePath: /nix/store/" + signed_hash + "-signed-cache-test" in signed_narinfo, signed_narinfo
+        assert "Sig: circus-test-cache:sig" in signed_narinfo, signed_narinfo
+
     #  NAR endpoints: invalid hash rejection
     with subtest("NAR zst rejects invalid hash"):
         machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/nix-cache/nar/INVALID.nar.zst | grep -q 404")
