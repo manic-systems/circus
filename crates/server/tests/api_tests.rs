@@ -352,6 +352,83 @@ async fn test_cache_invalid_hash_returns_404() {
 }
 
 #[tokio::test]
+async fn test_cache_serves_only_signed_persisted_narinfo() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let store_path = format!("/nix/store/{hash}-cache-test");
+  circus_common::repo::narinfo_cache::upsert(
+    &pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path:  &store_path,
+      nar_hash:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      nar_size:    1,
+      file_hash:   None,
+      file_size:   None,
+      compression: "none",
+      url:         &format!("nar/{hash}.nar"),
+      deriver:     None,
+      references:  &[],
+      sig:         None,
+      ca:          None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let mut config = circus_common::config::Config::default();
+  config.cache.enabled = true;
+  let app = build_app_with_config(pool.clone(), config.clone());
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri(format!("/nix-cache/{hash}.narinfo"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+  circus_common::repo::narinfo_cache::upsert(
+    &pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path:  &store_path,
+      nar_hash:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      nar_size:    1,
+      file_hash:   None,
+      file_size:   None,
+      compression: "none",
+      url:         &format!("nar/{hash}.nar"),
+      deriver:     None,
+      references:  &[],
+      sig:         Some("circus:test-signature"),
+      ca:          None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let app = build_app_with_config(pool, config);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/nix-cache/{hash}.narinfo"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_cache_nar_invalid_hash_returns_404() {
   let Some(pool) = get_pool().await else {
     return;

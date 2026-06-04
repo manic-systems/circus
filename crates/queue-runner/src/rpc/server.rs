@@ -669,11 +669,6 @@ impl runner::Server for RunnerImpl {
         let s = info.get_ca()?.to_str()?;
         (!s.is_empty()).then(|| s.to_owned())
       };
-      let sig_in = {
-        let s = info.get_sig()?.to_str()?;
-        (!s.is_empty()).then(|| s.to_owned())
-      };
-
       validate_store_path(&store_path)?;
       validate_hash_text("nar_hash", &nar_hash)?;
       if !file_hash.is_empty() {
@@ -725,11 +720,11 @@ impl runner::Server for RunnerImpl {
       let file_size_opt =
         (compression != "none" && file_size > 0).then_some(file_size);
 
-      // Sign the narinfo on the runner side. The fingerprint is the
-      // canonical Nix narinfo signing input:
+      // Sign the narinfo on the runner side. The fingerprint is the canonical
+      // Nix narinfo signing input:
       // `<storePath>;<narHash>;<narSize>;<references>` (refs comma-
-      // joined). When a signing key is configured we replace whatever
-      // the agent sent (typically empty) with our own signature.
+      // joined). Never persist an agent-supplied signature; only a runner-
+      // minted signature makes the uploaded NAR servable by circus-server.
       let signed_sig = if let Some(key_file) = &self_cfg.signing_key_file {
         match sign_fingerprint(
           key_file,
@@ -743,11 +738,11 @@ impl runner::Server for RunnerImpl {
           Ok(sig) => Some(sig),
           Err(e) => {
             tracing::warn!(%store_path, "narinfo signing failed: {e}");
-            sig_in
+            None
           },
         }
       } else {
-        sig_in
+        None
       };
 
       if let Err(e) = circus_common::repo::narinfo_cache::upsert(
