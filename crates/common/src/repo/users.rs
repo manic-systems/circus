@@ -557,3 +557,22 @@ pub async fn validate_session(
 
   Ok(result)
 }
+
+/// Delete a user session by its raw session token.
+///
+/// # Errors
+///
+/// Returns error if the database delete fails.
+pub async fn delete_session(pool: &PgPool, token: &str) -> Result<bool> {
+  use sha2::{Digest, Sha256};
+
+  let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+  let result =
+    sqlx::query("DELETE FROM user_sessions WHERE session_token_hash = $1")
+      .bind(&token_hash)
+      .execute(pool)
+      .await
+      .map_err(CiError::Database)?;
+
+  Ok(result.rows_affected() > 0)
+}

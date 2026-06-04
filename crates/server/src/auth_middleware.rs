@@ -4,7 +4,10 @@ use axum::{
   middleware::Next,
   response::Response,
 };
-use circus_common::models::{ApiKey, User};
+use circus_common::{
+  models::{ApiKey, User},
+  repo,
+};
 use sha2::{Digest, Sha256};
 
 use crate::state::AppState;
@@ -78,27 +81,26 @@ pub async fn require_api_key(
     .get("cookie")
     .and_then(|v| v.to_str().ok())
   {
-    // Try user session first (new circus_user_session cookie)
+    // User sessions are durable DB-backed tokens. Legacy API-key dashboard
+    // sessions below remain explicitly process-local.
     if let Some(session_id) = parse_cookie(cookie_header, "circus_user_session")
-      && let Some(session) = state.sessions.get(&session_id)
     {
-      // Check session expiry (24 hours)
-      if session.created_at.elapsed() < std::time::Duration::from_hours(24) {
-        if !is_read && !valid_csrf_header(&state, &request, &session_id) {
-          return Err(StatusCode::FORBIDDEN);
-        }
-        // Insert both user and session data
-        if let Some(ref user) = session.user {
+      match repo::users::validate_session(&state.pool, &session_id).await {
+        Ok(Some(user)) => {
+          if !is_read && !valid_csrf_header(&state, &request, &session_id) {
+            return Err(StatusCode::FORBIDDEN);
+          }
           request.extensions_mut().insert(user.clone());
-        }
-        if let Some(ref api_key) = session.api_key {
-          request.extensions_mut().insert(api_key.clone());
-        }
-        return Ok(next.run(request).await);
+          request.extensions_mut().insert(crate::state::SessionData {
+            api_key:    None,
+            user:       Some(user),
+            created_at: std::time::Instant::now(),
+          });
+          return Ok(next.run(request).await);
+        },
+        Ok(None) => {},
+        Err(e) => tracing::warn!("failed to validate user session: {e}"),
       }
-      // Expired, remove it
-      drop(session);
-      state.sessions.remove(&session_id);
     }
 
     // Try legacy API key session (circus_session cookie)
@@ -281,26 +283,21 @@ pub async fn extract_session(
     .map(std::string::ToString::to_string);
 
   if let Some(cookie_header) = cookie_header {
-    // Try user session first
+    // User sessions are durable DB-backed tokens. Legacy API-key dashboard
+    // sessions below remain explicitly process-local.
     if let Some(session_id) =
       parse_cookie(&cookie_header, "circus_user_session")
-      && let Some(session) = state.sessions.get(&session_id)
     {
-      // Check session expiry
-      if session.created_at.elapsed() < std::time::Duration::from_hours(24) {
-        if let Some(ref user) = session.user {
-          request.extensions_mut().insert(user.clone());
-        }
-        if let Some(ref api_key) = session.api_key {
-          request.extensions_mut().insert(api_key.clone());
-        }
-        let token = state.csrf_token_for(&session_id);
-        request
-          .extensions_mut()
-          .insert(crate::state::CsrfToken(token));
-      } else {
-        drop(session);
-        state.sessions.remove(&session_id);
+      match repo::users::validate_session(&state.pool, &session_id).await {
+        Ok(Some(user)) => {
+          request.extensions_mut().insert(user);
+          let token = state.csrf_token_for(&session_id);
+          request
+            .extensions_mut()
+            .insert(crate::state::CsrfToken(token));
+        },
+        Ok(None) => {},
+        Err(e) => tracing::warn!("failed to validate user session: {e}"),
       }
     }
 

@@ -18,6 +18,9 @@ use uuid::Uuid;
 use super::templates::LoginTemplate;
 use crate::state::AppState;
 
+const USER_SESSION_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
+const API_KEY_SESSION_MAX_AGE_SECS: i64 = 24 * 60 * 60;
+
 pub(super) async fn login_page() -> Html<String> {
   let tmpl = LoginTemplate {
     error:     None,
@@ -65,20 +68,24 @@ pub(super) async fn login_action(
       )
       .await;
 
-      let session_id = Uuid::new_v4().to_string();
-      state
-        .sessions
-        .insert(session_id.clone(), crate::state::SessionData {
-          api_key:    None,
-          user:       Some(user),
-          created_at: std::time::Instant::now(),
-        });
+      let session = match circus_common::repo::users::create_session(
+        &state.pool,
+        user.id,
+      )
+      .await
+      {
+        Ok(session) => session,
+        Err(e) => {
+          tracing::error!(user_id = %user.id, "failed to create user session: {e}");
+          return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        },
+      };
 
       let security_flags =
         crate::routes::cookie_security_flags(&state.config.server);
       let cookie = format!(
-        "circus_user_session={session_id}; {security_flags}; Path=/; \
-         Max-Age=86400"
+        "circus_user_session={}; {security_flags}; Path=/; Max-Age={}",
+        session.0, USER_SESSION_MAX_AGE_SECS,
       );
       return (
         [(axum::http::header::SET_COOKIE, cookie)],
@@ -160,7 +167,8 @@ pub(super) async fn login_action(
       let security_flags =
         crate::routes::cookie_security_flags(&state.config.server);
       let cookie = format!(
-        "circus_session={session_id}; {security_flags}; Path=/; Max-Age=86400"
+        "circus_session={session_id}; {security_flags}; Path=/; \
+         Max-Age={API_KEY_SESSION_MAX_AGE_SECS}"
       );
       (
         [(axum::http::header::SET_COOKIE, cookie)],
@@ -228,7 +236,12 @@ pub(super) async fn logout_action(
         None
       }
     }) {
-      state.sessions.remove(&session_id);
+      if let Err(e) =
+        circus_common::repo::users::delete_session(&state.pool, &session_id)
+          .await
+      {
+        tracing::warn!("failed to delete user session during logout: {e}");
+      }
     }
 
     // Check for legacy API key session
