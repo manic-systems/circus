@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "circus-admin"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "circus-agent"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "async-compression",
  "capnp",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "circus-common"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "argon2",
  "chrono",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "circus-evaluator"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "circus-common",
@@ -637,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "circus-migrate-cli"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "circus-common",
  "clap",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "circus-migrations"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "color-eyre",
  "sqlx",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "circus-proto"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "capnp",
  "capnp-futures",
@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "circus-queue-runner"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "base64",
  "capnp",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "circus-server"
-version = "0.10.0-dev"
+version = "0.11.0"
 dependencies = [
  "askama",
  "async-compression",
