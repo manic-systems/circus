@@ -116,7 +116,7 @@ async fn narinfo(
       (
         StatusCode::OK,
         [("content-type", "text/x-nix-narinfo")],
-        cached.value().body.clone(),
+        cached,
       )
         .into_response(),
     );
@@ -139,12 +139,7 @@ async fn narinfo(
     } else {
       body
     };
-    state
-      .narinfo_cache
-      .insert(hash.to_owned(), crate::state::CachedNarinfo {
-        body:       body.clone(),
-        created_at: std::time::Instant::now(),
-      });
+    state.narinfo_cache.insert(hash.to_owned(), body.clone());
     return Ok(
       (
         StatusCode::OK,
@@ -260,10 +255,7 @@ async fn narinfo(
 
   state
     .narinfo_cache
-    .insert(hash.to_string(), crate::state::CachedNarinfo {
-      body:       narinfo_text.clone(),
-      created_at: std::time::Instant::now(),
-    });
+    .insert(hash.to_string(), narinfo_text.clone());
 
   Ok(
     (

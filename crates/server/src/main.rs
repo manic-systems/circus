@@ -90,7 +90,7 @@ async fn main() -> color_eyre::Result<()> {
     pool: db.pool().clone(),
     config: config.clone(),
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
-    narinfo_cache: std::sync::Arc::new(dashmap::DashMap::new()),
+    narinfo_cache: AppState::new_narinfo_cache(),
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new(csrf_secret),
     email_regex,
@@ -98,7 +98,6 @@ async fn main() -> color_eyre::Result<()> {
 
   // Start background session cleanup to prevent memory leaks
   state.spawn_session_cleanup();
-  state.spawn_narinfo_cleanup();
 
   let app = routes::router(state, &config.server);
 

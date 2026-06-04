@@ -54,6 +54,7 @@ lettre = { version = "0.11.22", default-features = false, features = [
   "builder",
 ] }
 libc = "0.2.186"
+moka = { version = "0.12.11", features = [ "sync" ] }
 nix-nar = "0.4.0"
 oauth2 = "5.0.0"
 openapiv3 = "2.2.0"

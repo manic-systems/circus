@@ -21,6 +21,7 @@ futures.workspace            = true
 hex.workspace                = true
 hmac.workspace               = true
 ldap3.workspace              = true
+moka.workspace               = true
 oauth2.workspace             = true
 reqwest.workspace            = true
 serde.workspace              = true

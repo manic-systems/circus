@@ -6,10 +6,11 @@ use circus_common::{
 };
 use dashmap::DashMap;
 use hmac::KeyInit;
+use moka::sync::Cache;
 use regex::Regex;
 use sqlx::PgPool;
 
-/// Maximum session lifetime before automatic eviction (24 hours).
+/// Maximum lifetime for legacy in-memory API-key dashboard sessions.
 const SESSION_MAX_AGE: std::time::Duration =
   std::time::Duration::from_hours(24);
 
@@ -21,8 +22,7 @@ const SESSION_CLEANUP_INTERVAL: std::time::Duration =
 const NARINFO_CACHE_TTL: std::time::Duration =
   std::time::Duration::from_hours(1);
 
-/// Hard cap on the number of cached narinfos. Excess entries are evicted
-/// on the next sweep regardless of TTL.
+/// Hard cap on the number of cached narinfos.
 const NARINFO_CACHE_MAX_ENTRIES: usize = 50_000;
 
 /// Session data supporting both API key and user authentication
@@ -76,21 +76,14 @@ impl SessionData {
   }
 }
 
-/// Cached narinfo body together with the instant it was inserted.
-/// Used by the background eviction task to drop entries past
-/// `NARINFO_CACHE_TTL`.
-#[derive(Clone)]
-pub struct CachedNarinfo {
-  pub body:       String,
-  pub created_at: Instant,
-}
+pub type NarinfoCache = Cache<String, String>;
 
 #[derive(Clone)]
 pub struct AppState {
   pub pool:          PgPool,
   pub config:        Config,
   pub sessions:      Arc<DashMap<String, SessionData>>,
-  pub narinfo_cache: Arc<DashMap<String, CachedNarinfo>>,
+  pub narinfo_cache: NarinfoCache,
   pub http_client:   reqwest::Client,
   /// Per-process key used to derive CSRF tokens from session IDs via HMAC.
   /// Regenerated on every restart, which invalidates outstanding tokens; the
@@ -102,6 +95,14 @@ pub struct AppState {
 }
 
 impl AppState {
+  #[must_use]
+  pub fn new_narinfo_cache() -> NarinfoCache {
+    Cache::builder()
+      .max_capacity(NARINFO_CACHE_MAX_ENTRIES as u64)
+      .time_to_live(NARINFO_CACHE_TTL)
+      .build()
+  }
+
   /// Compute the CSRF token bound to a given session ID. Same input always
   /// produces the same output for the lifetime of the process; comparing
   /// with [`subtle::ConstantTimeEq`] avoids timing leaks.
@@ -132,8 +133,8 @@ impl AppState {
 pub struct CsrfToken(pub String);
 
 impl AppState {
-  /// Spawn a background task that periodically evicts expired sessions.
-  /// This prevents unbounded memory growth from the in-memory session store.
+  /// Spawn a background task that periodically evicts expired legacy API-key
+  /// dashboard sessions. User sessions are validated against PostgreSQL.
   pub fn spawn_session_cleanup(&self) {
     let sessions = Arc::clone(&self.sessions);
     tokio::spawn(async move {
@@ -149,31 +150,6 @@ impl AppState {
             remaining = sessions.len(),
             "Evicted expired sessions"
           );
-        }
-      }
-    });
-  }
-
-  /// Spawn a background task that evicts narinfo cache entries past the TTL
-  /// and trims the map back to the size cap. Without this the cache grows
-  /// without bound on a busy mirror.
-  pub fn spawn_narinfo_cleanup(&self) {
-    let cache = Arc::clone(&self.narinfo_cache);
-    tokio::spawn(async move {
-      loop {
-        tokio::time::sleep(SESSION_CLEANUP_INTERVAL).await;
-        cache.retain(|_, v| v.created_at.elapsed() < NARINFO_CACHE_TTL);
-        if cache.len() > NARINFO_CACHE_MAX_ENTRIES {
-          // Over the hard cap: drop the oldest entries until under the limit.
-          let mut entries: Vec<(String, Instant)> = cache
-            .iter()
-            .map(|e| (e.key().clone(), e.value().created_at))
-            .collect();
-          entries.sort_by_key(|(_, t)| *t);
-          let to_drop = cache.len().saturating_sub(NARINFO_CACHE_MAX_ENTRIES);
-          for (k, _) in entries.into_iter().take(to_drop) {
-            cache.remove(&k);
-          }
         }
       }
     });
