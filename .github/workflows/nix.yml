@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 jobs:
   changes:
     name: Detect Changed Files
@@ -60,4 +64,3 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: nix build .#${{ matrix.package }} -L --no-link
-
