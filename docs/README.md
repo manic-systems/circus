@@ -4,21 +4,21 @@
 [Hydra]: https://github.com/nixos/hydra
 [discussions tab]: https://github.com/manic-systems/circus/discussions/landing
 
-Circus is a fast, modular continuous integration system built from the ground up
-in Rust for Nix-based projects for quick, easy deployments for mortals and
-long-term reliability in mind with a special emphasis on declarative
-configuration, and robust distributed builds without any fuss. It used to follow
-[Hydra]'s three-daemon architecture, but the design has diverged since. Still,
-Circus addresses the original pain points with Hydra in the areas of
-performance, maintainability, and easy, declarative setups.
-
-Our goal with Circus is to have an "all in one" Nix CI option that can be
+Circus is fast, modular and declarative continuous integration (CI) system built
+from the ground up in Rust for Nix-based projects for quick, easy deployments
+for mortals and long-term reliability. We emphasize on declarative system
+configurations, and robust remote/distributed builds without any fuss. The
+project used to follow [Hydra]'s three-daemon architecture, but the design has
+diverged since. Still, Circus addresses the original pain points with Hydra in
+the areas of performance, maintainability, and easy, declarative setups while
+staying true to our goals of having an "all in one" Nix CI option that can be
 maintained long-term with ease, and without compromising from performance while
-allowing deployed anywhere, anytime _without friction_ for any user or team of
-any size. Feature requests, feedback and constructive criticism are welcome in
-preparing Circus for long-term adoption. If you feel overwhelmed by the
-documentation at any time, please head to the [discussions tab] to ask your
-questions directly.
+allowing deployed anywhere, anytime, _without friction_ and for any user or team
+of any size.
+
+Feature requests, feedback and constructive criticism are welcome in preparing
+Circus for long-term adoption. If you feel overwhelmed by the documentation at
+any time, please head to the [discussions tab] to ask your questions directly.
 
 > [!NOTE]
 > Until 1.0.0 is tagged and released (or, alternatively, this note is removed),
@@ -40,8 +40,8 @@ for clowns_. Hope this answers your other burning question.
 
 ## Architecture
 
-Circus, after everything, Hydra's three-daemon model (with the addition of
-optional distributed agents) with a shared PostgreSQL database. The server
+Circus, after everything, follows Hydra's three-daemon model (with the addition
+of optional distributed agents) with a shared PostgreSQL database. The server
 handles the API and dashboard, the evaluator polls repositories and runs Nix
 evaluations, and the queue-runner dispatches builds to workers. See the
 [design document] for architectural details, data flow, and how the pieces fit
