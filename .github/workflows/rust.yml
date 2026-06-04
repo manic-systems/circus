@@ -7,6 +7,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 jobs:
   fmt:
     name: Format
@@ -33,4 +37,4 @@ jobs:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31
       - name: Run Test Suite
-        run:  nix develop --command cargo nextest run --all
+        run: nix develop --command cargo nextest run --all
