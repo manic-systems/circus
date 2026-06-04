@@ -40,9 +40,10 @@ fn first_path_info_entry(
   }
 }
 
-/// Look up a store path by its nix hash, checking both `build_products` and
-/// builds tables.
-async fn find_store_path(
+/// Look up a store path by its nix hash, limited to build outputs that Circus
+/// signed at build time. This intentionally does not fall back to arbitrary
+/// `/nix/store` paths.
+async fn find_signed_store_path(
   pool: &sqlx::PgPool,
   hash: &str,
   store_dir: &str,
@@ -51,7 +52,8 @@ async fn find_store_path(
   let like_pattern = format!("{store_dir}/{hash}-%");
 
   let path: Option<String> = sqlx::query_scalar(
-    "SELECT path FROM build_products WHERE path LIKE $1 LIMIT 1",
+    "SELECT bp.path FROM build_products bp JOIN builds b ON b.id = \
+     bp.build_id WHERE bp.path LIKE $1 AND b.signed = true LIMIT 1",
   )
   .bind(&like_pattern)
   .fetch_optional(pool)
@@ -63,33 +65,21 @@ async fn find_store_path(
   }
 
   let from_builds = sqlx::query_scalar(
-    "SELECT build_output_path FROM builds WHERE build_output_path LIKE $1 \
-     LIMIT 1",
+    "SELECT build_output_path FROM builds WHERE build_output_path LIKE $1 AND \
+     signed = true LIMIT 1",
   )
   .bind(&like_pattern)
   .fetch_optional(pool)
   .await
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
 
-  if from_builds.is_some() {
-    return Ok(from_builds);
-  }
+  Ok(from_builds)
+}
 
-  // Otherwise serve any local store path so agents can substitute assigned
-  // drv closures.
-  //
-  // FIXME: this shells out to `nix`, and needs the nix-command feature. We
-  // should bind to the Nix C/C++ API and call it directly instead.
-  let resolved = tokio::process::Command::new("nix")
-    .args(["store", "path-from-hash-part", hash])
-    .output()
-    .await
-    .ok()
-    .filter(|o| o.status.success())
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-    .filter(|p| !p.is_empty());
-
-  Ok(resolved)
+fn narinfo_has_signature(
+  row: &circus_common::repo::narinfo_cache::NarInfo,
+) -> bool {
+  row.sig.as_ref().is_some_and(|sig| !sig.trim().is_empty())
 }
 
 /// Serve `NARInfo` for a store path hash.
@@ -129,16 +119,9 @@ async fn narinfo(
   if let Ok(row) =
     circus_common::repo::narinfo_cache::get_by_hash_part(&state.pool, hash)
       .await
+    && narinfo_has_signature(&row)
   {
     let body = render_narinfo_row(&row);
-    let body = if let (true, Some(key_file)) = (
-      state.config.signing.enabled,
-      state.config.signing.key_file.as_ref(),
-    ) {
-      sign_narinfo(&body, key_file).await
-    } else {
-      body
-    };
     state.narinfo_cache.insert(hash.to_owned(), body.clone());
     return Ok(
       (
@@ -152,7 +135,9 @@ async fn narinfo(
 
   let store_dir = state.config.nix.store_dir.to_string_lossy();
   let store_dir = store_dir.trim_end_matches('/');
-  let store_path = match find_store_path(&state.pool, hash, store_dir).await? {
+  let store_path = match find_signed_store_path(&state.pool, hash, store_dir)
+    .await?
+  {
     Some(p) if circus_common::validate::is_valid_store_path(&p, store_dir) => p,
     _ => return Ok(StatusCode::NOT_FOUND.into_response()),
   };
@@ -207,6 +192,15 @@ async fn narinfo(
   // Extract content-addressable hash
   let ca = entry.get("ca").and_then(|v| v.as_str());
 
+  let signatures: Vec<&str> = entry
+    .get("signatures")
+    .and_then(|v| v.as_array())
+    .map(|arr| arr.iter().filter_map(|s| s.as_str()).collect())
+    .unwrap_or_default();
+  if signatures.is_empty() {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  }
+
   let compression = &state.config.cache.compression;
   let nar_url = format!("nar/{hash}{}", compression.file_extension());
   let compression_str = compression.as_str();
@@ -240,18 +234,9 @@ async fn narinfo(
   if let Some(ca) = ca {
     let _ = writeln!(narinfo_text, "CA: {ca}");
   }
-
-  // Optionally sign if secret key is configured
-  let narinfo_text =
-    if let Some(ref key_file) = state.config.cache.secret_key_file {
-      if key_file.exists() {
-        sign_narinfo(&narinfo_text, key_file).await
-      } else {
-        narinfo_text
-      }
-    } else {
-      narinfo_text
-    };
+  for sig in signatures {
+    let _ = writeln!(narinfo_text, "Sig: {sig}");
+  }
 
   state
     .narinfo_cache
@@ -328,6 +313,9 @@ async fn redirect_uploaded_nar(
   match circus_common::repo::narinfo_cache::get_by_url(&state.pool, &url).await
   {
     Ok(row) => {
+      if !narinfo_has_signature(&row) {
+        return Ok(Some(StatusCode::NOT_FOUND.into_response()));
+      }
       let Some(presigner) = uploaded_nar_presigner(&state.config) else {
         tracing::warn!(
           url = %row.url,
@@ -347,56 +335,6 @@ async fn redirect_uploaded_nar(
     },
     Err(circus_common::CiError::NotFound(_)) => Ok(None),
     Err(e) => Err(ApiError(e)),
-  }
-}
-
-/// Sign narinfo using nix store sign command
-async fn sign_narinfo(narinfo: &str, key_file: &std::path::Path) -> String {
-  let store_path = narinfo
-    .lines()
-    .find(|l| l.starts_with("StorePath: "))
-    .and_then(|l| l.strip_prefix("StorePath: "));
-
-  let Some(store_path) = store_path else {
-    return narinfo.to_string();
-  };
-
-  let output = Command::new("nix")
-    .args([
-      "store",
-      "sign",
-      "--key-file",
-      &key_file.to_string_lossy(),
-      store_path,
-    ])
-    .output()
-    .await;
-
-  match output {
-    Ok(o) if o.status.success() => {
-      let re_output = Command::new("nix")
-        .args(["path-info", "--json", store_path])
-        .output()
-        .await;
-
-      if let Ok(o) = re_output
-        && let Ok(parsed) =
-          serde_json::from_slice::<serde_json::Value>(&o.stdout)
-        && let Some((entry, _)) = first_path_info_entry(&parsed)
-        && let Some(sigs) = entry.get("signatures").and_then(|v| v.as_array())
-      {
-        let sig_lines: Vec<String> = sigs
-          .iter()
-          .filter_map(|s| s.as_str())
-          .map(|s| format!("Sig: {s}"))
-          .collect();
-        if !sig_lines.is_empty() {
-          return format!("{narinfo}{}\n", sig_lines.join("\n"));
-        }
-      }
-      narinfo.to_string()
-    },
-    _ => narinfo.to_string(),
   }
 }
 
@@ -532,12 +470,15 @@ async fn serve_nar_combined(
 
   let store_dir = state.config.nix.store_dir.to_string_lossy();
   let store_dir = store_dir.trim_end_matches('/');
-  let store_path = match find_store_path(&state.pool, stripped, store_dir)
-    .await?
-  {
-    Some(p) if circus_common::validate::is_valid_store_path(&p, store_dir) => p,
-    _ => return Ok(StatusCode::NOT_FOUND.into_response()),
-  };
+  let store_path =
+    match find_signed_store_path(&state.pool, stripped, store_dir).await? {
+      Some(p)
+        if circus_common::validate::is_valid_store_path(&p, store_dir) =>
+      {
+        p
+      },
+      _ => return Ok(StatusCode::NOT_FOUND.into_response()),
+    };
 
   let body = if let Some((bin, args)) = compressor {
     let stdout = pipe_through_compressor(&store_path, bin, args)?;
