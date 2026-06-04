@@ -149,15 +149,17 @@ The flow is as follows
    flight are marked stuck and reset to `pending` by the orphan sweeper (already
    implemented at `crates/queue-runner/src/runner_loop.rs`).
 7. `register` carries a bearer token. The runner SHA-256 hashes it and compares
-   constant-time against `[queue_runner.rpc].auth_tokens` (hex digests). mTLS is
-   optional; when the server config sets `tls.client_ca` and
-   `tls.pin_cn = true`, the client certificate's Common Name must also equal the
-   agent's registered `name`.
+   constant-time against `[queue_runner.rpc].auth_tokens`. mTLS is optional, and
+   setting `tls.client_ca` enables client-cert verification. However, note that
+   with `tls.pin_cn = true`, the certificate's Common Name must equal the agent's
+   registered `name`. Whether a cert is mandatory is governed by
+   `tls.require_client_cert`, which is true by default. This enforces strict mTLS,
+   but setting it false to accept token-only agents that present no certificate
+   while still verifying any cert that is offered.
 8. If the runner's cache upload target is S3 and explicit presigning credentials
    are configured, `BuildAssignment.presignedUpload` asks the agent to upload
    outputs directly. The agent requests PUT URLs for the active
-   `(machineId,
-   buildId)` pair, streams each compressed NAR to S3, then calls
+   `(machineId, buildId)` pair, streams each compressed NAR to S3, then calls
    `notifyUploadComplete`. The runner verifies the upload was presigned for that
    live build/path before persisting narinfo and clears the expected-upload
    state when the build completes or disconnects.
@@ -234,11 +236,13 @@ prefix            = "nix-cache" # objects are written below root/nix-cache/
 access_key_id     = "..."
 secret_access_key = "..."
 
-[queue_runner.rpc.tls]                           # optional; omit for plain TCP
-cert_file = "/var/lib/circus/tls/runner.crt"
-key_file  = "/var/lib/circus/tls/runner.key"
-client_ca = "/var/lib/circus/tls/clients.ca.crt" # presence => mTLS required
-pin_cn    = true                                 # CN must equal agent.name
+# optional, this can be omitted for plain TCP
+[queue_runner.rpc.tls]
+cert_file           = "/var/lib/circus/tls/runner.crt"
+key_file            = "/var/lib/circus/tls/runner.key"
+client_ca           = "/var/lib/circus/tls/clients.ca.crt" # enables client-cert verification
+pin_cn              = true                                 # CN must equal agent.name
+require_client_cert = true                                 # false => cert optional, token-only OK
 ```
 
 > [!NOTE]
@@ -263,9 +267,9 @@ work_dir                = "/var/lib/circus-agent"
 
 # required for circus+tls://
 [agent.tls]
-ca_file   = "/etc/circus/tls/runner.ca.crt"
-cert_file = "/etc/circus/tls/build-01.crt"
-key_file  = "/etc/circus/tls/build-01.key"
+ca_file   = "/etc/circus/tls/runner.ca.crt" # required: trusts the runner cert
+cert_file = "/etc/circus/tls/build-01.crt"  # optional: client identity (mTLS)
+key_file  = "/etc/circus/tls/build-01.key"  # omit cert_file + key_file for token-only
 ```
 
 The agent runs as a Systemd service. A NixOS module is provided at
@@ -296,10 +300,12 @@ matter of which service is running.
   malformed token digests. The `builder_sessions` table has an `auth_token_hash`
   column reserved for per-agent tokens but no code path consults it yet.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
-  `[queue_runner.rpc].tls`; setting `client_ca` switches the acceptor to
-  `WebPkiClientVerifier` so client certs are required. With `pin_cn = true` (the
-  default when `client_ca` is set), the registering agent's `name` must equal
-  the CN extracted from the verified client certificate.
+  `[queue_runner.rpc].tls`; setting `client_ca` attaches a
+  `WebPkiClientVerifier`. With `require_client_cert = true`, client certs are
+  mandatory. Set it false to use `allow_unauthenticated` so an agent may
+  connect token-only while any cert it does present is still verified. With
+  `pin_cn = true` (the default when `client_ca` is set), an agent that presents
+  a certificate must have a CN equal to its registered `name`.
 - Cap'n Proto framing is bounded by `capnp::message::ReaderOptions` defaults;
   oversized messages are rejected at decode. Circus also enforces
   application-level limits from `circus_proto::limits`: bounded registration

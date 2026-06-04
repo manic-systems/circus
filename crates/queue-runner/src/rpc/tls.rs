@@ -1,7 +1,9 @@
 //! Runner-side TLS. Builds a `tokio_rustls::TlsAcceptor` from the
 //! configured server identity. When `client_ca` is set the acceptor
-//! enforces mTLS; the CN-pin is checked at the application layer after
-//! the handshake so we can map it onto the agent's registered name.
+//! verifies client certs against it. This is required when
+//! `require_client_cert` is set, otherwise honored only when offered. The
+//! CN-pin is checked at the application layer after the handshake so we can map
+//! it onto the agent's registered name.
 
 use std::{io::BufReader, sync::Arc};
 
@@ -36,7 +38,12 @@ pub fn build_acceptor(cfg: &RpcTlsConfig) -> color_eyre::Result<TlsAcceptor> {
     {
       roots.add(cert?)?;
     }
-    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
+    let builder = WebPkiClientVerifier::builder(Arc::new(roots));
+    let verifier = if cfg.require_client_cert {
+      builder.build()?
+    } else {
+      builder.allow_unauthenticated().build()?
+    };
     ServerConfig::builder()
       .with_client_cert_verifier(verifier)
       .with_single_cert(cert_chain, key)?

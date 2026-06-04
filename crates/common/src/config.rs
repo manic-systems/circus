@@ -263,16 +263,16 @@ pub struct RpcConfig {
 /// client and authentication relies on the bearer token alone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcTlsConfig {
-  pub cert_file: PathBuf,
-  pub key_file:  PathBuf,
+  pub cert_file:           PathBuf,
+  pub key_file:            PathBuf,
   #[serde(default)]
-  pub client_ca: Option<PathBuf>,
-  /// When `client_ca` is set and this is true, the server requires the
-  /// client certificate's CN to equal the agent's `name`. Defaults to
-  /// true; flip to false for cluster operators using a per-tenant CA
-  /// rather than per-host certs.
+  pub client_ca:           Option<PathBuf>,
+  /// Pin a presented client cert name to the registering agent name.
   #[serde(default = "default_true")]
-  pub pin_cn:    bool,
+  pub pin_cn:              bool,
+  /// Require every agent to present a cert when `client_ca` is set.
+  #[serde(default = "default_true")]
+  pub require_client_cert: bool,
 }
 
 const fn default_max_rpc_conns() -> usize {
