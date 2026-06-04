@@ -241,5 +241,12 @@ testers.runNixOSTest {
         # builds_succeeded only rises when the agent realises the drv via the cache, otherwise it would time out.
         wait_row("builder_sessions WHERE name='agent-01' AND builds_succeeded >= 1")
         assert runner.succeed(psql("SELECT builds_failed FROM builder_sessions WHERE name='agent-01'")).strip() == "0"
+
+    with subtest("Build is attributed to the agent, not local"):
+        # agent_machine_id must point at agent-01's session row
+        wait_row(
+            "builds b JOIN builder_sessions s ON b.agent_machine_id = s.machine_id "
+            "WHERE s.name='agent-01'"
+        )
   '';
 }
