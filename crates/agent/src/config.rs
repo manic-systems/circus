@@ -81,8 +81,10 @@ pub struct Agent {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TlsConfig {
   pub ca_file:   PathBuf,
-  pub cert_file: PathBuf,
-  pub key_file:  PathBuf,
+  #[serde(default)]
+  pub cert_file: Option<PathBuf>,
+  #[serde(default)]
+  pub key_file:  Option<PathBuf>,
 }
 
 const fn default_max_jobs() -> u32 {

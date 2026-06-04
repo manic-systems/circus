@@ -253,7 +253,7 @@ async fn serve_one(
 
   let rpc_result = if let Some(tls) = cfg.tls.as_ref() {
     let stream = tls.acceptor.clone().accept(socket).await?;
-    let pinned_cn = extract_peer_cn(&stream);
+    let peer_cert = extract_peer_cert_identity(&stream);
     let (rh, wh) = tokio::io::split(stream);
     let network = twoparty::VatNetwork::new(
       rh.compat(),
@@ -266,7 +266,7 @@ async fn serve_one(
       pool: Arc::clone(&pool),
       db_pool: db_pool.clone(),
       registered_machine: Arc::clone(&registered_machine),
-      pinned_cn,
+      peer_cert,
     };
     let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
     let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
@@ -284,7 +284,7 @@ async fn serve_one(
       pool:               Arc::clone(&pool),
       db_pool:            db_pool.clone(),
       registered_machine: Arc::clone(&registered_machine),
-      pinned_cn:          None,
+      peer_cert:          PeerCertIdentity::default(),
     };
     let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
     let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
@@ -314,20 +314,31 @@ async fn serve_one(
   Ok(())
 }
 
-/// Extract the Common Name from the peer's verified client certificate.
-///
-/// rustls hands us the DER-encoded certificate chain; we only need the CN
-/// of the leaf. We do a minimal X.509 walk rather than pulling in a full
-/// parser: the CN is in the Subject sequence under OID 2.5.4.3.
-fn extract_peer_cn(
-  stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
-) -> Option<String> {
-  let (_, server_conn) = stream.get_ref();
-  let peer = server_conn.peer_certificates()?.first()?;
-  parse_cn(peer.as_ref())
+#[derive(Clone, Default)]
+struct PeerCertIdentity {
+  presented: bool,
+  name:      Option<String>,
 }
 
-fn parse_cn(der: &[u8]) -> Option<String> {
+/// Extract the pinning name from the peer's verified client certificate.
+///
+/// rustls hands us the DER-encoded certificate chain; we only need the name
+/// of the leaf. Prefer DNS SANs and fall back to the Subject CN.
+fn extract_peer_cert_identity(
+  stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+) -> PeerCertIdentity {
+  let (_, server_conn) = stream.get_ref();
+  let Some(peer) = server_conn.peer_certificates().and_then(|c| c.first())
+  else {
+    return PeerCertIdentity::default();
+  };
+  PeerCertIdentity {
+    presented: true,
+    name:      parse_cert_name(peer.as_ref()),
+  }
+}
+
+fn parse_cert_name(der: &[u8]) -> Option<String> {
   let (_, cert) =
     x509_parser::certificate::X509Certificate::from_der(der).ok()?;
   if let Ok(Some(san)) = cert.subject_alternative_name() {
@@ -352,9 +363,8 @@ struct RunnerImpl {
   pool:               Arc<AgentPool>,
   db_pool:            PgPool,
   registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>>,
-  /// CN extracted from the peer certificate when mTLS is enforced; `None`
-  /// when TLS is off or `client_ca` was not set.
-  pinned_cn:          Option<String>,
+  /// Client certificate identity, if one was presented.
+  peer_cert:          PeerCertIdentity,
 }
 
 #[allow(refining_impl_trait_internal, refining_impl_trait_reachable)]
@@ -368,7 +378,7 @@ impl runner::Server for RunnerImpl {
     let pool = Arc::clone(&self.pool);
     let db_pool = self.db_pool.clone();
     let registered_slot = Arc::clone(&self.registered_machine);
-    let pinned_cn = self.pinned_cn.clone();
+    let peer_cert = self.peer_cert.clone();
     Promise::from_future(async move {
       let pr = params.get()?;
       let info = pr.get_info()?;
@@ -397,15 +407,20 @@ impl runner::Server for RunnerImpl {
         return Err(capnp::Error::failed("auth failed".into()));
       }
 
-      // CN pinning: only enforced when mTLS extracted a CN. With
-      // `pin_cn = false` operators can use a per-tenant CA where the CN
-      // is the tenant identifier rather than the agent name.
-      if let Some(cn) = pinned_cn.as_ref()
-        && cfg.tls.as_ref().is_some_and(|t| t.pin_cn)
-        && cn != &name
-      {
-        tracing::warn!(name = %name, cn = %cn, "cert CN does not match agent name");
-        return Err(capnp::Error::failed("CN/name mismatch".into()));
+      if cfg.tls.as_ref().is_some_and(|t| t.pin_cn) && peer_cert.presented {
+        match peer_cert.name.as_deref() {
+          Some(cert_name) if cert_name == name => {},
+          Some(cert_name) => {
+            tracing::warn!(name = %name, cert_name, "cert name does not match agent name");
+            return Err(capnp::Error::failed("cert/name mismatch".into()));
+          },
+          None => {
+            tracing::warn!(name = %name, "client cert has no name to pin");
+            return Err(capnp::Error::failed(
+              "client cert has no pinned name".into(),
+            ));
+          },
+        }
       }
 
       validate_text_len("agent.name", &name, 1, limits::MAX_AGENT_NAME_LEN)?;
