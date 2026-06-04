@@ -1,9 +1,9 @@
 //! Runner-side TLS. Builds a `tokio_rustls::TlsAcceptor` from the
 //! configured server identity. When `client_ca` is set the acceptor
-//! verifies client certs against it. This is required when
-//! `require_client_cert` is set, otherwise honored only when offered. The
-//! CN-pin is checked at the application layer after the handshake so we can map
-//! it onto the agent's registered name.
+//! verifies any client cert an agent presents, and can require one when
+//! `require_client_cert` is enabled. CN pinning runs after the handshake,
+//! where it can compare the verified cert identity with the agent's registered
+//! name.
 
 use std::{io::BufReader, sync::Arc};
 

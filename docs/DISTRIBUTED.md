@@ -149,13 +149,11 @@ The flow is as follows
    flight are marked stuck and reset to `pending` by the orphan sweeper (already
    implemented at `crates/queue-runner/src/runner_loop.rs`).
 7. `register` carries a bearer token. The runner SHA-256 hashes it and compares
-   constant-time against `[queue_runner.rpc].auth_tokens`. mTLS is optional, and
-   setting `tls.client_ca` enables client-cert verification. However, note that
-   with `tls.pin_cn = true`, the certificate's Common Name must equal the agent's
-   registered `name`. Whether a cert is mandatory is governed by
-   `tls.require_client_cert`, which is true by default. This enforces strict mTLS,
-   but setting it false to accept token-only agents that present no certificate
-   while still verifying any cert that is offered.
+   constant-time against `[queue_runner.rpc].auth_tokens`. If `tls.client_ca`
+   is set, the runner verifies any client cert an agent presents. Client certs
+   remain optional unless `tls.require_client_cert = true` is set, and with
+   `tls.pin_cn = true` the verified cert name must match the agent's registered
+   `name`.
 8. If the runner's cache upload target is S3 and explicit presigning credentials
    are configured, `BuildAssignment.presignedUpload` asks the agent to upload
    outputs directly. The agent requests PUT URLs for the active
@@ -242,7 +240,7 @@ cert_file           = "/var/lib/circus/tls/runner.crt"
 key_file            = "/var/lib/circus/tls/runner.key"
 client_ca           = "/var/lib/circus/tls/clients.ca.crt" # enables client-cert verification
 pin_cn              = true                                 # CN must equal agent.name
-require_client_cert = true                                 # false => cert optional, token-only OK
+require_client_cert = false                                # true opts into strict mTLS
 ```
 
 > [!NOTE]
@@ -300,12 +298,11 @@ matter of which service is running.
   malformed token digests. The `builder_sessions` table has an `auth_token_hash`
   column reserved for per-agent tokens but no code path consults it yet.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
-  `[queue_runner.rpc].tls`; setting `client_ca` attaches a
-  `WebPkiClientVerifier`. With `require_client_cert = true`, client certs are
-  mandatory. Set it false to use `allow_unauthenticated` so an agent may
-  connect token-only while any cert it does present is still verified. With
-  `pin_cn = true` (the default when `client_ca` is set), an agent that presents
-  a certificate must have a CN equal to its registered `name`.
+  `[queue_runner.rpc].tls`, and setting `client_ca` attaches a
+  `WebPkiClientVerifier` for any client cert an agent presents. Agents may
+  still connect token-only unless `require_client_cert = true` is set. With
+  `pin_cn = true`, the verified cert name must match the registered agent
+  `name`.
 - Cap'n Proto framing is bounded by `capnp::message::ReaderOptions` defaults;
   oversized messages are rejected at decode. Circus also enforces
   application-level limits from `circus_proto::limits`: bounded registration
