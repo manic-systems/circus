@@ -134,7 +134,7 @@ pub struct CsrfToken(pub String);
 
 impl AppState {
   /// Spawn a background task that periodically evicts expired legacy API-key
-  /// dashboard sessions. User sessions are validated against PostgreSQL.
+  /// dashboard sessions. User sessions are validated against `PostgreSQL`.
   pub fn spawn_session_cleanup(&self) {
     let sessions = Arc::clone(&self.sessions);
     tokio::spawn(async move {
