@@ -176,6 +176,26 @@ pub async fn start(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
   .map_err(CiError::Database)
 }
 
+/// Record that a build-start notification has been attempted.
+///
+/// Requeues keep this marker because they are infrastructure retries, whereas
+/// manual restarts clear it because they are user-visible new runs.
+///
+/// # Errors
+///
+/// Returns an error if the database update fails.
+pub async fn mark_started_notified(pool: &PgPool, id: Uuid) -> Result<bool> {
+  let claimed = sqlx::query_scalar::<_, Uuid>(
+    "UPDATE builds SET started_notified_at = NOW() WHERE id = $1 AND \
+     started_notified_at IS NULL RETURNING id",
+  )
+  .bind(id)
+  .fetch_optional(pool)
+  .await
+  .map_err(CiError::Database)?;
+  Ok(claimed.is_some())
+}
+
 /// Mark a build as completed with final status and outputs.
 ///
 /// # Errors
@@ -434,8 +454,9 @@ pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Build> {
   let build = sqlx::query_as::<_, Build>(
     "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = \
      NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, \
-     retry_count = retry_count + 1 WHERE id = $1 AND status IN ('failed', \
-     'succeeded', 'cancelled', 'cached_failure') RETURNING *",
+     started_notified_at = NULL, retry_count = retry_count + 1 WHERE id = $1 \
+     AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure') \
+     RETURNING *",
   )
   .bind(id)
   .fetch_optional(pool)
