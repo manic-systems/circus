@@ -57,6 +57,19 @@ pub fn scheduler_capacity(
   }
 }
 
+#[must_use]
+pub(crate) fn supports_required_features(
+  required_features: &[String],
+  supported_features: &[String],
+  mandatory_features: &[String],
+) -> bool {
+  required_features
+    .iter()
+    .all(|feature| supported_features.contains(feature))
+    && mandatory_features
+      .iter()
+      .all(|feature| required_features.contains(feature))
+}
 pub struct AgentDispatch<'a> {
   pub timeout:                    Duration,
   pub extra_nix_args:             &'a [String],
@@ -144,19 +157,12 @@ async fn select_and_reserve_agent(
     });
   }
 
-  if !build.required_features.is_empty() {
-    candidates.retain(|(_, snap)| {
-      build
-        .required_features
-        .iter()
-        .all(|f| snap.supported_features.iter().any(|s| s == f))
-    });
-  }
   candidates.retain(|(_, snap)| {
-    snap
-      .mandatory_features
-      .iter()
-      .all(|f| build.required_features.iter().any(|required| required == f))
+    supports_required_features(
+      &build.required_features,
+      &snap.supported_features,
+      &snap.mandatory_features,
+    )
   });
   if candidates.is_empty() {
     return None;
@@ -314,4 +320,41 @@ async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
     .map(|s| s.trim().to_owned())
     .filter(|s| !s.is_empty())
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::supports_required_features;
+
+  fn strs(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+  }
+
+  #[test]
+  fn supported_features_must_cover_build_requirements() {
+    assert!(supports_required_features(
+      &strs(&["kvm", "nixos-test"]),
+      &strs(&["benchmark", "kvm", "nixos-test"]),
+      &[],
+    ));
+    assert!(!supports_required_features(
+      &strs(&["kvm", "nixos-test", "uid-range"]),
+      &strs(&["benchmark", "kvm", "nixos-test"]),
+      &[],
+    ));
+  }
+
+  #[test]
+  fn builder_mandatory_features_must_be_required_by_build() {
+    assert!(supports_required_features(
+      &strs(&["kvm", "nixos-test"]),
+      &strs(&["kvm", "nixos-test"]),
+      &strs(&["kvm"]),
+    ));
+    assert!(!supports_required_features(
+      &strs(&["nixos-test"]),
+      &strs(&["kvm", "nixos-test"]),
+      &strs(&["kvm"]),
+    ));
+  }
 }

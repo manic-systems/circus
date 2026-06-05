@@ -8,7 +8,7 @@ use circus_common::{
 use sqlx::PgPool;
 use tokio::sync::{Notify, RwLock};
 
-use crate::worker::WorkerPool;
+use crate::{dispatch::supports_required_features, worker::WorkerPool};
 
 /// Reset builds left in `running` from a crashed runner. Builds older
 /// than 5 minutes in `running` are assumed orphaned.
@@ -343,7 +343,6 @@ pub async fn run(
             },
           }
 
-          // A full connected agent still means the system is supported.
           if let Some(timeout) = unsupported_timeout
             && let Some(system) = &build.system
           {
@@ -354,40 +353,55 @@ pub async fn run(
             )
             .await
             {
-              Ok(builders)
-                if builders.is_empty()
-                  && !worker_pool.agent_pool().serves_system(system) =>
-              {
-                let timeout_at = build.created_at + timeout;
-                if chrono::Utc::now() > timeout_at {
-                  tracing::info!(
-                    build_id = %build.id,
-                    system = %system,
-                    timeout = ?timeout,
-                    "Aborting build: no builder available for system type"
-                  );
-
-                  if let Err(e) = repo::builds::start(&pool, build.id).await {
-                    tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
-                  }
-
-                  if let Err(e) = repo::builds::complete(
-                    &pool,
-                    build.id,
-                    BuildStatus::UnsupportedSystem,
-                    None,
-                    None,
-                    Some("No builder available for system type"),
+              Ok(builders) => {
+                let has_builder = builders.iter().any(|builder| {
+                  supports_required_features(
+                    &build.required_features,
+                    &builder.supported_features,
+                    &builder.mandatory_features,
                   )
-                  .await
-                  {
-                    tracing::warn!(build_id = %build.id, "Failed to complete unsupported build: {e}");
-                  }
+                });
+                let has_agent =
+                  worker_pool.agent_pool().snapshot_all().iter().any(|agent| {
+                    agent.systems.iter().any(|s| s == system)
+                      && supports_required_features(
+                        &build.required_features,
+                        &agent.supported_features,
+                        &agent.mandatory_features,
+                      )
+                  });
+                if !has_builder && !has_agent {
+                  let timeout_at = build.created_at + timeout;
+                  if chrono::Utc::now() > timeout_at {
+                    tracing::info!(
+                      build_id = %build.id,
+                      system = %system,
+                      timeout = ?timeout,
+                      "Aborting build: no builder available for system/features"
+                    );
 
+                    if let Err(e) = repo::builds::start(&pool, build.id).await {
+                      tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
+                    }
+
+                    if let Err(e) = repo::builds::complete(
+                      &pool,
+                      build.id,
+                      BuildStatus::UnsupportedSystem,
+                      None,
+                      None,
+                      Some("No builder available for system/features"),
+                    )
+                    .await
+                    {
+                      tracing::warn!(build_id = %build.id, "Failed to complete unsupported build: {e}");
+                    }
+
+                    continue;
+                  }
                   continue;
                 }
               },
-              Ok(_) => {}, // Builders available, proceed normally
               Err(e) => {
                 tracing::error!(
                   build_id = %build.id,

@@ -722,15 +722,38 @@ async fn read_required_features(drv_path: &str) -> Vec<String> {
   else {
     return Vec::new();
   };
-  let Some(drv) = parsed.as_object().and_then(|o| o.values().next()) else {
+  required_features_from_derivation_show(&parsed)
+}
+
+fn derivation_from_show(
+  parsed: &serde_json::Value,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+  let obj = parsed.as_object()?;
+  if let Some(derivations) = obj.get("derivations").and_then(|v| v.as_object())
+  {
+    return derivations.values().next()?.as_object();
+  }
+  obj.values().next()?.as_object()
+}
+
+fn split_required_features(value: &str) -> Vec<String> {
+  value
+    .split(|c: char| c.is_whitespace() || c == ':' || c == ',')
+    .filter(|s| !s.is_empty())
+    .map(str::to_owned)
+    .collect()
+}
+
+fn required_features_from_derivation_show(
+  parsed: &serde_json::Value,
+) -> Vec<String> {
+  let Some(drv) = derivation_from_show(parsed) else {
     return Vec::new();
   };
-  let drv = drv.as_object();
 
   // 1. Top-level `requiredSystemFeatures` list (modern Nix).
-  if let Some(arr) = drv
-    .and_then(|d| d.get("requiredSystemFeatures"))
-    .and_then(|v| v.as_array())
+  if let Some(arr) =
+    drv.get("requiredSystemFeatures").and_then(|v| v.as_array())
   {
     return arr
       .iter()
@@ -738,14 +761,20 @@ async fn read_required_features(drv_path: &str) -> Vec<String> {
       .filter(|s| !s.is_empty())
       .collect();
   }
-  // 2. `env.requiredSystemFeatures`: space-separated string.
+
+  // 2. `env.requiredSystemFeatures`, a space-separated string.
+  if let Some(env_str) =
+    drv.get("requiredSystemFeatures").and_then(|v| v.as_str())
+  {
+    return split_required_features(env_str);
+  }
   if let Some(env_str) = drv
-    .and_then(|d| d.get("env"))
+    .get("env")
     .and_then(|v| v.as_object())
     .and_then(|env| env.get("requiredSystemFeatures"))
     .and_then(|v| v.as_str())
   {
-    return env_str.split_whitespace().map(str::to_owned).collect();
+    return split_required_features(env_str);
   }
   Vec::new()
 }
@@ -1025,5 +1054,47 @@ async fn discover_projects_without_jobsets(
     };
 
     sync_repo_declarative_config(pool, &repo_path, project.id).await;
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::*;
+
+  #[test]
+  fn required_features_read_wrapped_derivation_show() {
+    let shown = json!({
+      "derivations": {
+        "/nix/store/example.drv": {
+          "env": {
+            "requiredSystemFeatures": "kvm nixos-test uid-range"
+          }
+        }
+      },
+      "version": 3
+    });
+
+    assert_eq!(required_features_from_derivation_show(&shown), vec![
+      "kvm",
+      "nixos-test",
+      "uid-range"
+    ]);
+  }
+
+  #[test]
+  fn required_features_split_legacy_separators() {
+    let shown = json!({
+      "/nix/store/example.drv": {
+        "requiredSystemFeatures": "kvm:nixos-test,uid-range"
+      }
+    });
+
+    assert_eq!(required_features_from_derivation_show(&shown), vec![
+      "kvm",
+      "nixos-test",
+      "uid-range"
+    ]);
   }
 }
