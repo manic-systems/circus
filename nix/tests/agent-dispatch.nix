@@ -110,9 +110,13 @@ testers.runNixOSTest {
             };
             gc.enabled = false;
             logs.log_dir = "/var/lib/circus/logs";
-            # Serve + sign the local store so the agent can substitute drv closures.
+            # Serve the local store so the agent can substitute drv closures
+            # (drvs and sources are content-addressed and served unsigned).
             cache.enabled = true;
-            cache.secret_key_file = "/etc/circus/cache-key.sec";
+            signing = {
+              enabled = true;
+              key_file = "/etc/circus/cache-key.sec";
+            };
             tracing = {
               level = "info";
               format = "compact";

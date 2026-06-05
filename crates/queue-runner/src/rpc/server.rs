@@ -206,6 +206,14 @@ pub async fn serve(
     .with_context(|| format!("bind {}", cfg.bind))?;
   tracing::info!(addr = %cfg.bind, tls = cfg.tls.is_some(), "circus-rpc listening");
 
+  if cfg.presigner.is_some() && cfg.signing_key_file.is_none() {
+    tracing::warn!(
+      "[queue_runner] presigned uploads are enabled without [signing] \
+       key_file; uploaded NARs are persisted unsigned and the cache will \
+       never serve them"
+    );
+  }
+
   let cfg = Arc::new(cfg);
   let connection_permits = Arc::new(Semaphore::new(cfg.max_connections));
   #[expect(clippy::infinite_loop, reason = "intentional accept loop")]

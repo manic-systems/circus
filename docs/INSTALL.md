@@ -213,7 +213,7 @@ development; `circus.toml` remains the practical reference.
 | `logs`               | `log_dir`                    | `/var/lib/circus/logs`                              | Build log storage directory                      |
 | `logs`               | `compress`                   | `false`                                             | Compress stored logs                             |
 | `cache`              | `enabled`                    | `true`                                              | Serve a Nix binary cache at `/nix-cache/`        |
-| `cache`              | `secret_key_file`            | none                                                | Signing key for binary cache                     |
+| `cache`              | `secret_key_file`            | none                                                | Deprecated; outputs are signed via `[signing]`   |
 | `cache`              | `compression`                | `zstd`                                              | NAR compression algorithm                        |
 | `cache`              | `cache_url`                  | none                                                | Public cache URL for channel manifests           |
 | `signing`            | `enabled`                    | `false`                                             | Sign build outputs                               |
@@ -273,6 +273,13 @@ development; `circus.toml` remains the practical reference.
 Set `[cache].enabled = true` on the server to expose `/nix-cache/`. For outputs
 present in the server's Nix store, Circus generates narinfo from `nix path-info`
 and streams NARs with the configured `[cache].compression`.
+
+Only two kinds of local store paths are served: build outputs the queue-runner
+signed at build time (`[signing]` with a `key_file` — unsigned outputs are
+never exposed), and content-addressed paths such as drvs and sources, which
+Nix verifies against their `CA:` field and which agents substitute when
+starting dispatched builds. Without a signing key the cache serves nothing
+beyond drv closures.
 
 Set `[cache_upload].enabled = true` and `store_uri = "s3://bucket[/prefix]"` to
 push completed outputs to S3. SSH/local runner builds use `nix copy --to`; agent

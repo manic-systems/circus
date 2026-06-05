@@ -62,6 +62,13 @@ async fn main() -> color_eyre::Result<()> {
     &config.server.allowed_url_schemes,
   );
 
+  if config.cache.secret_key_file.is_some() {
+    tracing::warn!(
+      "[cache] secret_key_file no longer signs narinfos on the fly; configure \
+       [signing] on the queue-runner so outputs are signed at build time"
+    );
+  }
+
   let db = Database::new(config.database.clone()).await?;
 
   // Bootstrap declarative projects, jobsets, and API keys from config
