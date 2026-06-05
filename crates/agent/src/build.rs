@@ -259,7 +259,7 @@ async fn run_command(
     let ev = tokio::select! {
       r = line_rx.recv() => Event::Line(r),
       s = child.wait(), if pre_exit => Event::ChildExited(s),
-      () = sleep_opt(read_timeout) => Event::SilentTimeout,
+      () = sleep_opt(read_timeout), if pre_exit => Event::SilentTimeout,
       () = sleep_opt(deadline_timeout) => Event::DeadlineTimeout,
       () = cancel.cancelled() => Event::Cancelled,
     };

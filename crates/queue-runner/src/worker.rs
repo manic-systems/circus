@@ -166,6 +166,7 @@ impl WorkerPool {
       let result = async {
         let (
           timeout,
+          max_silent_time,
           notifications_config,
           scheduling_strategy,
           psi_threshold,
@@ -175,6 +176,7 @@ impl WorkerPool {
           let hot = hot_config.read().await;
           (
             hot.build_timeout,
+            hot.max_silent_time,
             hot.notifications_config.clone(),
             hot.scheduling_strategy.clone(),
             hot.psi_threshold,
@@ -189,6 +191,7 @@ impl WorkerPool {
           &work_dir,
           &nix_store_dir,
           timeout,
+          max_silent_time,
           &log_config,
           &gc_config,
           &notifications_config,
@@ -751,6 +754,7 @@ async fn run_build(
   work_dir: &std::path::Path,
   nix_store_dir: &std::path::Path,
   timeout: Duration,
+  max_silent_time: Duration,
   log_config: &LogConfig,
   gc_config: &GcConfig,
   notifications_config: &NotificationsConfig,
@@ -867,6 +871,7 @@ async fn run_build(
     crate::dispatch::ExecutionReservation::Agent { meta, snap, slot } => {
       let opts = crate::dispatch::AgentDispatch {
         timeout,
+        max_silent_time,
         extra_nix_args: &build_extra_nix_args,
         cache_upload_enabled_s3,
         cache_upload_compression: &cache_upload_config.compression,

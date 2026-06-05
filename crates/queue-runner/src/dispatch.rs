@@ -72,6 +72,7 @@ pub(crate) fn supports_required_features(
 }
 pub struct AgentDispatch<'a> {
   pub timeout:                    Duration,
+  pub max_silent_time:            Duration,
   pub extra_nix_args:             &'a [String],
   pub cache_upload_enabled_s3:    bool,
   pub cache_upload_compression:   &'a str,
@@ -243,7 +244,11 @@ pub async fn run_on_agent(
     build_id: build.id,
     drv_path: drv_path.to_owned(),
     max_log_size: 100 * 1024 * 1024,
-    max_silent_time: 0,
+    max_silent_time: opts
+      .max_silent_time
+      .as_secs()
+      .try_into()
+      .unwrap_or(u32::MAX),
     build_timeout: opts.timeout.as_secs().try_into().unwrap_or(u32::MAX),
     extra_args: opts.extra_nix_args.to_vec(),
     log_path: live_log_path.to_path_buf(),

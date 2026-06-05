@@ -191,6 +191,7 @@ development; `circus.toml` remains the practical reference.
 | `queue_runner`       | `workers`                    | `4`                                                 | Concurrent build slots                           |
 | `queue_runner`       | `poll_interval`              | `5`                                                 | Seconds between build queue polls                |
 | `queue_runner`       | `build_timeout`              | `3600`                                              | Per-build timeout (seconds)                      |
+| `queue_runner`       | `max_silent_time`            | `0`                                                 | Fail agent builds silent for `N` seconds         |
 | `queue_runner`       | `work_dir`                   | `/tmp/circus-queue-runner`                          | Working directory for builds                     |
 | `queue_runner`       | `strict_errors`              | `false`                                             | Abort on first runner loop error                 |
 | `queue_runner`       | `failed_paths_cache`         | `true`                                              | Cache failed derivation paths                    |
