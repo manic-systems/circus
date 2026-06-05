@@ -30,6 +30,8 @@ use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::dispatch::supports_required_features;
+
 pub type ActiveBuilds = Arc<DashMap<Uuid, CancellationToken>>;
 
 pub struct WorkerPool {
@@ -528,20 +530,18 @@ async fn try_remote_build(
     .ok()?;
 
   for builder in &builders {
-    // Build-side required_features gate. Mirrors the agent path: every
-    // entry must appear in `supported_features`. Skipping leaves the
-    // build pending so a feature-capable builder can pick it up.
-    if !build.required_features.is_empty()
-      && !build
-        .required_features
-        .iter()
-        .all(|f| builder.supported_features.iter().any(|s| s == f))
-    {
+    // Leave the build pending for a builder with the right feature set.
+    if !supports_required_features(
+      &build.required_features,
+      &builder.supported_features,
+      &builder.mandatory_features,
+    ) {
       tracing::debug!(
         build_id = %build.id,
         builder = %builder.name,
         required = ?build.required_features,
         supported = ?builder.supported_features,
+        mandatory = ?builder.mandatory_features,
         "skipping builder: missing required_features"
       );
       continue;
