@@ -82,6 +82,61 @@ fn narinfo_has_signature(
   row.sig.as_ref().is_some_and(|sig| !sig.trim().is_empty())
 }
 
+/// Resolve the local store path a cache request may serve. Signed build
+/// outputs come from the DB; any other local path is only servable when
+/// content-addressed (`true` in the second tuple field), which covers the
+/// drv closures (drvs and sources) agents substitute for dispatched
+/// builds. Nix recomputes the store path from the `CA:` field on
+/// substitution, so CA paths cannot be forged and need no signature.
+///
+/// FIXME: this shells out to `nix`, and needs the nix-command feature. We
+/// should bind to the Nix C/C++ API and call it directly instead.
+async fn resolve_servable_path(
+  pool: &sqlx::PgPool,
+  hash: &str,
+  store_dir: &str,
+) -> std::result::Result<Option<(String, bool)>, ApiError> {
+  if let Some(p) = find_signed_store_path(pool, hash, store_dir).await? {
+    return Ok(
+      circus_common::validate::is_valid_store_path(&p, store_dir)
+        .then_some((p, false)),
+    );
+  }
+
+  let resolved = Command::new("nix")
+    .args(["store", "path-from-hash-part", hash])
+    .output()
+    .await
+    .ok()
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    .filter(|p| circus_common::validate::is_valid_store_path(p, store_dir));
+
+  Ok(resolved.map(|p| (p, true)))
+}
+
+/// Whether the local store path is content-addressed (drvs, sources).
+async fn is_content_addressed(store_path: &str) -> bool {
+  let output = Command::new("nix")
+    .args(["path-info", "--json", store_path])
+    .output()
+    .await;
+  let Ok(output) = output else {
+    return false;
+  };
+  if !output.status.success() {
+    return false;
+  }
+  let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+  else {
+    return false;
+  };
+  first_path_info_entry(&parsed)
+    .and_then(|(entry, _)| entry.get("ca"))
+    .and_then(|v| v.as_str())
+    .is_some_and(|ca| !ca.is_empty())
+}
+
 /// Serve `NARInfo` for a store path hash.
 /// GET /nix-cache/{hash}.narinfo
 async fn narinfo(
@@ -135,11 +190,10 @@ async fn narinfo(
 
   let store_dir = state.config.nix.store_dir.to_string_lossy();
   let store_dir = store_dir.trim_end_matches('/');
-  let store_path = match find_signed_store_path(&state.pool, hash, store_dir)
-    .await?
-  {
-    Some(p) if circus_common::validate::is_valid_store_path(&p, store_dir) => p,
-    _ => return Ok(StatusCode::NOT_FOUND.into_response()),
+  let Some((store_path, require_ca)) =
+    resolve_servable_path(&state.pool, hash, store_dir).await?
+  else {
+    return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
   // Get narinfo from nix path-info
@@ -197,7 +251,14 @@ async fn narinfo(
     .and_then(|v| v.as_array())
     .map(|arr| arr.iter().filter_map(|s| s.as_str()).collect())
     .unwrap_or_default();
-  if signatures.is_empty() {
+  // Outputs must carry a signature minted at build time; drv-closure
+  // paths are only trusted through their CA field.
+  let servable = if require_ca {
+    ca.is_some_and(|c| !c.is_empty())
+  } else {
+    !signatures.is_empty()
+  };
+  if !servable {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -470,15 +531,14 @@ async fn serve_nar_combined(
 
   let store_dir = state.config.nix.store_dir.to_string_lossy();
   let store_dir = store_dir.trim_end_matches('/');
-  let store_path =
-    match find_signed_store_path(&state.pool, stripped, store_dir).await? {
-      Some(p)
-        if circus_common::validate::is_valid_store_path(&p, store_dir) =>
-      {
-        p
-      },
-      _ => return Ok(StatusCode::NOT_FOUND.into_response()),
-    };
+  let Some((store_path, require_ca)) =
+    resolve_servable_path(&state.pool, stripped, store_dir).await?
+  else {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  };
+  if require_ca && !is_content_addressed(&store_path).await {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  }
 
   let body = if let Some((bin, args)) = compressor {
     let stdout = pipe_through_compressor(&store_path, bin, args)?;
