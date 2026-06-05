@@ -168,6 +168,10 @@ pub struct QueueRunnerConfig {
   pub build_timeout: u64,
   pub work_dir:      PathBuf,
 
+  /// Agent build silence timeout in seconds. `0` disables it.
+  #[serde(default)]
+  pub max_silent_time: u64,
+
   /// When true, abort on the first runner loop error instead of logging and
   /// retrying.
   #[serde(default)]
@@ -900,6 +904,7 @@ impl Default for QueueRunnerConfig {
       workers:              4,
       poll_interval:        5,
       build_timeout:        3600,
+      max_silent_time:      0,
       work_dir:             PathBuf::from("/tmp/circus-queue-runner"),
       strict_errors:        false,
       failed_paths_cache:   true,
@@ -966,6 +971,7 @@ pub enum BuilderSchedulingStrategy {
 pub struct HotConfig {
   pub poll_interval:        std::time::Duration,
   pub build_timeout:        std::time::Duration,
+  pub max_silent_time:      std::time::Duration,
   pub notifications_config: NotificationsConfig,
   pub failed_paths_ttl:     u64,
   pub scheduling_strategy:  BuilderSchedulingStrategy,
@@ -984,6 +990,9 @@ impl HotConfig {
       ),
       build_timeout:        std::time::Duration::from_secs(
         config.queue_runner.build_timeout,
+      ),
+      max_silent_time:      std::time::Duration::from_secs(
+        config.queue_runner.max_silent_time,
       ),
       notifications_config: config.notifications.clone(),
       failed_paths_ttl:     config.queue_runner.failed_paths_ttl,

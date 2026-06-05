@@ -86,6 +86,7 @@ async fn test_worker_pool_drain_stops_dispatch() {
     circus_common::config::HotConfig {
       poll_interval:        std::time::Duration::from_secs(1),
       build_timeout:        std::time::Duration::from_mins(1),
+      max_silent_time:      std::time::Duration::ZERO,
       notifications_config: circus_common::config::NotificationsConfig::default(
       ),
       failed_paths_ttl:     0,
@@ -210,6 +211,7 @@ async fn test_worker_pool_active_builds_cancel() {
     circus_common::config::HotConfig {
       poll_interval:        std::time::Duration::from_secs(1),
       build_timeout:        std::time::Duration::from_mins(1),
+      max_silent_time:      std::time::Duration::ZERO,
       notifications_config: circus_common::config::NotificationsConfig::default(
       ),
       failed_paths_ttl:     0,
