@@ -1120,11 +1120,6 @@ impl Config {
     }
 
     // Validate queue runner settings
-    if self.queue_runner.workers == 0 {
-      return Err(color_eyre::eyre::eyre!(
-        "Queue runner workers must be greater than 0"
-      ));
-    }
     if let Some(t) = self.queue_runner.psi_threshold
       && !(0.0..=100.0).contains(&t)
     {
