@@ -12,6 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: cachix/install-nix-action@v31
+      - name: Check tree formatting
+        run: nix build .#checks.x86_64-linux.formatting -L --no-link
+
   changes:
     name: Detect Changed Files
     runs-on: ubuntu-latest
