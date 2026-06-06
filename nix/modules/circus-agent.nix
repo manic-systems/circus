@@ -13,6 +13,7 @@
   cfg = config.services.circus-agent;
   configFile = settingsFormat.generate "circus-agent.toml" (recursiveUpdate cfg.settings {
     agent.auth_token = "@CIRCUS_AGENT_AUTH_TOKEN@";
+    tracing.show_timestamps = false;
   });
 in {
   options.services.circus-agent = {

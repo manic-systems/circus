@@ -780,6 +780,7 @@ in {
 
           environment = {
             CIRCUS_CONFIG_FILE = "${settingsFile}";
+            CIRCUS_TRACING__SHOW_TIMESTAMPS = "false";
           };
         };
 
@@ -825,6 +826,7 @@ in {
             CIRCUS_CONFIG_FILE = "${settingsFile}";
             CIRCUS_EVALUATOR__WORK_DIR = "/var/lib/circus/evaluator";
             CIRCUS_EVALUATOR__RESTRICT_EVAL = "true";
+            CIRCUS_TRACING__SHOW_TIMESTAMPS = "false";
           };
         };
 
@@ -872,6 +874,7 @@ in {
           environment = {
             CIRCUS_CONFIG_FILE = "${settingsFile}";
             CIRCUS_QUEUE_RUNNER__WORK_DIR = "/var/lib/circus/queue-runner";
+            CIRCUS_TRACING__SHOW_TIMESTAMPS = "false";
           };
         };
       };
