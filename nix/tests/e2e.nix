@@ -357,6 +357,22 @@ testers.runNixOSTest {
         )
         assert "StorePath:" in narinfo, f"NARinfo missing StorePath: {narinfo}"
         assert "NarHash:" in narinfo, f"NARinfo missing NarHash: {narinfo}"
+        assert "Compression: none" in narinfo, f"Harmonia NARinfo should serve uncompressed NARs: {narinfo}"
+        assert "FileHash: sha256:" in narinfo, f"NARinfo missing FileHash: {narinfo}"
+        assert "FileSize:" in narinfo, f"NARinfo missing FileSize: {narinfo}"
+
+        nar_url = next(
+            line.split(": ", 1)[1]
+            for line in narinfo.splitlines()
+            if line.startswith("URL: ")
+        )
+        assert nar_url.startswith("nar/"), f"Expected Harmonia NAR URL under nar/: {nar_url}"
+        assert nar_url.endswith(f"?hash={store_hash}"), \
+            f"Expected Harmonia NAR URL to carry output hash query, got: {nar_url}"
+
+        machine.succeed(f"curl -sf 'http://127.0.0.1:3000/nix-cache/{nar_url}' > /tmp/circus-cache.nar")
+        machine.succeed(f"nix-store --dump {output_path} > /tmp/local-store.nar")
+        machine.succeed("cmp /tmp/circus-cache.nar /tmp/local-store.nar")
 
     with subtest("Build with invalid drv_path fails and retries"):
         # Insert a build with an invalid drv_path via SQL
