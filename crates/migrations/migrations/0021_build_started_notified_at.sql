@@ -1,1 +1,2 @@
-ALTER TABLE builds ADD COLUMN IF NOT EXISTS started_notified_at TIMESTAMPTZ;
+ALTER TABLE builds
+ADD COLUMN IF NOT EXISTS started_notified_at TIMESTAMPTZ;

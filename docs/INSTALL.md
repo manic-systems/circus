@@ -275,11 +275,11 @@ present in the server's Nix store, Circus generates narinfo from `nix path-info`
 and streams NARs with the configured `[cache].compression`.
 
 Only two kinds of local store paths are served: build outputs the queue-runner
-signed at build time (`[signing]` with a `key_file` — unsigned outputs are
-never exposed), and content-addressed paths such as drvs and sources, which
-Nix verifies against their `CA:` field and which agents substitute when
-starting dispatched builds. Without a signing key the cache serves nothing
-beyond drv closures.
+signed at build time (`[signing]` with a `key_file` — unsigned outputs are never
+exposed), and content-addressed paths such as drvs and sources, which Nix
+verifies against their `CA:` field and which agents substitute when starting
+dispatched builds. Without a signing key the cache serves nothing beyond drv
+closures.
 
 Set `[cache_upload].enabled = true` and `store_uri = "s3://bucket[/prefix]"` to
 push completed outputs to S3. SSH/local runner builds use `nix copy --to`; agent

@@ -151,7 +151,7 @@
           fd "$@" -t f -e sql -x sql-formatter --fix '{}' -l postgresql
 
           # Format Markdown with Deno
-          fd "$@" -t f -e md -x deno fmt -q '{}'
+          fd "$@" -t f -e md -E docs/API.md -x deno fmt -q '{}'
         '';
       });
   };

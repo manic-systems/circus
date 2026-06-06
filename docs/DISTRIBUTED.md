@@ -149,8 +149,8 @@ The flow is as follows
    flight are marked stuck and reset to `pending` by the orphan sweeper (already
    implemented at `crates/queue-runner/src/runner_loop.rs`).
 7. `register` carries a bearer token. The runner SHA-256 hashes it and compares
-   constant-time against `[queue_runner.rpc].auth_tokens`. If `tls.client_ca`
-   is set, the runner verifies any client cert an agent presents. Client certs
+   constant-time against `[queue_runner.rpc].auth_tokens`. If `tls.client_ca` is
+   set, the runner verifies any client cert an agent presents. Client certs
    remain optional unless `tls.require_client_cert = true` is set, and with
    `tls.pin_cn = true` the verified cert name must match the agent's registered
    `name`.
@@ -299,8 +299,8 @@ matter of which service is running.
   column reserved for per-agent tokens but no code path consults it yet.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
   `[queue_runner.rpc].tls`, and setting `client_ca` attaches a
-  `WebPkiClientVerifier` for any client cert an agent presents. Agents may
-  still connect token-only unless `require_client_cert = true` is set. With
+  `WebPkiClientVerifier` for any client cert an agent presents. Agents may still
+  connect token-only unless `require_client_cert = true` is set. With
   `pin_cn = true`, the verified cert name must match the registered agent
   `name`.
 - Cap'n Proto framing is bounded by `capnp::message::ReaderOptions` defaults;
