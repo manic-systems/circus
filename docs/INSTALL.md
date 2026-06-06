@@ -508,6 +508,41 @@ Circus supports SSH remote builders and persistent `circus-agent` builders.
 Detailed usage and operations are covered in [USAGE.md](./USAGE.md); protocol
 details are covered in [DISTRIBUTED.md](./DISTRIBUTED.md).
 
+### Rootless Agents
+
+`circus-agent` can run on machines where you have an unprivileged shell
+account and no Nix installation (such as unprivileged ssh access). Set
+`rootless = true` under `[agent]` and the agent executes every Nix invocation
+inside a `user+mount` namespace, with `$XDG_DATA_HOME/circus-agent` mounted
+as `/nix`, build scratch under its `tmp/`, and `proc`/`dev`/DNS/CA bind-mounts
+from the host.
+
+Requirements:
+
+- Unprivileged user namespaces must be enabled on the host kernel.
+  You can check if they are with `unshare --user --map-root-user true` succeeding.
+- `CIRCUS_AGENT_NIX` must point to a `nix` (or `nix-store`) binary **at its
+  `/nix/store` path as seen inside the sandbox**, that is, the binary and its
+  closure must be seeded into `$XDG_DATA_HOME/circus-agent/store` first.
+  This can be done by unpacking a Nix release tarball there. A host
+  path like `~/.nix-profile/bin/nix` will not exist after the sandbox pivots its
+  root.
+
+The data directory can be moved with `rootless_data_dir` under `[agent]` (or
+the `CIRCUS_AGENT_DATA_DIR` environment variable) for hosts without a usable
+home directory.
+
+The agent validates both requirements at startup and refuses to register when
+they fail. Nix settings for builds come from `etc/nix/nix.conf` in the data
+dir. By default Nix sandboxes each build in a nested user namespace inside the
+agent's, however, if the host kernel does not support this, just set
+`sandbox = false` there.
+
+Rootless mode is an isolation mechanism, not a security boundary. The
+namespace only exists to give Nix the filesystem layout it expects. Builds still
+run as your real uid with unrestricted network access. Do not rely on it to contain
+untrusted build code.
+
 ## Authentication Bootstrapping
 
 Circus supports API keys, local users, GitHub OAuth, and LDAP. Day-to-day user

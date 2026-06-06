@@ -82,6 +82,18 @@ pub struct Agent {
   /// the URL scheme is `circus://`.
   #[serde(default)]
   pub tls: Option<TlsConfig>,
+
+  /// Indicates whether the builder will use rootless, sandboxed Nix.
+  #[serde(default)]
+  pub rootless: bool,
+
+  /// Sandbox data directory for rootless mode. Defaults to `$XDG_DATA_HOME`,
+  /// falling back to `~/.local/share`. Both come from the agent's environment,
+  /// and under service accounts, the resulting path often cannot be created or
+  /// written. Set this to a directory the agent can write, such as its
+  /// `StateDirectory`.
+  #[serde(default)]
+  pub rootless_data_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

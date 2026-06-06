@@ -109,6 +109,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     cfg.cores,
     machine_id,
     runner_cap.clone(),
+    cfg.rootless,
   ));
 
   let rpc_join = tokio::task::spawn_local(async move {
@@ -377,6 +378,8 @@ struct BuilderInner {
   /// `build_id` -> `CancellationToken`. Inserted by `assign`, removed by
   /// the per-build task at completion, signalled by `abort`.
   running:    Mutex<HashMap<Uuid, CancellationToken>>,
+  /// Indicates whether the builder will use rootless, sandboxed Nix.
+  rootless:   bool,
 }
 
 impl BuilderImpl {
@@ -391,6 +394,7 @@ impl BuilderImpl {
     cores: u32,
     machine_id: Uuid,
     runner_cap: runner::Client,
+    rootless: bool,
   ) -> Self {
     Self {
       inner: Arc::new(BuilderInner {
@@ -399,6 +403,7 @@ impl BuilderImpl {
         machine_id: machine_id.to_string(),
         runner_cap,
         running: Mutex::new(HashMap::new()),
+        rootless,
       }),
     }
   }
@@ -484,6 +489,7 @@ impl builder::Server for BuilderImpl {
             extra_args: extra,
             cache_substituter,
             cache_public_key,
+            rootless: inner_for_task.rootless,
           },
           log,
           cancel,
@@ -505,6 +511,7 @@ impl builder::Server for BuilderImpl {
             &build_id_str,
             &compression,
             &local.outputs,
+            inner_for_task.rootless,
           )
           .await
           {

@@ -5,7 +5,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use circus_agent::{config::AgentConfig, session};
+use circus_agent::{config::AgentConfig, sandbox, session};
 use clap::Parser;
 use color_eyre::eyre::{Result, eyre};
 use uuid::Uuid;
@@ -19,6 +19,10 @@ struct Cli {
 
 fn main() -> Result<()> {
   color_eyre::install()?;
+
+  if let Some(code) = sandbox::maybe_run_helper(std::env::args_os())? {
+    std::process::exit(code);
+  }
 
   // Use ring for tls.
   rustls::crypto::ring::default_provider()
@@ -38,6 +42,14 @@ fn main() -> Result<()> {
 
   let machine_id = resolve_machine_id(&cfg)?;
   tracing::info!(machine_id = %machine_id, "agent identity resolved");
+
+  if cfg.agent.rootless {
+    if let Some(dir) = &cfg.agent.rootless_data_dir {
+      // SAFETY: this is before the runtime starts
+      unsafe { std::env::set_var(sandbox::DATA_DIR_ENV, dir) };
+    }
+    sandbox::preflight()?;
+  }
 
   let rt = tokio::runtime::Builder::new_current_thread()
     .enable_all()
