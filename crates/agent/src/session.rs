@@ -103,6 +103,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
 
   let local_builder: builder::Client = capnp_rpc::new_client(BuilderImpl::new(
     cfg.max_jobs,
+    cfg.cores,
     machine_id,
     runner_cap.clone(),
   ));
@@ -365,6 +366,7 @@ struct BuilderImpl {
 
 struct BuilderInner {
   max_jobs:   u32,
+  cores:      u32,
   machine_id: String,
   /// Runner capability, used to request presigned URLs and notify the
   /// runner of upload completion. Cloning a capnp client is cheap.
@@ -381,10 +383,16 @@ impl BuilderImpl {
               a single-threaded tokio runtime so an Arc is never actually \
               shared across threads"
   )]
-  fn new(max_jobs: u32, machine_id: Uuid, runner_cap: runner::Client) -> Self {
+  fn new(
+    max_jobs: u32,
+    cores: u32,
+    machine_id: Uuid,
+    runner_cap: runner::Client,
+  ) -> Self {
     Self {
       inner: Arc::new(BuilderInner {
         max_jobs,
+        cores,
         machine_id: machine_id.to_string(),
         runner_cap,
         running: Mutex::new(HashMap::new()),
@@ -469,6 +477,7 @@ impl builder::Server for BuilderImpl {
             max_log_size,
             max_silent_time: Duration::from_secs(max_silent_time.into()),
             build_timeout: Duration::from_secs(build_timeout.into()),
+            cores: inner_for_task.cores,
             extra_args: extra,
             cache_substituter,
             cache_public_key,
