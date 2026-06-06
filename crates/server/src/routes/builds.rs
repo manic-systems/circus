@@ -207,7 +207,7 @@ async fn bump_build(
     .map_err(ApiError)?
     .ok_or_else(|| {
       ApiError(circus_common::CiError::Validation(
-        "Build not found or not in pending state".to_string(),
+        "Build not found or no longer pending".to_string(),
       ))
     })?;
 
