@@ -5,7 +5,7 @@
   ...
 }: let
   inherit (lib.modules) mkIf;
-  inherit (lib.options) mkOption mkEnableOption;
+  inherit (lib.options) mkOption mkEnableOption literalExpression;
   inherit (lib.types) listOf package str path ints submodule;
   inherit (lib.attrsets) recursiveUpdate;
   settingsFormat = pkgs.formats.toml {};
@@ -20,6 +20,8 @@ in {
 
     package = mkOption {
       type = package;
+      default = pkgs.callPackage ../package.nix {};
+      defaultText = literalExpression "pkgs.callPackage ./nix/package.nix {}";
       description = "circus-agent package to use.";
     };
 

@@ -11,7 +11,8 @@
     ...
   }: let
     inherit (nixpkgs) lib;
-    forAllSystems = lib.genAttrs ["x86_64-linux" "aarch64-linux"];
+    forAllSystems = lib.genAttrs lib.systems.doubles.linux;
+    pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs {inherit system;});
   in {
     # NixOS modules for Circus and components
     nixosModules = {
@@ -21,7 +22,7 @@
     };
 
     packages = forAllSystems (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = pkgsFor system;
       craneLib = crane.mkLib pkgs;
       src = let
         fs = lib.fileset;
@@ -59,7 +60,7 @@
     });
 
     checks = forAllSystems (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = pkgsFor system;
 
       callTest = path: pkgs.callPackage path {inherit self;};
       vmTests = {
@@ -88,7 +89,7 @@
     });
 
     devShells = forAllSystems (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = pkgsFor system;
     in {
       default = pkgs.mkShell {
         name = "circus-dev";
@@ -110,7 +111,7 @@
     });
 
     formatter = forAllSystems (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = pkgsFor system;
     in
       pkgs.writeShellApplication {
         name = "nix3-fmt-wrapper";
