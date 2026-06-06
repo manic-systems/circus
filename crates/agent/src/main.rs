@@ -6,6 +6,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use circus_agent::{config::AgentConfig, sandbox, session};
+use circus_logs::init_tracing;
 use clap::Parser;
 use color_eyre::eyre::{Result, eyre};
 use uuid::Uuid;
@@ -30,14 +31,8 @@ fn main() -> Result<()> {
     .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
 
   let cli = Cli::parse();
-  tracing_subscriber::fmt()
-    .with_env_filter(
-      tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-    )
-    .init();
-
   let cfg = AgentConfig::load(cli.config.as_deref())?;
+  init_tracing(&cfg.tracing);
   tracing::info!(name = %cfg.agent.name, "circus-agent starting");
 
   let machine_id = resolve_machine_id(&cfg)?;
