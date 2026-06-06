@@ -655,8 +655,8 @@ pub(super) async fn queue_bump(
     circus_common::repo::builds::bump_priority(&state.pool, build_id, 10)
       .await
       .map_err(|e| {
-        tracing::warn!(build_id = %build_id, "Bump failed: {e}");
-        (StatusCode::BAD_REQUEST, format!("Bump failed: {e}")).into_response()
+        tracing::error!(build_id = %build_id, error = %e, "Bump failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, "Bump failed").into_response()
       })?;
   if updated.is_none() {
     return Err(
