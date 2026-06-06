@@ -44,7 +44,11 @@ use tokio_util::{
 };
 use uuid::Uuid;
 
-use crate::{build, config::Agent, psi};
+use crate::{
+  build,
+  config::{Agent, TlsConfig},
+  psi,
+};
 
 /// Open a connection and run it to completion.
 ///
@@ -71,9 +75,8 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
   // Branch on TLS at the type level: keep both arms inside the RPC system
   // by erasing through `Box<dyn>` and the tokio-util compat adapters.
   let mut rpc = if want_tls {
-    let tls = cfg.tls.as_ref().ok_or_else(|| {
-      eyre!("circus+tls:// requested but [agent.tls] not configured")
-    })?;
+    let default_tls = TlsConfig::default();
+    let tls = cfg.tls.as_ref().unwrap_or(&default_tls);
     let connector = crate::tls::build_client_connector(tls)?;
     let server_name = rustls::pki_types::ServerName::try_from(host.clone())
       .map_err(|e| eyre!("invalid server name {host}: {e}"))?;
