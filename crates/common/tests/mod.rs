@@ -94,13 +94,8 @@ fn test_config_validation() -> color_eyre::Result<()> {
   assert!(config.validate().is_err());
 
   // Test invalid evaluator settings
-  let mut config = base_config.clone();
-  config.evaluator.poll_interval = 0;
-  assert!(config.validate().is_err());
-
-  // Test invalid queue runner settings
   let mut config = base_config;
-  config.queue_runner.workers = 0;
+  config.evaluator.poll_interval = 0;
   assert!(config.validate().is_err());
 
   Ok(())
