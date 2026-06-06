@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
+pub use circus_logs::TracingConfig;
 use config as config_crate;
 use serde::{Deserialize, Serialize};
 
@@ -785,26 +786,6 @@ const fn default_notification_retention_days() -> i64 {
 
 const fn default_notification_poll_interval() -> u64 {
   5
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TracingConfig {
-  pub level:           String,
-  pub format:          String,
-  pub show_targets:    bool,
-  pub show_timestamps: bool,
-}
-
-impl Default for TracingConfig {
-  fn default() -> Self {
-    Self {
-      level:           "info".to_string(),
-      format:          "compact".to_string(),
-      show_targets:    true,
-      show_timestamps: true,
-    }
-  }
 }
 
 impl Default for DatabaseConfig {

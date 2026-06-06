@@ -570,7 +570,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
  "url",
  "uuid",
  "whoami",
@@ -582,6 +581,7 @@ version = "0.11.0"
 dependencies = [
  "argon2",
  "chrono",
+ "circus-logs",
  "circus-migrations",
  "clap",
  "color-eyre",
@@ -606,7 +606,6 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber",
  "url",
  "urlencoding",
  "uuid",
@@ -639,15 +638,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "circus-logs"
+version = "0.11.0"
+dependencies = [
+ "serde",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "circus-migrate-cli"
 version = "0.11.0"
 dependencies = [
  "circus-common",
+ "circus-logs",
  "clap",
  "color-eyre",
  "tempfile",
  "tokio",
- "tracing-subscriber",
 ]
 
 [[package]]

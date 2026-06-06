@@ -20,16 +20,15 @@ pub mod nix_probe;
 pub mod roles;
 pub mod s3;
 pub mod service_heartbeat;
-pub mod tracing_init;
 pub mod validate;
 pub mod validation;
 
+pub use circus_logs::{TracingConfig, init_tracing};
 pub use config::*;
 pub use crypto::install_crypto_provider;
 pub use database::*;
 pub use error::*;
 pub use migrate::*;
 pub use models::*;
-pub use tracing_init::init_tracing;
 pub use validate::Validate;
 pub use validation::*;
