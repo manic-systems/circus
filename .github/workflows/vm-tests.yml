@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -33,9 +34,38 @@ jobs:
               - 'flake.nix'
               - 'flake.lock'
 
+  build-packages:
+    name: Build Packages
+    needs: changes
+    if: ${{ needs.changes.outputs.files_changed == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: extra-experimental-features = nix-command flakes
+
+      - name: Restore cached paths
+        id: cache-store-restore
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: 0
+          purge-primary-key: never
+
+      - name: Build all circus packages
+        run: |
+          nix build .#circus-server .#circus-evaluator .#circus-queue-runner \
+                    .#circus-migrate-cli .#circus-agent -L --no-link
+
   vm-test:
     name: ${{ matrix.name }}
-    needs: changes
+    needs: [changes, build-packages]
     if: ${{ needs.changes.outputs.files_changed == 'true' }}
     runs-on: ubuntu-latest
     strategy:
@@ -92,7 +122,5 @@ jobs:
           purge-last-accessed: 0
           purge-primary-key: never
 
-      # XXX: do we want to run those checks on any other arch? Maybe Darwin
-      # in the future once Circus can actually run on Darwin?
       - name: Build ${{ matrix.check }} for x86_64-linux
         run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
