@@ -1,14 +1,15 @@
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use circus_common::{
   config::Config,
   models::{ApiKey, User},
 };
 use dashmap::DashMap;
+use harmonia_store_path::StoreDir;
 use hmac::KeyInit;
 use moka::sync::Cache;
 use regex::Regex;
-use sqlx::PgPool;
+use sqlx::{ConnectOptions as _, PgPool, SqlitePool};
 
 /// Maximum lifetime for legacy in-memory API-key dashboard sessions.
 const SESSION_MAX_AGE: std::time::Duration =
@@ -79,8 +80,55 @@ impl SessionData {
 pub type NarinfoCache = Cache<String, String>;
 
 #[derive(Clone)]
+pub struct NixStore {
+  store_dir: PathBuf,
+}
+
+impl NixStore {
+  #[must_use]
+  pub fn new(store_dir: PathBuf) -> Self {
+    Self { store_dir }
+  }
+
+  pub fn store_dir(&self) -> Result<StoreDir, String> {
+    StoreDir::new(self.store_dir.clone()).map_err(|e| e.to_string())
+  }
+
+  fn db_path(&self) -> Option<PathBuf> {
+    self
+      .store_dir
+      .parent()
+      .map(|root| root.join("var/nix/db/db.sqlite"))
+  }
+
+  /// Open the local Nix store database once for binary-cache serving.
+  ///
+  /// Missing databases are treated as cache misses, but an existing database
+  /// that cannot be opened is returned as an error so the failure is explicit
+  /// at startup instead of surfacing as per-request 500s.
+  pub async fn open_db(&self) -> Result<Option<SqlitePool>, sqlx::Error> {
+    let Some(db_path) = self.db_path() else {
+      return Ok(None);
+    };
+    if !db_path.exists() {
+      return Ok(None);
+    }
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+      .filename(&db_path)
+      .read_only(true)
+      .create_if_missing(false)
+      .disable_statement_logging();
+
+    SqlitePool::connect_with(options).await.map(Some)
+  }
+}
+
+#[derive(Clone)]
 pub struct AppState {
   pub pool:          PgPool,
+  pub nix_store:     NixStore,
+  pub nix_store_db:  Option<SqlitePool>,
   pub config:        Config,
   pub sessions:      Arc<DashMap<String, SessionData>>,
   pub narinfo_cache: NarinfoCache,

@@ -15,22 +15,38 @@ use harmonia_store_path::{StoreDir, StorePath, StorePathHash};
 use harmonia_store_path_info::{UnkeyedValidPathInfo, ValidPathInfo};
 use harmonia_utils_hash::{Hash, HashFormat as _, fmt::Any as AnyHashFmt};
 use serde::Deserialize;
-use sqlx::ConnectOptions as _;
+use sqlx::{FromRow, PgPool, SqlitePool};
 
 use crate::{error::ApiError, state::AppState};
 
 const S3_GET_PRESIGN_EXPIRY: Duration = Duration::from_hours(1);
 const MAX_NAR_OBJECT_NAME_LEN: usize = 512;
 
+#[derive(FromRow)]
+struct ValidPathRow {
+  id:                i64,
+  path:              String,
+  #[sqlx(rename = "hash")]
+  nar_hash:          String,
+  #[sqlx(rename = "registrationTime")]
+  registration_time: i64,
+  deriver:           Option<String>,
+  #[sqlx(rename = "narSize")]
+  nar_size:          Option<i64>,
+  ultimate:          Option<i32>,
+  sigs:              Option<String>,
+  ca:                Option<String>,
+}
+
 #[derive(Deserialize)]
 struct NarQuery {
   hash: Option<String>,
 }
 
-fn nix_db_path_for_store(store_dir: &std::path::Path) -> Option<PathBuf> {
-  store_dir
-    .parent()
-    .map(|root| root.join("var/nix/db/db.sqlite"))
+fn cache_data_error(error: impl std::fmt::Display) -> ApiError {
+  ApiError(circus_common::CiError::Internal(format!(
+    "invalid Nix store cache data: {error}"
+  )))
 }
 
 fn narinfo_has_signature(
@@ -41,66 +57,27 @@ fn narinfo_has_signature(
 
 async fn query_harmonia_path_info(
   hash: &str,
-  store_dir: PathBuf,
-) -> Result<Option<(StoreDir, ValidPathInfo)>, ApiError> {
-  let store_dir = StoreDir::new(store_dir)
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
-  let Some(db_path) = nix_db_path_for_store(store_dir.to_path()) else {
+  store_dir: &StoreDir,
+  nix_store_db: &SqlitePool,
+) -> Result<Option<ValidPathInfo>, ApiError> {
+  let Ok(hash) = StorePathHash::decode_digest(hash.as_bytes()) else {
     return Ok(None);
   };
-  if !db_path.exists() {
-    return Ok(None);
-  }
-
-  let hash = StorePathHash::decode_digest(hash.as_bytes())
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
   let prefix = format!("{store_dir}/{hash}");
-  let options = sqlx::sqlite::SqliteConnectOptions::new()
-    .filename(&db_path)
-    .read_only(true)
-    .create_if_missing(false)
-    .disable_statement_logging();
-  let pool = sqlx::SqlitePool::connect_with(options)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
 
-  let row = sqlx::query_as::<
-    _,
-    (
-      i64,
-      String,
-      String,
-      i64,
-      Option<String>,
-      Option<i64>,
-      Option<i32>,
-      Option<String>,
-      Option<String>,
-    ),
-  >(
+  let Some(row) = sqlx::query_as::<_, ValidPathRow>(
     "SELECT id, path, hash, registrationTime, deriver, narSize, ultimate, \
      sigs, ca FROM ValidPaths WHERE path >= ?1 LIMIT 1",
   )
   .bind(&prefix)
-  .fetch_optional(&pool)
+  .fetch_optional(nix_store_db)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
-
-  let Some((
-    id,
-    path,
-    nar_hash,
-    registration_time,
-    deriver,
-    nar_size,
-    ultimate,
-    sigs,
-    ca,
-  )) = row
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?
   else {
     return Ok(None);
   };
-  if !path.starts_with(&prefix) {
+
+  if !row.path.starts_with(&prefix) {
     return Ok(None);
   }
 
@@ -108,26 +85,29 @@ async fn query_harmonia_path_info(
     "SELECT v.path FROM Refs r JOIN ValidPaths v ON r.reference = v.id WHERE \
      r.referrer = ?1",
   )
-  .bind(id)
-  .fetch_all(&pool)
+  .bind(row.id)
+  .fetch_all(nix_store_db)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?
   .into_iter()
   .filter_map(|path| store_dir.parse(&path).ok())
   .collect::<BTreeSet<_>>();
 
   let path = store_dir
-    .parse::<StorePath>(&path)
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
-  let deriver = deriver
+    .parse::<StorePath>(&row.path)
+    .map_err(cache_data_error)?;
+  let deriver = row
+    .deriver
     .map(|path| store_dir.parse::<StorePath>(&path))
     .transpose()
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
-  let nar_hash = nar_hash
+    .map_err(cache_data_error)?;
+  let nar_hash = row
+    .nar_hash
     .parse::<AnyHashFmt<harmonia_store_path_info::NarHash>>()
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?
+    .map_err(cache_data_error)?
     .into_hash();
-  let signatures = sigs
+  let signatures = row
+    .sigs
     .as_deref()
     .map(|sigs| {
       sigs
@@ -136,29 +116,58 @@ async fn query_harmonia_path_info(
         .collect()
     })
     .unwrap_or_default();
-  let ca = ca
+  let ca = row
+    .ca
     .map(|ca| ca.parse::<ContentAddress>())
     .transpose()
-    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+    .map_err(cache_data_error)?;
 
-  Ok(Some((store_dir.clone(), ValidPathInfo {
+  Ok(Some(ValidPathInfo {
     path,
     info: UnkeyedValidPathInfo {
       deriver,
       nar_hash,
       references,
-      registration_time: NonZero::new(registration_time),
-      nar_size: nar_size.map(|n| n as u64).unwrap_or(0),
-      ultimate: ultimate.unwrap_or(0) != 0,
+      registration_time: NonZero::new(row.registration_time),
+      nar_size: row.nar_size.map(|n| n as u64).unwrap_or(0),
+      ultimate: row.ultimate.unwrap_or(0) != 0,
       signatures,
       ca,
-      store_dir,
+      store_dir: store_dir.clone(),
     },
-  })))
+  }))
 }
 
-fn is_servable_harmonia_path(info: &ValidPathInfo) -> bool {
-  !info.info.signatures.is_empty() || info.info.ca.is_some()
+async fn has_circus_signed_build_product(
+  pool: &PgPool,
+  store_path: &str,
+) -> Result<bool, ApiError> {
+  sqlx::query_scalar::<_, bool>(
+    "SELECT EXISTS(SELECT 1 FROM build_products bp JOIN builds b ON b.id = \
+     bp.build_id WHERE bp.path = $1 AND b.signed = true)",
+  )
+  .bind(store_path)
+  .fetch_one(pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+}
+
+async fn is_servable_harmonia_path(
+  pool: &PgPool,
+  info: &ValidPathInfo,
+) -> Result<bool, ApiError> {
+  if info.info.ca.is_some() {
+    return Ok(true);
+  }
+  if info.info.signatures.is_empty() {
+    return Ok(false);
+  }
+
+  // Do not rebroadcast arbitrary signed paths from the local Nix store. For
+  // non-CA paths, serving stays limited to paths Circus built and marked
+  // signed.
+  let store_path = info.info.store_dir.display(&info.path).to_string();
+  has_circus_signed_build_product(pool, &store_path).await
 }
 
 /// Serve `NARInfo` for a store path hash.
@@ -210,20 +219,25 @@ async fn narinfo(
     );
   }
 
-  let Some((store_dir, info)) =
-    query_harmonia_path_info(hash, state.config.nix.store_dir.clone()).await?
+  let Some(nix_store_db) = &state.nix_store_db else {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  };
+  let store_dir = state.nix_store.store_dir().map_err(cache_data_error)?;
+  let Some(info) =
+    query_harmonia_path_info(hash, &store_dir, nix_store_db).await?
   else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&info) {
+  if !is_servable_harmonia_path(&state.pool, &info).await? {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
+  let store_dir = info.info.store_dir.clone();
   let narinfo = build_narinfo(&store_dir, info, hash, &[]);
   let narinfo_text =
     String::from_utf8(format_narinfo_txt(&store_dir, &narinfo))
-      .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+      .map_err(cache_data_error)?;
 
   state
     .narinfo_cache
@@ -350,14 +364,17 @@ async fn serve_nar_combined(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let Some((store_dir, info)) =
-    query_harmonia_path_info(output_hash, state.config.nix.store_dir.clone())
-      .await?
+  let Some(nix_store_db) = &state.nix_store_db else {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  };
+  let store_dir = state.nix_store.store_dir().map_err(cache_data_error)?;
+  let Some(info) =
+    query_harmonia_path_info(output_hash, &store_dir, nix_store_db).await?
   else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&info) {
+  if !is_servable_harmonia_path(&state.pool, &info).await? {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -369,7 +386,8 @@ async fn serve_nar_combined(
     }
   }
 
-  let store_path = PathBuf::from(store_dir.display(&info.path).to_string());
+  let store_path =
+    PathBuf::from(info.info.store_dir.display(&info.path).to_string());
   let body = Body::from_stream(NarByteStream::new(store_path));
 
   Ok(
