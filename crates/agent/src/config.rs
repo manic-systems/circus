@@ -6,12 +6,15 @@
 
 use std::path::{Path, PathBuf};
 
+pub use circus_logs::TracingConfig;
 use serde::{Deserialize, Serialize};
 
 /// Top-level agent config.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentConfig {
-  pub agent: Agent,
+  pub agent:   Agent,
+  #[serde(default)]
+  pub tracing: TracingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
