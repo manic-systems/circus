@@ -786,8 +786,13 @@ in {
         circus-evaluator = mkIf cfg.evaluator.enable {
           description = "circus Evaluator";
           wantedBy = ["multi-user.target"];
-          after = ["network.target" "circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
-          requires = ["circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
+          after =
+            ["network.target"]
+            ++ optional cfg.server.enable "circus-server.service"
+            ++ optional cfg.database.createLocally "postgresql.target";
+          requires =
+            optional cfg.server.enable "circus-server.service"
+            ++ optional cfg.database.createLocally "postgresql.target";
 
           path = with pkgs; [
             nix
@@ -826,8 +831,13 @@ in {
         circus-queue-runner = mkIf cfg.queueRunner.enable {
           description = "circus Queue Runner";
           wantedBy = ["multi-user.target"];
-          after = ["network.target" "circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
-          requires = ["circus-server.service"] ++ optional cfg.database.createLocally "postgresql.target";
+          after =
+            ["network.target"]
+            ++ optional cfg.server.enable "circus-server.service"
+            ++ optional cfg.database.createLocally "postgresql.target";
+          requires =
+            optional cfg.server.enable "circus-server.service"
+            ++ optional cfg.database.createLocally "postgresql.target";
 
           path = with pkgs; [
             nix
