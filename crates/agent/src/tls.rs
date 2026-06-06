@@ -10,10 +10,10 @@ use tokio_rustls::TlsConnector;
 
 use crate::config::TlsConfig;
 
-/// Build a connector that trusts `ca_file` for the server. When `cert_file`
-/// and `key_file` are both set it also presents them as the client identity
-/// for mTLS. When they're absent it connects with no client auth, relying on
-/// the bearer token alone.
+/// Build a connector that trusts `ca_file` or the OS root store for the server.
+/// When `cert_file` and `key_file` are both set it also presents them as the
+/// client identity for mTLS. When they're absent it connects with no client
+/// auth, relying on the bearer token alone.
 ///
 /// # Errors
 ///
@@ -40,10 +40,23 @@ pub fn build_client_connector(
   };
 
   let mut roots = RootCertStore::empty();
-  let ca_bytes = std::fs::read(&cfg.ca_file)?;
-  for cert in rustls_pemfile::certs(&mut BufReader::new(ca_bytes.as_slice())) {
-    let cert = cert?;
-    roots.add(cert)?;
+  if let Some(ca_file) = &cfg.ca_file {
+    let ca_bytes = std::fs::read(ca_file)?;
+    for cert in rustls_pemfile::certs(&mut BufReader::new(ca_bytes.as_slice()))
+    {
+      roots.add(cert?)?;
+    }
+  } else {
+    let native = rustls_native_certs::load_native_certs();
+    for err in &native.errors {
+      tracing::warn!(%err, "skipping unparseable system certificate");
+    }
+    if native.certs.is_empty() {
+      return Err(eyre!(
+        "no system CA certificates found; set tls.ca_file explicitly"
+      ));
+    }
+    roots.add_parsable_certificates(native.certs);
   }
 
   let builder = ClientConfig::builder().with_root_certificates(roots);
@@ -72,7 +85,7 @@ mod tests {
 
   fn cfg(cert_file: Option<&str>, key_file: Option<&str>) -> TlsConfig {
     TlsConfig {
-      ca_file:   PathBuf::from("missing-ca.pem"),
+      ca_file:   Some(PathBuf::from("missing-ca.pem")),
       cert_file: cert_file.map(PathBuf::from),
       key_file:  key_file.map(PathBuf::from),
     }

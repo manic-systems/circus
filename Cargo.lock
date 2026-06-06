@@ -558,6 +558,7 @@ dependencies = [
  "parking_lot",
  "reqwest 0.13.4",
  "rustls",
+ "rustls-native-certs",
  "rustls-pemfile",
  "serde",
  "serde_json",
