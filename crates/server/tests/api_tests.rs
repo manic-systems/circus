@@ -33,6 +33,10 @@ fn build_app(pool: sqlx::PgPool) -> axum::Router {
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
+    nix_store: circus_server::state::NixStore::new(
+      config.nix.store_dir.clone(),
+    ),
+    nix_store_db: None,
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
@@ -53,6 +57,10 @@ async fn test_router_no_duplicate_routes() {
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
+    nix_store: circus_server::state::NixStore::new(
+      config.nix.store_dir.clone(),
+    ),
+    nix_store_db: None,
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
@@ -71,6 +79,10 @@ fn build_app_with_config(
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
+    nix_store: circus_server::state::NixStore::new(
+      config.nix.store_dir.clone(),
+    ),
+    nix_store_db: None,
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
