@@ -1,8 +1,27 @@
-//! Tracing initialization helper for all circus daemons.
+//! Logging configuration and initialization for Circus daemons.
 
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::{EnvFilter, fmt};
 
-use crate::config::TracingConfig;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TracingConfig {
+  pub level:           String,
+  pub format:          String,
+  pub show_targets:    bool,
+  pub show_timestamps: bool,
+}
+
+impl Default for TracingConfig {
+  fn default() -> Self {
+    Self {
+      level:           "info".to_string(),
+      format:          "compact".to_string(),
+      show_targets:    true,
+      show_timestamps: true,
+    }
+  }
+}
 
 /// Initialize the global tracing subscriber based on configuration.
 ///

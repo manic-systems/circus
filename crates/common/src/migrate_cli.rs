@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use tracing::info;
-use tracing_subscriber::fmt::init;
 
 const DEFAULT_MIGRATIONS_DIR: &str = "crates/migrations/migrations";
 
@@ -52,9 +51,6 @@ pub enum Commands {
 )]
 pub async fn run() -> color_eyre::Result<()> {
   let cli = Cli::parse();
-
-  // Initialize logging
-  init();
 
   match cli.command {
     Commands::Up { database_url } => {
