@@ -497,13 +497,10 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
   bind_if_exists("/etc/nsswitch.conf", newroot.join("etc/nsswitch.conf"))?;
   bind_if_exists("/etc/ssl/certs", newroot.join("etc/ssl/certs"))?;
 
-  mount(
-    Some("proc"),
-    newroot.join("proc").as_path(),
-    Some("proc"),
-    MsFlags::empty(),
-    None::<&str>,
-  )?;
+  // Bind the host /proc rather than mounting a fresh procfs as it needs
+  // CAP_SYS_ADMIN over the PID namespace it exposes, which this sandbox does
+  // not own.
+  bind("/proc", newroot.join("proc"))?;
 
   pivot_root(newroot, &newroot.join(".oldroot"))?;
   chdir("/")?;
