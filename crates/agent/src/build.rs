@@ -45,6 +45,7 @@ pub struct BuildOptions<'a> {
   pub max_log_size:      u64,
   pub max_silent_time:   Duration,
   pub build_timeout:     Duration,
+  pub cores:             u32,
   pub extra_args:        Vec<String>,
   pub cache_substituter: String,
   pub cache_public_key:  String,
@@ -97,7 +98,7 @@ pub async fn run(
 }
 
 fn build_command(opts: &BuildOptions<'_>) -> Command {
-  let mut args: Vec<String> = vec![
+  let mut args = vec![
     "--realise".into(),
     "--log-format".into(),
     "internal-json".into(),
@@ -113,6 +114,11 @@ fn build_command(opts: &BuildOptions<'_>) -> Command {
       args.push("extra-trusted-public-keys".into());
       args.push(opts.cache_public_key.clone());
     }
+  }
+  if opts.cores > 0 {
+    args.push("--option".into());
+    args.push("cores".into());
+    args.push(opts.cores.to_string());
   }
   args.extend(opts.extra_args.iter().cloned());
 
@@ -774,6 +780,7 @@ mod tests {
       max_log_size,
       max_silent_time: Duration::ZERO,
       build_timeout,
+      cores: 0,
       extra_args: Vec::new(),
       cache_substituter: String::new(),
       cache_public_key: String::new(),

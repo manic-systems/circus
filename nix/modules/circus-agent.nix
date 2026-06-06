@@ -79,6 +79,12 @@ in {
                 default = 4;
               };
 
+              cores = mkOption {
+                type = ints.unsigned;
+                default = 0;
+                description = "Per-build nix `cores` cap. 0 keeps the host's default.";
+              };
+
               speed_factor = mkOption {
                 type = lib.types.numbers.positive;
                 default = 1.0;

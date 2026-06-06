@@ -47,6 +47,12 @@ pub struct Agent {
   #[serde(default = "default_max_jobs")]
   pub max_jobs: u32,
 
+  /// Per-build parallelism cap, passed to nix as the `cores` setting. This
+  /// bounds total build CPU at roughly `max_jobs * cores` threads. 0 keeps
+  /// the host's nix default.
+  #[serde(default)]
+  pub cores: u32,
+
   /// Scheduling weight relative to other agents. 1.0 = baseline.
   #[serde(default = "default_speed_factor")]
   pub speed_factor: f32,
