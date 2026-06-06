@@ -145,11 +145,10 @@ in {
         ExecStartPre = pkgs.writeShellScript "circus-agent-render-config" ''
           set -eu
           token="$(cat "$CREDENTIALS_DIRECTORY/auth_token")"
-          token_json="$(printf '%s' "$token" | ${pkgs.jq}/bin/jq -Rs .)"
-          install -m 0600 ${configFile} "$RUNTIME_DIRECTORY/circus-agent.toml"
-          TOKEN_JSON="$token_json" ${pkgs.perl}/bin/perl -0pi -e \
-            's/"\@CIRCUS_AGENT_AUTH_TOKEN\@"/$ENV{TOKEN_JSON}/g' \
-            "$RUNTIME_DIRECTORY/circus-agent.toml"
+          install -m 0600 /dev/null "$RUNTIME_DIRECTORY/circus-agent.toml"
+          ${pkgs.jq}/bin/jq -Rrs --arg tok "$token" \
+            '($tok | @json) as $j | gsub("\"@CIRCUS_AGENT_AUTH_TOKEN@\""; $j)' \
+            ${configFile} > "$RUNTIME_DIRECTORY/circus-agent.toml"
         '';
         RuntimeDirectory = "circus-agent";
         RuntimeDirectoryMode = "0700";
