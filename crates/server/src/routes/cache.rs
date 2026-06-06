@@ -1,79 +1,36 @@
-use std::{
-  pin::Pin,
-  task::{Context, Poll},
-  time::Duration,
-};
+use std::{collections::BTreeSet, num::NonZero, path::PathBuf, time::Duration};
 
 use axum::{
   Router,
   body::Body,
-  extract::{Path, State},
+  extract::{Path, Query, State},
   http::{HeaderValue, StatusCode, header},
   response::{IntoResponse, Response},
   routing::get,
 };
-use tokio::{
-  io::{AsyncRead, ReadBuf},
-  process::{Child, ChildStdout, Command},
-};
+use harmonia_file_nar::NarByteStream;
+use harmonia_store_content_address::ContentAddress;
+use harmonia_store_nar_info::{build_narinfo, format_narinfo_txt};
+use harmonia_store_path::{StoreDir, StorePath, StorePathHash};
+use harmonia_store_path_info::{UnkeyedValidPathInfo, ValidPathInfo};
+use harmonia_utils_hash::{Hash, HashFormat as _, fmt::Any as AnyHashFmt};
+use serde::Deserialize;
+use sqlx::ConnectOptions as _;
 
 use crate::{error::ApiError, state::AppState};
 
 const S3_GET_PRESIGN_EXPIRY: Duration = Duration::from_hours(1);
 const MAX_NAR_OBJECT_NAME_LEN: usize = 512;
 
-/// Extract the first path info entry from `nix path-info --json` output,
-/// handling both the old array format (`[{"path":...}]`) and the new
-/// object-keyed format (`{"/nix/store/...": {...}}`).
-fn first_path_info_entry(
-  parsed: &serde_json::Value,
-) -> Option<(&serde_json::Value, Option<&str>)> {
-  if let Some(arr) = parsed.as_array() {
-    let entry = arr.first()?;
-    let path = entry.get("path").and_then(|v| v.as_str());
-    Some((entry, path))
-  } else if let Some(obj) = parsed.as_object() {
-    let (key, val) = obj.iter().next()?;
-    Some((val, Some(key.as_str())))
-  } else {
-    None
-  }
+#[derive(Deserialize)]
+struct NarQuery {
+  hash: Option<String>,
 }
 
-/// Look up a store path by its nix hash, limited to build outputs that Circus
-/// signed at build time. This intentionally does not fall back to arbitrary
-/// `/nix/store` paths.
-async fn find_signed_store_path(
-  pool: &sqlx::PgPool,
-  hash: &str,
-  store_dir: &str,
-) -> std::result::Result<Option<String>, ApiError> {
-  let store_dir = store_dir.trim_end_matches('/');
-  let like_pattern = format!("{store_dir}/{hash}-%");
-
-  let path: Option<String> = sqlx::query_scalar(
-    "SELECT bp.path FROM build_products bp JOIN builds b ON b.id = \
-     bp.build_id WHERE bp.path LIKE $1 AND b.signed = true LIMIT 1",
-  )
-  .bind(&like_pattern)
-  .fetch_optional(pool)
-  .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
-
-  if path.is_some() {
-    return Ok(path);
-  }
-
-  let from_builds = sqlx::query_scalar(
-    "SELECT build_output_path FROM builds WHERE build_output_path LIKE $1 AND \
-     signed = true LIMIT 1",
-  )
-  .bind(&like_pattern)
-  .fetch_optional(pool)
-  .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
-
-  Ok(from_builds)
+fn nix_db_path_for_store(store_dir: &std::path::Path) -> Option<PathBuf> {
+  store_dir
+    .parent()
+    .map(|root| root.join("var/nix/db/db.sqlite"))
 }
 
 fn narinfo_has_signature(
@@ -82,59 +39,126 @@ fn narinfo_has_signature(
   row.sig.as_ref().is_some_and(|sig| !sig.trim().is_empty())
 }
 
-/// Resolve the local store path a cache request may serve. Signed build
-/// outputs come from the DB; any other local path is only servable when
-/// content-addressed (`true` in the second tuple field), which covers the
-/// drv closures (drvs and sources) agents substitute for dispatched
-/// builds. Nix recomputes the store path from the `CA:` field on
-/// substitution, so CA paths cannot be forged and need no signature.
-///
-/// FIXME: this shells out to `nix`, and needs the nix-command feature. We
-/// should bind to the Nix C/C++ API and call it directly instead.
-async fn resolve_servable_path(
-  pool: &sqlx::PgPool,
+async fn query_harmonia_path_info(
   hash: &str,
-  store_dir: &str,
-) -> std::result::Result<Option<(String, bool)>, ApiError> {
-  if let Some(p) = find_signed_store_path(pool, hash, store_dir).await? {
-    return Ok(
-      circus_common::validate::is_valid_store_path(&p, store_dir)
-        .then_some((p, false)),
-    );
+  store_dir: PathBuf,
+) -> Result<Option<(StoreDir, ValidPathInfo)>, ApiError> {
+  let store_dir = StoreDir::new(store_dir)
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+  let Some(db_path) = nix_db_path_for_store(store_dir.to_path()) else {
+    return Ok(None);
+  };
+  if !db_path.exists() {
+    return Ok(None);
   }
 
-  let resolved = Command::new("nix")
-    .args(["store", "path-from-hash-part", hash])
-    .output()
+  let hash = StorePathHash::decode_digest(hash.as_bytes())
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+  let prefix = format!("{store_dir}/{hash}");
+  let options = sqlx::sqlite::SqliteConnectOptions::new()
+    .filename(&db_path)
+    .read_only(true)
+    .create_if_missing(false)
+    .disable_statement_logging();
+  let pool = sqlx::SqlitePool::connect_with(options)
     .await
-    .ok()
-    .filter(|o| o.status.success())
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-    .filter(|p| circus_common::validate::is_valid_store_path(p, store_dir));
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
 
-  Ok(resolved.map(|p| (p, true)))
+  let row = sqlx::query_as::<
+    _,
+    (
+      i64,
+      String,
+      String,
+      i64,
+      Option<String>,
+      Option<i64>,
+      Option<i32>,
+      Option<String>,
+      Option<String>,
+    ),
+  >(
+    "SELECT id, path, hash, registrationTime, deriver, narSize, ultimate, \
+     sigs, ca FROM ValidPaths WHERE path >= ?1 LIMIT 1",
+  )
+  .bind(&prefix)
+  .fetch_optional(&pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+
+  let Some((
+    id,
+    path,
+    nar_hash,
+    registration_time,
+    deriver,
+    nar_size,
+    ultimate,
+    sigs,
+    ca,
+  )) = row
+  else {
+    return Ok(None);
+  };
+  if !path.starts_with(&prefix) {
+    return Ok(None);
+  }
+
+  let references = sqlx::query_scalar::<_, String>(
+    "SELECT v.path FROM Refs r JOIN ValidPaths v ON r.reference = v.id WHERE \
+     r.referrer = ?1",
+  )
+  .bind(id)
+  .fetch_all(&pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?
+  .into_iter()
+  .filter_map(|path| store_dir.parse(&path).ok())
+  .collect::<BTreeSet<_>>();
+
+  let path = store_dir
+    .parse::<StorePath>(&path)
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+  let deriver = deriver
+    .map(|path| store_dir.parse::<StorePath>(&path))
+    .transpose()
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+  let nar_hash = nar_hash
+    .parse::<AnyHashFmt<harmonia_store_path_info::NarHash>>()
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?
+    .into_hash();
+  let signatures = sigs
+    .as_deref()
+    .map(|sigs| {
+      sigs
+        .split_whitespace()
+        .filter_map(|sig| sig.parse().ok())
+        .collect()
+    })
+    .unwrap_or_default();
+  let ca = ca
+    .map(|ca| ca.parse::<ContentAddress>())
+    .transpose()
+    .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
+
+  Ok(Some((store_dir.clone(), ValidPathInfo {
+    path,
+    info: UnkeyedValidPathInfo {
+      deriver,
+      nar_hash,
+      references,
+      registration_time: NonZero::new(registration_time),
+      nar_size: nar_size.map(|n| n as u64).unwrap_or(0),
+      ultimate: ultimate.unwrap_or(0) != 0,
+      signatures,
+      ca,
+      store_dir,
+    },
+  })))
 }
 
-/// Whether the local store path is content-addressed (drvs, sources).
-async fn is_content_addressed(store_path: &str) -> bool {
-  let output = Command::new("nix")
-    .args(["path-info", "--json", store_path])
-    .output()
-    .await;
-  let Ok(output) = output else {
-    return false;
-  };
-  if !output.status.success() {
-    return false;
-  }
-  let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-  else {
-    return false;
-  };
-  first_path_info_entry(&parsed)
-    .and_then(|(entry, _)| entry.get("ca"))
-    .and_then(|v| v.as_str())
-    .is_some_and(|ca| !ca.is_empty())
+fn is_servable_harmonia_path(info: &ValidPathInfo) -> bool {
+  !info.info.signatures.is_empty() || info.info.ca.is_some()
 }
 
 /// Serve `NARInfo` for a store path hash.
@@ -143,8 +167,6 @@ async fn narinfo(
   State(state): State<AppState>,
   Path(hash): Path<String>,
 ) -> Result<Response, ApiError> {
-  use std::fmt::Write;
-
   if !state.config.cache.enabled {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
@@ -188,116 +210,20 @@ async fn narinfo(
     );
   }
 
-  let store_dir = state.config.nix.store_dir.to_string_lossy();
-  let store_dir = store_dir.trim_end_matches('/');
-  let Some((store_path, require_ca)) =
-    resolve_servable_path(&state.pool, hash, store_dir).await?
+  let Some((store_dir, info)) =
+    query_harmonia_path_info(hash, state.config.nix.store_dir.clone()).await?
   else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  // Get narinfo from nix path-info
-  let output = Command::new("nix")
-    .args(["path-info", "--json", &store_path])
-    .output()
-    .await;
-
-  let output = match output {
-    Ok(o) if o.status.success() => o,
-    _ => return Ok(StatusCode::NOT_FOUND.into_response()),
-  };
-
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
-    Ok(v) => v,
-    Err(_) => return Ok(StatusCode::NOT_FOUND.into_response()),
-  };
-
-  let Some((entry, path_from_info)) = first_path_info_entry(&parsed) else {
-    return Ok(StatusCode::NOT_FOUND.into_response());
-  };
-
-  let nar_hash = entry.get("narHash").and_then(|v| v.as_str()).unwrap_or("");
-  let nar_size = entry
-    .get("narSize")
-    .and_then(serde_json::Value::as_u64)
-    .unwrap_or(0);
-  let store_path = path_from_info.unwrap_or(&store_path);
-
-  let store_prefix = format!("{store_dir}/");
-  let refs: Vec<&str> = entry
-    .get("references")
-    .and_then(|v| v.as_array())
-    .map(|arr| {
-      arr
-        .iter()
-        .filter_map(|r| r.as_str())
-        .map(|s| s.strip_prefix(store_prefix.as_str()).unwrap_or(s))
-        .collect()
-    })
-    .unwrap_or_default();
-
-  // Extract deriver
-  let deriver = entry
-    .get("deriver")
-    .and_then(|v| v.as_str())
-    .map(|d| d.strip_prefix(store_prefix.as_str()).unwrap_or(d));
-
-  // Extract content-addressable hash
-  let ca = entry.get("ca").and_then(|v| v.as_str());
-
-  let signatures: Vec<&str> = entry
-    .get("signatures")
-    .and_then(|v| v.as_array())
-    .map(|arr| arr.iter().filter_map(|s| s.as_str()).collect())
-    .unwrap_or_default();
-  // Outputs must carry a signature minted at build time; drv-closure
-  // paths are only trusted through their CA field.
-  let servable = if require_ca {
-    ca.is_some_and(|c| !c.is_empty())
-  } else {
-    !signatures.is_empty()
-  };
-  if !servable {
+  if !is_servable_harmonia_path(&info) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let compression = &state.config.cache.compression;
-  let nar_url = format!("nar/{hash}{}", compression.file_extension());
-  let compression_str = compression.as_str();
-  let is_uncompressed =
-    matches!(compression, circus_common::config::NarCompression::None);
-
-  let refs_joined = refs.join(" ");
-  // FileHash / FileSize describe the compressed file being served. We can
-  // only set them honestly when compression is none (then they equal the
-  // NAR hash/size). For compressed responses we'd have to buffer the full
-  // compressed stream to hash it; omit the fields instead. Nix clients
-  // fall back to validating NarHash after decompression.
-  let mut narinfo_text = if is_uncompressed {
-    format!(
-      "StorePath: {store_path}\nURL: {nar_url}\nCompression: \
-       {compression_str}\nFileHash: {nar_hash}\nFileSize: \
-       {nar_size}\nNarHash: {nar_hash}\nNarSize: {nar_size}\nReferences: \
-       {refs_joined}\n",
-    )
-  } else {
-    format!(
-      "StorePath: {store_path}\nURL: {nar_url}\nCompression: \
-       {compression_str}\nNarHash: {nar_hash}\nNarSize: \
-       {nar_size}\nReferences: {refs_joined}\n",
-    )
-  };
-
-  if let Some(deriver) = deriver {
-    let _ = writeln!(narinfo_text, "Deriver: {deriver}");
-  }
-  if let Some(ca) = ca {
-    let _ = writeln!(narinfo_text, "CA: {ca}");
-  }
-  for sig in signatures {
-    let _ = writeln!(narinfo_text, "Sig: {sig}");
-  }
+  let narinfo = build_narinfo(&store_dir, info, hash, &[]);
+  let narinfo_text =
+    String::from_utf8(format_narinfo_txt(&store_dir, &narinfo))
+      .map_err(|e| ApiError(circus_common::CiError::Build(e.to_string())))?;
 
   state
     .narinfo_cache
@@ -399,125 +325,19 @@ async fn redirect_uploaded_nar(
   }
 }
 
-/// Serve a compressed NAR file for a store path.
-/// Pipe `nix store dump-path` through an external compressor binary.
-/// Both processes are killed on drop so client disconnects are propagated.
-struct ChildOutput {
-  children: Vec<OwnedChild>,
-  stdout:   ChildStdout,
-}
-
-enum OwnedChild {
-  Std(std::process::Child),
-  Tokio(Child),
-}
-
-impl OwnedChild {
-  fn kill(&mut self) -> std::io::Result<()> {
-    match self {
-      Self::Std(child) => child.kill(),
-      Self::Tokio(child) => child.start_kill(),
-    }
-  }
-}
-
-impl AsyncRead for ChildOutput {
-  fn poll_read(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &mut ReadBuf<'_>,
-  ) -> Poll<std::io::Result<()>> {
-    Pin::new(&mut self.stdout).poll_read(cx, buf)
-  }
-}
-
-impl Drop for ChildOutput {
-  fn drop(&mut self) {
-    for child in &mut self.children {
-      if let Err(e) = child.kill() {
-        tracing::debug!("Failed to kill cache stream child process: {e}");
-      }
-    }
-  }
-}
-
-fn pipe_through_compressor(
-  store_path: &str,
-  compressor: &str,
-  args: &[&str],
-) -> Result<ChildOutput, ApiError> {
-  // Inherit stderr so a failing nix/compressor child shows up in the
-  // server log instead of truncating the response body silently.
-  let mut nix_child = std::process::Command::new("nix")
-    .args(["store", "dump-path", store_path])
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::inherit())
-    .spawn()
-    .map_err(|_| {
-      ApiError(circus_common::CiError::Build(
-        "Failed to start nix store dump-path".to_string(),
-      ))
-    })?;
-
-  let nix_stdout = nix_child.stdout.take().ok_or_else(|| {
-    ApiError(circus_common::CiError::Build(
-      "nix store dump-path produced no stdout".to_string(),
-    ))
-  })?;
-
-  let mut comp_child = Command::new(compressor)
-    .args(args)
-    .stdin(nix_stdout)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::inherit())
-    .kill_on_drop(true)
-    .spawn()
-    .map_err(|_| {
-      ApiError(circus_common::CiError::Build(format!(
-        "Failed to start {compressor}"
-      )))
-    })?;
-
-  let stdout = comp_child.stdout.take().ok_or_else(|| {
-    ApiError(circus_common::CiError::Build(format!(
-      "{compressor} produced no stdout"
-    )))
-  })?;
-
-  Ok(ChildOutput {
-    children: vec![OwnedChild::Std(nix_child), OwnedChild::Tokio(comp_child)],
-    stdout,
-  })
-}
-
-/// Serve a NAR file with the requested compression algorithm.
-/// Routes for all `.nar`, `.nar.zst`, `.nar.bz2`, `.nar.xz` suffixes funnel
-/// here.
+/// Serve an uncompressed NAR file. Harmonia narinfos point here as
+/// `nar/<nar-hash>.nar?hash=<output-hash>`; legacy Circus URLs using the
+/// output hash in the path continue to work for uncached clients.
 async fn serve_nar_combined(
   State(state): State<AppState>,
   Path(hash): Path<String>,
+  Query(query): Query<NarQuery>,
 ) -> Result<Response, ApiError> {
   if !state.config.cache.enabled {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let (stripped, content_type, compressor): (
-    &str,
-    &'static str,
-    Option<(&'static str, &'static [&'static str])>,
-  ) = if let Some(s) = hash.strip_suffix(".nar.zst") {
-    (s, "application/zstd", Some(("zstd", &["-c"])))
-  } else if let Some(s) = hash.strip_suffix(".nar.gz") {
-    (s, "application/gzip", Some(("gzip", &["-c"])))
-  } else if let Some(s) = hash.strip_suffix(".nar.bz2") {
-    (s, "application/x-bzip2", Some(("bzip2", &["-c"])))
-  } else if let Some(s) = hash.strip_suffix(".nar.br") {
-    (s, "application/brotli", Some(("brotli", &["-c"])))
-  } else if let Some(s) = hash.strip_suffix(".nar.xz") {
-    (s, "application/x-xz", Some(("xz", &["-c"])))
-  } else if let Some(s) = hash.strip_suffix(".nar") {
-    (s, "application/x-nix-nar", None)
-  } else {
+  let Some(stripped) = hash.strip_suffix(".nar") else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
@@ -525,48 +345,41 @@ async fn serve_nar_combined(
     return Ok(response);
   }
 
-  if !circus_common::validate::is_valid_nix_hash(stripped) {
+  let output_hash = query.hash.as_deref().unwrap_or(stripped);
+  if !circus_common::validate::is_valid_nix_hash(output_hash) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let store_dir = state.config.nix.store_dir.to_string_lossy();
-  let store_dir = store_dir.trim_end_matches('/');
-  let Some((store_path, require_ca)) =
-    resolve_servable_path(&state.pool, stripped, store_dir).await?
+  let Some((store_dir, info)) =
+    query_harmonia_path_info(output_hash, state.config.nix.store_dir.clone())
+      .await?
   else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
-  if require_ca && !is_content_addressed(&store_path).await {
+
+  if !is_servable_harmonia_path(&info) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let body = if let Some((bin, args)) = compressor {
-    let stdout = pipe_through_compressor(&store_path, bin, args)?;
-    Body::from_stream(tokio_util::io::ReaderStream::new(stdout))
-  } else {
-    let mut child = Command::new("nix")
-      .args(["store", "dump-path", &store_path])
-      .stdout(std::process::Stdio::piped())
-      .stderr(std::process::Stdio::inherit())
-      .kill_on_drop(true)
-      .spawn()
-      .map_err(|_| {
-        ApiError(circus_common::CiError::Build(
-          "Failed to start nix store dump-path".to_string(),
-        ))
-      })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-      ApiError(circus_common::CiError::Build(
-        "nix store dump-path produced no stdout".to_string(),
-      ))
-    })?;
-    Body::from_stream(tokio_util::io::ReaderStream::new(ChildOutput {
-      children: vec![OwnedChild::Tokio(child)],
-      stdout,
-    }))
-  };
+  if query.hash.is_some() {
+    let nar_hash: Hash = info.info.nar_hash.into();
+    let expected_hash = nar_hash.as_base32().as_bare().to_string();
+    if stripped != expected_hash {
+      return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+  }
 
-  Ok((StatusCode::OK, [("content-type", content_type)], body).into_response())
+  let store_path = PathBuf::from(store_dir.display(&info.path).to_string());
+  let body = Body::from_stream(NarByteStream::new(store_path));
+
+  Ok(
+    (
+      StatusCode::OK,
+      [("content-type", "application/x-nix-nar")],
+      body,
+    )
+      .into_response(),
+  )
 }
 
 /// Nix binary cache info endpoint.

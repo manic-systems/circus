@@ -109,6 +109,16 @@ uuid = { version = "1.23.2", features = [ "v4", "serde" ] }
 whoami = { version = "2.1.2", features = [ "std" ] }
 x509-parser = "0.18.1"
 
+# Harmonia does not publish regularly to crates.io, and moves faster on their Github
+# repository, providing the features we need *only* on the Git version. While this is
+# annoying it's the only way we can use Harmonia to back our binary cache.
+harmonia-file-nar              = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
+harmonia-store-content-address = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
+harmonia-store-nar-info        = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
+harmonia-store-path            = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
+harmonia-store-path-info       = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
+harmonia-utils-hash            = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
+
 # In fc-common `os::OsRng` is configured out by feature flag.
 # argon/std -> password-hash/std -> rand_core/std -> getrandom
 # Add it back.
