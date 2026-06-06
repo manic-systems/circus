@@ -75,6 +75,18 @@
       pkgs = pkgsFor system;
 
       callTest = path: pkgs.callPackage path {inherit self;};
+
+      formatting = pkgs.runCommand "circus-formatting-check" {nativeBuildInputs = [self.formatter.${system}];} ''
+        cp -r --no-preserve=mode ${self} src
+        cd src
+        export HOME="$TMPDIR" DENO_DIR="$TMPDIR/deno"
+        nix3-fmt-wrapper
+        diff -ru ${self} . || {
+          echo "::error::Tree is not formatted; run 'nix fmt' and commit the result." >&2
+          exit 1
+        }
+        touch "$out"
+      '';
       vmTests = {
         # Split VM integration tests
         service-startup = callTest ./nix/tests/startup.nix;
@@ -94,6 +106,7 @@
       };
     in {
       inherit (vmTests) service-startup basic-api auth-rbac api-crud features webhooks e2e declarative gc-pinning machine-health channel-tarball distributed agent-dispatch s3-cache;
+      inherit formatting;
       full = pkgs.symlinkJoin {
         name = "vm-tests-full";
         paths = builtins.attrValues vmTests;
