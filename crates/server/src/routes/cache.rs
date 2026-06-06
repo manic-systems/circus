@@ -67,7 +67,7 @@ async fn query_harmonia_path_info(
 
   let Some(row) = sqlx::query_as::<_, ValidPathRow>(
     "SELECT id, path, hash, registrationTime, deriver, narSize, ultimate, \
-     sigs, ca FROM ValidPaths WHERE path >= ?1 LIMIT 1",
+     sigs, ca FROM ValidPaths WHERE path >= ?1 ORDER BY path ASC LIMIT 1",
   )
   .bind(&prefix)
   .fetch_optional(nix_store_db)
@@ -351,13 +351,13 @@ async fn serve_nar_combined(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let Some(stripped) = hash.strip_suffix(".nar") else {
-    return Ok(StatusCode::NOT_FOUND.into_response());
-  };
-
   if let Some(response) = redirect_uploaded_nar(&state, &hash).await? {
     return Ok(response);
   }
+
+  let Some(stripped) = hash.strip_suffix(".nar") else {
+    return Ok(StatusCode::NOT_FOUND.into_response());
+  };
 
   let output_hash = query.hash.as_deref().unwrap_or(stripped);
   if !circus_common::validate::is_valid_nix_hash(output_hash) {
