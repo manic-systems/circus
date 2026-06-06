@@ -46,14 +46,15 @@ fn session_role(extensions: &Extensions) -> Option<&str> {
   extensions.get::<ApiKey>().map(|k| k.role.as_str())
 }
 
+fn role_grants(role: &str, permission: Permission) -> bool {
+  role == Permission::Admin.role_str() || role == permission.role_str()
+}
+
 /// Whether the authenticated session may exercise `permission`. Admin
 /// sessions satisfy every check; anonymous sessions satisfy none.
 #[must_use]
 pub fn check(extensions: &Extensions, permission: Permission) -> bool {
-  let Some(role) = session_role(extensions) else {
-    return false;
-  };
-  role == Permission::Admin.role_str() || role == permission.role_str()
+  session_role(extensions).is_some_and(|role| role_grants(role, permission))
 }
 
 /// Reject the request with `UNAUTHORIZED` if the session is anonymous,
@@ -66,13 +67,10 @@ pub fn require(
   extensions: &Extensions,
   permission: Permission,
 ) -> Result<(), StatusCode> {
-  let Some(role) = session_role(extensions) else {
-    return Err(StatusCode::UNAUTHORIZED);
-  };
-  if role == Permission::Admin.role_str() || role == permission.role_str() {
-    Ok(())
-  } else {
-    Err(StatusCode::FORBIDDEN)
+  match session_role(extensions) {
+    None => Err(StatusCode::UNAUTHORIZED),
+    Some(role) if role_grants(role, permission) => Ok(()),
+    Some(_) => Err(StatusCode::FORBIDDEN),
   }
 }
 
