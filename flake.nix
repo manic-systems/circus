@@ -102,16 +102,18 @@
         channel-tarball = callTest ./nix/tests/channel-tarball.nix;
         distributed = callTest ./nix/tests/distributed.nix;
         agent-dispatch = callTest ./nix/tests/agent-dispatch.nix;
+        capability-scheduling = callTest ./nix/tests/capability-scheduling.nix;
         s3-cache = callTest ./nix/tests/s3-cache.nix;
       };
-    in {
-      inherit (vmTests) service-startup basic-api auth-rbac api-crud features webhooks e2e declarative gc-pinning machine-health channel-tarball distributed agent-dispatch s3-cache;
-      inherit formatting;
-      full = pkgs.symlinkJoin {
-        name = "vm-tests-full";
-        paths = builtins.attrValues vmTests;
-      };
-    });
+    in
+      vmTests
+      // {
+        inherit formatting;
+        full = pkgs.symlinkJoin {
+          name = "vm-tests-full";
+          paths = builtins.attrValues vmTests;
+        };
+      });
 
     devShells = forAllSystems (system: let
       pkgs = pkgsFor system;

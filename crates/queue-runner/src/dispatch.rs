@@ -1,11 +1,18 @@
 //! The running state should mean a build already holds execution capacity.
 
 use std::{
+  cmp::Ordering,
+  collections::HashSet,
   path::Path,
   sync::Arc,
   time::{Duration, Instant},
 };
 
+use BuilderSchedulingStrategy::{
+  CpuCoreCountWithSpeedFactor,
+  Dynamic,
+  SpeedFactorOnly,
+};
 use circus_common::{config::BuilderSchedulingStrategy, models::Build, repo};
 use sqlx::PgPool;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
@@ -70,6 +77,52 @@ pub(crate) fn supports_required_features(
       .iter()
       .all(|feature| required_features.contains(feature))
 }
+
+/// Count of the builder's features that some other pending build needs
+/// (`demand`) but this build does not. Scoping to `demand` keeps the score 0
+/// when nothing is contended, leaving the load strategy in charge.
+#[must_use]
+pub(crate) fn contended_surplus(
+  supported_features: &[String],
+  required_features: &[String],
+  demand: &HashSet<String>,
+) -> usize {
+  supported_features
+    .iter()
+    .filter(|feature| {
+      demand.contains(*feature) && !required_features.contains(*feature)
+    })
+    .count()
+}
+
+/// Load-based ordering for the configured strategy, used as the tie-break once
+/// builders are ranked by contended surplus.
+///
+/// Returns [`Ordering::Less`] when `a` is the better choice.
+fn strategy_order(
+  strategy: &BuilderSchedulingStrategy,
+  a: &AgentSnapshot,
+  b: &AgentSnapshot,
+) -> Ordering {
+  match strategy {
+    SpeedFactorOnly => {
+      b.speed_factor
+        .partial_cmp(&a.speed_factor)
+        .unwrap_or(Ordering::Equal)
+    },
+    CpuCoreCountWithSpeedFactor => {
+      let av = a.cpu_count as f32 * a.speed_factor;
+      let bv = b.cpu_count as f32 * b.speed_factor;
+      bv.partial_cmp(&av).unwrap_or(Ordering::Equal)
+    },
+    Dynamic => {
+      let free = |s: &AgentSnapshot| -> f32 {
+        s.max_jobs.saturating_sub(s.current_jobs) as f32 * s.speed_factor
+      };
+      free(b).partial_cmp(&free(a)).unwrap_or(Ordering::Equal)
+    },
+  }
+}
 pub struct AgentDispatch<'a> {
   pub timeout:                    Duration,
   pub max_silent_time:            Duration,
@@ -130,12 +183,6 @@ async fn select_and_reserve_agent(
   heartbeat_ttl: Duration,
   strategy: &BuilderSchedulingStrategy,
 ) -> Option<(Arc<AgentMeta>, AgentSnapshot, SlotGuard)> {
-  use BuilderSchedulingStrategy::{
-    CpuCoreCountWithSpeedFactor,
-    Dynamic,
-    SpeedFactorOnly,
-  };
-
   let mut candidates = agent_pool.candidates_for(system);
   if candidates.is_empty() {
     return None;
@@ -192,28 +239,26 @@ async fn select_and_reserve_agent(
     }
   }
 
+  // Capability-preserving order: prefer builders that waste the fewest
+  // currently-contended capabilities on this build, so a versatile builder is
+  // kept free for the queued work that actually needs it.
+  let demand = repo::builds::pending_feature_demand(pool, system)
+    .await
+    .unwrap_or_default();
+
   eligible.sort_by(|a, b| {
-    match strategy {
-      SpeedFactorOnly => {
-        b.1
-          .speed_factor
-          .partial_cmp(&a.1.speed_factor)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      },
-      CpuCoreCountWithSpeedFactor => {
-        let av = a.1.cpu_count as f32 * a.1.speed_factor;
-        let bv = b.1.cpu_count as f32 * b.1.speed_factor;
-        bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
-      },
-      Dynamic => {
-        let free = |s: &AgentSnapshot| -> f32 {
-          s.max_jobs.saturating_sub(s.current_jobs) as f32 * s.speed_factor
-        };
-        free(&b.1)
-          .partial_cmp(&free(&a.1))
-          .unwrap_or(std::cmp::Ordering::Equal)
-      },
-    }
+    let sa = contended_surplus(
+      &a.1.supported_features,
+      &build.required_features,
+      &demand,
+    );
+    let sb = contended_surplus(
+      &b.1.supported_features,
+      &build.required_features,
+      &demand,
+    );
+    sa.cmp(&sb)
+      .then_with(|| strategy_order(strategy, &a.1, &b.1))
   });
 
   eligible.into_iter().find_map(|(meta, snap)| {
@@ -329,10 +374,59 @@ async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-  use super::supports_required_features;
+  use std::collections::HashSet;
+
+  use super::{contended_surplus, supports_required_features};
 
   fn strs(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+  }
+
+  fn demand(values: &[&str]) -> HashSet<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+  }
+
+  #[test]
+  fn no_contention_scores_zero_for_every_builder() {
+    // Nothing queued demands a feature, so ordering must fall back entirely to
+    // the load strategy (every builder scores 0).
+    let empty = demand(&[]);
+    assert_eq!(
+      contended_surplus(&strs(&["kvm", "big-parallel"]), &strs(&[]), &empty),
+      0
+    );
+    assert_eq!(contended_surplus(&strs(&[]), &strs(&[]), &empty), 0);
+  }
+
+  #[test]
+  fn fungible_build_is_penalised_on_a_contended_builder() {
+    // A plain build, while a kvm build is queued
+    let d = demand(&["kvm"]);
+    assert_eq!(contended_surplus(&strs(&["kvm"]), &strs(&[]), &d), 1);
+    assert_eq!(contended_surplus(&strs(&[]), &strs(&[]), &d), 0);
+  }
+
+  #[test]
+  fn a_builds_own_required_feature_is_never_surplus() {
+    // The kvm build itself belongs on the kvm builder, so kvm must not count
+    // against it even though kvm is in demand.
+    let d = demand(&["kvm"]);
+    assert_eq!(contended_surplus(&strs(&["kvm"]), &strs(&["kvm"]), &d), 0);
+  }
+
+  #[test]
+  fn only_demanded_features_count_not_noise() {
+    // `benchmark` is advertised but nothing demands it, so it must not inflate
+    // surplus, only the demanded `uid-range` does.
+    let d = demand(&["uid-range"]);
+    assert_eq!(
+      contended_surplus(
+        &strs(&["benchmark", "big-parallel", "uid-range"]),
+        &strs(&[]),
+        &d,
+      ),
+      1
+    );
   }
 
   #[test]

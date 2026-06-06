@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -270,6 +272,30 @@ pub async fn list_pending_in_scheduler_order(
   .fetch_all(pool)
   .await
   .map_err(CiError::Database)
+}
+
+/// The set of system features any pending build for `system` requires.
+///
+/// This is used by capability-preserving scheduling to decide which builder
+/// capabilities are currently contended, so a versatile builder is not handed
+/// fungible work while a build that needs one of its scarce features is queued.
+///
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn pending_feature_demand(
+  pool: &PgPool,
+  system: &str,
+) -> Result<HashSet<String>> {
+  let rows = sqlx::query_as(
+    "SELECT DISTINCT unnest(required_features) FROM builds WHERE status = \
+     'pending' AND system = $1",
+  )
+  .bind(system)
+  .fetch_all(pool)
+  .await
+  .map_err(CiError::Database)?;
+  Ok(rows.into_iter().map(|(feature,)| feature).collect())
 }
 
 /// Atomically increment a pending build's priority by `delta`. The row is
@@ -602,9 +628,7 @@ pub async fn get_completed_by_drv_paths(
 /// # Errors
 ///
 /// Returns error if database query fails.
-pub async fn list_pinned_ids(
-  pool: &PgPool,
-) -> Result<std::collections::HashSet<Uuid>> {
+pub async fn list_pinned_ids(pool: &PgPool) -> Result<HashSet<Uuid>> {
   let rows: Vec<(Uuid,)> =
     sqlx::query_as("SELECT id FROM builds WHERE keep = true")
       .fetch_all(pool)
