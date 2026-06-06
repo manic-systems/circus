@@ -442,49 +442,10 @@ pub struct EmailConfig {
   pub on_failure_only: bool,
 }
 
-/// NAR compression algorithm served by the binary cache.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum NarCompression {
-  #[default]
-  Zstd,
-  Bzip2,
-  Brotli,
-  Xz,
-  None,
-}
-
-impl NarCompression {
-  #[must_use]
-  pub const fn as_str(&self) -> &'static str {
-    match self {
-      Self::Zstd => "zstd",
-      Self::Bzip2 => "bzip2",
-      Self::Brotli => "br",
-      Self::Xz => "xz",
-      Self::None => "none",
-    }
-  }
-
-  #[must_use]
-  pub const fn file_extension(&self) -> &'static str {
-    match self {
-      Self::Zstd => ".nar.zst",
-      Self::Bzip2 => ".nar.bz2",
-      Self::Brotli => ".nar.br",
-      Self::Xz => ".nar.xz",
-      Self::None => ".nar",
-    }
-  }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfig {
   pub enabled:         bool,
   pub secret_key_file: Option<PathBuf>,
-  /// NAR compression algorithm (default: zstd)
-  #[serde(default)]
-  pub compression:     NarCompression,
   /// Public URL of this binary cache (for channel manifest endpoints)
   pub cache_url:       Option<String>,
 }
@@ -946,7 +907,6 @@ impl Default for CacheConfig {
     Self {
       enabled:         true,
       secret_key_file: None,
-      compression:     NarCompression::Zstd,
       cache_url:       None,
     }
   }
