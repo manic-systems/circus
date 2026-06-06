@@ -26,6 +26,12 @@ testers.runNixOSTest {
       security.sudo.enable = true;
       environment.systemPackages = with pkgs; [curl jq openssl util-linux];
 
+      environment.etc."circus/cache-key.sec" = {
+        text = "circus-test-cache-1:C7h9wunIEh7kCa2Ylpa/omVaLewO7gQTb2LEPCPeJ0G6ZsLd2SaJZyt44z6nX5RanSkkrjM4xwapqVPneHY83A==";
+        mode = "0400";
+        user = "circus";
+      };
+
       nix.settings.experimental-features = ["nix-command" "flakes"];
       nix.settings.substituters = lib.mkForce [];
 
@@ -63,8 +69,11 @@ testers.runNixOSTest {
           };
           gc.enabled = false;
           logs.log_dir = "/var/lib/circus/logs";
-          cache.enabled = false;
-          signing.enabled = false;
+          cache.enabled = true;
+          signing = {
+            enabled = true;
+            key_file = "/etc/circus/cache-key.sec";
+          };
           tracing = {
             level = "info";
             format = "compact";
@@ -82,6 +91,8 @@ testers.runNixOSTest {
                   builtins.hashString "sha256" "demo-agent-token-please-rotate"
                 }"
               ];
+              cache_substituter = "http://runner:3000/nix-cache";
+              cache_public_key = "circus-test-cache-1:umbC3dkmiWcreOM+p1+UWp0pJK4zOMcGqalT53h2PNw=";
             };
           };
         };
@@ -151,6 +162,7 @@ testers.runNixOSTest {
         )
 
     import json
+    import re
     auth = "-H 'Authorization: Bearer circus_bootstrap_key'"
 
     with subtest("Admin /connected endpoint lists the live agent"):
@@ -210,5 +222,86 @@ testers.runNixOSTest {
         )
         row = json.loads(out)
         assert row.get("connected") is True, f"expected connected=True after restart, got: {row}"
+
+    with subtest("Create project with a buildable flake"):
+        runner.succeed("mkdir -p /var/lib/circus/test-repos")
+        runner.succeed("git init --bare /var/lib/circus/test-repos/distributed-cache.git")
+        runner.succeed("git config --global --add safe.directory /var/lib/circus/test-repos/distributed-cache.git")
+        runner.succeed("mkdir -p /tmp/distributed-cache-work")
+        runner.succeed("cd /tmp/distributed-cache-work && git init")
+        runner.succeed("cd /tmp/distributed-cache-work && git config user.email 'test@circus' && git config user.name 'circus Test'")
+        runner.succeed(
+            "cat > /tmp/distributed-cache-work/flake.nix << 'FLAKE'\n"
+            "{\n"
+            '  description = "circus distributed cache test";\n'
+            '  outputs = { self, ... }: {\n'
+            '    packages.x86_64-linux.agent-cache-test = derivation {\n'
+            '      name = "circus-agent-cache-test";\n'
+            '      system = "x86_64-linux";\n'
+            '      builder = "builtin:fetchurl";\n'
+            '      url = "file://''${builtins.toFile "circus-agent-cache-test.txt" "agent-cache-test\\n"}";\n'
+            '      outputHashMode = "flat";\n'
+            '      outputHashAlgo = "sha256";\n'
+            '      outputHash = "sha256-wq3ayny+lhFrJwgYNU6Jqb74vaFul5WqlbD7fCtCYRI=";\n'
+            "    };\n"
+            "  };\n"
+            "}\n"
+            "FLAKE\n"
+        )
+        runner.succeed("cd /tmp/distributed-cache-work && git add -A && git commit -m 'initial flake'")
+        runner.succeed("cd /tmp/distributed-cache-work && git remote add origin /var/lib/circus/test-repos/distributed-cache.git")
+        runner.succeed("cd /tmp/distributed-cache-work && git push origin HEAD:refs/heads/master")
+        runner.succeed("chown -R circus:circus /var/lib/circus/test-repos")
+
+        project_id = runner.succeed(
+            "curl -sf -X POST http://127.0.0.1:3000/api/v1/projects "
+            f"{auth} "
+            "-H 'Content-Type: application/json' "
+            "-d '{\"name\": \"distributed-cache\", \"repository_url\": \"file:///var/lib/circus/test-repos/distributed-cache.git\"}' "
+            "| jq -r .id"
+        ).strip()
+        runner.succeed(
+            f"curl -sf -X POST http://127.0.0.1:3000/api/v1/projects/{project_id}/jobsets "
+            f"{auth} "
+            "-H 'Content-Type: application/json' "
+            "-d '{\"name\": \"packages\", \"nix_expression\": \"packages\", \"flake_mode\": true, \"enabled\": true, \"check_interval\": 10}'"
+        )
+
+    with subtest("Distributed agent build is served by runner binary cache"):
+        runner.wait_until_succeeds(
+            "curl -sf 'http://127.0.0.1:3000/api/v1/builds?job_name=agent-cache-test' "
+            "| jq -e '.items[] | select(.status==\"succeeded\")'",
+            timeout=120,
+        )
+        build = json.loads(runner.succeed(
+            "curl -sf 'http://127.0.0.1:3000/api/v1/builds?job_name=agent-cache-test' "
+            "| jq -c '.items[] | select(.status==\"succeeded\")' | head -1"
+        ))
+        build_id = build["id"]
+        output_path = build["build_output_path"]
+        assert output_path.startswith("/nix/store/"), f"expected store output, got: {output_path}"
+
+        hash_match = re.match(r"/nix/store/([a-z0-9]+)-", output_path)
+        assert hash_match, f"could not extract store hash from: {output_path}"
+        store_hash = hash_match.group(1)
+
+        runner.succeed(
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tAc \""
+            "SELECT count(*) FROM builds b JOIN builder_sessions s ON b.agent_machine_id = s.machine_id "
+            f"WHERE b.id='{build_id}' AND s.name='agent-01' AND b.status='succeeded'\" "
+            "| grep -qE '^ *1$'"
+        )
+
+        narinfo = runner.succeed(f"curl -sf http://127.0.0.1:3000/nix-cache/{store_hash}.narinfo")
+        assert f"StorePath: {output_path}" in narinfo, f"narinfo should describe agent-built output: {narinfo}"
+        assert "NarHash:" in narinfo, f"narinfo missing NarHash: {narinfo}"
+
+        nar_url = next(
+            line.split(": ", 1)[1]
+            for line in narinfo.splitlines()
+            if line.startswith("URL: ")
+        )
+        runner.succeed(f"curl -sf 'http://127.0.0.1:3000/nix-cache/{nar_url}' > /tmp/distributed-agent-output.nar")
+        runner.succeed("test -s /tmp/distributed-agent-output.nar")
   '';
 }
