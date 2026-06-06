@@ -15,6 +15,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::sandbox::NixTool;
+
 /// Keep log writes below the 1MiB wire cap without sending one RPC per line.
 const MAX_LOG_BATCH_BYTES: usize = 256 * 1024;
 const MAX_LOG_BATCH_LINES: usize = 4096;
@@ -49,6 +51,7 @@ pub struct BuildOptions<'a> {
   pub extra_args:        Vec<String>,
   pub cache_substituter: String,
   pub cache_public_key:  String,
+  pub rootless:          bool,
 }
 
 /// One output discovered after a successful realisation.
@@ -93,11 +96,11 @@ pub async fn run(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
   )]
-  let cmd = build_command(&opts);
+  let cmd = crate::sandbox::wrap_command(opts.rootless, build_command(&opts)?)?;
   run_command(cmd, &opts, Tunables::default(), log_sink, cancel).await
 }
 
-fn build_command(opts: &BuildOptions<'_>) -> Command {
+fn build_command(opts: &BuildOptions<'_>) -> color_eyre::Result<Command> {
   let mut args = vec![
     "--realise".into(),
     "--log-format".into(),
@@ -122,13 +125,13 @@ fn build_command(opts: &BuildOptions<'_>) -> Command {
   }
   args.extend(opts.extra_args.iter().cloned());
 
-  let mut cmd = Command::new("nix-store");
+  let mut cmd = crate::sandbox::nix_command(opts.rootless, NixTool::NixStore)?;
   cmd
     .args(&args)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .kill_on_drop(true);
-  cmd
+  Ok(cmd)
 }
 
 enum Event {
@@ -558,7 +561,7 @@ async fn run_command(
   };
 
   let outputs = if success {
-    query_outputs(opts.drv_path).await
+    query_outputs(opts.drv_path, opts.rootless).await
   } else {
     Vec::new()
   };
@@ -599,15 +602,18 @@ async fn sleep_opt(d: Option<Duration>) {
 /// `nix derivation show --derivation` returns the structured outputs map
 /// with output names as keys. We fall back to `nix-store --query --outputs`
 /// (which only gives paths, not names) if that fails.
-async fn query_outputs(drv_path: &str) -> Vec<ResolvedOutput> {
-  if let Some(parsed) = query_outputs_via_show(drv_path).await {
+async fn query_outputs(drv_path: &str, rootless: bool) -> Vec<ResolvedOutput> {
+  if let Some(parsed) = query_outputs_via_show(drv_path, rootless).await {
     return parsed;
   }
-  match tokio::process::Command::new("nix-store")
-    .args(["--query", "--outputs", drv_path])
-    .output()
-    .await
-  {
+  let Ok(mut cmd) = crate::sandbox::nix_command(rootless, NixTool::NixStore)
+    .and_then(|cmd| {
+      crate::sandbox::wrap_command(rootless, cmd).map_err(Into::into)
+    })
+  else {
+    return Vec::new();
+  };
+  match cmd.args(["--query", "--outputs", drv_path]).output().await {
     Ok(out) if out.status.success() => {
       String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -650,8 +656,13 @@ fn summarize_failure(msgs: &VecDeque<String>) -> String {
   }
 }
 
-async fn query_outputs_via_show(drv_path: &str) -> Option<Vec<ResolvedOutput>> {
-  let out = tokio::process::Command::new("nix")
+async fn query_outputs_via_show(
+  drv_path: &str,
+  rootless: bool,
+) -> Option<Vec<ResolvedOutput>> {
+  let cmd = crate::sandbox::nix_command(rootless, NixTool::Nix).ok()?;
+  let mut cmd = crate::sandbox::wrap_command(rootless, cmd).ok()?;
+  let out = cmd
     .args([
       "--extra-experimental-features",
       "nix-command",
@@ -784,6 +795,7 @@ mod tests {
       extra_args: Vec::new(),
       cache_substituter: String::new(),
       cache_public_key: String::new(),
+      rootless: false,
     }
   }
 

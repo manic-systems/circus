@@ -55,6 +55,13 @@ lettre = { version = "0.11.22", default-features = false, features = [
 ] }
 libc = "0.2.186"
 moka = { version = "0.12.11", features = [ "sync" ] }
+nix = { version = "0.31.3", default-features = false, features = [
+  "sched",
+  "mount",
+  "fs",
+  "user",
+  "process",
+] }
 nix-nar = "0.4.0"
 oauth2 = "5.0.0"
 openapiv3 = "2.2.0"

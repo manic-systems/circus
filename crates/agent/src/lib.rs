@@ -14,6 +14,7 @@
 pub mod build;
 pub mod config;
 pub mod psi;
+pub mod sandbox;
 pub mod session;
 pub mod tls;
 pub mod upload;

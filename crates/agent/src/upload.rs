@@ -36,13 +36,10 @@ use circus_proto::{nar_info, runner};
 use color_eyre::eyre::{Context as _, eyre};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
-use tokio::{
-  io::{AsyncRead, BufReader, ReadBuf},
-  process::Command,
-};
+use tokio::io::{AsyncRead, BufReader, ReadBuf};
 use tokio_util::io::ReaderStream;
 
-use crate::build::ResolvedOutput;
+use crate::{build::ResolvedOutput, sandbox::NixTool};
 
 /// Per-output narinfo discovered via `nix path-info --json`.
 #[derive(Debug, Clone)]
@@ -75,6 +72,7 @@ pub async fn upload_all(
   build_id: &str,
   compression: &str,
   outputs: &[ResolvedOutput],
+  rootless: bool,
 ) -> color_eyre::Result<UploadStats> {
   #![expect(
     clippy::future_not_send,
@@ -88,7 +86,7 @@ pub async fn upload_all(
   // set with a recorded reason.
   let mut metadata: Vec<PathMetadata> = Vec::with_capacity(outputs.len());
   for o in outputs {
-    match query_path_info(&o.path).await {
+    match query_path_info(&o.path, rootless).await {
       Ok(m) => metadata.push(m),
       Err(e) => failures.push((o.path.clone(), format!("path-info: {e}"))),
     }
@@ -130,7 +128,7 @@ pub async fn upload_all(
       failures.push((meta.store_path.clone(), slot.error.clone()));
       continue;
     }
-    match upload_one(&http, meta, slot, compression).await {
+    match upload_one(&http, meta, slot, compression, rootless).await {
       Ok(uploaded) => {
         if let Err(e) = notify_complete(
           runner_cap,
@@ -226,15 +224,19 @@ async fn upload_one(
   meta: &PathMetadata,
   slot: &PresignSlot,
   compression: &str,
+  rootless: bool,
 ) -> color_eyre::Result<UploadedBytes> {
   // Spawn `nix-store --dump <path>` and keep its stdout as a streaming
   // AsyncRead. The PUT body reads from it on demand, so the NAR is
   // never materialised in agent memory.
-  let mut dump = Command::new("nix-store")
+  let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
+  cmd
     .arg("--dump")
     .arg(&meta.store_path)
     .stdout(Stdio::piped())
-    .kill_on_drop(true)
+    .kill_on_drop(true);
+  let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
+  let mut dump = cmd
     .spawn()
     .with_context(|| format!("spawn nix-store --dump {}", meta.store_path))?;
   let stdout = dump
@@ -323,12 +325,14 @@ impl AsyncRead for HashingReader {
   }
 }
 
-async fn query_path_info(store_path: &str) -> color_eyre::Result<PathMetadata> {
-  let out = Command::new("nix")
-    .args(["path-info", "--json", "--closure-size", store_path])
-    .output()
-    .await
-    .context("nix path-info")?;
+async fn query_path_info(
+  store_path: &str,
+  rootless: bool,
+) -> color_eyre::Result<PathMetadata> {
+  let mut cmd = crate::sandbox::nix_command(rootless, NixTool::Nix)?;
+  cmd.args(["path-info", "--json", "--closure-size", store_path]);
+  let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
+  let out = cmd.output().await.context("nix path-info")?;
   if !out.status.success() {
     return Err(eyre!("nix path-info exited with {}", out.status));
   }
