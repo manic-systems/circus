@@ -80,7 +80,8 @@ pub struct Agent {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TlsConfig {
-  pub ca_file:   PathBuf,
+  #[serde(default)]
+  pub ca_file:   Option<PathBuf>,
   #[serde(default)]
   pub cert_file: Option<PathBuf>,
   #[serde(default)]
