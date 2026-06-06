@@ -240,6 +240,20 @@ pub async fn evaluate(
   }
 }
 
+/// nix-eval-jobs chokes on raw `nixosConfigurations.<name>`, so drill into the
+/// toplevel derivation.
+fn rewrite_nixos_config_expr(expr: &str) -> Option<String> {
+  let parts = expr.split('.').collect::<Vec<&str>>();
+  match parts.as_slice() {
+    ["nixosConfigurations", name] => {
+      Some(format!(
+        "nixosConfigurations.{name}.config.system.build.toplevel"
+      ))
+    },
+    _ => None,
+  }
+}
+
 #[tracing::instrument(skip(config, inputs))]
 async fn evaluate_flake(
   repo_path: &Path,
@@ -248,7 +262,23 @@ async fn evaluate_flake(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
 ) -> Result<EvalResult> {
-  let flake_ref = format!("{}#{}", repo_path.display(), nix_expression);
+  if nix_expression == "nixosConfigurations" {
+    return evaluate_all_nixos_configs(repo_path, timeout, config, inputs)
+      .await;
+  }
+
+  let effective_expr = rewrite_nixos_config_expr(nix_expression)
+    .unwrap_or_else(|| nix_expression.to_string());
+
+  if effective_expr != nix_expression {
+    tracing::info!(
+      original = %nix_expression,
+      rewritten = %effective_expr,
+      "Rewrote nixosConfigurations to target toplevel derivation"
+    );
+  }
+
+  let flake_ref = format!("{}#{effective_expr}", repo_path.display());
 
   tracing::debug!(flake_ref = %flake_ref, "Running nix-eval-jobs");
 
@@ -304,7 +334,7 @@ async fn evaluate_flake(
       },
       _ => {
         tracing::info!("nix-eval-jobs unavailable, falling back to nix eval");
-        let jobs = evaluate_with_nix_eval(repo_path, nix_expression).await?;
+        let jobs = evaluate_with_nix_eval(repo_path, &effective_expr).await?;
         Ok(EvalResult {
           jobs,
           error_count: 0,
@@ -316,6 +346,111 @@ async fn evaluate_flake(
   .map_err(|_| {
     CiError::Timeout(format!("Nix evaluation timed out after {timeout:?}"))
   })?
+}
+
+/// Resolve all toplevels in one nix eval.
+async fn evaluate_all_nixos_configs(
+  repo_path: &Path,
+  _timeout: Duration,
+  _config: &EvaluatorConfig,
+  _inputs: &[JobsetInput],
+) -> Result<EvalResult> {
+  let flake_ref = format!("{}#nixosConfigurations", repo_path.display());
+
+  let expr = "builtins.mapAttrs (_: v: v.config.system.build.toplevel)";
+  let output = tokio::process::Command::new("nix")
+    .args([
+      "eval",
+      "--json",
+      &flake_ref,
+      "--apply",
+      expr,
+      "--no-write-lock-file",
+    ])
+    .kill_on_drop(true)
+    .output()
+    .await
+    .map_err(|e| {
+      CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
+    })?;
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    return Err(CiError::NixEval(format!(
+      "Failed to evaluate nixosConfigurations: {stderr}"
+    )));
+  }
+
+  let value = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+    .map_err(|e| {
+      CiError::NixEval(format!(
+        "Failed to parse nixosConfigurations output: {e}"
+      ))
+    })?;
+
+  let entries = flatten_attrs("", &value);
+
+  tracing::info!(
+    count = entries.len(),
+    "Discovered nixosConfigurations toplevels"
+  );
+
+  let mut jobs = Vec::new();
+  for (name, eval_path) in entries {
+    let drv_ref = format!(
+      "{}#nixosConfigurations.{name}.config.system.build.toplevel",
+      repo_path.display()
+    );
+    let shown = resolve_drv(&drv_ref).await;
+
+    let (drv_path, system, outputs, input_drvs) = if let Some(shown) = shown {
+      (
+        shown.drv_path,
+        shown.system,
+        shown.outputs,
+        shown.input_drvs,
+      )
+    } else if is_store_drv_path(&eval_path) {
+      (eval_path, None, None, None)
+    } else {
+      tracing::warn!(
+        attr = %name,
+        "Skipping nixosConfiguration: could not resolve drv path"
+      );
+      continue;
+    };
+
+    jobs.push(NixJob {
+      name,
+      drv_path,
+      system,
+      outputs,
+      input_drvs,
+      constituents: None,
+      meta: NixMeta::default(),
+    });
+  }
+
+  Ok(EvalResult {
+    jobs,
+    error_count: 0,
+  })
+}
+
+async fn resolve_drv(flake_ref: &str) -> Option<ShownDerivation> {
+  let out = tokio::process::Command::new("nix")
+    .args(["derivation", "show", flake_ref])
+    .kill_on_drop(true)
+    .output()
+    .await
+    .ok()?;
+
+  if !out.status.success() {
+    return None;
+  }
+
+  let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
+  parse_derivation_show(&json)
 }
 
 /// Legacy (non-flake) evaluation: import the nix expression file and evaluate
@@ -865,6 +1000,21 @@ mod meta_tests {
       return;
     };
     assert_eq!(shown.drv_path, "/nix/store/abc-hello.drv");
+  }
+
+  #[test]
+  fn rewrite_nixos_config_expr_only_rewrites_bare_config_name() {
+    assert_eq!(
+      rewrite_nixos_config_expr("nixosConfigurations.main").as_deref(),
+      Some("nixosConfigurations.main.config.system.build.toplevel"),
+    );
+    assert!(
+      rewrite_nixos_config_expr(
+        "nixosConfigurations.main.config.system.build.toplevel"
+      )
+      .is_none()
+    );
+    assert!(rewrite_nixos_config_expr("packages").is_none());
   }
 
   #[test]
