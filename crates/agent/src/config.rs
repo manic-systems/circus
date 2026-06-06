@@ -84,7 +84,7 @@ pub struct Agent {
   pub tls: Option<TlsConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TlsConfig {
   #[serde(default)]
   pub ca_file:   Option<PathBuf>,
