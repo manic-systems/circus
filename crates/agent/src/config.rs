@@ -4,7 +4,7 @@
 //! `/etc/circus-agent.toml`. Environment overrides with prefix
 //! `CIRCUS_AGENT__` and `__` as a path separator.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +25,7 @@ pub struct Agent {
 
   /// Bearer token presented on `register`. Hashed and compared against
   /// `[builder].auth_tokens` on the runner.
+  #[serde(default)]
   pub auth_token: String,
 
   /// Nix systems this agent can build. Must match what the host's Nix
@@ -127,11 +128,9 @@ impl AgentConfig {
   ///
   /// # Errors
   /// Returns the underlying `config` error on missing file or parse failure.
-  pub fn load(
-    path: Option<&std::path::Path>,
-  ) -> Result<Self, config::ConfigError> {
+  pub fn load(path: Option<&Path>) -> Result<Self, config::ConfigError> {
     let chosen = path
-      .map(std::path::Path::to_path_buf)
+      .map(Path::to_path_buf)
       .or_else(|| std::env::var("CIRCUS_AGENT_CONFIG").ok().map(PathBuf::from))
       .unwrap_or_else(|| PathBuf::from("/etc/circus-agent.toml"));
 
@@ -142,6 +141,17 @@ impl AgentConfig {
       )
       .build()?;
 
-    cfg.try_deserialize()
+    let mut parsed = cfg.try_deserialize::<Self>()?;
+
+    if let Ok(token) = std::env::var("CIRCUS_AGENT_TOKEN") {
+      parsed.agent.auth_token = token;
+    }
+    if parsed.agent.auth_token.is_empty() {
+      return Err(config::ConfigError::Message(
+        "no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token".into(),
+      ));
+    }
+
+    Ok(parsed)
   }
 }
