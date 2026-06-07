@@ -56,20 +56,49 @@
         });
 
       callCratePackage = path: pkgs.callPackage path {inherit craneLib commonArgs cargoArtifacts;};
-    in {
-      demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
-      # circus Packages
-      circus-admin = callCratePackage ./nix/packages/circus-admin.nix;
-      circus-agent = (callCratePackage ./nix/packages/circus-agent.nix).override {
-        commonArgs = agentArgs;
-        cargoArtifacts = agentArtifacts;
+      muslCrossAttr = {
+        x86_64-linux = "musl64";
+        i686-linux = "musl32";
+        aarch64-linux = "aarch64-multiplatform-musl";
+        armv6l-linux = "muslpi";
+        powerpc64-linux = "ppc64-musl";
+        riscv64-linux = "riscv64-musl";
       };
-      circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
-      circus-migrate-cli = callCratePackage ./nix/packages/circus-migrate-cli.nix;
-      circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
-      circus-server = callCratePackage ./nix/packages/circus-server.nix;
-    });
+
+      # A statically linked agent
+      crossPkgs = pkgs.pkgsCross.${muslCrossAttr.${system} or "musl64"};
+      staticAgentArgs = {
+        pname = "circus-agent-static";
+        inherit src;
+        strictDeps = true;
+        nativeBuildInputs = with crossPkgs.buildPackages; [pkg-config capnproto];
+        cargoExtraArgs = "--package circus-agent";
+        doCheck = false;
+        CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+        hardeningDisable = ["fortify" "fortify3"];
+      };
+      staticCraneLib = crane.mkLib crossPkgs;
+    in
+      {
+        demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
+
+        # circus Packages
+        circus-admin = callCratePackage ./nix/packages/circus-admin.nix;
+        circus-agent = (callCratePackage ./nix/packages/circus-agent.nix).override {
+          commonArgs = agentArgs;
+          cargoArtifacts = agentArtifacts;
+        };
+        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
+        circus-migrate-cli = callCratePackage ./nix/packages/circus-migrate-cli.nix;
+        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
+        circus-server = callCratePackage ./nix/packages/circus-server.nix;
+      }
+      // lib.optionalAttrs (muslCrossAttr ? ${system}) {
+        circus-agent-static = staticCraneLib.buildPackage (
+          staticAgentArgs // {cargoArtifacts = staticCraneLib.buildDepsOnly staticAgentArgs;}
+        );
+      });
 
     checks = forAllSystems (system: let
       pkgs = pkgsFor system;
