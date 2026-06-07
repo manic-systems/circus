@@ -49,6 +49,16 @@ fn cache_data_error(error: impl std::fmt::Display) -> ApiError {
   )))
 }
 
+async fn open_nix_store_db(state: &AppState) -> Option<&SqlitePool> {
+  match state.nix_store.open_db().await {
+    Ok(db) => db,
+    Err(e) => {
+      tracing::warn!("failed to open local Nix store DB for binary cache: {e}");
+      None
+    },
+  }
+}
+
 fn narinfo_has_signature(
   row: &circus_common::repo::narinfo_cache::NarInfo,
 ) -> bool {
@@ -93,19 +103,19 @@ async fn query_harmonia_path_info(
   .filter_map(|path| store_dir.parse(&path).ok())
   .collect::<BTreeSet<_>>();
 
-  let path = store_dir
-    .parse::<StorePath>(&row.path)
-    .map_err(cache_data_error)?;
+  let Ok(path) = store_dir.parse::<StorePath>(&row.path) else {
+    return Ok(None);
+  };
   let deriver = row
     .deriver
-    .map(|path| store_dir.parse::<StorePath>(&path))
-    .transpose()
-    .map_err(cache_data_error)?;
-  let nar_hash = row
+    .and_then(|path| store_dir.parse::<StorePath>(&path).ok());
+  let Ok(nar_hash) = row
     .nar_hash
     .parse::<AnyHashFmt<harmonia_store_path_info::NarHash>>()
-    .map_err(cache_data_error)?
-    .into_hash();
+  else {
+    return Ok(None);
+  };
+  let nar_hash = nar_hash.into_hash();
   let signatures = row
     .sigs
     .as_deref()
@@ -116,11 +126,7 @@ async fn query_harmonia_path_info(
         .collect()
     })
     .unwrap_or_default();
-  let ca = row
-    .ca
-    .map(|ca| ca.parse::<ContentAddress>())
-    .transpose()
-    .map_err(cache_data_error)?;
+  let ca = row.ca.and_then(|ca| ca.parse::<ContentAddress>().ok());
 
   Ok(Some(ValidPathInfo {
     path,
@@ -144,7 +150,8 @@ async fn has_circus_signed_build_product(
 ) -> Result<bool, ApiError> {
   sqlx::query_scalar::<_, bool>(
     "SELECT EXISTS(SELECT 1 FROM build_products bp JOIN builds b ON b.id = \
-     bp.build_id WHERE bp.path = $1 AND b.signed = true)",
+     bp.build_id WHERE bp.path = $1 AND b.signed = true UNION ALL SELECT 1 \
+     FROM builds WHERE build_output_path = $1 AND signed = true)",
   )
   .bind(store_path)
   .fetch_one(pool)
@@ -219,10 +226,10 @@ async fn narinfo(
     );
   }
 
-  let Some(nix_store_db) = &state.nix_store_db else {
+  let Some(nix_store_db) = open_nix_store_db(&state).await else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
-  let store_dir = state.nix_store.store_dir().map_err(cache_data_error)?;
+  let store_dir = state.nix_store.store_dir();
   let Some(info) =
     query_harmonia_path_info(hash, &store_dir, nix_store_db).await?
   else {
@@ -364,10 +371,10 @@ async fn serve_nar_combined(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  let Some(nix_store_db) = &state.nix_store_db else {
+  let Some(nix_store_db) = open_nix_store_db(&state).await else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
-  let store_dir = state.nix_store.store_dir().map_err(cache_data_error)?;
+  let store_dir = state.nix_store.store_dir();
   let Some(info) =
     query_harmonia_path_info(output_hash, &store_dir, nix_store_db).await?
   else {
