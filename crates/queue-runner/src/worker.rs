@@ -263,73 +263,62 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
   Some((nar_hash, nar_size))
 }
 
-/// Operations against the queue runner's local Nix store.
-struct RunnerStore;
-
-impl RunnerStore {
-  const fn new() -> Self {
-    Self
-  }
-
-  /// Return whether `output_path` is currently valid in this store.
-  async fn is_valid(&self, output_path: &str) -> bool {
+async fn check_valid_outputs(
+  output_paths: &[String],
+) -> color_eyre::Result<bool> {
+  Ok(
     tokio::process::Command::new("nix-store")
-      .args(["--check-validity", output_path])
+      .arg("--check-validity")
+      .args(output_paths)
       .output()
-      .await
-      .is_ok_and(|output| output.status.success())
+      .await?
+      .status
+      .success(),
+  )
+}
+
+/// Ensure successful agent-built outputs are present in the runner's store.
+///
+/// Agents can report a successful build before the runner can serve the output
+/// from its own binary cache. When any expected output is missing locally,
+/// realize the derivation on the runner and verify every output became valid
+/// before metadata, signatures, and cache publication continue.
+async fn ensure_agent_outputs(
+  drv_path: &str,
+  output_paths: &[String],
+) -> color_eyre::Result<()> {
+  if output_paths.is_empty() || check_valid_outputs(output_paths).await? {
+    return Ok(());
   }
 
-  /// Ensure successful agent-built outputs are present in this store.
-  ///
-  /// Agents can report a successful build before the runner can serve the
-  /// output from its own binary cache. When any expected output is missing
-  /// locally, realize the derivation on the runner and verify every output
-  /// became valid before metadata, signatures, and cache publication continue.
-  async fn ensure_agent_outputs(
-    &self,
-    drv_path: &str,
-    output_paths: &[String],
-  ) -> color_eyre::Result<()> {
-    let mut missing = Vec::new();
-    for output_path in output_paths {
-      if !self.is_valid(output_path).await {
-        missing.push(output_path.as_str());
-      }
-    }
+  tracing::warn!(
+    drv_path,
+    output_paths = ?output_paths,
+    "agent build succeeded but outputs are missing from runner store; realizing locally"
+  );
 
-    if missing.is_empty() {
-      return Ok(());
-    }
-
-    tracing::warn!(
-      drv_path,
-      missing_outputs = ?missing,
-      "agent build succeeded but outputs are missing from runner store; realizing locally"
-    );
-
-    let output = tokio::process::Command::new("nix-store")
-      .args(["--realise", drv_path])
-      .output()
-      .await?;
-    if !output.status.success() {
-      return Err(color_eyre::eyre::eyre!(
-        "failed to realize agent-built outputs in runner store: {}",
-        String::from_utf8_lossy(&output.stderr)
-      ));
-    }
-
-    for output_path in output_paths {
-      if !self.is_valid(output_path).await {
-        return Err(color_eyre::eyre::eyre!(
-          "output path {output_path} is still missing from runner store after \
-           local realization"
-        ));
-      }
-    }
-
-    Ok(())
+  let output = tokio::time::timeout(
+    Duration::from_mins(5),
+    tokio::process::Command::new("nix-store")
+      .args(["--realise", "--max-jobs", "0", drv_path])
+      .output(),
+  )
+  .await??;
+  if !output.status.success() {
+    return Err(color_eyre::eyre::eyre!(
+      "failed to realize agent-built outputs in runner store: {}",
+      String::from_utf8_lossy(&output.stderr)
+    ));
   }
+
+  if !check_valid_outputs(output_paths).await? {
+    return Err(color_eyre::eyre::eyre!(
+      "agent-built outputs are still missing from runner store after local \
+       realization"
+    ));
+  }
+
+  Ok(())
 }
 
 fn first_path_info_entry(
@@ -1067,9 +1056,8 @@ async fn run_build(
     Ok(mut build_result) => {
       if ran_on_agent
         && build_result.success
-        && let Err(e) = RunnerStore::new()
-          .ensure_agent_outputs(drv_path, &build_result.output_paths)
-          .await
+        && let Err(e) =
+          ensure_agent_outputs(drv_path, &build_result.output_paths).await
       {
         tracing::error!(
           build_id = %build.id,
