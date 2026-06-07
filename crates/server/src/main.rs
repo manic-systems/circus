@@ -93,13 +93,12 @@ async fn main() -> color_eyre::Result<()> {
     })
     .transpose()?;
 
-  let nix_store = NixStore::new(config.nix.store_dir.clone());
-  let nix_store_db = nix_store.open_db().await?;
+  let nix_store = NixStore::new(config.nix.store_dir.clone())
+    .map_err(|e| color_eyre::eyre::eyre!(e))?;
 
   let state = AppState {
     pool: db.pool().clone(),
     nix_store,
-    nix_store_db,
     config: config.clone(),
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: AppState::new_narinfo_cache(),

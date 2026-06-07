@@ -295,8 +295,8 @@ async fn test_e2e_project_eval_build_flow() {
     pool: pool.clone(),
     nix_store: circus_server::state::NixStore::new(
       config.nix.store_dir.clone(),
-    ),
-    nix_store_db: None,
+    )
+    .unwrap(),
     config,
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
