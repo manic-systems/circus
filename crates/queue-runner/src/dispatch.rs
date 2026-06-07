@@ -123,6 +123,7 @@ fn strategy_order(
     },
   }
 }
+
 pub struct AgentDispatch<'a> {
   pub timeout:                    Duration,
   pub max_silent_time:            Duration,
@@ -239,12 +240,22 @@ async fn select_and_reserve_agent(
     }
   }
 
+  if eligible.is_empty() {
+    return None;
+  }
+
   // Capability-preserving order: prefer builders that waste the fewest
   // currently-contended capabilities on this build, so a versatile builder is
   // kept free for the queued work that actually needs it.
   let demand = repo::builds::pending_feature_demand(pool, system)
     .await
-    .unwrap_or_default();
+    .unwrap_or_else(|e| {
+      tracing::warn!(
+        "pending_feature_demand failed, falling back to load-only ordering: \
+         {e}"
+      );
+      HashSet::new()
+    });
 
   eligible.sort_by(|a, b| {
     let sa = contended_surplus(
