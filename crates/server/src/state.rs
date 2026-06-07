@@ -10,6 +10,7 @@ use hmac::KeyInit;
 use moka::sync::Cache;
 use regex::Regex;
 use sqlx::{ConnectOptions as _, PgPool, SqlitePool};
+use tokio::sync::OnceCell;
 
 /// Maximum lifetime for legacy in-memory API-key dashboard sessions.
 const SESSION_MAX_AGE: std::time::Duration =
@@ -81,43 +82,48 @@ pub type NarinfoCache = Cache<String, String>;
 
 #[derive(Clone)]
 pub struct NixStore {
-  store_dir: PathBuf,
+  store_dir_path: PathBuf,
+  store_dir:      StoreDir,
+  db:             Arc<OnceCell<SqlitePool>>,
 }
 
 impl NixStore {
-  #[must_use]
-  pub const fn new(store_dir: PathBuf) -> Self {
-    Self { store_dir }
-  }
-
-  /// Returns the Nix store directory.
+  /// Create a local Nix store handle.
   ///
   /// # Errors
   ///
   /// Returns an error if the configured path does not point to a valid
   /// Nix store root.
-  pub fn store_dir(&self) -> Result<StoreDir, String> {
-    StoreDir::new(self.store_dir.clone()).map_err(|e| e.to_string())
+  pub fn new(store_dir: PathBuf) -> Result<Self, String> {
+    Ok(Self {
+      store_dir:      StoreDir::new(store_dir.clone())
+        .map_err(|e| e.to_string())?,
+      store_dir_path: store_dir,
+      db:             Arc::new(OnceCell::new()),
+    })
+  }
+
+  /// Returns the Nix store directory.
+  #[must_use]
+  pub fn store_dir(&self) -> StoreDir {
+    self.store_dir.clone()
   }
 
   fn db_path(&self) -> Option<PathBuf> {
     self
-      .store_dir
+      .store_dir_path
       .parent()
       .map(|root| root.join("var/nix/db/db.sqlite"))
   }
 
-  /// Open the local Nix store database once for binary-cache serving.
-  ///
-  /// Missing databases are treated as cache misses, but an existing database
-  /// that cannot be opened is returned as an error so the failure is explicit
-  /// at startup instead of surfacing as per-request 500s.
+  /// Open the local Nix store database lazily for binary-cache serving.
+  /// Missing or failed databases are not cached, so later cache requests retry.
   ///
   /// # Errors
   ///
   /// Returns a [`sqlx::Error`] if the database file exists but cannot be
   /// opened (e.g. due to permissions or corruption).
-  pub async fn open_db(&self) -> Result<Option<SqlitePool>, sqlx::Error> {
+  pub async fn open_db(&self) -> Result<Option<&SqlitePool>, sqlx::Error> {
     let Some(db_path) = self.db_path() else {
       return Ok(None);
     };
@@ -131,7 +137,11 @@ impl NixStore {
       .create_if_missing(false)
       .disable_statement_logging();
 
-    SqlitePool::connect_with(options).await.map(Some)
+    self
+      .db
+      .get_or_try_init(|| async { SqlitePool::connect_with(options).await })
+      .await
+      .map(Some)
   }
 }
 
@@ -139,7 +149,6 @@ impl NixStore {
 pub struct AppState {
   pub pool:          PgPool,
   pub nix_store:     NixStore,
-  pub nix_store_db:  Option<SqlitePool>,
   pub config:        Config,
   pub sessions:      Arc<DashMap<String, SessionData>>,
   pub narinfo_cache: NarinfoCache,
