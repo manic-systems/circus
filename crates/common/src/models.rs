@@ -206,6 +206,21 @@ pub struct Build {
   /// is eligible.
   #[serde(default)]
   pub required_features:          Vec<String>,
+  /// `requiredSystemFeatures` unioned over the drvs the venue will actually
+  /// build. [`None`] means this was not yet computed.
+  #[serde(default)]
+  pub effective_features:         Option<Vec<String>>,
+}
+
+impl Build {
+  /// The effective features, else the job drv's own `required_features`.
+  #[must_use]
+  pub fn scheduling_features(&self) -> &[String] {
+    self
+      .effective_features
+      .as_deref()
+      .unwrap_or(&self.required_features)
+  }
 }
 
 #[derive(

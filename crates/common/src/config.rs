@@ -212,6 +212,14 @@ pub struct QueueRunnerConfig {
   #[serde(default)]
   pub extra_nix_build_args: Vec<String>,
 
+  /// Systems the runner host itself may build.
+  #[serde(default)]
+  pub local_systems: Option<Vec<String>>,
+
+  /// `system-features` of the runner host's nix.
+  #[serde(default)]
+  pub local_features: Option<Vec<String>>,
+
   /// Capnp-rpc endpoint for persistent build agents. When set, the
   /// queue-runner listens on this address and dispatches eligible builds
   /// to connected agents in preference to the SSH `remote_builders`
@@ -895,6 +903,8 @@ impl Default for QueueRunnerConfig {
       psi_threshold:        None,
       psi_check_timeout:    5,
       extra_nix_build_args: Vec::new(),
+      local_systems:        None,
+      local_features:       None,
       rpc:                  None,
     }
   }

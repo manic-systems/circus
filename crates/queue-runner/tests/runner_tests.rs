@@ -10,6 +10,10 @@
 
 // Nix log line parsing
 
+use std::sync::Arc;
+
+use circus_queue_runner::caps::RunnerCaps;
+
 #[test]
 fn test_parse_nix_log_start() {
   let line =
@@ -82,8 +86,8 @@ async fn test_worker_pool_drain_stops_dispatch() {
     .await
     .expect("failed to connect");
 
-  let hot_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-    circus_common::config::HotConfig {
+  let hot_config =
+    Arc::new(tokio::sync::RwLock::new(circus_common::config::HotConfig {
       poll_interval:        std::time::Duration::from_secs(1),
       build_timeout:        std::time::Duration::from_mins(1),
       max_silent_time:      std::time::Duration::ZERO,
@@ -95,8 +99,7 @@ async fn test_worker_pool_drain_stops_dispatch() {
       psi_threshold:        None,
       psi_check_timeout:    std::time::Duration::from_secs(5),
       extra_nix_build_args: Vec::new(),
-    },
-  ));
+    }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
     2,
@@ -109,6 +112,11 @@ async fn test_worker_pool_drain_stops_dispatch() {
     circus_common::config::CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
+    Arc::new(RunnerCaps::new(
+      true,
+      vec!["x86_64-linux".into()],
+      Vec::new(),
+    )),
     std::time::Duration::from_mins(1),
   );
 
@@ -124,8 +132,6 @@ async fn test_worker_pool_drain_stops_dispatch() {
 
 #[tokio::test]
 async fn test_active_builds_registry_cancellation() {
-  use std::sync::Arc;
-
   use dashmap::DashMap;
   use tokio_util::sync::CancellationToken;
 
@@ -207,8 +213,8 @@ async fn test_worker_pool_active_builds_cancel() {
     .await
     .expect("failed to connect");
 
-  let hot_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-    circus_common::config::HotConfig {
+  let hot_config =
+    Arc::new(tokio::sync::RwLock::new(circus_common::config::HotConfig {
       poll_interval:        std::time::Duration::from_secs(1),
       build_timeout:        std::time::Duration::from_mins(1),
       max_silent_time:      std::time::Duration::ZERO,
@@ -220,8 +226,7 @@ async fn test_worker_pool_active_builds_cancel() {
       psi_threshold:        None,
       psi_check_timeout:    std::time::Duration::from_secs(5),
       extra_nix_build_args: Vec::new(),
-    },
-  ));
+    }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
     2,
@@ -234,6 +239,11 @@ async fn test_worker_pool_active_builds_cancel() {
     circus_common::config::CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
+    Arc::new(RunnerCaps::new(
+      true,
+      vec!["x86_64-linux".into()],
+      Vec::new(),
+    )),
     std::time::Duration::from_mins(1),
   );
 

@@ -133,12 +133,17 @@ pub struct AgentDispatch<'a> {
   pub fail_build_on_upload_error: bool,
 }
 
-/// Reserve capacity before the build is claimed as running.
+/// Reserve capacity before the build is claimed as running. [`None`] means
+/// there is no capable venue.
 ///
 /// # Panics
 ///
 /// Only if the worker semaphore has been closed, which never happens during
 /// normal operation.
+#[expect(
+  clippy::too_many_arguments,
+  reason = "venue reservation needs the same scheduling context as dispatch"
+)]
 pub async fn reserve_venue(
   agent_pool: &Arc<AgentPool>,
   pool: &PgPool,
@@ -148,7 +153,10 @@ pub async fn reserve_venue(
   heartbeat_ttl: Duration,
   strategy: &BuilderSchedulingStrategy,
   worker_semaphore: &Arc<Semaphore>,
-) -> ExecutionReservation {
+  runner_caps: &crate::caps::RunnerCaps,
+  psi_cache: &crate::psi::PsiCache,
+  psi_check_timeout: Duration,
+) -> Option<ExecutionReservation> {
   if let Some(system) = system
     && let Some((meta, snap, slot)) = select_and_reserve_agent(
       agent_pool,
@@ -161,7 +169,53 @@ pub async fn reserve_venue(
     )
     .await
   {
-    return ExecutionReservation::Agent { meta, snap, slot };
+    return Some(ExecutionReservation::Agent { meta, snap, slot });
+  }
+
+  let features = build.scheduling_features();
+  let runner_ok = runner_caps.supports(system, features);
+  let ssh_ok = if runner_ok {
+    false // the runner already qualifies
+  } else if let Some(system) = system {
+    match repo::remote_builders::find_for_system(pool, system, strategy).await {
+      Ok(builders) => {
+        let mut any = false;
+        for b in &builders {
+          if !supports_required_features(
+            features,
+            &b.supported_features,
+            &b.mandatory_features,
+          ) {
+            continue;
+          }
+          if let Some(threshold) = psi_threshold
+            && let Some(snap) =
+              crate::psi::read_cached(psi_cache, &b.ssh_uri, psi_check_timeout)
+                .await
+            && snap.exceeds(threshold)
+          {
+            continue;
+          }
+          any = true;
+          break;
+        }
+        any
+      },
+      Err(e) => {
+        tracing::warn!(build_id = %build.id, "failed to check SSH builders for venue reservation: {e}");
+        false
+      },
+    }
+  } else {
+    false
+  };
+  if !runner_ok && !ssh_ok {
+    tracing::debug!(
+      build_id = %build.id,
+      ?features,
+      "no capable venue; leaving build pending"
+    );
+    return None;
   }
 
   #[expect(
@@ -172,7 +226,7 @@ pub async fn reserve_venue(
     .acquire_owned()
     .await
     .expect("worker semaphore is never closed");
-  ExecutionReservation::Runner(permit)
+  Some(ExecutionReservation::Runner(permit))
 }
 
 async fn select_and_reserve_agent(
@@ -208,7 +262,7 @@ async fn select_and_reserve_agent(
 
   candidates.retain(|(_, snap)| {
     supports_required_features(
-      &build.required_features,
+      build.scheduling_features(),
       &snap.supported_features,
       &snap.mandatory_features,
     )
@@ -260,12 +314,12 @@ async fn select_and_reserve_agent(
   eligible.sort_by(|a, b| {
     let sa = contended_surplus(
       &a.1.supported_features,
-      &build.required_features,
+      build.scheduling_features(),
       &demand,
     );
     let sb = contended_surplus(
       &b.1.supported_features,
-      &build.required_features,
+      build.scheduling_features(),
       &demand,
     );
     sa.cmp(&sb)
