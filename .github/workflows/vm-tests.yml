@@ -98,6 +98,10 @@ jobs:
             check: machine-health
           - name: Channel Tarball
             check: channel-tarball
+          - name: Capability Scheduling
+            check: capability-scheduling
+          - name: S3 Cache
+            check: s3-cache
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: cachix/install-nix-action@v31
