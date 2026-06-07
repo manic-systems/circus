@@ -688,97 +688,18 @@ async fn evaluate_jobset(
   Ok(())
 }
 
+/// Read the derivation's `requiredSystemFeatures` via `nix derivation show`.
+/// Failure returns an empty list, mirroring the SSH path which treats absence
+/// as "no constraint".
+async fn read_required_features(drv_path: &str) -> Vec<String> {
+  circus_common::drv::show_required_features(&[drv_path.to_owned()])
+    .await
+    .unwrap_or_default()
+}
+
 /// Detect whether a derivation is a fixed-output derivation by reading the
 /// `.drv` file and checking for `outputHash` in its env vars.
 /// Returns `(is_fod, fod_hash)`.
-/// Read the derivation's `requiredSystemFeatures` env var via
-/// `nix derivation show`. The Nix derivation format encodes this attribute
-/// as a colon- or space-separated string in `env.requiredSystemFeatures`
-/// (a function of how nixpkgs builds the drv); modern Nix exposes a
-/// structured `requiredSystemFeatures` key on the derivation too.
-///
-/// We accept either: parse a JSON list if present, otherwise split the
-/// env string on whitespace. Failure (drv not on disk, nix not on PATH,
-/// malformed JSON) returns an empty list, mirroring the SSH path which
-/// treats absence as "no constraint".
-async fn read_required_features(drv_path: &str) -> Vec<String> {
-  let Ok(output) = tokio::process::Command::new("nix")
-    .args([
-      "--extra-experimental-features",
-      "nix-command",
-      "derivation",
-      "show",
-      drv_path,
-    ])
-    .output()
-    .await
-  else {
-    return Vec::new();
-  };
-  if !output.status.success() {
-    return Vec::new();
-  }
-  let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-  else {
-    return Vec::new();
-  };
-  required_features_from_derivation_show(&parsed)
-}
-
-fn derivation_from_show(
-  parsed: &serde_json::Value,
-) -> Option<&serde_json::Map<String, serde_json::Value>> {
-  let obj = parsed.as_object()?;
-  if let Some(derivations) = obj.get("derivations").and_then(|v| v.as_object())
-  {
-    return derivations.values().next()?.as_object();
-  }
-  obj.values().next()?.as_object()
-}
-
-fn split_required_features(value: &str) -> Vec<String> {
-  value
-    .split(|c: char| c.is_whitespace() || c == ':' || c == ',')
-    .filter(|s| !s.is_empty())
-    .map(str::to_owned)
-    .collect()
-}
-
-fn required_features_from_derivation_show(
-  parsed: &serde_json::Value,
-) -> Vec<String> {
-  let Some(drv) = derivation_from_show(parsed) else {
-    return Vec::new();
-  };
-
-  // 1. Top-level `requiredSystemFeatures` list (modern Nix).
-  if let Some(arr) =
-    drv.get("requiredSystemFeatures").and_then(|v| v.as_array())
-  {
-    return arr
-      .iter()
-      .filter_map(|v| v.as_str().map(str::to_owned))
-      .filter(|s| !s.is_empty())
-      .collect();
-  }
-
-  // 2. `env.requiredSystemFeatures`, a space-separated string.
-  if let Some(env_str) =
-    drv.get("requiredSystemFeatures").and_then(|v| v.as_str())
-  {
-    return split_required_features(env_str);
-  }
-  if let Some(env_str) = drv
-    .get("env")
-    .and_then(|v| v.as_object())
-    .and_then(|env| env.get("requiredSystemFeatures"))
-    .and_then(|v| v.as_str())
-  {
-    return split_required_features(env_str);
-  }
-  Vec::new()
-}
-
 fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
   let Ok(content) = std::fs::read_to_string(drv_path) else {
     return (false, None);
@@ -1054,47 +975,5 @@ async fn discover_projects_without_jobsets(
     };
 
     sync_repo_declarative_config(pool, &repo_path, project.id).await;
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use serde_json::json;
-
-  use super::*;
-
-  #[test]
-  fn required_features_read_wrapped_derivation_show() {
-    let shown = json!({
-      "derivations": {
-        "/nix/store/example.drv": {
-          "env": {
-            "requiredSystemFeatures": "kvm nixos-test uid-range"
-          }
-        }
-      },
-      "version": 3
-    });
-
-    assert_eq!(required_features_from_derivation_show(&shown), vec![
-      "kvm",
-      "nixos-test",
-      "uid-range"
-    ]);
-  }
-
-  #[test]
-  fn required_features_split_legacy_separators() {
-    let shown = json!({
-      "/nix/store/example.drv": {
-        "requiredSystemFeatures": "kvm:nixos-test,uid-range"
-      }
-    });
-
-    assert_eq!(required_features_from_derivation_show(&shown), vec![
-      "kvm",
-      "nixos-test",
-      "uid-range"
-    ]);
   }
 }

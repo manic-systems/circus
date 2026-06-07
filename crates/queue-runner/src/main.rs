@@ -7,6 +7,7 @@ use circus_common::{
   repo,
 };
 use circus_queue_runner::{
+  caps::RunnerCaps,
   rpc::{AgentPool, server::ServerConfig as RpcServerConfig},
   worker::{ActiveBuilds, WorkerPool},
 };
@@ -46,6 +47,15 @@ async fn main() -> color_eyre::Result<()> {
   let nix_store_dir = config.nix.store_dir;
 
   let workers = cli.workers.unwrap_or(qr_config.workers);
+  let runner_caps = Arc::new(
+    RunnerCaps::detect(
+      workers > 0,
+      qr_config.local_systems.clone(),
+      qr_config.local_features.clone(),
+    )
+    .await,
+  );
+  tracing::info!(?runner_caps, "resolved local runner capabilities");
   let strict_errors = qr_config.strict_errors;
   let failed_paths_cache = qr_config.failed_paths_cache;
   let work_dir = qr_config.work_dir;
@@ -96,6 +106,7 @@ async fn main() -> color_eyre::Result<()> {
     cache_upload_config,
     alert_config,
     Arc::clone(&agent_pool),
+    runner_caps,
     heartbeat_ttl,
   ));
 

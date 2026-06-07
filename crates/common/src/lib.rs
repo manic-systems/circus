@@ -5,6 +5,7 @@ pub mod audit;
 pub mod config;
 pub mod crypto;
 pub mod database;
+pub mod drv;
 pub mod error;
 pub mod gc_roots;
 pub mod log_storage;

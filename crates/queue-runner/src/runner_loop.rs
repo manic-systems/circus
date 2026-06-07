@@ -343,72 +343,82 @@ pub async fn run(
             },
           }
 
-          if let Some(timeout) = unsupported_timeout
-            && let Some(system) = &build.system
-          {
-            match repo::remote_builders::find_for_system(
-              &pool,
-              system,
-              &scheduling_strategy,
-            )
-            .await
-            {
-              Ok(builders) => {
-                let has_builder = builders.iter().any(|builder| {
-                  supports_required_features(
-                    &build.required_features,
-                    &builder.supported_features,
-                    &builder.mandatory_features,
-                  )
-                });
-                let has_agent =
-                  worker_pool.agent_pool().snapshot_all().iter().any(|agent| {
-                    agent.systems.iter().any(|s| s == system)
-                      && supports_required_features(
-                        &build.required_features,
-                        &agent.supported_features,
-                        &agent.mandatory_features,
-                      )
-                  });
-                if !has_builder && !has_agent {
-                  let timeout_at = build.created_at + timeout;
-                  if chrono::Utc::now() > timeout_at {
-                    tracing::info!(
-                      build_id = %build.id,
-                      system = %system,
-                      timeout = ?timeout,
-                      "Aborting build: no builder available for system/features"
-                    );
-
-                    if let Err(e) = repo::builds::start(&pool, build.id).await {
-                      tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
-                    }
-
-                    if let Err(e) = repo::builds::complete(
-                      &pool,
-                      build.id,
-                      BuildStatus::UnsupportedSystem,
-                      None,
-                      None,
-                      Some("No builder available for system/features"),
+          if let Some(timeout) = unsupported_timeout {
+            // Builders and agents are system-keyed, but a system-less build can
+            // only run on the runner host.
+            let (has_builder, has_agent) = if let Some(system) = &build.system {
+              match repo::remote_builders::find_for_system(
+                &pool,
+                system,
+                &scheduling_strategy,
+              )
+              .await
+              {
+                Ok(builders) => {
+                  let has_builder = builders.iter().any(|builder| {
+                    supports_required_features(
+                      build.scheduling_features(),
+                      &builder.supported_features,
+                      &builder.mandatory_features,
                     )
-                    .await
-                    {
-                      tracing::warn!(build_id = %build.id, "Failed to complete unsupported build: {e}");
-                    }
-
-                    continue;
-                  }
+                  });
+                  let has_agent =
+                    worker_pool.agent_pool().snapshot_all().iter().any(
+                      |agent| {
+                        agent.systems.iter().any(|s| s == system)
+                          && supports_required_features(
+                            build.scheduling_features(),
+                            &agent.supported_features,
+                            &agent.mandatory_features,
+                          )
+                      },
+                    );
+                  (has_builder, has_agent)
+                },
+                Err(e) => {
+                  tracing::error!(
+                    build_id = %build.id,
+                    "Failed to check builders for unsupported system: {e}"
+                  );
                   continue;
-                }
-              },
-              Err(e) => {
-                tracing::error!(
+                },
+              }
+            } else {
+              (false, false)
+            };
+            let has_runner = worker_pool
+              .runner_caps()
+              .supports(build.system.as_deref(), build.scheduling_features());
+            if !has_builder && !has_agent && !has_runner {
+              let timeout_at = build.created_at + timeout;
+              if chrono::Utc::now() > timeout_at {
+                tracing::info!(
                   build_id = %build.id,
-                  "Failed to check builders for unsupported system: {e}"
+                  system = ?build.system,
+                  timeout = ?timeout,
+                  "Aborting build: no builder available for system/features"
                 );
+
+                if let Err(e) = repo::builds::start(&pool, build.id).await {
+                  tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
+                }
+
+                if let Err(e) = repo::builds::complete(
+                  &pool,
+                  build.id,
+                  BuildStatus::UnsupportedSystem,
+                  None,
+                  None,
+                  Some("No builder available for system/features"),
+                )
+                .await
+                {
+                  tracing::warn!(build_id = %build.id, "Failed to complete unsupported build: {e}");
+                }
+
                 continue;
-              },
+              }
+              continue;
             }
           }
 

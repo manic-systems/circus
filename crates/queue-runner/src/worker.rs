@@ -51,6 +51,7 @@ pub struct WorkerPool {
   alert_manager:       Arc<Option<AlertManager>>,
   psi_cache:           Arc<crate::psi::PsiCache>,
   agent_pool:          Arc<crate::rpc::AgentPool>,
+  runner_caps:         Arc<crate::caps::RunnerCaps>,
   heartbeat_ttl:       Duration,
   drain_token:         CancellationToken,
   active_builds:       ActiveBuilds,
@@ -74,6 +75,7 @@ impl WorkerPool {
     cache_upload_config: CacheUploadConfig,
     alert_config: Option<AlertConfig>,
     agent_pool: Arc<crate::rpc::AgentPool>,
+    runner_caps: Arc<crate::caps::RunnerCaps>,
     heartbeat_ttl: Duration,
   ) -> Self {
     let alert_manager = alert_config.map(AlertManager::new);
@@ -93,6 +95,7 @@ impl WorkerPool {
       alert_manager: Arc::new(alert_manager),
       psi_cache: crate::psi::PsiCache::new(),
       agent_pool,
+      runner_caps,
       heartbeat_ttl,
       drain_token: CancellationToken::new(),
       active_builds: Arc::new(DashMap::new()),
@@ -131,6 +134,11 @@ impl WorkerPool {
   }
 
   #[must_use]
+  pub const fn runner_caps(&self) -> &Arc<crate::caps::RunnerCaps> {
+    &self.runner_caps
+  }
+
+  #[must_use]
   pub const fn active_builds(&self) -> &ActiveBuilds {
     &self.active_builds
   }
@@ -155,6 +163,7 @@ impl WorkerPool {
     let alert_manager = Arc::clone(&self.alert_manager);
     let psi_cache = Arc::clone(&self.psi_cache);
     let agent_pool = Arc::clone(&self.agent_pool);
+    let runner_caps = Arc::clone(&self.runner_caps);
     let heartbeat_ttl = self.heartbeat_ttl;
     let active_builds = Arc::clone(&self.active_builds);
     let cancel_token = CancellationToken::new();
@@ -164,6 +173,11 @@ impl WorkerPool {
 
     tokio::spawn(async move {
       let result = async {
+        // Computed here so slow dry-runs on a cold queue don't serialize the
+        // scheduler loop.
+        let build =
+          crate::features::ensure_effective_features(&pool, build).await;
+
         let (
           timeout,
           max_silent_time,
@@ -206,6 +220,7 @@ impl WorkerPool {
           Arc::clone(&psi_cache),
           extra_nix_args,
           Arc::clone(&agent_pool),
+          Arc::clone(&runner_caps),
           heartbeat_ttl,
         )
         .await
@@ -535,14 +550,14 @@ async fn try_remote_build(
   for builder in &builders {
     // Leave the build pending for a builder with the right feature set.
     if !supports_required_features(
-      &build.required_features,
+      build.scheduling_features(),
       &builder.supported_features,
       &builder.mandatory_features,
     ) {
       tracing::debug!(
         build_id = %build.id,
         builder = %builder.name,
-        required = ?build.required_features,
+        required = ?build.scheduling_features(),
         supported = ?builder.supported_features,
         mandatory = ?builder.mandatory_features,
         "skipping builder: missing required_features"
@@ -687,7 +702,7 @@ async fn collect_metrics_and_alert(
 }
 
 /// Runs with a worker permit, trying configured SSH builders before local
-/// execution.
+/// execution. `Ok(None)` means no venue could take the build.
 #[expect(
   clippy::too_many_arguments,
   reason = "on-runner execution needs the full SSH/local scheduling context"
@@ -705,7 +720,8 @@ async fn run_on_runner(
   psi_check_timeout: Duration,
   psi_cache: &Arc<crate::psi::PsiCache>,
   extra_nix_args: &[String],
-) -> circus_common::error::Result<crate::builder::BuildResult> {
+  runner_caps: &crate::caps::RunnerCaps,
+) -> circus_common::error::Result<Option<crate::builder::BuildResult>> {
   let _permit = permit;
   if build.system.is_some()
     && let Some(r) = try_remote_build(
@@ -723,7 +739,18 @@ async fn run_on_runner(
     )
     .await
   {
-    return Ok(r);
+    return Ok(Some(r));
+  }
+  if !runner_caps.supports(build.system.as_deref(), build.scheduling_features())
+  {
+    tracing::warn!(
+      build_id = %build.id,
+      system = ?build.system,
+      features = ?build.scheduling_features(),
+      "no capable SSH builder and the runner host lacks the required \
+       system/features; requeueing"
+    );
+    return Ok(None);
   }
   crate::builder::run_nix_build(
     drv_path,
@@ -733,14 +760,10 @@ async fn run_on_runner(
     extra_nix_args,
   )
   .await
+  .map(Some)
 }
 
 #[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
-#[expect(
-  clippy::significant_drop_tightening,
-  reason = "the execution reservation is held deliberately from before the DB \
-            claim until the build completes"
-)]
 #[expect(
   clippy::too_many_arguments,
   reason = "build execution coordinates database state, config, \
@@ -769,11 +792,12 @@ async fn run_build(
   psi_cache: Arc<crate::psi::PsiCache>,
   extra_nix_args: Arc<Vec<String>>,
   agent_pool: Arc<crate::rpc::AgentPool>,
+  runner_caps: Arc<crate::caps::RunnerCaps>,
   heartbeat_ttl: Duration,
 ) -> color_eyre::Result<()> {
   // Reserve capacity before claiming the build so `running` means execution
   // can start immediately.
-  let venue = crate::dispatch::reserve_venue(
+  let Some(venue) = crate::dispatch::reserve_venue(
     &agent_pool,
     pool,
     build,
@@ -782,8 +806,14 @@ async fn run_build(
     heartbeat_ttl,
     &scheduling_strategy,
     &worker_semaphore,
+    &runner_caps,
+    &psi_cache,
+    psi_check_timeout,
   )
-  .await;
+  .await
+  else {
+    return Ok(());
+  };
 
   let Some(claimed_build) = repo::builds::start(pool, build.id).await? else {
     tracing::debug!(build_id = %build.id, "Build already claimed, skipping");
@@ -890,7 +920,7 @@ async fn run_build(
       )
       .await
       {
-        Ok(r)
+        Ok(Some(r))
       } else if let Ok(permit) =
         Arc::clone(&worker_semaphore).try_acquire_owned()
       {
@@ -907,26 +937,11 @@ async fn run_build(
           psi_check_timeout,
           &psi_cache,
           &build_extra_nix_args,
+          &runner_caps,
         )
         .await
       } else {
-        // Only remove the live log when requeue succeeds. Cancelled or
-        // completed builds may still need it.
-        match repo::builds::requeue(pool, build.id).await {
-          Ok(Some(_)) => {
-            let _ = tokio::fs::remove_file(&live_log_path).await;
-          },
-          Ok(None) => {
-            tracing::debug!(
-              build_id = %build.id,
-              "build no longer running at requeue (cancelled or completed elsewhere)"
-            );
-          },
-          Err(e) => {
-            tracing::warn!(build_id = %build.id, "Failed to requeue after agent loss: {e}");
-          },
-        }
-        return Ok(());
+        Ok(None)
       }
     },
     crate::dispatch::ExecutionReservation::Runner(permit) => {
@@ -943,9 +958,35 @@ async fn run_build(
         psi_check_timeout,
         &psi_cache,
         &build_extra_nix_args,
+        &runner_caps,
       )
       .await
     },
+  };
+
+  // No venue executed the build, so hand it back to the queue. Only remove
+  // the live log when requeuing succeeds, as cancelled or completed builds may
+  // still need it.
+  let result = match result {
+    Ok(Some(r)) => Ok(r),
+    Ok(None) => {
+      match repo::builds::requeue(pool, build.id).await {
+        Ok(Some(_)) => {
+          let _ = tokio::fs::remove_file(&live_log_path).await;
+        },
+        Ok(None) => {
+          tracing::debug!(
+            build_id = %build.id,
+            "build no longer running at requeue (cancelled or completed elsewhere)"
+          );
+        },
+        Err(e) => {
+          tracing::warn!(build_id = %build.id, "Failed to requeue after venue loss: {e}");
+        },
+      }
+      return Ok(());
+    },
+    Err(e) => Err(e),
   };
 
   // Initialize log storage
@@ -1198,7 +1239,8 @@ async fn run_build(
           );
           sqlx::query(
             "UPDATE builds SET status = 'pending', started_at = NULL, \
-             retry_count = retry_count + 1, completed_at = NULL WHERE id = $1",
+             retry_count = retry_count + 1, completed_at = NULL, \
+             effective_features = NULL WHERE id = $1",
           )
           .bind(build.id)
           .execute(pool)

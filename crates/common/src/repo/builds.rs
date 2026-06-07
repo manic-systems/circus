@@ -213,9 +213,10 @@ pub async fn mark_started_notified(pool: &PgPool, id: Uuid) -> Result<bool> {
 pub async fn requeue(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
   sqlx::query_as::<_, Build>(
     "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = \
-     NULL, completed_at = NULL WHERE id = $1 AND status = 'running' RETURNING \
-     * ), cleared AS ( DELETE FROM build_steps WHERE build_id = $1 AND EXISTS \
-     (SELECT 1 FROM bumped) ) SELECT * FROM bumped",
+     NULL, completed_at = NULL, effective_features = NULL WHERE id = $1 AND \
+     status = 'running' RETURNING * ), cleared AS ( DELETE FROM build_steps \
+     WHERE build_id = $1 AND EXISTS (SELECT 1 FROM bumped) ) SELECT * FROM \
+     bumped",
   )
   .bind(id)
   .fetch_optional(pool)
@@ -288,8 +289,8 @@ pub async fn pending_feature_demand(
   system: &str,
 ) -> Result<HashSet<String>> {
   let rows = sqlx::query_as(
-    "SELECT DISTINCT unnest(required_features) FROM builds WHERE status = \
-     'pending' AND system = $1",
+    "SELECT DISTINCT unnest(COALESCE(effective_features, required_features)) \
+     FROM builds WHERE status = 'pending' AND system = $1",
   )
   .bind(system)
   .fetch_all(pool)
@@ -398,8 +399,9 @@ pub async fn reset_orphaned(
   older_than_secs: i64,
 ) -> Result<u64> {
   let result = sqlx::query(
-    "UPDATE builds SET status = 'pending', started_at = NULL WHERE status = \
-     'running' AND started_at < NOW() - make_interval(secs => $1)",
+    "UPDATE builds SET status = 'pending', started_at = NULL, \
+     effective_features = NULL WHERE status = 'running' AND started_at < \
+     NOW() - make_interval(secs => $1)",
   )
   .bind(older_than_secs)
   .execute(pool)
@@ -557,9 +559,9 @@ pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Build> {
   let build = sqlx::query_as::<_, Build>(
     "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = \
      NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, \
-     started_notified_at = NULL, retry_count = retry_count + 1 WHERE id = $1 \
-     AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure') \
-     RETURNING *",
+     started_notified_at = NULL, effective_features = NULL, retry_count = \
+     retry_count + 1 WHERE id = $1 AND status IN ('failed', 'succeeded', \
+     'cancelled', 'cached_failure') RETURNING *",
   )
   .bind(id)
   .fetch_optional(pool)
@@ -577,6 +579,25 @@ pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Build> {
   }
 
   Ok(build)
+}
+
+/// Persist the dispatch-time effective features for a build.
+///
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn set_effective_features(
+  pool: &PgPool,
+  id: Uuid,
+  features: &[String],
+) -> Result<()> {
+  sqlx::query("UPDATE builds SET effective_features = $1 WHERE id = $2")
+    .bind(features)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(CiError::Database)?;
+  Ok(())
 }
 
 /// Mark a build's outputs as signed.
