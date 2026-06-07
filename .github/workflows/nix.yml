@@ -56,6 +56,8 @@ jobs:
           - circus-queue-runner
           - circus-migrate-cli
           - circus-agent
+          - circus-admin
+          - circus-agent-static
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: cachix/install-nix-action@v31
