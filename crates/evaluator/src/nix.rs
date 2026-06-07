@@ -288,6 +288,8 @@ async fn evaluate_flake(
     // Surface meta.{description, license, homepage, maintainers} so the
     // channel tarball can carry them through to nix-env / nix search.
     cmd.arg("--meta");
+    // `inputDrvs` is what create_builds_from_eval wires into build_dependencies
+    cmd.arg("--show-input-drvs");
     // Evaluation must never mutate the consumer's flake.lock. Without this,
     // nix-eval-jobs can race against the checked-out working tree and write a
     // refreshed lock that the next eval then disagrees with.
@@ -470,6 +472,7 @@ async fn evaluate_legacy(
     let mut cmd = tokio::process::Command::new("nix-eval-jobs");
     cmd.arg(&expr_path).arg("--force-recurse");
     cmd.arg("--meta");
+    cmd.arg("--show-input-drvs");
     cmd.kill_on_drop(true);
 
     if config.restrict_eval {
