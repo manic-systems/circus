@@ -129,7 +129,7 @@ async fn query_harmonia_path_info(
       nar_hash,
       references,
       registration_time: NonZero::new(row.registration_time),
-      nar_size: row.nar_size.map(|n| n as u64).unwrap_or(0),
+      nar_size: row.nar_size.map_or(0, |n| n as u64),
       ultimate: row.ultimate.unwrap_or(0) != 0,
       signatures,
       ca,

@@ -267,7 +267,7 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
 struct RunnerStore;
 
 impl RunnerStore {
-  fn new() -> Self {
+  const fn new() -> Self {
     Self
   }
 

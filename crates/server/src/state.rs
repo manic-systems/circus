@@ -86,10 +86,16 @@ pub struct NixStore {
 
 impl NixStore {
   #[must_use]
-  pub fn new(store_dir: PathBuf) -> Self {
+  pub const fn new(store_dir: PathBuf) -> Self {
     Self { store_dir }
   }
 
+  /// Returns the Nix store directory.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the configured path does not point to a valid
+  /// Nix store root.
   pub fn store_dir(&self) -> Result<StoreDir, String> {
     StoreDir::new(self.store_dir.clone()).map_err(|e| e.to_string())
   }
@@ -106,6 +112,11 @@ impl NixStore {
   /// Missing databases are treated as cache misses, but an existing database
   /// that cannot be opened is returned as an error so the failure is explicit
   /// at startup instead of surfacing as per-request 500s.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`sqlx::Error`] if the database file exists but cannot be
+  /// opened (e.g. due to permissions or corruption).
   pub async fn open_db(&self) -> Result<Option<SqlitePool>, sqlx::Error> {
     let Some(db_path) = self.db_path() else {
       return Ok(None);
