@@ -51,13 +51,13 @@ jobs:
       fail-fast: false
       matrix:
         package:
-          - circus-server
-          - circus-evaluator
-          - circus-queue-runner
-          - circus-migrate-cli
-          - circus-agent
           - circus-admin
+          - circus-agent
           - circus-agent-static
+          - circus-evaluator
+          - circus-migrate-cli
+          - circus-queue-runner
+          - circus-server
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: cachix/install-nix-action@v31
