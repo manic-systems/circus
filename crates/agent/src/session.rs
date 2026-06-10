@@ -31,6 +31,7 @@ use circus_proto::{
   builder,
   heartbeat,
   log_sink,
+  output_sink,
   pressure_state,
   result_sink,
   runner,
@@ -48,6 +49,7 @@ use crate::{
   build,
   config::{Agent, TlsConfig},
   psi,
+  sandbox::NixTool,
 };
 
 /// Open a connection and run it to completion.
@@ -459,6 +461,11 @@ impl builder::Server for BuilderImpl {
         );
       let log: log_sink::Client = pr.get_log()?;
       let result: result_sink::Client = pr.get_result()?;
+      let output = if pr.has_output() {
+        Some(pr.get_output()?)
+      } else {
+        None
+      };
 
       let cancel = CancellationToken::new();
       {
@@ -550,6 +557,26 @@ impl builder::Server for BuilderImpl {
                 local.exit_code = 1;
               }
             },
+          }
+        }
+
+        // Best-effort, like the S3 upload above
+        if let (Some(sink), Ok(local)) = (&output, outcome.as_ref())
+          && matches!(local.outcome, circus_proto::BuildOutcome::Success)
+          && !local.outputs.is_empty()
+        {
+          let paths = local
+            .outputs
+            .iter()
+            .map(|o| o.path.clone())
+            .collect::<Vec<String>>();
+          if let Err(e) =
+            export_outputs_to_sink(sink, &paths, inner_for_task.rootless).await
+          {
+            tracing::warn!(
+              %build_id,
+              "output closure transfer to runner failed: {e}"
+            );
           }
         }
 
@@ -660,4 +687,99 @@ async fn report_result(
   }
   req.send().promise.await?;
   Ok(())
+}
+
+/// Stream the closure of `output_paths` to the runner's `OutputSink`. A
+/// successful return means the runner has imported it into its store.
+async fn export_outputs_to_sink(
+  sink: &output_sink::Client,
+  output_paths: &[String],
+  rootless: bool,
+) -> color_eyre::Result<()> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
+  use tokio::io::AsyncReadExt as _;
+
+  // Import needs references registered first, so ship the whole closure.
+  let closure = query_requisites(output_paths, rootless).await?;
+  if closure.is_empty() {
+    return Ok(());
+  }
+
+  let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
+  cmd
+    .arg("--export")
+    .args(&closure)
+    .stdout(std::process::Stdio::piped())
+    .kill_on_drop(true);
+  let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
+  let mut child = cmd.spawn().context("spawn nix-store --export")?;
+  let mut stdout = child
+    .stdout
+    .take()
+    .ok_or_else(|| eyre!("export stdout missing"))?;
+
+  let mut buf = vec![0u8; 1024 * 1024];
+  let mut stream_err = None;
+  loop {
+    let n = match stdout.read(&mut buf).await {
+      Ok(0) => break,
+      Ok(n) => n,
+      Err(e) => {
+        stream_err = Some(eyre!("read nix-store --export: {e}"));
+        break;
+      },
+    };
+    let mut req = sink.write_request();
+    req.get().set_chunk(&buf[..n]);
+    if let Err(e) = req.send().promise.await {
+      stream_err = Some(eyre!("stream output closure: {e}"));
+      break;
+    }
+  }
+
+  // Always close so the runner reaps its import child, even on a short read.
+  let close_res = sink.close_request().send().promise.await;
+  if let Some(e) = stream_err {
+    return Err(e);
+  }
+  let status = child.wait().await?;
+  if !status.success() {
+    return Err(eyre!("nix-store --export exited with {status}"));
+  }
+  close_res
+    .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
+  Ok(())
+}
+
+async fn query_requisites(
+  output_paths: &[String],
+  rootless: bool,
+) -> color_eyre::Result<Vec<String>> {
+  let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
+  cmd
+    .arg("--query")
+    .arg("--requisites")
+    .args(output_paths)
+    .stdout(std::process::Stdio::piped());
+  let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
+  let out = cmd
+    .output()
+    .await
+    .context("nix-store --query --requisites")?;
+  if !out.status.success() {
+    return Err(eyre!(
+      "nix-store --query --requisites exited with {}",
+      out.status
+    ));
+  }
+  Ok(
+    String::from_utf8_lossy(&out.stdout)
+      .lines()
+      .map(str::to_owned)
+      .filter(|s| !s.is_empty())
+      .collect(),
+  )
 }

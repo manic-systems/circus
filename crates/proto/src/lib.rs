@@ -30,6 +30,7 @@ pub mod limits {
   pub const MAX_HASH_LEN: usize = 512;
   pub const MAX_PRESIGNED_URL_REQUESTS: u32 = 128;
   pub const MAX_LOG_CHUNK_BYTES: usize = 1024 * 1024;
+  pub const MAX_NAR_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 }
 
 pub mod nix_log;
@@ -60,6 +61,7 @@ pub use circus_capnp::{
   log_sink,
   nar_info,
   output_info,
+  output_sink,
   presigned_nar_request,
   presigned_nar_response,
   presigned_upload_opts,
