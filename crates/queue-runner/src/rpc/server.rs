@@ -44,6 +44,7 @@ use x509_parser::prelude::FromDer;
 use super::{
   AgentPool,
   log_sink::LogSinkImpl,
+  output_sink::OutputSinkImpl,
   pool::{AgentMeta, DispatchCommand, DispatchResult},
   result_sink::{BuildOutcomeKind, ResultSinkImpl},
   session::SessionImpl,
@@ -929,6 +930,12 @@ async fn dispatch_one(
   };
   let result_cap: result_sink::Client = capnp_rpc::new_client(result_sink_impl);
 
+  // Give the agent a sink to stream its output closure into so the runner can
+  // serve this build locally.
+  let output_cap = cmd.presigned_upload.is_none().then(|| {
+    capnp_rpc::new_client(OutputSinkImpl::new(cmd.build_id.to_string()))
+  });
+
   let mut req = builder_cap.assign_request();
   {
     let mut p = req.get();
@@ -963,6 +970,9 @@ async fn dispatch_one(
     }
     p.set_log(log_cap);
     p.set_result(result_cap);
+    if let Some(output_cap) = output_cap {
+      p.set_output(output_cap);
+    }
   }
 
   if let Err(e) = req.send().promise.await {

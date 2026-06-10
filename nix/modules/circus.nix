@@ -705,8 +705,9 @@ in {
 
       # The queue runner builds with `--option sandbox true` and
       # `--max-build-log-size`; these are restricted settings that the daemon
-      # ignores unless the requesting user is trusted. Trust circus so its build
-      # settings actually take effect.
+      # ignores unless the requesting user is trusted. It also runs
+      # `nix-store --import` to pull agent-built closures into the runner
+      # store. Trust circus for both.
       extra-trusted-users = ["circus"];
     };
 

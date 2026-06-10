@@ -9,6 +9,7 @@
 //! See `docs/DISTRIBUTED.md` for the protocol overview.
 
 pub mod log_sink;
+pub mod output_sink;
 pub mod pool;
 pub mod result_sink;
 pub mod s3;

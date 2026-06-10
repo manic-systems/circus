@@ -263,64 +263,6 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
   Some((nar_hash, nar_size))
 }
 
-async fn check_valid_outputs(
-  output_paths: &[String],
-) -> color_eyre::Result<bool> {
-  Ok(
-    tokio::process::Command::new("nix-store")
-      .arg("--check-validity")
-      .args(output_paths)
-      .output()
-      .await?
-      .status
-      .success(),
-  )
-}
-
-/// Ensure successful agent-built outputs are present in the runner's store.
-///
-/// Agents can report a successful build before the runner can serve the output
-/// from its own binary cache. When any expected output is missing locally,
-/// realize the derivation on the runner and verify every output became valid
-/// before metadata, signatures, and cache publication continue.
-async fn ensure_agent_outputs(
-  drv_path: &str,
-  output_paths: &[String],
-) -> color_eyre::Result<()> {
-  if output_paths.is_empty() || check_valid_outputs(output_paths).await? {
-    return Ok(());
-  }
-
-  tracing::warn!(
-    drv_path,
-    output_paths = ?output_paths,
-    "agent build succeeded but outputs are missing from runner store; realizing locally"
-  );
-
-  let output = tokio::time::timeout(
-    Duration::from_mins(5),
-    tokio::process::Command::new("nix-store")
-      .args(["--realise", "--max-jobs", "0", drv_path])
-      .output(),
-  )
-  .await??;
-  if !output.status.success() {
-    return Err(color_eyre::eyre::eyre!(
-      "failed to realize agent-built outputs in runner store: {}",
-      String::from_utf8_lossy(&output.stderr)
-    ));
-  }
-
-  if !check_valid_outputs(output_paths).await? {
-    return Err(color_eyre::eyre::eyre!(
-      "agent-built outputs are still missing from runner store after local \
-       realization"
-    ));
-  }
-
-  Ok(())
-}
-
 fn first_path_info_entry(
   parsed: &serde_json::Value,
 ) -> Option<&serde_json::Value> {
@@ -954,8 +896,6 @@ async fn run_build(
 
   let cache_upload_enabled_s3 =
     presigned_s3_upload_available(cache_upload_config);
-  let ran_on_agent =
-    matches!(venue, crate::dispatch::ExecutionReservation::Agent { .. });
 
   let result = match venue {
     crate::dispatch::ExecutionReservation::Agent { meta, snap, slot } => {
@@ -1053,25 +993,7 @@ async fn run_build(
   let log_storage = LogStorage::new(log_config.log_dir.clone()).ok();
 
   match result {
-    Ok(mut build_result) => {
-      if ran_on_agent
-        && build_result.success
-        && let Err(e) =
-          ensure_agent_outputs(drv_path, &build_result.output_paths).await
-      {
-        tracing::error!(
-          build_id = %build.id,
-          "agent build output transfer to runner store failed: {e}"
-        );
-        build_result.success = false;
-        build_result.exit_code = Some(1);
-        build_result.stderr = if build_result.stderr.trim().is_empty() {
-          e.to_string()
-        } else {
-          format!("{}\n{e}", build_result.stderr.trim_end())
-        };
-      }
-
+    Ok(build_result) => {
       // Complete the build step
       let exit_code = i32::from(!build_result.success);
       repo::build_steps::complete(

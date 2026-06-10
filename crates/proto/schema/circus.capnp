@@ -40,9 +40,11 @@ interface Runner {
 # Capability the agent passes to the runner during register. The runner calls
 # these methods to push work to the agent.
 interface Builder {
-  # Run one build. `log` and `result` are runner-side capabilities the agent
-  # calls back into during execution.
-  assign @0 (job :BuildAssignment, log :LogSink, result :ResultSink) -> ();
+  # Run one build. `log`, `result`, and `output` are runner-side capabilities
+  # the agent calls back into during execution. `output` is null for S3 builds,
+  # otherwise the agent streams the output closure into it.
+  assign @0 (job :BuildAssignment, log :LogSink, result :ResultSink,
+             output :OutputSink) -> ();
 
   # Best-effort abort of a running build. The agent SIGTERMs its child and
   # reports a BuildResult with `success = false`.
@@ -63,6 +65,13 @@ interface AgentSession {
 # Runner-side capability for log chunks. The agent calls `write` repeatedly
 # with framed log data and ends with `close`.
 interface LogSink {
+  write @0 (chunk :Data) -> ();
+  close @1 () -> ();
+}
+
+# Runner-side capability for a build's output closure. The agent streams
+# `nix-store --export` bytes via `write` and ends with `close`.
+interface OutputSink {
   write @0 (chunk :Data) -> ();
   close @1 () -> ();
 }
