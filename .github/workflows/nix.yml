@@ -42,9 +42,39 @@ jobs:
               - 'flake.nix'
               - 'flake.lock'
 
+  build-packages:
+    name: Build Packages
+    needs: changes
+    if: ${{ needs.changes.outputs.files_changed == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: extra-experimental-features = nix-command flakes
+
+      - name: Restore and save cached paths
+        id: cache-store-restore
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-packages-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: 0
+          purge-primary-key: never
+
+      - name: Build all circus packages
+        run: |
+          nix build .#circus-admin .#circus-agent .#circus-agent-static \
+                    .#circus-evaluator .#circus-migrate-cli \
+                    .#circus-queue-runner .#circus-server -L --no-link
+
   build:
     name: Build ${{ matrix.package }}
-    needs: changes
+    needs: [changes, build-packages]
     if: ${{ needs.changes.outputs.files_changed == 'true' }}
     runs-on: ubuntu-latest
     strategy:
@@ -63,16 +93,10 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - name: Restore cached paths
         id: cache-store-restore
-        uses: nix-community/cache-nix-action@v7
+        uses: nix-community/cache-nix-action/restore@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 5G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-last-accessed: 0
-          purge-primary-key: never
+          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
 
       - name: Build ${{ matrix.package }}
         run: nix build .#${{ matrix.package }} -L --no-link
