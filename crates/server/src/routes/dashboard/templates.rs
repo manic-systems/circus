@@ -236,6 +236,17 @@ pub(super) struct AgentView {
   pub(super) builds_succeeded: i64,
   pub(super) builds_failed:    i64,
   pub(super) last_seen:        String,
+  pub(super) last_seen_sort:   i64,
+}
+
+pub(super) struct SortHeaderView {
+  pub(super) key:         String,
+  pub(super) label:       String,
+  pub(super) href:        String,
+  pub(super) default_dir: String,
+  pub(super) active:      bool,
+  pub(super) indicator:   String,
+  pub(super) aria_sort:   String,
 }
 
 pub(super) struct NotificationTaskView {
@@ -267,6 +278,9 @@ pub(super) struct AdminTemplate {
   pub(super) status:                  SystemStatus,
   pub(super) builders:                Vec<BuilderView>,
   pub(super) agents:                  Vec<AgentView>,
+  pub(super) agent_sort_headers:      Vec<SortHeaderView>,
+  pub(super) agent_sort_key:          String,
+  pub(super) agent_sort_dir:          String,
   pub(super) api_keys:                Vec<ApiKeyView>,
   pub(super) notification_tasks:      Vec<NotificationTaskView>,
   pub(super) pinned_outputs:          Vec<PinnedOutputView>,
