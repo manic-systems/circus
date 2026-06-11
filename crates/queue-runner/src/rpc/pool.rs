@@ -84,6 +84,10 @@ pub struct AgentMeta {
   pub speed_factor:       f32,
   pub cpu_count:          u32,
   pub max_jobs:           u32,
+  pub ephemeral:          bool,
+  pub auth_kind:          String,
+  pub oidc_repository:    Option<String>,
+  pub oidc_subject:       Option<String>,
 
   current_jobs:      Arc<AtomicU32>,
   pub active_builds: RwLock<HashSet<Uuid>>,
@@ -114,6 +118,10 @@ impl AgentMeta {
     speed_factor: f32,
     cpu_count: u32,
     max_jobs: u32,
+    ephemeral: bool,
+    auth_kind: String,
+    oidc_repository: Option<String>,
+    oidc_subject: Option<String>,
     tx: mpsc::UnboundedSender<DispatchCommand>,
   ) -> Self {
     Self {
@@ -127,6 +135,10 @@ impl AgentMeta {
       speed_factor,
       cpu_count,
       max_jobs,
+      ephemeral,
+      auth_kind,
+      oidc_repository,
+      oidc_subject,
       current_jobs: Arc::new(AtomicU32::new(0)),
       active_builds: RwLock::new(HashSet::new()),
       heartbeat: RwLock::new(HeartbeatSnapshot::default()),
@@ -199,6 +211,10 @@ pub struct AgentSnapshot {
   pub cpu_count:          u32,
   pub max_jobs:           u32,
   pub current_jobs:       u32,
+  pub ephemeral:          bool,
+  pub auth_kind:          String,
+  pub oidc_repository:    Option<String>,
+  pub oidc_subject:       Option<String>,
   pub heartbeat:          HeartbeatSnapshot,
 }
 
@@ -357,6 +373,10 @@ fn snapshot(m: &AgentMeta, current_jobs: u32) -> AgentSnapshot {
     cpu_count: m.cpu_count,
     max_jobs: m.max_jobs,
     current_jobs,
+    ephemeral: m.ephemeral,
+    auth_kind: m.auth_kind.clone(),
+    oidc_repository: m.oidc_repository.clone(),
+    oidc_subject: m.oidc_subject.clone(),
     heartbeat: hb,
   }
 }
@@ -382,6 +402,10 @@ mod tests {
       1.0,
       1,
       max_jobs,
+      false,
+      "token".into(),
+      None,
+      None,
       tx,
     ))
   }

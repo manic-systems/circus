@@ -10,6 +10,7 @@ repository.workspace = true
 circus-common.workspace = true
 circus-proto.workspace  = true
 
+async-compression.workspace  = true
 base64.workspace             = true
 capnp.workspace              = true
 capnp-futures.workspace      = true
@@ -40,6 +41,7 @@ tokio-rustls.workspace       = true
 tokio-util.workspace         = true
 tracing.workspace            = true
 tracing-subscriber.workspace = true
+url.workspace                = true
 urlencoding.workspace        = true
 uuid.workspace               = true
 x509-parser.workspace        = true

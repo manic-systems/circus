@@ -722,6 +722,7 @@ dependencies = [
 name = "circus-queue-runner"
 version = "0.11.0"
 dependencies = [
+ "async-compression",
  "base64",
  "capnp",
  "capnp-futures",
@@ -754,6 +755,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "uuid",
  "x509-parser",

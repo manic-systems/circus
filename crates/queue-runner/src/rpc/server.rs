@@ -421,13 +421,14 @@ impl runner::Server for RunnerImpl {
       )?;
       // Bearer token first (cheap, constant-time); fall through to OIDC so a
       // JWT presented in the same field is verified against the issuer's JWKS.
-      let auth_kind = if verify_token(&cfg.token_hashes, token) {
-        "token"
+      let (auth_kind, oidc_identity) = if verify_token(&cfg.token_hashes, token)
+      {
+        ("token", None)
       } else if let Some(verifier) = cfg.oidc.as_ref() {
         match verifier.verify(token).await {
           Ok(id) => {
             tracing::info!(name = %name, repository = %id.repository, subject = %id.subject, "agent authenticated via OIDC");
-            "oidc"
+            ("oidc", Some(id))
           },
           Err(e) => {
             tracing::warn!(name = %name, "OIDC auth failed: {e}");
@@ -536,6 +537,10 @@ impl runner::Server for RunnerImpl {
         speed,
         cpu,
         maxj,
+        ephemeral,
+        auth_kind.to_owned(),
+        oidc_identity.as_ref().map(|id| id.repository.clone()),
+        oidc_identity.as_ref().map(|id| id.subject.clone()),
         tx,
       ));
       if let Some(previous) = pool.insert(Arc::clone(&meta)) {
@@ -684,7 +689,7 @@ impl runner::Server for RunnerImpl {
       let info = pr.get_nar_info()?;
       let store_path = info.get_store_path()?.to_str()?.to_owned();
       let nar_hash = info.get_nar_hash()?.to_str()?.to_owned();
-      let nar_size = info.get_nar_size() as i64;
+      let nar_size = info.get_nar_size();
       let file_hash = info.get_file_hash()?.to_str()?.to_owned();
       let file_size = info.get_file_size() as i64;
       let compression = info.get_compression()?.to_str()?.to_owned();
@@ -732,7 +737,7 @@ impl runner::Server for RunnerImpl {
         ));
       };
       if expected.nar_hash != nar_hash
-        || expected.nar_size != info.get_nar_size()
+        || expected.nar_size != nar_size
         || expected.compression != compression
         || expected.nar_path != url
       {
@@ -740,20 +745,43 @@ impl runner::Server for RunnerImpl {
           "narinfo does not match presigned upload".into(),
         ));
       }
+      let Some(presigner) = self_cfg.presigner.as_ref() else {
+        return Err(capnp::Error::failed(
+          "runner has no S3 presigner configured".into(),
+        ));
+      };
+      let get_url =
+        presigner.presign_get(&expected.nar_path, self_cfg.presign_expiry);
+      let verified = tokio::spawn(super::upload_verify::verify(
+        super::upload_verify::VerifyRequest {
+          get_url,
+          compression: compression.clone(),
+          nar_hash: nar_hash.clone(),
+          nar_size,
+          file_hash: (!file_hash.is_empty()).then(|| file_hash.clone()),
+          file_size: (file_size > 0).then_some(file_size as u64),
+        },
+      ))
+      .await
+      .map_err(|e| capnp::Error::failed(format!("upload verification panicked: {e}")))?
+      .map_err(|e| {
+        tracing::warn!(%machine_id, %build_id, %store_path, "uploaded NAR verification failed: {e}");
+        capnp::Error::failed(format!("uploaded NAR verification failed: {e}"))
+      })?;
 
       tracing::info!(
         %machine_id,
         %build_id,
         %store_path,
-        nar_size,
-        file_size,
+        nar_size = verified.nar_size as i64,
+        file_size = verified.file_size as i64,
         %compression,
-        "agent reported upload complete"
+        "verified uploaded NAR"
       );
 
-      let file_hash_opt = (!file_hash.is_empty()).then_some(file_hash.as_str());
+      let file_hash_opt = Some(verified.file_hash.as_str());
       let file_size_opt =
-        (compression != "none" && file_size > 0).then_some(file_size);
+        (compression != "none").then_some(verified.file_size as i64);
 
       // Sign the narinfo on the runner side. The fingerprint is the canonical
       // Nix narinfo signing input:
@@ -764,8 +792,8 @@ impl runner::Server for RunnerImpl {
         match sign_fingerprint(
           key_file,
           &store_path,
-          &nar_hash,
-          nar_size,
+          &verified.nar_hash,
+          verified.nar_size as i64,
           &references,
         )
         .await
@@ -783,17 +811,17 @@ impl runner::Server for RunnerImpl {
       if let Err(e) = circus_common::repo::narinfo_cache::upsert(
         &db_pool,
         circus_common::repo::narinfo_cache::UpsertNarInfo {
-          store_path: &store_path,
-          nar_hash: &nar_hash,
-          nar_size,
-          file_hash: file_hash_opt,
-          file_size: file_size_opt,
+          store_path:  &store_path,
+          nar_hash:    &verified.nar_hash,
+          nar_size:    verified.nar_size as i64,
+          file_hash:   file_hash_opt,
+          file_size:   file_size_opt,
           compression: &compression,
-          url: &url,
-          deriver: deriver.as_deref(),
-          references: &references,
-          sig: signed_sig.as_deref(),
-          ca: ca.as_deref(),
+          url:         &url,
+          deriver:     deriver.as_deref(),
+          references:  &references,
+          sig:         signed_sig.as_deref(),
+          ca:          ca.as_deref(),
         },
       )
       .await

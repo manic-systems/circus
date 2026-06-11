@@ -17,6 +17,7 @@ pub mod s3;
 pub mod server;
 pub mod session;
 pub mod tls;
+mod upload_verify;
 
 pub use pool::{AgentHandle, AgentPool, AgentSnapshot};
 pub use server::serve;
