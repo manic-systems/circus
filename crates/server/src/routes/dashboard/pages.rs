@@ -65,8 +65,20 @@ pub(super) struct PageParams {
 
 #[derive(serde::Deserialize)]
 pub(super) struct BuildFilterParams {
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
   status:   Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
   system:   Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
   job_name: Option<String>,
   limit:    Option<i64>,
   offset:   Option<i64>,
@@ -1365,4 +1377,25 @@ pub(super) async fn project_setup_page(
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
   ))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::BuildFilterParams;
+
+  #[test]
+  fn blank_filter_params_deserialize_to_none() {
+    let params = serde_urlencoded::from_str::<BuildFilterParams>(
+      "offset=50&limit=50&status=&system=&job_name=",
+    )
+    .expect("deserialize query");
+    assert_eq!(params.status, None);
+    assert_eq!(params.system, None);
+    assert_eq!(params.job_name, None);
+    assert_eq!(params.offset, Some(50));
+
+    let kept = serde_urlencoded::from_str::<BuildFilterParams>("status=failed")
+      .expect("deserialize query");
+    assert_eq!(kept.status.as_deref(), Some("failed"));
+  }
 }

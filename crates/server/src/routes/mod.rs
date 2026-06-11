@@ -17,6 +17,7 @@ pub mod oauth;
 pub mod openapi;
 pub mod projects;
 pub mod search;
+pub(crate) mod serde_util;
 pub mod users;
 pub mod webhooks;
 
