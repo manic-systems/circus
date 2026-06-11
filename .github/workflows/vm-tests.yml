@@ -45,15 +45,15 @@ jobs:
         with:
           extra_nix_config: extra-experimental-features = nix-command flakes
 
-      - name: Restore cached paths
+      - name: Restore and save cached paths
         id: cache-store-restore
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          primary-key: nix-vm-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: nix-vm-packages-${{ runner.os }}-
           gc-max-store-size-linux: 5G
           purge: true
-          purge-prefixes: nix-${{ runner.os }}-
+          purge-prefixes: nix-vm-packages-${{ runner.os }}-
           purge-created: 0
           purge-last-accessed: 0
           purge-primary-key: never
@@ -115,16 +115,10 @@ jobs:
 
       - name: Restore cached paths
         id: cache-store-restore
-        uses: nix-community/cache-nix-action@v7
+        uses: nix-community/cache-nix-action/restore@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 5G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-last-accessed: 0
-          purge-primary-key: never
+          primary-key: nix-vm-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: nix-vm-packages-${{ runner.os }}-
 
       - name: Build ${{ matrix.check }} for x86_64-linux
         run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
