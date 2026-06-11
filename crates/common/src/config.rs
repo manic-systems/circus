@@ -273,6 +273,40 @@ pub struct RpcConfig {
   /// Public key to trust for `cache_substituter`.
   #[serde(default)]
   pub cache_public_key: Option<String>,
+
+  /// Accept short-lived OIDC JWTs (e.g. GitHub Actions) in place of a
+  /// bearer token. `auth_tokens` still works alongside this.
+  #[serde(default)]
+  pub oidc: Option<RpcOidcConfig>,
+}
+
+/// OIDC trust settings for the capnp-rpc endpoint. An agent may present an
+/// OIDC ID token in `register` instead of a bearer token; the runner verifies
+/// it against the issuer's JWKS. Defaults target GitHub Actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcOidcConfig {
+  /// Expected `iss` claim. The JWKS is discovered from this issuer unless
+  /// `jwks_url` is set.
+  #[serde(default = "default_oidc_issuer")]
+  pub issuer: String,
+
+  /// JWKS endpoint override. Discovered from the issuer's
+  /// `.well-known/openid-configuration` when absent.
+  #[serde(default)]
+  pub jwks_url: Option<String>,
+
+  /// Accepted `aud` claim values. The workflow must mint its token with one
+  /// of these audiences. Empty = reject all.
+  #[serde(default)]
+  pub audiences: Vec<String>,
+
+  /// `owner/repo` slugs allowed to register. Empty = reject all.
+  #[serde(default)]
+  pub allowed_repositories: Vec<String>,
+}
+
+fn default_oidc_issuer() -> String {
+  "https://token.actions.githubusercontent.com".to_owned()
 }
 
 /// Server-side TLS material for the capnp-rpc endpoint. When `client_ca` is
@@ -1118,6 +1152,18 @@ impl Config {
             "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got \
              {}",
             decoded.len()
+          ));
+        }
+      }
+      if let Some(oidc) = rpc.oidc.as_ref() {
+        if !oidc.issuer.starts_with("https://") {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.rpc.oidc.issuer must be an https URL"
+          ));
+        }
+        if oidc.audiences.is_empty() {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.rpc.oidc.audiences must list at least one audience"
           ));
         }
       }

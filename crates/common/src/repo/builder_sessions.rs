@@ -157,10 +157,14 @@ pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
 ///
 /// # Errors
 /// Returns the underlying sqlx error.
-pub async fn prune_stale_ephemeral(pool: &PgPool, ttl_secs: i64) -> Result<u64> {
+pub async fn prune_stale_ephemeral(
+  pool: &PgPool,
+  ttl_secs: i64,
+) -> Result<u64> {
   let res = sqlx::query(
-    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND connected = FALSE \
-     AND (last_seen IS NULL OR last_seen < NOW() - make_interval(secs => $1))",
+    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND connected = \
+     FALSE AND (last_seen IS NULL OR last_seen < NOW() - make_interval(secs \
+     => $1))",
   )
   .bind(ttl_secs as f64)
   .execute(pool)
