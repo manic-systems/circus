@@ -204,12 +204,8 @@ pub struct QueueRunnerConfig {
   #[serde(default = "default_psi_check_timeout")]
   pub psi_check_timeout: u64,
 
-  /// Refuse to dispatch to an SSH `remote_builder` that has no
-  /// `public_host_key` recorded. When false (default), a builder without a
-  /// pinned host key is still used but connects with
-  /// `StrictHostKeyChecking=accept-new` and logs a warning. When true, such
-  /// builders are skipped so a build only ever runs over a host-key-verified
-  /// SSH connection.
+  /// Skip SSH `remote_builders` with no `public_host_key` recorded instead of
+  /// falling back to `accept-new`. Default false.
   #[serde(default)]
   pub ssh_require_host_key: bool,
 

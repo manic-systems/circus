@@ -44,6 +44,11 @@ pub struct BuilderSession {
   pub builds_failed:        i64,
   pub consecutive_failures: i32,
   pub disabled_until:       Option<DateTime<Utc>>,
+  /// Single-session CI runner that never reconnects (see
+  /// `prune_stale_ephemeral`).
+  pub ephemeral:            bool,
+  /// How the agent authenticated on register: `"token"` or `"oidc"`.
+  pub auth_kind:            String,
   pub created_at:           DateTime<Utc>,
   pub updated_at:           DateTime<Utc>,
 }
@@ -144,6 +149,24 @@ pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
   .await
   .map_err(CiError::Database)?;
   Ok(row.is_some_and(|(schedulable,)| schedulable))
+}
+
+/// Delete disconnected ephemeral sessions whose last activity is older than
+/// `ttl_secs`, so the table doesn't accumulate one dead row per CI run.
+/// Persistent agents are never touched.
+///
+/// # Errors
+/// Returns the underlying sqlx error.
+pub async fn prune_stale_ephemeral(pool: &PgPool, ttl_secs: i64) -> Result<u64> {
+  let res = sqlx::query(
+    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND connected = FALSE \
+     AND (last_seen IS NULL OR last_seen < NOW() - make_interval(secs => $1))",
+  )
+  .bind(ttl_secs as f64)
+  .execute(pool)
+  .await
+  .map_err(CiError::Database)?;
+  Ok(res.rows_affected())
 }
 
 /// Mark every row disconnected. Called on runner startup to clean up

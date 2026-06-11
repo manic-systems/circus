@@ -16,6 +16,13 @@ use uuid::Uuid;
 struct Cli {
   #[arg(short, long, value_name = "FILE")]
   config: Option<PathBuf>,
+
+  /// Run as a single-session, short-lived agent: generate a fresh machine ID,
+  /// drain the queue, then exit instead of reconnecting. Enables ephemeral
+  /// mode even if `[agent.ephemeral]` is absent (using defaults). Intended for
+  /// CI runners such as GitHub Actions.
+  #[arg(long)]
+  ephemeral: bool,
 }
 
 fn main() -> Result<()> {
@@ -31,12 +38,26 @@ fn main() -> Result<()> {
     .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
 
   let cli = Cli::parse();
-  let cfg = AgentConfig::load(cli.config.as_deref())?;
+  let mut cfg = AgentConfig::load(cli.config.as_deref())?;
   init_tracing(&cfg.tracing);
-  tracing::info!(name = %cfg.agent.name, "circus-agent starting");
 
-  let machine_id = resolve_machine_id(&cfg)?;
-  tracing::info!(machine_id = %machine_id, "agent identity resolved");
+  // `--ephemeral` enables it without an `[agent.ephemeral]` table.
+  if cli.ephemeral && cfg.agent.ephemeral.is_none() {
+    cfg.agent.ephemeral =
+      Some(circus_agent::config::EphemeralConfig::default());
+  }
+  let ephemeral = cfg.agent.ephemeral.is_some();
+  tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
+
+  let machine_id = resolve_machine_id(&cfg, ephemeral)?;
+
+  // Uniquify the shared name so concurrent CI runs don't collide.
+  if let Some(eph) = &cfg.agent.ephemeral
+    && eph.unique_name
+  {
+    cfg.agent.name = unique_ephemeral_name(&cfg.agent.name, machine_id);
+  }
+  tracing::info!(machine_id = %machine_id, name = %cfg.agent.name, "agent identity resolved");
 
   if cfg.agent.rootless {
     if let Some(dir) = &cfg.agent.rootless_data_dir {
@@ -60,6 +81,26 @@ async fn run_supervisor(
   cfg: circus_agent::config::Agent,
   machine_id: Uuid,
 ) -> Result<()> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
+  // One session, then exit; the orphan sweeper recovers any in-flight build.
+  if cfg.ephemeral.is_some() {
+    match session::run_once(&cfg, machine_id).await {
+      Ok(()) => tracing::info!("ephemeral session ended; exiting"),
+      Err(e) => tracing::warn!(error = %e, "ephemeral session failed; exiting"),
+    }
+    return Ok(());
+  }
+
+  reconnect_forever(&cfg, machine_id).await
+}
+
+async fn reconnect_forever(
+  cfg: &circus_agent::config::Agent,
+  machine_id: Uuid,
+) -> Result<()> {
   #![expect(clippy::infinite_loop, reason = "intentional reconnect loop")]
   #![expect(
     clippy::future_not_send,
@@ -67,7 +108,7 @@ async fn run_supervisor(
   )]
   let backoff = Duration::from_secs(cfg.reconnect_delay_secs.max(1));
   loop {
-    match session::run_once(&cfg, machine_id).await {
+    match session::run_once(cfg, machine_id).await {
       Ok(()) => {
         tracing::warn!("connection ended cleanly; reconnecting");
       },
@@ -79,10 +120,12 @@ async fn run_supervisor(
   }
 }
 
-/// Read or initialise the machine ID file. The runner uses this ID as the
-/// stable key into `builder_sessions` and the `AgentPool`, so it must
-/// outlive process restarts but be unique to this physical host.
-fn resolve_machine_id(cfg: &AgentConfig) -> Result<Uuid> {
+/// Resolve the machine ID: persistent agents read/init the ID file (identity
+/// survives reconnects); ephemeral agents mint a fresh, unpersisted ID.
+fn resolve_machine_id(cfg: &AgentConfig, ephemeral: bool) -> Result<Uuid> {
+  if ephemeral {
+    return Ok(Uuid::new_v4());
+  }
   let path = cfg
     .agent
     .machine_id_file
@@ -99,4 +142,18 @@ fn resolve_machine_id(cfg: &AgentConfig) -> Result<Uuid> {
   let id = Uuid::new_v4();
   std::fs::write(&path, id.to_string())?;
   Ok(id)
+}
+
+/// Cluster-unique name for an ephemeral run: GitHub run identifiers (for
+/// traceability) plus a slice of the random machine ID (for uniqueness).
+fn unique_ephemeral_name(base: &str, machine_id: Uuid) -> String {
+  let short = &machine_id.simple().to_string()[..8];
+  match (
+    std::env::var("GITHUB_RUN_ID").ok(),
+    std::env::var("GITHUB_RUN_ATTEMPT").ok(),
+  ) {
+    (Some(run), Some(attempt)) => format!("{base}-gh{run}.{attempt}-{short}"),
+    (Some(run), None) => format!("{base}-gh{run}-{short}"),
+    _ => format!("{base}-{short}"),
+  }
 }

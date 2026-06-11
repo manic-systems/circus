@@ -98,6 +98,46 @@ pub struct Agent {
   /// `StateDirectory`.
   #[serde(default)]
   pub rootless_data_dir: Option<PathBuf>,
+
+  /// When present (or `--ephemeral`), run as a single-session builder: fresh
+  /// machine ID, drain the queue, then exit instead of reconnecting. For CI
+  /// runners such as GitHub Actions.
+  #[serde(default)]
+  pub ephemeral: Option<EphemeralConfig>,
+}
+
+/// Lifecycle bounds for an ephemeral (single-session) agent. In-flight builds
+/// drain before exit; the runner's orphan sweeper recovers anything still
+/// running if the CI host dies first.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EphemeralConfig {
+  /// Exit after this many completed builds. `None` = unbounded.
+  #[serde(default)]
+  pub max_builds: Option<u32>,
+
+  /// Hard cap on session wall-clock (seconds). `None` = no cap.
+  #[serde(default)]
+  pub max_lifetime_secs: Option<u64>,
+
+  /// Exit after this many seconds with no running builds.
+  #[serde(default = "default_max_idle")]
+  pub max_idle_secs: u64,
+
+  /// Append a unique suffix to `name` so concurrent CI runs don't collide on
+  /// the unique-name constraint.
+  #[serde(default = "default_true")]
+  pub unique_name: bool,
+}
+
+impl Default for EphemeralConfig {
+  fn default() -> Self {
+    Self {
+      max_builds:        None,
+      max_lifetime_secs: None,
+      max_idle_secs:     default_max_idle(),
+      unique_name:       true,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -124,6 +164,12 @@ const fn default_heartbeat_interval() -> u64 {
 }
 fn default_work_dir() -> PathBuf {
   PathBuf::from("/var/lib/circus-agent")
+}
+const fn default_max_idle() -> u64 {
+  120
+}
+const fn default_true() -> bool {
+  true
 }
 
 impl AgentConfig {

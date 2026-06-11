@@ -461,6 +461,7 @@ impl runner::Server for RunnerImpl {
       let speed = info.get_speed_factor();
       let cpu = info.get_cpu_count();
       let maxj = info.get_max_jobs();
+      let ephemeral = info.get_ephemeral();
       validate_agent_capacity(&systems, speed, cpu, maxj)?;
 
       let connection_id = Uuid::new_v4();
@@ -488,6 +489,9 @@ impl runner::Server for RunnerImpl {
         speed,
         cpu as i32,
         maxj as i32,
+        ephemeral,
+        // Bearer-token auth; OIDC will set "oidc".
+        "token",
       )
       .await
       {
@@ -1145,18 +1149,22 @@ async fn upsert_session(
   speed: f32,
   cpu: i32,
   max_jobs: i32,
+  ephemeral: bool,
+  auth_kind: &str,
 ) -> Result<(), sqlx::Error> {
   sqlx::query(
     "INSERT INTO builder_sessions (machine_id, name, hostname, systems, \
      supported_features, mandatory_features, speed_factor, cpu_count, \
-     max_jobs, proto_version, connected, last_seen, updated_at) VALUES ($1, \
-     $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, NOW(), NOW()) ON CONFLICT \
+     max_jobs, proto_version, ephemeral, auth_kind, connected, last_seen, \
+     updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+     TRUE, NOW(), NOW()) ON CONFLICT \
      (machine_id) DO UPDATE SET name = EXCLUDED.name, hostname = \
      EXCLUDED.hostname, systems = EXCLUDED.systems, supported_features = \
      EXCLUDED.supported_features, mandatory_features = \
      EXCLUDED.mandatory_features, speed_factor = EXCLUDED.speed_factor, \
      cpu_count = EXCLUDED.cpu_count, max_jobs = EXCLUDED.max_jobs, \
-     proto_version = EXCLUDED.proto_version, connected = TRUE, last_seen = \
+     proto_version = EXCLUDED.proto_version, ephemeral = EXCLUDED.ephemeral, \
+     auth_kind = EXCLUDED.auth_kind, connected = TRUE, last_seen = \
      NOW(), updated_at = NOW()",
   )
   .bind(machine_id)
@@ -1169,6 +1177,8 @@ async fn upsert_session(
   .bind(cpu)
   .bind(max_jobs)
   .bind(PROTO_VERSION)
+  .bind(ephemeral)
+  .bind(auth_kind)
   .execute(pool)
   .await?;
   Ok(())

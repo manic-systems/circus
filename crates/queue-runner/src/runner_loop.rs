@@ -24,6 +24,27 @@ async fn reset_orphaned_builds(pool: &PgPool) {
   }
 }
 
+/// How long a disconnected ephemeral session lingers before pruning.
+const EPHEMERAL_SESSION_TTL_SECS: i64 = 3600;
+
+/// Delete stale ephemeral (CI runner) sessions that ran and went away.
+async fn prune_stale_ephemeral_sessions(pool: &PgPool) {
+  match repo::builder_sessions::prune_stale_ephemeral(
+    pool,
+    EPHEMERAL_SESSION_TTL_SECS,
+  )
+  .await
+  {
+    Ok(count) if count > 0 => {
+      tracing::info!(count, "Pruned stale ephemeral builder sessions");
+    },
+    Ok(_) => {},
+    Err(e) => {
+      tracing::error!("Failed to prune ephemeral builder sessions: {e}");
+    },
+  }
+}
+
 /// Query the expected output path for a derivation using `nix-store --query`.
 /// Returns the first output path, or `None` if the query fails.
 async fn query_drv_output(drv_path: &str) -> Option<String> {
@@ -90,10 +111,12 @@ pub async fn run(
   let mut last_orphan_reset = tokio::time::Instant::now();
   let orphan_reset_interval = Duration::from_mins(1);
   reset_orphaned_builds(&pool).await;
+  prune_stale_ephemeral_sessions(&pool).await;
 
   loop {
     if last_orphan_reset.elapsed() >= orphan_reset_interval {
       reset_orphaned_builds(&pool).await;
+      prune_stale_ephemeral_sessions(&pool).await;
       last_orphan_reset = tokio::time::Instant::now();
     }
 
