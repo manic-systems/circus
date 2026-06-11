@@ -327,6 +327,99 @@ fn validate_ssh_uri(uri: &str) -> Result<(), String> {
   if uri.len() > 2048 {
     return Err("ssh_uri must be at most 2048 characters".to_string());
   }
+  if uri.contains('\0') {
+    return Err("ssh_uri must not contain null bytes".to_string());
+  }
+  // A store URI is a single token; whitespace means it is malformed.
+  if uri.chars().any(char::is_whitespace) {
+    return Err("ssh_uri must not contain whitespace".to_string());
+  }
+  // If a scheme is present it must be one nix understands for SSH stores.
+  if let Some((scheme, _rest)) = uri.split_once("://")
+    && scheme != "ssh"
+    && scheme != "ssh-ng"
+  {
+    return Err(format!(
+      "ssh_uri scheme '{scheme}://' is not allowed (use ssh:// or ssh-ng://)"
+    ));
+  }
+  // Must resolve to a non-empty host, optionally behind `user@`.
+  let after_scheme = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+  let host_part = after_scheme
+    .split_once('@')
+    .map_or(after_scheme, |(_, rest)| rest);
+  let host = host_part.split([':', '/']).next().unwrap_or("");
+  if host.is_empty() {
+    return Err("ssh_uri must include a host".to_string());
+  }
+  Ok(())
+}
+
+/// Validate a recorded SSH host key used for connection pinning. Accepts a
+/// bare key (`<type> <base64>`) or a full `known_hosts` line
+/// (`<host> <type> <base64>`), optionally with a trailing comment.
+fn validate_ssh_host_key(key: &str) -> Result<(), String> {
+  let key = key.trim();
+  if key.is_empty() {
+    return Err("public_host_key cannot be empty".to_string());
+  }
+  if key.len() > 4096 {
+    return Err("public_host_key must be at most 4096 characters".to_string());
+  }
+  if key.contains('\0') {
+    return Err("public_host_key must not contain null bytes".to_string());
+  }
+  if key.contains('\n') || key.contains('\r') {
+    return Err("public_host_key must be a single line".to_string());
+  }
+  // Find the key-type token and require a base64 blob to follow it.
+  let tokens: Vec<&str> = key.split_whitespace().collect();
+  let type_idx = tokens.iter().position(|t| {
+    t.starts_with("ssh-") || t.starts_with("ecdsa-") || t.starts_with("sk-")
+  });
+  let Some(type_idx) = type_idx else {
+    return Err(
+      "public_host_key must contain a key type (ssh-ed25519, ssh-rsa, \
+       ecdsa-..., sk-...)"
+        .to_string(),
+    );
+  };
+  let Some(blob) = tokens.get(type_idx + 1) else {
+    return Err(
+      "public_host_key is missing its base64 key material".to_string(),
+    );
+  };
+  let is_base64 = !blob.is_empty()
+    && blob
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=');
+  if !is_base64 {
+    return Err(
+      "public_host_key base64 material contains invalid characters".to_string(),
+    );
+  }
+  Ok(())
+}
+
+/// Validate the path to an SSH private key file. Existence is not checked here
+/// (the file lives on the queue-runner host, not the API host); this only
+/// rejects malformed or traversing paths.
+fn validate_ssh_key_file(path: &str) -> Result<(), String> {
+  if path.is_empty() {
+    return Err("ssh_key_file cannot be empty".to_string());
+  }
+  if path.len() > 4096 {
+    return Err("ssh_key_file must be at most 4096 characters".to_string());
+  }
+  if path.contains('\0') {
+    return Err("ssh_key_file must not contain null bytes".to_string());
+  }
+  if !path.starts_with('/') {
+    return Err("ssh_key_file must be an absolute path".to_string());
+  }
+  if path.contains("..") {
+    return Err("ssh_key_file must not contain '..'".to_string());
+  }
   Ok(())
 }
 
@@ -462,6 +555,12 @@ impl Validate for CreateRemoteBuilder {
     if let Some(speed_factor) = self.speed_factor {
       validate_positive_i32(speed_factor, "speed_factor")?;
     }
+    if let Some(ref host_key) = self.public_host_key {
+      validate_ssh_host_key(host_key)?;
+    }
+    if let Some(ref key_file) = self.ssh_key_file {
+      validate_ssh_key_file(key_file)?;
+    }
     Ok(())
   }
 }
@@ -487,6 +586,12 @@ impl Validate for UpdateRemoteBuilder {
     }
     if let Some(speed_factor) = self.speed_factor {
       validate_positive_i32(speed_factor, "speed_factor")?;
+    }
+    if let Some(ref host_key) = self.public_host_key {
+      validate_ssh_host_key(host_key)?;
+    }
+    if let Some(ref key_file) = self.ssh_key_file {
+      validate_ssh_key_file(key_file)?;
     }
     Ok(())
   }
@@ -794,6 +899,82 @@ mod tests {
       ssh_key_file:       None,
     };
     assert!(rb.validate().is_ok());
+  }
+
+  #[test]
+  fn ssh_uri_accepts_common_forms() {
+    assert!(validate_ssh_uri("root@builder.example.com").is_ok());
+    assert!(validate_ssh_uri("ssh://root@builder.example.com:2222").is_ok());
+    assert!(validate_ssh_uri("ssh-ng://builder.example.com").is_ok());
+    assert!(validate_ssh_uri("builder.example.com").is_ok());
+  }
+
+  #[test]
+  fn ssh_uri_rejects_malformed() {
+    assert!(validate_ssh_uri("").is_err());
+    assert!(validate_ssh_uri("root@host with space").is_err());
+    assert!(validate_ssh_uri("http://host").is_err());
+    assert!(validate_ssh_uri("ssh://").is_err());
+    assert!(validate_ssh_uri("root@host\0").is_err());
+  }
+
+  #[test]
+  fn ssh_host_key_accepts_bare_and_full_lines() {
+    assert!(
+      validate_ssh_host_key("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc").is_ok()
+    );
+    assert!(
+      validate_ssh_host_key(
+        "builder.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc"
+      )
+      .is_ok()
+    );
+    assert!(
+      validate_ssh_host_key("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXc=").is_ok()
+    );
+  }
+
+  #[test]
+  fn ssh_host_key_rejects_garbage() {
+    assert!(validate_ssh_host_key("").is_err());
+    assert!(validate_ssh_host_key("not-a-key").is_err());
+    assert!(validate_ssh_host_key("ssh-ed25519").is_err());
+    assert!(validate_ssh_host_key("ssh-ed25519 bad!@#blob").is_err());
+    assert!(validate_ssh_host_key("ssh-ed25519 AAAA\nsecond line").is_err());
+  }
+
+  #[test]
+  fn ssh_key_file_requires_clean_absolute_path() {
+    assert!(validate_ssh_key_file("/var/lib/circus/id_ed25519").is_ok());
+    assert!(validate_ssh_key_file("relative/path").is_err());
+    assert!(validate_ssh_key_file("/etc/../root/.ssh/id").is_err());
+    assert!(validate_ssh_key_file("").is_err());
+    assert!(validate_ssh_key_file("/path\0null").is_err());
+  }
+
+  #[test]
+  fn remote_builder_validates_host_key_and_key_file() {
+    let rb = CreateRemoteBuilder {
+      name:               "builder1".to_string(),
+      ssh_uri:            "root@builder.example.com".to_string(),
+      systems:            vec!["x86_64-linux".to_string()],
+      max_jobs:           Some(4),
+      speed_factor:       Some(1),
+      supported_features: None,
+      mandatory_features: None,
+      public_host_key:    Some("not a valid key".to_string()),
+      ssh_key_file:       None,
+    };
+    assert!(rb.validate().is_err());
+
+    let rb = CreateRemoteBuilder {
+      public_host_key: Some(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc".to_string(),
+      ),
+      ssh_key_file: Some("relative".to_string()),
+      ..rb
+    };
+    assert!(rb.validate().is_err());
   }
 
   #[test]

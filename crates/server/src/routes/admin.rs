@@ -110,7 +110,12 @@ async fn create_builder(
     "BUILDER_CREATE",
     Some("builder"),
     Some(&builder.id.to_string()),
-    serde_json::json!({ "name": builder.name, "ssh_uri": builder.ssh_uri }),
+    serde_json::json!({
+      "name": builder.name,
+      "ssh_uri": builder.ssh_uri,
+      "ssh_key_file": builder.ssh_key_file,
+      "host_key_pinned": builder.public_host_key.is_some(),
+    }),
   )
   .await;
 
@@ -126,6 +131,14 @@ async fn update_builder(
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+
+  // Capture which security-relevant fields the request changed before `input`
+  // is moved into the update, so key rotations and host-key changes are
+  // auditable.
+  let ssh_uri_changed = input.ssh_uri.is_some();
+  let ssh_key_file_changed = input.ssh_key_file.is_some();
+  let public_host_key_changed = input.public_host_key.is_some();
+
   let builder =
     circus_common::repo::remote_builders::update(&state.pool, id, input)
       .await
@@ -137,7 +150,13 @@ async fn update_builder(
     "BUILDER_UPDATE",
     Some("builder"),
     Some(&builder.id.to_string()),
-    serde_json::json!({ "name": builder.name, "enabled": builder.enabled }),
+    serde_json::json!({
+      "name": builder.name,
+      "enabled": builder.enabled,
+      "ssh_uri_changed": ssh_uri_changed,
+      "ssh_key_file_changed": ssh_key_file_changed,
+      "public_host_key_changed": public_host_key_changed,
+    }),
   )
   .await;
 
