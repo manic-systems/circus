@@ -90,7 +90,7 @@ in
   testers.runNixOSTest {
     name = "circus-capability-scheduling";
 
-    containers = {
+    nodes = {
       runner = {
         pkgs,
         lib,
