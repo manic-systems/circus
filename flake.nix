@@ -104,6 +104,7 @@
       pkgs = pkgsFor system;
 
       callTest = path: pkgs.callPackage path {inherit self;};
+      nixosModuleAgentPackage = pkgs.callPackage ./nix/package.nix {crate = "circus-agent";};
 
       formatting = pkgs.runCommand "circus-formatting-check" {nativeBuildInputs = [self.formatter.${system}];} ''
         cp -r --no-preserve=mode ${self} src
@@ -138,6 +139,7 @@
       vmTests
       // {
         inherit formatting;
+        nixos-module-agent-package = nixosModuleAgentPackage;
         full = pkgs.symlinkJoin {
           name = "vm-tests-full";
           paths = builtins.attrValues vmTests;

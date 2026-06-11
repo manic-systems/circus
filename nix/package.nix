@@ -18,7 +18,12 @@ rustPlatform.buildRustPackage {
       ../Cargo.lock
     ];
   };
-  cargoLock.lockFile = ../Cargo.lock;
+  cargoLock = {
+    lockFile = ../Cargo.lock;
+    outputHashes = {
+      "harmonia-file-nar-3.1.0" = "sha256-6LJOkuyWuMjENbzZCKDOjEz4qjYipTwH0qRMcwpdLSk=";
+    };
+  };
 
   cargoBuildFlags = ["--package" crate];
   cargoTestFlags = ["--package" crate];
