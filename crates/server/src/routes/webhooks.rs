@@ -9,6 +9,7 @@ use axum::{
   routing::post,
 };
 use circus_common::{
+  glob::glob_matches,
   models::{CreateEvaluation, Jobset, JobsetTriggerMode},
   repo,
 };
@@ -70,20 +71,61 @@ fn trace_webhook_repo(
   );
 }
 
-/// Strip the `refs/heads/` prefix from a git ref. Returns the original
-/// string if no such prefix is present.
-fn strip_branch_prefix(git_ref: &str) -> &str {
-  git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref)
+/// A push ref classified by kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PushedRef<'a> {
+  Branch(&'a str),
+  Tag(&'a str),
+  Other(&'a str),
 }
 
-/// True if a jobset configured for `jobset_branch` should react to a push
-/// to `pushed_branch`. A jobset with no configured branch matches every
-/// push (treat None as "any branch").
-fn jobset_matches_branch(
-  jobset_branch: Option<&str>,
-  pushed_branch: &str,
-) -> bool {
-  jobset_branch.is_none_or(|b| b == pushed_branch)
+/// Classify a raw push ref.
+fn parse_push_ref(git_ref: &str) -> PushedRef<'_> {
+  git_ref.strip_prefix("refs/heads/").map_or_else(
+    || {
+      git_ref
+        .strip_prefix("refs/tags/")
+        .map_or(PushedRef::Other(git_ref), PushedRef::Tag)
+    },
+    PushedRef::Branch,
+  )
+}
+
+fn normalize_branch_name(branch: &str) -> &str {
+  branch.strip_prefix("refs/heads/").unwrap_or(branch)
+}
+
+/// Matches `branch_pattern` as a glob if set, otherwise `branch` exactly.
+/// A jobset with neither matches every branch unless it is tag-only.
+fn jobset_matches_branch(jobset: &Jobset, pushed_branch: &str) -> bool {
+  if let Some(pattern) = jobset.branch_pattern.as_deref() {
+    return glob_matches(pattern, pushed_branch);
+  }
+  jobset
+    .branch
+    .as_deref()
+    .map(normalize_branch_name)
+    .map_or_else(
+      || jobset.tag_pattern.is_none(),
+      |branch| branch == pushed_branch,
+    )
+}
+
+/// Whether a tag push should trigger `jobset`.
+fn jobset_matches_tag(jobset: &Jobset, pushed_tag: &str) -> bool {
+  jobset
+    .tag_pattern
+    .as_deref()
+    .is_some_and(|pattern| glob_matches(pattern, pushed_tag))
+}
+
+/// Whether a push to `pushed_ref` should trigger `jobset`.
+fn jobset_matches_push_ref(jobset: &Jobset, pushed_ref: PushedRef<'_>) -> bool {
+  match pushed_ref {
+    PushedRef::Branch(branch) => jobset_matches_branch(jobset, branch),
+    PushedRef::Tag(tag) => jobset_matches_tag(jobset, tag),
+    PushedRef::Other(_) => false,
+  }
 }
 
 fn jobset_accepts_source_trigger(jobset: &Jobset) -> bool {
@@ -98,7 +140,7 @@ async fn trigger_push_evaluations(
   state: &AppState,
   project_id: Uuid,
   commit: &str,
-  pushed_branch: &str,
+  pushed_ref: PushedRef<'_>,
 ) -> Result<usize, ApiError> {
   let jobsets =
     repo::jobsets::list_all_for_project(&state.pool, project_id).await?;
@@ -108,7 +150,7 @@ async fn trigger_push_evaluations(
     if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
-    if !jobset_matches_branch(jobset.branch.as_deref(), pushed_branch) {
+    if !jobset_matches_push_ref(jobset, pushed_ref) {
       continue;
     }
     match repo::evaluations::create(&state.pool, CreateEvaluation {
@@ -153,7 +195,7 @@ async fn trigger_change_request_evaluations(
     if !jobset_accepts_source_trigger(jobset) {
       continue;
     }
-    if !jobset_matches_branch(jobset.branch.as_deref(), base) {
+    if !jobset_matches_branch(jobset, base) {
       continue;
     }
     match repo::evaluations::create(&state.pool, CreateEvaluation {

@@ -8,12 +8,13 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::{
+  PushedRef,
   WebhookResponse,
   branch_deletion_response,
   header_value,
   invalid_signature_response,
   is_deleted_commit,
-  strip_branch_prefix,
+  parse_push_ref,
   trace_webhook_repo,
   trigger_push_evaluations,
   triggered_push_response,
@@ -122,12 +123,13 @@ async fn process_push(
     return Ok(branch_deletion_response());
   }
 
-  let pushed_branch =
-    payload.git_ref.as_deref().map_or("", strip_branch_prefix);
+  let pushed_ref = payload
+    .git_ref
+    .as_deref()
+    .map_or(PushedRef::Other(""), parse_push_ref);
 
   let triggered =
-    trigger_push_evaluations(&state, project_id, &commit, pushed_branch)
-      .await?;
+    trigger_push_evaluations(&state, project_id, &commit, pushed_ref).await?;
 
   Ok(triggered_push_response(triggered, &commit))
 }
