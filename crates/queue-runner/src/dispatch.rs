@@ -13,7 +13,11 @@ use BuilderSchedulingStrategy::{
   Dynamic,
   SpeedFactorOnly,
 };
-use circus_common::{config::BuilderSchedulingStrategy, models::Build, repo};
+use circus_common::{
+  config::BuilderSchedulingStrategy,
+  models::{Build, Evaluation, EvaluationTriggerKind, Jobset},
+  repo,
+};
 use sqlx::PgPool;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
@@ -35,7 +39,7 @@ use crate::{
 pub enum ExecutionReservation {
   Agent {
     meta: Arc<AgentMeta>,
-    snap: AgentSnapshot,
+    snap: Box<AgentSnapshot>,
     slot: SlotGuard,
   },
   Runner(OwnedSemaphorePermit),
@@ -93,6 +97,123 @@ pub(crate) fn contended_surplus(
       demand.contains(*feature) && !required_features.contains(*feature)
     })
     .count()
+}
+
+#[must_use]
+pub(crate) fn requires_trusted_ref(agent: &AgentSnapshot) -> bool {
+  agent.ephemeral || agent.auth_kind == "oidc"
+}
+
+#[must_use]
+pub(crate) fn is_trusted_ref_evaluation(
+  evaluation: &Evaluation,
+  jobset: &Jobset,
+) -> bool {
+  if jobset.branch.as_deref().is_none_or(str::is_empty) {
+    return false;
+  }
+  if evaluation.pr_number.is_some()
+    || evaluation.pr_head_branch.is_some()
+    || evaluation.pr_base_branch.is_some()
+  {
+    return false;
+  }
+  matches!(
+    evaluation.trigger_kind,
+    EvaluationTriggerKind::SourceChange
+      | EvaluationTriggerKind::Manual
+      | EvaluationTriggerKind::Interval
+  )
+}
+
+struct TrustedBuildContext {
+  repository: Option<String>,
+}
+
+async fn trusted_build_context(
+  pool: &PgPool,
+  build: &Build,
+) -> Option<TrustedBuildContext> {
+  let evaluation = match repo::evaluations::get(pool, build.evaluation_id).await
+  {
+    Ok(evaluation) => evaluation,
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build.id,
+        evaluation_id = %build.evaluation_id,
+        "failed to load evaluation for trusted-ref scheduling: {e}"
+      );
+      return None;
+    },
+  };
+  let jobset = match repo::jobsets::get(pool, evaluation.jobset_id).await {
+    Ok(jobset) => jobset,
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build.id,
+        jobset_id = %evaluation.jobset_id,
+        "failed to load jobset for trusted-ref scheduling: {e}"
+      );
+      return None;
+    },
+  };
+  if !is_trusted_ref_evaluation(&evaluation, &jobset) {
+    return None;
+  }
+  let project = match repo::projects::get(pool, jobset.project_id).await {
+    Ok(project) => project,
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build.id,
+        project_id = %jobset.project_id,
+        "failed to load project for trusted-ref scheduling: {e}"
+      );
+      return None;
+    },
+  };
+  Some(TrustedBuildContext {
+    repository: github_repository_slug(&project.repository_url),
+  })
+}
+
+fn candidate_allowed_for_trusted_build(
+  agent: &AgentSnapshot,
+  trusted: Option<&TrustedBuildContext>,
+) -> bool {
+  if !requires_trusted_ref(agent) {
+    return true;
+  }
+  let Some(trusted) = trusted else {
+    return false;
+  };
+  agent
+    .oidc_repository
+    .as_deref()
+    .is_none_or(|repo| trusted.repository.as_deref() == Some(repo))
+}
+
+#[must_use]
+pub(crate) fn github_repository_slug(url: &str) -> Option<String> {
+  let url = url.trim().trim_end_matches(".git");
+  if let Some(rest) = url.strip_prefix("git@github.com:") {
+    return owner_repo_from_path(rest);
+  }
+  if let Ok(parsed) = url::Url::parse(url)
+    && parsed.host_str() == Some("github.com")
+  {
+    return owner_repo_from_path(parsed.path().trim_start_matches('/'));
+  }
+  None
+}
+
+fn owner_repo_from_path(path: &str) -> Option<String> {
+  let mut parts = path.split('/').filter(|part| !part.is_empty());
+  let owner = parts.next()?;
+  let repo = parts.next()?;
+  if parts.next().is_some() {
+    return None;
+  }
+  Some(format!("{owner}/{repo}"))
 }
 
 /// Load-based ordering for the configured strategy, used as the tie-break once
@@ -169,7 +290,11 @@ pub async fn reserve_venue(
     )
     .await
   {
-    return Some(ExecutionReservation::Agent { meta, snap, slot });
+    return Some(ExecutionReservation::Agent {
+      meta,
+      snap: Box::new(snap),
+      slot,
+    });
   }
 
   let features = build.scheduling_features();
@@ -269,6 +394,23 @@ async fn select_and_reserve_agent(
   });
   if candidates.is_empty() {
     return None;
+  }
+
+  if candidates
+    .iter()
+    .any(|(_, snap)| requires_trusted_ref(snap))
+  {
+    let trusted = trusted_build_context(pool, build).await;
+    candidates.retain(|(_, snap)| {
+      candidate_allowed_for_trusted_build(snap, trusted.as_ref())
+    });
+    if candidates.is_empty() {
+      tracing::debug!(
+        build_id = %build.id,
+        "skipping ephemeral/OIDC agents for untrusted ref"
+      );
+      return None;
+    }
   }
 
   let mut eligible = Vec::with_capacity(candidates.len());
@@ -441,7 +583,23 @@ async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
 mod tests {
   use std::collections::HashSet;
 
-  use super::{contended_surplus, supports_required_features};
+  use chrono::Utc;
+  use circus_common::models::{
+    EvaluationStatus,
+    JobsetState,
+    JobsetTriggerMode,
+  };
+  use uuid::Uuid;
+
+  use super::{
+    AgentSnapshot,
+    candidate_allowed_for_trusted_build,
+    contended_surplus,
+    github_repository_slug,
+    is_trusted_ref_evaluation,
+    supports_required_features,
+  };
+  use crate::rpc::pool::HeartbeatSnapshot;
 
   fn strs(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
@@ -449,6 +607,71 @@ mod tests {
 
   fn demand(values: &[&str]) -> HashSet<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+  }
+
+  fn jobset(branch: Option<&str>) -> circus_common::models::Jobset {
+    let now = Utc::now();
+    circus_common::models::Jobset {
+      id:                Uuid::new_v4(),
+      project_id:        Uuid::new_v4(),
+      name:              "packages".into(),
+      nix_expression:    "packages".into(),
+      enabled:           true,
+      flake_mode:        true,
+      check_interval:    60,
+      trigger_mode:      JobsetTriggerMode::SourceChange,
+      branch:            branch.map(str::to_owned),
+      scheduling_shares: 100,
+      created_at:        now,
+      updated_at:        now,
+      state:             JobsetState::Enabled,
+      last_checked_at:   None,
+      keep_nr:           3,
+    }
+  }
+
+  fn evaluation(
+    trigger_kind: circus_common::models::EvaluationTriggerKind,
+    pr_head_branch: Option<&str>,
+  ) -> circus_common::models::Evaluation {
+    circus_common::models::Evaluation {
+      id: Uuid::new_v4(),
+      jobset_id: Uuid::new_v4(),
+      commit_hash: "0123456789012345678901234567890123456789".into(),
+      evaluation_time: Utc::now(),
+      status: EvaluationStatus::Completed,
+      error_message: None,
+      inputs_hash: None,
+      trigger_kind,
+      hidden: false,
+      pr_number: pr_head_branch.map(|_| 1),
+      pr_head_branch: pr_head_branch.map(str::to_owned),
+      pr_base_branch: pr_head_branch.map(|_| "main".to_owned()),
+      pr_action: None,
+    }
+  }
+
+  fn agent_snapshot(
+    ephemeral: bool,
+    auth_kind: &str,
+    oidc_repository: Option<&str>,
+  ) -> AgentSnapshot {
+    AgentSnapshot {
+      machine_id: Uuid::new_v4(),
+      name: "agent".into(),
+      systems: vec!["x86_64-linux".into()],
+      supported_features: Vec::new(),
+      mandatory_features: Vec::new(),
+      speed_factor: 1.0,
+      cpu_count: 1,
+      max_jobs: 1,
+      current_jobs: 0,
+      ephemeral,
+      auth_kind: auth_kind.into(),
+      oidc_repository: oidc_repository.map(str::to_owned),
+      oidc_subject: None,
+      heartbeat: HeartbeatSnapshot::default(),
+    }
   }
 
   #[test]
@@ -520,5 +743,63 @@ mod tests {
       &strs(&["kvm", "nixos-test"]),
       &strs(&["kvm"]),
     ));
+  }
+
+  #[test]
+  fn trusted_ref_requires_concrete_jobset_branch_and_not_pr() {
+    use circus_common::models::EvaluationTriggerKind::SourceChange;
+    assert!(is_trusted_ref_evaluation(
+      &evaluation(SourceChange, None),
+      &jobset(Some("main"))
+    ));
+    assert!(!is_trusted_ref_evaluation(
+      &evaluation(SourceChange, None),
+      &jobset(None)
+    ));
+    assert!(!is_trusted_ref_evaluation(
+      &evaluation(SourceChange, Some("feature")),
+      &jobset(Some("main"))
+    ));
+  }
+
+  #[test]
+  fn oidc_agent_must_match_project_repository() {
+    let trusted = super::TrustedBuildContext {
+      repository: Some("owner/repo".into()),
+    };
+    let matching = agent_snapshot(true, "oidc", Some("owner/repo"));
+    let other_repo = agent_snapshot(true, "oidc", Some("owner/other"));
+    let token_ephemeral = agent_snapshot(true, "token", None);
+    let persistent = agent_snapshot(false, "token", None);
+
+    assert!(candidate_allowed_for_trusted_build(
+      &matching,
+      Some(&trusted)
+    ));
+    assert!(!candidate_allowed_for_trusted_build(
+      &other_repo,
+      Some(&trusted)
+    ));
+    assert!(candidate_allowed_for_trusted_build(
+      &token_ephemeral,
+      Some(&trusted)
+    ));
+    assert!(candidate_allowed_for_trusted_build(&persistent, None));
+  }
+
+  #[test]
+  fn github_slug_accepts_https_and_ssh_urls() {
+    assert_eq!(
+      github_repository_slug("https://github.com/owner/repo.git").as_deref(),
+      Some("owner/repo")
+    );
+    assert_eq!(
+      github_repository_slug("git@github.com:owner/repo.git").as_deref(),
+      Some("owner/repo")
+    );
+    assert_eq!(
+      github_repository_slug("https://example.com/owner/repo"),
+      None
+    );
   }
 }
