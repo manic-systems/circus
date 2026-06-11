@@ -168,7 +168,7 @@
 </div>
 {% endif %}
 
-<h2>Agents</h2>
+<h2 id="agents">Agents</h2>
 {% if agents.is_empty() %}
 <div class="empty">
   <div class="empty-title">No agents registered</div>
@@ -176,13 +176,55 @@
 </div>
 {% else %}
 <div class="table-wrap">
-<table>
+<table
+  class="agents-table"
+  data-agent-sort="{{ agent_sort_key }}"
+  data-agent-sort-dir="{{ agent_sort_dir }}"
+>
+  <colgroup>
+    <col class="agents-col-name">
+    <col class="agents-col-host">
+    <col class="agents-col-systems">
+    <col class="agents-col-jobs">
+    <col class="agents-col-status">
+    <col class="agents-col-succeeded">
+    <col class="agents-col-failed">
+    <col class="agents-col-last-seen">
+  </colgroup>
   <thead>
-    <tr><th>Name</th><th>Host</th><th>Systems</th><th>Jobs</th><th>Status</th><th>Succeeded</th><th>Failed</th><th>Last Seen</th></tr>
+    <tr>
+      {% for header in agent_sort_headers %}
+      <th aria-sort="{{ header.aria_sort }}">
+        <a
+          class="sort-link{% if header.active %} is-active{% endif %}"
+          href="{{ header.href }}"
+          data-agent-sort="{{ header.key }}"
+          data-agent-default-dir="{{ header.default_dir }}"
+        >
+          <span>{{ header.label }}</span>
+          <span
+            class="sort-indicator{% if header.active %} sort-{{ header.indicator }}{% endif %}"
+            aria-hidden="true"
+          ></span>
+        </a>
+      </th>
+      {% endfor %}
+    </tr>
   </thead>
   <tbody>
     {% for a in agents %}
-    <tr>
+    <tr
+      data-agent-id="{{ a.machine_id }}"
+      data-agent-name="{{ a.name }}"
+      data-agent-host="{{ a.hostname }}"
+      data-agent-systems="{{ a.systems }}"
+      data-agent-jobs-current="{{ a.current_jobs }}"
+      data-agent-jobs-max="{{ a.max_jobs }}"
+      data-agent-status="{% if a.connected %}1{% else %}0{% endif %}"
+      data-agent-succeeded="{{ a.builds_succeeded }}"
+      data-agent-failed="{{ a.builds_failed }}"
+      data-agent-last-seen="{{ a.last_seen_sort }}"
+    >
       <td>{{ a.name }}</td>
       <td>{{ a.hostname }}</td>
       <td>{{ a.systems }}</td>
@@ -269,6 +311,138 @@
 {% if is_admin %}
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
+initAgentTableSort();
+
+function initAgentTableSort() {
+  const table = document.querySelector('.agents-table');
+  if (!table || !table.tBodies.length) return;
+
+  const tbody = table.tBodies[0];
+  const links = Array.from(table.querySelectorAll('[data-agent-sort]'));
+  const collator = new Intl.Collator(undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+
+  links.forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const key = link.dataset.agentSort;
+      const currentKey = table.dataset.agentSort || 'name';
+      const currentDir = table.dataset.agentSortDir || 'asc';
+      const dir = currentKey === key
+        ? (currentDir === 'asc' ? 'desc' : 'asc')
+        : (link.dataset.agentDefaultDir || 'asc');
+
+      sortAgentRows(table, tbody, links, collator, key, dir);
+    });
+  });
+}
+
+function sortAgentRows(table, tbody, links, collator, key, dir) {
+  const rows = Array.from(tbody.rows);
+  rows.sort((a, b) => compareAgentRows(a, b, key, dir, collator));
+  tbody.append(...rows);
+  table.dataset.agentSort = key;
+  table.dataset.agentSortDir = dir;
+  updateAgentSortHeaders(links, key, dir);
+}
+
+function updateAgentSortHeaders(links, key, dir) {
+  links.forEach((link) => {
+    const active = link.dataset.agentSort === key;
+    const nextDir = active
+      ? (dir === 'asc' ? 'desc' : 'asc')
+      : (link.dataset.agentDefaultDir || 'asc');
+    link.classList.toggle('is-active', active);
+    link.setAttribute('href', agentSortHref(link.dataset.agentSort, nextDir));
+
+    const indicator = link.querySelector('.sort-indicator');
+    indicator?.classList.remove('sort-asc', 'sort-desc');
+    if (active) indicator?.classList.add('sort-' + dir);
+
+    const header = link.closest('th');
+    if (header) {
+      header.setAttribute(
+        'aria-sort',
+        active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none',
+      );
+    }
+  });
+}
+
+function agentSortHref(key, dir) {
+  return '/admin?agent_sort='
+    + encodeURIComponent(key)
+    + '&agent_dir='
+    + dir
+    + '#agents';
+}
+
+function compareAgentRows(a, b, key, dir, collator) {
+  let order = compareAgentPrimary(a, b, key, collator);
+  if (dir === 'desc') order *= -1;
+  if (order !== 0) return order;
+
+  if (key === 'status') {
+    const lastSeen = compareNumber(
+      agentNumber(a, 'agentLastSeen'),
+      agentNumber(b, 'agentLastSeen'),
+    );
+    if (lastSeen !== 0) return -lastSeen;
+  }
+
+  return compareAgentIdentity(a, b, collator);
+}
+
+function compareAgentPrimary(a, b, key, collator) {
+  switch (key) {
+    case 'name':
+      return compareText(a.dataset.agentName, b.dataset.agentName, collator);
+    case 'host':
+      return compareText(a.dataset.agentHost, b.dataset.agentHost, collator);
+    case 'systems':
+      return compareText(a.dataset.agentSystems, b.dataset.agentSystems, collator);
+    case 'jobs':
+      return compareNumber(
+        agentNumber(a, 'agentJobsCurrent'),
+        agentNumber(b, 'agentJobsCurrent'),
+      ) || compareNumber(
+        agentNumber(a, 'agentJobsMax'),
+        agentNumber(b, 'agentJobsMax'),
+      );
+    case 'status':
+      return compareNumber(agentNumber(a, 'agentStatus'), agentNumber(b, 'agentStatus'));
+    case 'succeeded':
+      return compareNumber(agentNumber(a, 'agentSucceeded'), agentNumber(b, 'agentSucceeded'));
+    case 'failed':
+      return compareNumber(agentNumber(a, 'agentFailed'), agentNumber(b, 'agentFailed'));
+    case 'last_seen':
+      return compareNumber(agentNumber(a, 'agentLastSeen'), agentNumber(b, 'agentLastSeen'));
+    default:
+      return 0;
+  }
+}
+
+function compareAgentIdentity(a, b, collator) {
+  return compareText(a.dataset.agentName, b.dataset.agentName, collator)
+    || compareText(a.dataset.agentHost, b.dataset.agentHost, collator)
+    || compareText(a.dataset.agentId, b.dataset.agentId, collator);
+}
+
+function compareText(a, b, collator) {
+  return collator.compare(a || '', b || '') || String(a || '').localeCompare(String(b || ''));
+}
+
+function compareNumber(a, b) {
+  return a === b ? 0 : (a < b ? -1 : 1);
+}
+
+function agentNumber(row, key) {
+  const value = Number(row.dataset[key]);
+  return Number.isFinite(value) ? value : 0;
+}
+
 document.getElementById('create-key-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = document.getElementById('key-msg');

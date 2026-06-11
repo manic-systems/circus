@@ -5,6 +5,8 @@
 //! order, so a non-admin attempting to forge a request never reaches the
 //! database.
 
+use std::cmp::Ordering;
+
 use askama::Template;
 use axum::{
   Form,
@@ -34,6 +36,7 @@ use super::{
     NotificationTaskView,
     NotificationsTemplate,
     PinnedOutputView,
+    SortHeaderView,
     UsersTemplate,
   },
 };
@@ -42,11 +45,212 @@ use crate::{
   state::AppState,
 };
 
+#[derive(Default, serde::Deserialize)]
+pub(super) struct AdminParams {
+  agent_sort: Option<String>,
+  agent_dir:  Option<String>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AgentSort {
+  Name,
+  Host,
+  Systems,
+  Jobs,
+  Status,
+  Succeeded,
+  Failed,
+  LastSeen,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SortDirection {
+  Asc,
+  Desc,
+}
+
+const AGENT_SORT_COLUMNS: [(AgentSort, &str); 8] = [
+  (AgentSort::Name, "Name"),
+  (AgentSort::Host, "Host"),
+  (AgentSort::Systems, "Systems"),
+  (AgentSort::Jobs, "Jobs"),
+  (AgentSort::Status, "Status"),
+  (AgentSort::Succeeded, "Succeeded"),
+  (AgentSort::Failed, "Failed"),
+  (AgentSort::LastSeen, "Last Seen"),
+];
+
+impl AgentSort {
+  fn from_param(param: Option<&str>) -> Option<Self> {
+    match param {
+      Some("name") => Some(Self::Name),
+      Some("host") => Some(Self::Host),
+      Some("systems") => Some(Self::Systems),
+      Some("jobs") => Some(Self::Jobs),
+      Some("status") => Some(Self::Status),
+      Some("succeeded") => Some(Self::Succeeded),
+      Some("failed") => Some(Self::Failed),
+      Some("last_seen") => Some(Self::LastSeen),
+      _ => None,
+    }
+  }
+
+  const fn as_param(self) -> &'static str {
+    match self {
+      Self::Name => "name",
+      Self::Host => "host",
+      Self::Systems => "systems",
+      Self::Jobs => "jobs",
+      Self::Status => "status",
+      Self::Succeeded => "succeeded",
+      Self::Failed => "failed",
+      Self::LastSeen => "last_seen",
+    }
+  }
+
+  const fn default_direction(self) -> SortDirection {
+    match self {
+      Self::Name | Self::Host | Self::Systems => SortDirection::Asc,
+      Self::Jobs
+      | Self::Status
+      | Self::Succeeded
+      | Self::Failed
+      | Self::LastSeen => SortDirection::Desc,
+    }
+  }
+}
+
+impl SortDirection {
+  fn from_param(param: Option<&str>, sort: AgentSort) -> Self {
+    match param {
+      Some("asc") => Self::Asc,
+      Some("desc") => Self::Desc,
+      _ => sort.default_direction(),
+    }
+  }
+
+  const fn as_param(self) -> &'static str {
+    match self {
+      Self::Asc => "asc",
+      Self::Desc => "desc",
+    }
+  }
+
+  const fn toggle(self) -> Self {
+    match self {
+      Self::Asc => Self::Desc,
+      Self::Desc => Self::Asc,
+    }
+  }
+}
+
+fn agent_sort_headers(
+  active_sort: AgentSort,
+  active_dir: SortDirection,
+) -> Vec<SortHeaderView> {
+  AGENT_SORT_COLUMNS
+    .iter()
+    .map(|(sort, label)| {
+      let active = active_sort == *sort;
+      let next_dir = if active {
+        active_dir.toggle()
+      } else {
+        sort.default_direction()
+      };
+      SortHeaderView {
+        key: sort.as_param().to_string(),
+        label: (*label).to_string(),
+        href: format!(
+          "/admin?agent_sort={}&agent_dir={}#agents",
+          sort.as_param(),
+          next_dir.as_param(),
+        ),
+        default_dir: sort.default_direction().as_param().to_string(),
+        active,
+        indicator: if active {
+          active_dir.as_param().to_string()
+        } else {
+          String::new()
+        },
+        aria_sort: if active {
+          match active_dir {
+            SortDirection::Asc => "ascending",
+            SortDirection::Desc => "descending",
+          }
+        } else {
+          "none"
+        }
+        .to_string(),
+      }
+    })
+    .collect()
+}
+
+fn sort_agents(agents: &mut [AgentView], sort: AgentSort, dir: SortDirection) {
+  agents.sort_by(|a, b| compare_agents_by_sort(a, b, sort, dir));
+}
+
+fn compare_agents_by_sort(
+  a: &AgentView,
+  b: &AgentView,
+  sort: AgentSort,
+  dir: SortDirection,
+) -> Ordering {
+  let primary = match sort {
+    AgentSort::Name => compare_text(&a.name, &b.name),
+    AgentSort::Host => compare_text(&a.hostname, &b.hostname),
+    AgentSort::Systems => compare_text(&a.systems, &b.systems),
+    AgentSort::Jobs => {
+      a.current_jobs
+        .cmp(&b.current_jobs)
+        .then_with(|| a.max_jobs.cmp(&b.max_jobs))
+    },
+    AgentSort::Status => a.connected.cmp(&b.connected),
+    AgentSort::Succeeded => a.builds_succeeded.cmp(&b.builds_succeeded),
+    AgentSort::Failed => a.builds_failed.cmp(&b.builds_failed),
+    AgentSort::LastSeen => a.last_seen_sort.cmp(&b.last_seen_sort),
+  };
+
+  apply_direction(primary, dir)
+    .then_with(|| {
+      match sort {
+        AgentSort::Status => {
+          apply_direction(
+            a.last_seen_sort.cmp(&b.last_seen_sort),
+            SortDirection::Desc,
+          )
+        },
+        _ => Ordering::Equal,
+      }
+    })
+    .then_with(|| compare_agent_identity(a, b))
+}
+
+fn compare_agent_identity(a: &AgentView, b: &AgentView) -> Ordering {
+  compare_text(&a.name, &b.name)
+    .then_with(|| compare_text(&a.hostname, &b.hostname))
+    .then_with(|| a.machine_id.as_bytes().cmp(b.machine_id.as_bytes()))
+}
+
+fn compare_text(a: &str, b: &str) -> Ordering {
+  a.to_lowercase()
+    .cmp(&b.to_lowercase())
+    .then_with(|| a.cmp(b))
+}
+
+const fn apply_direction(ordering: Ordering, dir: SortDirection) -> Ordering {
+  match dir {
+    SortDirection::Asc => ordering,
+    SortDirection::Desc => ordering.reverse(),
+  }
+}
+
 /// Render the admin overview at `/admin`: system status counters, builder
 /// load and last-activity, API keys, queued notification tasks, pinned
 /// build outputs, and the on-disk config editor when writes are enabled.
 pub(super) async fn admin_page(
   State(state): State<AppState>,
+  Query(params): Query<AdminParams>,
   extensions: Extensions,
 ) -> Result<Html<String>, Response> {
   if !is_admin(&extensions) {
@@ -148,26 +352,36 @@ pub(super) async fn admin_page(
   let raw_sessions = circus_common::repo::builder_sessions::list(pool)
     .await
     .unwrap_or_default();
-  let agents = raw_sessions
+  let agent_sort = AgentSort::from_param(params.agent_sort.as_deref())
+    .unwrap_or(AgentSort::Name);
+  let agent_dir =
+    SortDirection::from_param(params.agent_dir.as_deref(), agent_sort);
+  let mut agents = raw_sessions
     .into_iter()
     .map(|s| {
+      let last_seen = s.last_seen;
+      let last_seen_display = last_seen.as_ref().map_or_else(
+        || "Never".to_string(),
+        |t| t.format("%Y-%m-%d %H:%M").to_string(),
+      );
+      let last_seen_sort = last_seen.map_or(0, |t| t.timestamp());
       AgentView {
-        machine_id:       s.machine_id,
-        name:             s.name,
-        hostname:         s.hostname,
-        systems:          s.systems.join(", "),
-        max_jobs:         s.max_jobs,
-        current_jobs:     s.current_jobs,
-        connected:        s.connected,
+        machine_id: s.machine_id,
+        name: s.name,
+        hostname: s.hostname,
+        systems: s.systems.join(", "),
+        max_jobs: s.max_jobs,
+        current_jobs: s.current_jobs,
+        connected: s.connected,
         builds_succeeded: s.builds_succeeded,
-        builds_failed:    s.builds_failed,
-        last_seen:        s.last_seen.map_or_else(
-          || "Never".to_string(),
-          |t| t.format("%Y-%m-%d %H:%M").to_string(),
-        ),
+        builds_failed: s.builds_failed,
+        last_seen: last_seen_display,
+        last_seen_sort,
       }
     })
     .collect::<Vec<AgentView>>();
+  sort_agents(&mut agents, agent_sort, agent_dir);
+  let agent_sort_headers = agent_sort_headers(agent_sort, agent_dir);
 
   // Fetch API keys for admin view
   let keys = circus_common::repo::api_keys::list(pool)
@@ -260,6 +474,9 @@ pub(super) async fn admin_page(
     status,
     builders,
     agents,
+    agent_sort_headers,
+    agent_sort_key: agent_sort.as_param().to_string(),
+    agent_sort_dir: agent_dir.as_param().to_string(),
     api_keys,
     notification_tasks,
     pinned_outputs,
