@@ -186,6 +186,7 @@ impl WorkerPool {
           psi_threshold,
           psi_check_timeout,
           extra_nix_args,
+          ssh_require_host_key,
         ) = {
           let hot = hot_config.read().await;
           (
@@ -196,6 +197,7 @@ impl WorkerPool {
             hot.psi_threshold,
             hot.psi_check_timeout,
             Arc::new(hot.extra_nix_build_args.clone()),
+            hot.ssh_require_host_key,
           )
         };
 
@@ -222,6 +224,7 @@ impl WorkerPool {
           Arc::clone(&agent_pool),
           Arc::clone(&runner_caps),
           heartbeat_ttl,
+          ssh_require_host_key,
         )
         .await
         {
@@ -540,6 +543,7 @@ async fn try_remote_build(
   psi_check_timeout: Duration,
   psi_cache: &crate::psi::PsiCache,
   extra_nix_args: &[String],
+  require_host_key: bool,
 ) -> Option<crate::builder::BuildResult> {
   let system = build.system.as_deref()?;
 
@@ -548,6 +552,17 @@ async fn try_remote_build(
     .ok()?;
 
   for builder in &builders {
+    // Refuse unpinned builders when host-key verification is mandatory, rather
+    // than silently falling back to trust-on-first-use.
+    if require_host_key && builder.public_host_key.is_none() {
+      tracing::warn!(
+        build_id = %build.id,
+        builder = %builder.name,
+        "skipping builder: ssh_require_host_key is set but no public_host_key \
+         is recorded"
+      );
+      continue;
+    }
     // Leave the build pending for a builder with the right feature set.
     if !supports_required_features(
       build.scheduling_features(),
@@ -609,6 +624,7 @@ async fn try_remote_build(
       timeout,
       &store_uri,
       builder.ssh_key_file.as_deref(),
+      builder.public_host_key.as_deref(),
       live_log_path,
       extra_nix_args,
     )
@@ -721,6 +737,7 @@ async fn run_on_runner(
   psi_cache: &Arc<crate::psi::PsiCache>,
   extra_nix_args: &[String],
   runner_caps: &crate::caps::RunnerCaps,
+  require_host_key: bool,
 ) -> circus_common::error::Result<Option<crate::builder::BuildResult>> {
   let _permit = permit;
   if build.system.is_some()
@@ -736,6 +753,7 @@ async fn run_on_runner(
       psi_check_timeout,
       psi_cache,
       extra_nix_args,
+      require_host_key,
     )
     .await
   {
@@ -794,6 +812,7 @@ async fn run_build(
   agent_pool: Arc<crate::rpc::AgentPool>,
   runner_caps: Arc<crate::caps::RunnerCaps>,
   heartbeat_ttl: Duration,
+  require_host_key: bool,
 ) -> color_eyre::Result<()> {
   // Reserve capacity before claiming the build so `running` means execution
   // can start immediately.
@@ -938,6 +957,7 @@ async fn run_build(
           &psi_cache,
           &build_extra_nix_args,
           &runner_caps,
+          require_host_key,
         )
         .await
       } else {
@@ -959,6 +979,7 @@ async fn run_build(
         &psi_cache,
         &build_extra_nix_args,
         &runner_caps,
+        require_host_key,
       )
       .await
     },

@@ -30,6 +30,7 @@ serde_json.workspace         = true
 sha2.workspace               = true
 sqlx.workspace               = true
 subtle.workspace             = true
+tempfile.workspace           = true
 thiserror.workspace          = true
 time.workspace               = true
 tokio.workspace              = true
@@ -40,9 +41,6 @@ tracing-subscriber.workspace = true
 urlencoding.workspace        = true
 uuid.workspace               = true
 x509-parser.workspace        = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

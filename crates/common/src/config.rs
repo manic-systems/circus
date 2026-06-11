@@ -204,6 +204,15 @@ pub struct QueueRunnerConfig {
   #[serde(default = "default_psi_check_timeout")]
   pub psi_check_timeout: u64,
 
+  /// Refuse to dispatch to an SSH `remote_builder` that has no
+  /// `public_host_key` recorded. When false (default), a builder without a
+  /// pinned host key is still used but connects with
+  /// `StrictHostKeyChecking=accept-new` and logs a warning. When true, such
+  /// builders are skipped so a build only ever runs over a host-key-verified
+  /// SSH connection.
+  #[serde(default)]
+  pub ssh_require_host_key: bool,
+
   /// Extra arguments appended to every `nix build` invocation (after the
   /// queue-runner's defaults, before the installable). Use this to inject
   /// substituters, trusted public keys, or override sandbox settings without
@@ -863,6 +872,7 @@ impl Default for QueueRunnerConfig {
       scheduling_strategy:  BuilderSchedulingStrategy::SpeedFactorOnly,
       psi_threshold:        None,
       psi_check_timeout:    5,
+      ssh_require_host_key: false,
       extra_nix_build_args: Vec::new(),
       local_systems:        None,
       local_features:       None,
@@ -929,6 +939,7 @@ pub struct HotConfig {
   pub psi_threshold:        Option<f64>,
   pub psi_check_timeout:    std::time::Duration,
   pub extra_nix_build_args: Vec<String>,
+  pub ssh_require_host_key: bool,
 }
 
 impl HotConfig {
@@ -953,6 +964,7 @@ impl HotConfig {
         config.queue_runner.psi_check_timeout,
       ),
       extra_nix_build_args: config.queue_runner.extra_nix_build_args.clone(),
+      ssh_require_host_key: config.queue_runner.ssh_require_host_key,
     }
   }
 }
