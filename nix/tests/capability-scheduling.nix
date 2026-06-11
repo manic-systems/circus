@@ -101,6 +101,8 @@ in
         imports = [self.nixosModules.circus];
         _module.args.self = self;
 
+        virtualisation.diskSize = 10000;
+
         programs.git.enable = true;
         security.sudo.enable = true;
         environment.systemPackages = with pkgs; [
