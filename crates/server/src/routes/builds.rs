@@ -26,8 +26,20 @@ use crate::{
 #[derive(Debug, Deserialize)]
 struct ListBuildsParams {
   evaluation_id: Option<Uuid>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
   status:        Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
   system:        Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
   job_name:      Option<String>,
   limit:         Option<i64>,
   offset:        Option<i64>,
@@ -43,9 +55,9 @@ async fn list_builds(
   };
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let status = params.status.as_deref().filter(|s| !s.is_empty());
-  let system = params.system.as_deref().filter(|s| !s.is_empty());
-  let job_name = params.job_name.as_deref().filter(|s| !s.is_empty());
+  let status = params.status.as_deref();
+  let system = params.system.as_deref();
+  let job_name = params.job_name.as_deref();
   let items = circus_common::repo::builds::list_filtered(
     &state.pool,
     params.evaluation_id,

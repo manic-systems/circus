@@ -52,7 +52,8 @@ circus-common.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
-tower.workspace = true
+serde_urlencoded = "0.7"
+tower.workspace  = true
 
 [lints]
 workspace = true
