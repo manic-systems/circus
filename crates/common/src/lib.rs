@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod database;
 pub mod error;
 pub mod gc_roots;
+pub mod glob;
 pub mod log_storage;
 pub mod migrate;
 pub mod migrate_cli;

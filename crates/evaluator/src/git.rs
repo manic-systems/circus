@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use circus_common::error::{CiError, Result};
+use circus_common::{
+  error::{CiError, Result},
+  glob::glob_matches,
+};
 use git2::Repository;
 
 /// Refspecs fetched on every sync. The first is the standard branch fetch.
@@ -46,22 +49,6 @@ pub struct DiscoveredRef {
   pub kind:        RefKind,
   pub name:        String,
   pub commit_hash: String,
-}
-
-fn glob_matches(pattern: &str, value: &str) -> bool {
-  fn inner(pattern: &[u8], value: &[u8]) -> bool {
-    match pattern {
-      [] => value.is_empty(),
-      [b'*', rest @ ..] => {
-        inner(rest, value) || (!value.is_empty() && inner(pattern, &value[1..]))
-      },
-      [b'?', rest @ ..] => !value.is_empty() && inner(rest, &value[1..]),
-      [ch, rest @ ..] => {
-        value.first().is_some_and(|v| v == ch) && inner(rest, &value[1..])
-      },
-    }
-  }
-  inner(pattern.as_bytes(), value.as_bytes())
 }
 
 fn resolve_ref(

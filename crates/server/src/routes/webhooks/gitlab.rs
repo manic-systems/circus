@@ -10,11 +10,12 @@ use uuid::Uuid;
 
 use super::{
   ChangeRequestEvaluation,
+  PushedRef,
   WebhookResponse,
   branch_deletion_response,
   header_value,
   is_deleted_commit,
-  strip_branch_prefix,
+  parse_push_ref,
   trigger_change_request_evaluations,
   trigger_push_evaluations,
   triggered_push_response,
@@ -143,12 +144,13 @@ async fn handle_push(
     return Ok(branch_deletion_response());
   }
 
-  let pushed_branch =
-    payload.git_ref.as_deref().map_or("", strip_branch_prefix);
+  let pushed_ref = payload
+    .git_ref
+    .as_deref()
+    .map_or(PushedRef::Other(""), parse_push_ref);
 
   let triggered =
-    trigger_push_evaluations(&state, project_id, &commit, pushed_branch)
-      .await?;
+    trigger_push_evaluations(&state, project_id, &commit, pushed_ref).await?;
 
   Ok(triggered_push_response(triggered, &commit))
 }
