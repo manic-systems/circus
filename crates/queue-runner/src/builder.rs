@@ -13,11 +13,8 @@ use tokio::{
 
 const MAX_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB
 
-/// SSH connection hardening applied to every remote build, independent of
-/// host-key pinning: only offer the configured identity (never an agent or
-/// `~/.ssh` key), never fall back to an ssh-agent, never prompt interactively,
-/// and bound the connect phase so a dead host fails fast instead of hanging
-/// until the build timeout.
+/// SSH options for every remote build: use only the configured identity (no
+/// agent or `~/.ssh` keys), never prompt, and fail fast on a dead host.
 const SSH_HARDENING_OPTS: &[&str] = &[
   "-o",
   "IdentitiesOnly=yes",
@@ -31,18 +28,14 @@ const SSH_HARDENING_OPTS: &[&str] = &[
 
 /// Run a nix build on a remote builder via SSH.
 ///
-/// When `public_host_key` is `Some`, the key is written to a throwaway
-/// `known_hosts` file and the SSH connection is pinned with
-/// `StrictHostKeyChecking=yes`, so a MITM (or a re-provisioned host serving a
-/// new key) is rejected before any build inputs are sent. When it is `None`
-/// the connection falls back to `accept-new` (trust on first use) and logs a
-/// warning; callers that require pinning should refuse such builders before
-/// calling this (see `ssh_require_host_key`).
+/// With `public_host_key` set, the key is pinned via a throwaway `known_hosts`
+/// and `StrictHostKeyChecking=yes`; without it, the connection falls back to
+/// `accept-new` (see `ssh_require_host_key`).
 ///
 /// # Errors
 ///
-/// Returns error if the temporary `known_hosts` cannot be written, or if the
-/// nix build command fails or times out.
+/// Returns error if the `known_hosts` write fails, or the build fails or times
+/// out.
 #[tracing::instrument(
   skip(work_dir, live_log_path, public_host_key),
   fields(drv_path, store_uri, host_key_pinned = public_host_key.is_some())
@@ -63,8 +56,7 @@ pub async fn run_nix_build_remote(
     store_uri.into(),
   ]);
 
-  // The `known_hosts` file must outlive the spawned `nix`/`ssh` process, so
-  // hold the guard in this scope until `run_nix_build_command` returns.
+  // Hold the guard until the build returns; it must outlive the ssh process.
   let known_hosts = if let Some(key) = public_host_key {
     Some(write_known_hosts(store_uri, key)?)
   } else {
@@ -94,9 +86,8 @@ pub async fn run_nix_build_remote(
   result
 }
 
-/// Assemble the `NIX_SSHOPTS` string for a remote build. Pins the host key via
-/// the temporary `known_hosts` when present, otherwise falls back to
-/// `accept-new`.
+/// Assemble the `NIX_SSHOPTS` string, pinning the host key when `known_hosts`
+/// is present and falling back to `accept-new` otherwise.
 fn build_ssh_opts(
   ssh_key_file: Option<&str>,
   known_hosts: Option<&tempfile::NamedTempFile>,

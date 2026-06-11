@@ -401,9 +401,8 @@ fn validate_ssh_host_key(key: &str) -> Result<(), String> {
   Ok(())
 }
 
-/// Validate the path to an SSH private key file. Existence is not checked here
-/// (the file lives on the queue-runner host, not the API host); this only
-/// rejects malformed or traversing paths.
+/// Validate an SSH private key file path. Existence isn't checked (the file
+/// lives on the queue-runner host); this only rejects malformed paths.
 fn validate_ssh_key_file(path: &str) -> Result<(), String> {
   if path.is_empty() {
     return Err("ssh_key_file cannot be empty".to_string());

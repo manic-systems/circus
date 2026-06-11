@@ -94,6 +94,7 @@ struct AgentInfo {
   maxJobs            @8  :UInt32;
   protoVersion       @9  :Text;
   authToken          @10 :Text;       # bearer; runner compares to a hash
+  ephemeral          @11 :Bool;       # single-session agent (CI runner); never reconnects
 }
 
 struct Heartbeat {

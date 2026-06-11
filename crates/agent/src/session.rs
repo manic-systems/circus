@@ -17,9 +17,9 @@ use std::{
   path::{Path, PathBuf},
   sync::{
     Arc,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
   },
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 use capnp::capability::Promise;
@@ -47,7 +47,7 @@ use uuid::Uuid;
 
 use crate::{
   build,
-  config::{Agent, TlsConfig},
+  config::{Agent, EphemeralConfig, TlsConfig},
   psi,
   sandbox::NixTool,
 };
@@ -106,15 +106,18 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     rpc.bootstrap(rpc_twoparty_capnp::Side::Server);
   let disconnector = rpc.get_disconnector();
 
+  let lifecycle = cfg.ephemeral.as_ref().map(|_| Arc::new(Lifecycle::new()));
+
   let local_builder: builder::Client = capnp_rpc::new_client(BuilderImpl::new(
     cfg.max_jobs,
     cfg.cores,
     machine_id,
     runner_cap.clone(),
     cfg.rootless,
+    lifecycle.clone(),
   ));
 
-  let rpc_join = tokio::task::spawn_local(async move {
+  let mut rpc_join = tokio::task::spawn_local(async move {
     if let Err(e) = rpc.await {
       tracing::warn!("rpc system ended: {e}");
     }
@@ -130,10 +133,56 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     cfg.work_dir.clone(),
   );
 
-  let _ = rpc_join.await;
+  // Ephemeral: a monitor drains and exits on the limits. Persistent: run until
+  // the connection ends.
+  if let (Some(eph), Some(lc)) = (cfg.ephemeral.as_ref(), lifecycle.as_ref()) {
+    let quit = CancellationToken::new();
+    let monitor = tokio::task::spawn_local(ephemeral_monitor(
+      eph.clone(),
+      Arc::clone(lc),
+      quit.clone(),
+    ));
+    tokio::select! {
+      _ = &mut rpc_join => {
+        tracing::info!("connection ended before ephemeral limits");
+      },
+      () = quit.cancelled() => {
+        drain_inflight().await;
+      },
+    }
+    monitor.abort();
+  } else {
+    let _ = rpc_join.await;
+  }
+
   heartbeat_join.abort();
   let _ = disconnector.await;
   Ok(())
+}
+
+/// Wait for in-flight builds to finish before disconnecting (new work is
+/// already refused). Bounded; anything still running when the grace expires is
+/// recovered by the runner's orphan sweeper.
+async fn drain_inflight() {
+  const DRAIN_GRACE: Duration = Duration::from_mins(5);
+  let deadline = Instant::now() + DRAIN_GRACE;
+  let mut ticker = tokio::time::interval(Duration::from_secs(1));
+  loop {
+    let running = JOB_COUNTER.load(Ordering::Relaxed);
+    if running == 0 {
+      tracing::info!("ephemeral: drained; disconnecting");
+      return;
+    }
+    if Instant::now() >= deadline {
+      tracing::warn!(
+        running,
+        "ephemeral: drain grace expired with builds still running; \
+         disconnecting anyway (runner will requeue)"
+      );
+      return;
+    }
+    ticker.tick().await;
+  }
 }
 
 fn parse_endpoint(url: &str) -> color_eyre::Result<(String, u16, bool)> {
@@ -212,6 +261,7 @@ fn fill_info(mut info: agent_info::Builder<'_>, cfg: &Agent, machine_id: Uuid) {
   info.set_max_jobs(cfg.max_jobs);
   info.set_proto_version(PROTO_VERSION);
   info.set_auth_token(cfg.auth_token.as_str());
+  info.set_ephemeral(cfg.ephemeral.is_some());
 
   {
     let mut sys = info.reborrow().init_systems(cfg.systems.len() as u32);
@@ -360,6 +410,89 @@ fn fs_available_bytes(path: &Path) -> u64 {
 /// dropped on result. Exposed in heartbeats.
 static JOB_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Shared lifecycle state for an ephemeral session; `None` for persistent
+/// agents. The builder records activity, the monitor reads it.
+struct Lifecycle {
+  /// Builds that have reported a result this session.
+  completed:   AtomicU32,
+  /// Set on exit so `assign` refuses further work while draining.
+  draining:    AtomicBool,
+  /// Last assign/completion time; seeded to connect time so an idle agent
+  /// still hits the idle limit.
+  last_active: Mutex<Instant>,
+}
+
+impl Lifecycle {
+  fn new() -> Self {
+    Self {
+      completed:   AtomicU32::new(0),
+      draining:    AtomicBool::new(false),
+      last_active: Mutex::new(Instant::now()),
+    }
+  }
+
+  fn touch(&self) {
+    *self.last_active.lock() = Instant::now();
+  }
+
+  fn is_draining(&self) -> bool {
+    self.draining.load(Ordering::Relaxed)
+  }
+}
+
+/// Cancel `quit` once an exit condition is reached (max builds, lifetime, or
+/// idle), setting `draining` first so no further work is accepted.
+async fn ephemeral_monitor(
+  eph: EphemeralConfig,
+  lifecycle: Arc<Lifecycle>,
+  quit: CancellationToken,
+) {
+  let start = Instant::now();
+  let mut ticker = tokio::time::interval(Duration::from_secs(1));
+  ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+  loop {
+    ticker.tick().await;
+
+    let lifetime_reached = eph
+      .max_lifetime_secs
+      .is_some_and(|max| start.elapsed() >= Duration::from_secs(max));
+    let running = JOB_COUNTER.load(Ordering::Relaxed);
+
+    if lifetime_reached {
+      tracing::info!(
+        running,
+        "ephemeral: max_lifetime reached; draining and exiting"
+      );
+      break;
+    }
+
+    // The build-count and idle limits only apply once idle.
+    if running > 0 {
+      continue;
+    }
+
+    if eph
+      .max_builds
+      .is_some_and(|max| lifecycle.completed.load(Ordering::Relaxed) >= max)
+    {
+      tracing::info!("ephemeral: max_builds reached; exiting");
+      break;
+    }
+
+    let idle = lifecycle.last_active.lock().elapsed();
+    if idle >= Duration::from_secs(eph.max_idle_secs) {
+      tracing::info!(
+        idle_secs = idle.as_secs(),
+        "ephemeral: idle limit reached; exiting"
+      );
+      break;
+    }
+  }
+
+  lifecycle.draining.store(true, Ordering::Relaxed);
+  quit.cancel();
+}
+
 /// The `Builder` capability we expose to the runner.
 ///
 /// Each `assign` spawns a build task and reports the result via the
@@ -382,6 +515,8 @@ struct BuilderInner {
   running:    Mutex<HashMap<Uuid, CancellationToken>>,
   /// Indicates whether the builder will use rootless, sandboxed Nix.
   rootless:   bool,
+  /// Ephemeral session lifecycle; `None` for persistent agents.
+  lifecycle:  Option<Arc<Lifecycle>>,
 }
 
 impl BuilderImpl {
@@ -397,6 +532,7 @@ impl BuilderImpl {
     machine_id: Uuid,
     runner_cap: runner::Client,
     rootless: bool,
+    lifecycle: Option<Arc<Lifecycle>>,
   ) -> Self {
     Self {
       inner: Arc::new(BuilderInner {
@@ -406,6 +542,7 @@ impl BuilderImpl {
         runner_cap,
         running: Mutex::new(HashMap::new()),
         rootless,
+        lifecycle,
       }),
     }
   }
@@ -467,6 +604,13 @@ impl builder::Server for BuilderImpl {
         None
       };
 
+      // Draining: refuse like the max-jobs case so the runner reschedules.
+      if inner.lifecycle.as_ref().is_some_and(|l| l.is_draining()) {
+        return Err(capnp::Error::failed(
+          "agent draining; not accepting new builds".into(),
+        ));
+      }
+
       let cancel = CancellationToken::new();
       {
         let mut g = inner.running.lock();
@@ -483,6 +627,9 @@ impl builder::Server for BuilderImpl {
         g.insert(build_id, cancel.clone());
       }
       JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
+      if let Some(lc) = &inner.lifecycle {
+        lc.touch();
+      }
 
       let inner_for_task = Arc::clone(&inner);
       tokio::task::spawn_local(async move {
@@ -605,6 +752,10 @@ impl builder::Server for BuilderImpl {
         }
         JOB_COUNTER.fetch_sub(1, Ordering::Relaxed);
         inner_for_task.running.lock().remove(&build_id);
+        if let Some(lc) = &inner_for_task.lifecycle {
+          lc.completed.fetch_add(1, Ordering::Relaxed);
+          lc.touch();
+        }
       });
       Ok(())
     })
