@@ -77,6 +77,8 @@ pub struct ServerConfig {
   pub cache_substituter:  Option<String>,
   /// Key forwarded to agents so they can substitute drv closures.
   pub cache_public_key:   Option<String>,
+  /// OIDC verifier. `None` disables the OIDC auth path.
+  pub oidc:               Option<Arc<super::oidc::OidcVerifier>>,
   active_uploads: Arc<parking_lot::Mutex<HashMap<UploadKey, ExpectedUpload>>>,
 }
 
@@ -140,6 +142,11 @@ impl ServerConfig {
       );
     }
 
+    let oidc = match &cfg.oidc {
+      None => None,
+      Some(o) => Some(Arc::new(super::oidc::OidcVerifier::new(o)?)),
+    };
+
     Ok(Self {
       bind,
       token_hashes: cfg.auth_tokens.clone(),
@@ -151,6 +158,7 @@ impl ServerConfig {
       signing_key_file: None,
       cache_substituter: cfg.cache_substituter.clone(),
       cache_public_key: cfg.cache_public_key.clone(),
+      oidc,
       active_uploads: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     })
   }
@@ -411,10 +419,25 @@ impl runner::Server for RunnerImpl {
         1,
         limits::MAX_AUTH_TOKEN_LEN,
       )?;
-      if !verify_token(&cfg.token_hashes, token) {
+      // Bearer token first (cheap, constant-time); fall through to OIDC so a
+      // JWT presented in the same field is verified against the issuer's JWKS.
+      let auth_kind = if verify_token(&cfg.token_hashes, token) {
+        "token"
+      } else if let Some(verifier) = cfg.oidc.as_ref() {
+        match verifier.verify(token).await {
+          Ok(id) => {
+            tracing::info!(name = %name, repository = %id.repository, subject = %id.subject, "agent authenticated via OIDC");
+            "oidc"
+          },
+          Err(e) => {
+            tracing::warn!(name = %name, "OIDC auth failed: {e}");
+            return Err(capnp::Error::failed("auth failed".into()));
+          },
+        }
+      } else {
         tracing::warn!(name = %name, "bad auth token from agent");
         return Err(capnp::Error::failed("auth failed".into()));
-      }
+      };
 
       if cfg.tls.as_ref().is_some_and(|t| t.pin_cn) && peer_cert.presented {
         match peer_cert.name.as_deref() {
@@ -490,8 +513,7 @@ impl runner::Server for RunnerImpl {
         cpu as i32,
         maxj as i32,
         ephemeral,
-        // Bearer-token auth; OIDC will set "oidc".
-        "token",
+        auth_kind,
       )
       .await
       {
@@ -1157,15 +1179,14 @@ async fn upsert_session(
      supported_features, mandatory_features, speed_factor, cpu_count, \
      max_jobs, proto_version, ephemeral, auth_kind, connected, last_seen, \
      updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-     TRUE, NOW(), NOW()) ON CONFLICT \
-     (machine_id) DO UPDATE SET name = EXCLUDED.name, hostname = \
-     EXCLUDED.hostname, systems = EXCLUDED.systems, supported_features = \
-     EXCLUDED.supported_features, mandatory_features = \
+     TRUE, NOW(), NOW()) ON CONFLICT (machine_id) DO UPDATE SET name = \
+     EXCLUDED.name, hostname = EXCLUDED.hostname, systems = EXCLUDED.systems, \
+     supported_features = EXCLUDED.supported_features, mandatory_features = \
      EXCLUDED.mandatory_features, speed_factor = EXCLUDED.speed_factor, \
      cpu_count = EXCLUDED.cpu_count, max_jobs = EXCLUDED.max_jobs, \
      proto_version = EXCLUDED.proto_version, ephemeral = EXCLUDED.ephemeral, \
-     auth_kind = EXCLUDED.auth_kind, connected = TRUE, last_seen = \
-     NOW(), updated_at = NOW()",
+     auth_kind = EXCLUDED.auth_kind, connected = TRUE, last_seen = NOW(), \
+     updated_at = NOW()",
   )
   .bind(machine_id)
   .bind(name)
