@@ -155,10 +155,10 @@ impl AsyncRead for HashingReader {
 }
 
 fn redact_url_query(url: &str) -> String {
-  match url.find('?') {
-    Some(pos) => format!("{}?<redacted>", &url[..pos]),
-    None => url.to_owned(),
-  }
+  url.find('?').map_or_else(
+    || url.to_owned(),
+    |pos| format!("{}?<redacted>", &url[..pos]),
+  )
 }
 
 fn hash_matches(text: &str, computed: &[u8]) -> color_eyre::Result<bool> {

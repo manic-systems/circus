@@ -147,6 +147,8 @@ fn resolve_machine_id(cfg: &AgentConfig, ephemeral: bool) -> Result<Uuid> {
 /// Cluster-unique name for an ephemeral run: GitHub run identifiers (for
 /// traceability) plus a slice of the random machine ID (for uniqueness).
 fn unique_ephemeral_name(base: &str, machine_id: Uuid) -> String {
+  const MAX: usize = 128;
+
   let short = &machine_id.simple().to_string()[..8];
   let suffix = match (
     std::env::var("GITHUB_RUN_ID").ok(),
@@ -158,7 +160,6 @@ fn unique_ephemeral_name(base: &str, machine_id: Uuid) -> String {
     (Some(run), None) => format!("-gh{run}-{short}"),
     _ => format!("-{short}"),
   };
-  const MAX: usize = 128;
   let available = MAX.saturating_sub(suffix.len());
   let base = if base.len() > available {
     let mut end = available;
