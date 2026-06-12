@@ -101,7 +101,7 @@ pub(crate) fn contended_surplus(
 
 #[must_use]
 pub(crate) fn requires_trusted_ref(agent: &AgentSnapshot) -> bool {
-  agent.ephemeral || agent.auth_kind == "oidc"
+  agent.ephemeral || agent.auth_kind == circus_common::models::AuthKind::Oidc
 }
 
 #[must_use]
@@ -596,6 +596,7 @@ mod tests {
 
   use chrono::Utc;
   use circus_common::models::{
+    AuthKind,
     EvaluationStatus,
     JobsetState,
     JobsetTriggerMode,
@@ -664,7 +665,7 @@ mod tests {
 
   fn agent_snapshot(
     ephemeral: bool,
-    auth_kind: &str,
+    auth_kind: circus_common::models::AuthKind,
     oidc_repository: Option<&str>,
   ) -> AgentSnapshot {
     AgentSnapshot {
@@ -678,7 +679,7 @@ mod tests {
       max_jobs: 1,
       current_jobs: 0,
       ephemeral,
-      auth_kind: auth_kind.into(),
+      auth_kind,
       oidc_repository: oidc_repository.map(str::to_owned),
       oidc_subject: None,
       heartbeat: HeartbeatSnapshot::default(),
@@ -778,10 +779,10 @@ mod tests {
     let trusted = super::TrustedBuildContext {
       repository: Some("owner/repo".into()),
     };
-    let matching = agent_snapshot(true, "oidc", Some("owner/repo"));
-    let other_repo = agent_snapshot(true, "oidc", Some("owner/other"));
-    let token_ephemeral = agent_snapshot(true, "token", None);
-    let persistent = agent_snapshot(false, "token", None);
+    let matching = agent_snapshot(true, AuthKind::Oidc, Some("owner/repo"));
+    let other_repo = agent_snapshot(true, AuthKind::Oidc, Some("owner/other"));
+    let token_ephemeral = agent_snapshot(true, AuthKind::Token, None);
+    let persistent = agent_snapshot(false, AuthKind::Token, None);
 
     assert!(candidate_allowed_for_trusted_build(
       &matching,
