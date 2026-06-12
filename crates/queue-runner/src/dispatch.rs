@@ -176,6 +176,15 @@ async fn trusted_build_context(
   })
 }
 
+pub(crate) async fn trusted_build_github_repository(
+  pool: &PgPool,
+  build: &Build,
+) -> Option<Option<String>> {
+  trusted_build_context(pool, build)
+    .await
+    .map(|context| context.repository)
+}
+
 fn candidate_allowed_for_trusted_build(
   agent: &AgentSnapshot,
   trusted: Option<&TrustedBuildContext>,
