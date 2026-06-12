@@ -1,5 +1,5 @@
 use std::{
-  collections::VecDeque,
+  collections::{HashMap, VecDeque},
   sync::Arc,
   time::{Duration, Instant},
 };
@@ -164,6 +164,8 @@ impl Autoscaler {
       .await
       .context("load pending builds for GHA autoscaler")?;
     let mut eligible_pending = 0usize;
+    let mut trusted_cache: HashMap<uuid::Uuid, Option<Option<String>>> =
+      HashMap::new();
     for build in builds {
       if !supports_required_features(
         build.scheduling_features(),
@@ -173,7 +175,13 @@ impl Autoscaler {
         continue;
       }
       let trusted_repo =
-        trusted_build_github_repository(&self.pool, &build).await;
+        if let Some(cached) = trusted_cache.get(&build.evaluation_id) {
+          cached.clone()
+        } else {
+          let repo = trusted_build_github_repository(&self.pool, &build).await;
+          trusted_cache.insert(build.evaluation_id, repo.clone());
+          repo
+        };
       if trusted_repo.as_ref().and_then(|repo| repo.as_deref())
         == Some(self.cfg.repository.as_str())
       {
@@ -187,7 +195,7 @@ impl Autoscaler {
       .into_iter()
       .filter(|agent| {
         agent.ephemeral
-          && agent.auth_kind == "oidc"
+          && agent.auth_kind == circus_common::models::AuthKind::Oidc
           && agent.oidc_repository.as_deref()
             == Some(self.cfg.repository.as_str())
           && self
