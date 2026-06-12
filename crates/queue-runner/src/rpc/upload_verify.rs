@@ -5,6 +5,7 @@ use std::{
     atomic::{AtomicU64, Ordering},
   },
   task::{Context, Poll},
+  time::Duration,
 };
 
 use async_compression::tokio::bufread::{GzipDecoder, XzDecoder, ZstdDecoder};
@@ -35,7 +36,14 @@ pub struct VerifyRequest {
 }
 
 pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
-  let response = reqwest::get(&req.get_url)
+  let http = reqwest::Client::builder()
+    .connect_timeout(Duration::from_secs(10))
+    .timeout(Duration::from_secs(30))
+    .build()
+    .context("build upload-verify HTTP client")?;
+  let response = http
+    .get(&req.get_url)
+    .send()
     .await
     .with_context(|| format!("GET {}", req.get_url))?
     .error_for_status()
