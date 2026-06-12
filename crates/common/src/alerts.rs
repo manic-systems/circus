@@ -51,6 +51,9 @@ impl AlertManager {
   }
 
   /// Calculate failure rate and dispatch alerts if threshold exceeded.
+  ///
+  /// # Returns
+  ///
   /// Returns the computed failure rate if alerts are enabled.
   pub async fn check_and_alert(
     &self,

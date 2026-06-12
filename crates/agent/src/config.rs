@@ -176,6 +176,7 @@ impl AgentConfig {
   /// Load from explicit path, env var, or the default location.
   ///
   /// # Errors
+  ///
   /// Returns the underlying `config` error on missing file or parse failure.
   pub fn load(path: Option<&Path>) -> Result<Self, config::ConfigError> {
     let chosen = path

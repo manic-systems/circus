@@ -17,6 +17,8 @@ pub fn is_envelope(line: &str) -> bool {
   line.starts_with("@nix ")
 }
 
+/// # Returns
+///
 /// Returns [`None`] if `line` is not an envelope, is malformed, or carries no
 /// text.
 #[must_use]

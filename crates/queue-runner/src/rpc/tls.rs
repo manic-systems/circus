@@ -16,6 +16,7 @@ use tokio_rustls::TlsAcceptor;
 /// malformed PEM; never panics.
 ///
 /// # Errors
+///
 /// Returns any underlying IO or rustls error.
 pub fn build_acceptor(cfg: &RpcTlsConfig) -> color_eyre::Result<TlsAcceptor> {
   let cert_bytes = std::fs::read(&cfg.cert_file)

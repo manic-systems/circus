@@ -197,6 +197,9 @@ pub struct SubStep {
 }
 
 /// Parse a single nix internal JSON log line (`@nix {...}`).
+///
+/// # Returns
+///
 /// Returns `Some(action, drv_path)` if the line contains a derivation action.
 #[must_use]
 pub fn parse_nix_log_line(line: &str) -> Option<(&'static str, String)> {

@@ -25,7 +25,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
-use color_eyre::eyre::{Context as _, eyre};
+use color_eyre::eyre::{Context as _, bail, eyre};
 use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
 use subtle::ConstantTimeEq as _;
@@ -117,6 +117,7 @@ impl ServerConfig {
   /// is loaded here; failure prevents the listener from starting.
   ///
   /// # Errors
+  ///
   /// Returns the underlying error if TLS files are missing or invalid.
   pub fn from_user(
     cfg: &circus_common::config::RpcConfig,
@@ -204,6 +205,7 @@ impl ServerConfig {
 /// responsible for spawning the runtime + `LocalSet`.
 ///
 /// # Errors
+///
 /// Returns the underlying error if the listener cannot be bound.
 pub async fn serve(
   cfg: ServerConfig,
@@ -862,7 +864,7 @@ async fn sign_fingerprint(
     .decode(secret_b64)
     .with_context(|| "signing key base64 decode")?;
   if secret.len() != 64 {
-    return Err(eyre!("signing key has {} bytes, expected 64", secret.len()));
+    bail!("signing key has {} bytes, expected 64", secret.len());
   }
   // libsodium layout is `seed (32) || public key (32)`. ring wants the
   // seed alone.
@@ -1160,10 +1162,10 @@ fn validate_token_hashes(hashes: &[String]) -> color_eyre::Result<()> {
       format!("queue_runner.rpc.auth_tokens[{idx}] is not hex")
     })?;
     if decoded.len() != 32 {
-      return Err(eyre!(
+      bail!(
         "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got {}",
         decoded.len()
-      ));
+      );
     }
   }
   Ok(())

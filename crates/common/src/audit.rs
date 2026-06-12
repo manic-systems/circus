@@ -102,6 +102,8 @@ pub struct AuditRecord<'a> {
 /// reference; if the database is gone the underlying action has likely
 /// failed too. We log the failure at WARN.
 ///
+/// # Returns
+///
 /// Returns `true` on success, `false` if the write failed (already logged).
 pub async fn record(pool: &PgPool, entry: AuditRecord<'_>) -> bool {
   let res = sqlx::query(

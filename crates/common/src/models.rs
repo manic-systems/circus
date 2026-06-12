@@ -94,11 +94,17 @@ pub enum JobsetState {
 
 impl JobsetState {
   /// Returns true if this jobset state allows evaluation.
+  ///
+  /// # Returns
+  ///
+  /// `true` when the jobset is [`Enabled`], [`OneShot`], or [`OneAtATime`].
   #[must_use]
   pub const fn is_evaluable(&self) -> bool {
     matches!(self, Self::Enabled | Self::OneShot | Self::OneAtATime)
   }
 
+  /// # Returns
+  ///
   /// Returns the database string representation of this state.
   #[must_use]
   pub const fn as_str(&self) -> &'static str {
@@ -138,12 +144,16 @@ pub enum JobsetTriggerMode {
 }
 
 impl JobsetTriggerMode {
+  /// # Returns
+  ///
   /// Returns true when webhook/manual pending evaluations should be accepted.
   #[must_use]
   pub const fn accepts_source_triggers(&self) -> bool {
     matches!(self, Self::SourceChange)
   }
 
+  /// # Returns
+  ///
   /// Returns the database string representation of this trigger mode.
   #[must_use]
   pub const fn as_str(&self) -> &'static str {
@@ -246,12 +256,16 @@ pub enum BuildStatus {
 }
 
 impl BuildStatus {
+  /// # Returns
+  ///
   /// Returns true if the build has completed (not pending or running).
   #[must_use]
   pub const fn is_finished(&self) -> bool {
     !matches!(self, Self::Pending | Self::Running)
   }
 
+  /// # Returns
+  ///
   /// Returns true if the build succeeded.
   /// Note: Does NOT include `CachedFailure` - a cached failure is still a
   /// failure.
@@ -260,6 +274,8 @@ impl BuildStatus {
     matches!(self, Self::Succeeded)
   }
 
+  /// # Returns
+  ///
   /// Returns true if the build completed without needing a retry.
   /// This includes both successful builds and cached failures.
   #[must_use]
@@ -281,6 +297,8 @@ impl BuildStatus {
     )
   }
 
+  /// # Returns
+  ///
   /// Returns the database integer representation of this status.
   /// Note: This uses an internal numbering scheme (0-13), not Hydra exit codes.
   #[must_use]

@@ -122,6 +122,9 @@ pub const REQUIRED_VIEWS: &[&str] =
   &["active_jobsets", "build_metrics_summary", "build_stats"];
 
 /// Static migration descriptors exposed for inspection by tests and tooling.
+///
+/// # Returns
+///
 /// Returns `(version, name)` pairs in the order sqlx will apply them.
 #[must_use]
 pub fn migration_set() -> Vec<(i64, String)> {

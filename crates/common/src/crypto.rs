@@ -3,6 +3,7 @@
 /// Pin ring as the process-level rustls [`CryptoProvider`].
 ///
 /// # Errors
+///
 /// Returns an error if a provider was already installed, which should never
 /// happen.
 pub fn install_crypto_provider() -> color_eyre::Result<()> {

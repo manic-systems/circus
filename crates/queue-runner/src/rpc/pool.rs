@@ -147,6 +147,8 @@ impl AgentMeta {
     }
   }
 
+  /// # Returns
+  ///
   /// Returns [`None`] when the agent is already at
   /// [`max_jobs`][`Self::max_jobs`].
   ///

@@ -36,7 +36,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
-use color_eyre::eyre::{Context as _, eyre};
+use color_eyre::eyre::{Context as _, bail, eyre};
 use parking_lot::Mutex;
 use tokio::net::TcpStream;
 use tokio_util::{
@@ -58,6 +58,7 @@ use crate::{
 /// The caller (`main`) implements reconnect with backoff.
 ///
 /// # Errors
+///
 /// Network or RPC errors. Connection-time errors (`connect`, `register`)
 /// are bubbled; mid-stream errors land in tracing and end the function.
 #[expect(
@@ -197,7 +198,7 @@ fn parse_endpoint(url: &str) -> color_eyre::Result<(String, u16, bool)> {
   let scheme = parsed.scheme();
   let tls = matches!(scheme, "circus+tls");
   if !matches!(scheme, "circus" | "circus+tls") {
-    return Err(eyre!("unsupported runner_url scheme: {scheme}"));
+    bail!("unsupported runner_url scheme: {scheme}");
   }
   let host = parsed
     .host_str()
@@ -225,9 +226,9 @@ async fn verify_runner_version(
   let payload = response.get().context("version response")?;
   let proto = payload.get_proto()?.to_str()?;
   if proto != PROTO_VERSION {
-    return Err(eyre!(
+    bail!(
       "proto mismatch: runner={proto} agent={PROTO_VERSION}"
-    ));
+    );
   }
   Ok(())
 }
@@ -898,7 +899,7 @@ async fn export_outputs_to_sink(
   }
   let status = child.wait().await?;
   if !status.success() {
-    return Err(eyre!("nix-store --export exited with {status}"));
+    bail!("nix-store --export exited with {status}");
   }
   close_res
     .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
@@ -921,10 +922,10 @@ async fn query_requisites(
     .await
     .context("nix-store --query --requisites")?;
   if !out.status.success() {
-    return Err(eyre!(
+    bail!(
       "nix-store --query --requisites exited with {}",
       out.status
-    ));
+    );
   }
   Ok(
     String::from_utf8_lossy(&out.stdout)

@@ -49,6 +49,9 @@ use crate::{
 static STYLE_CSS: &str = include_str!("../../static/style.css");
 
 /// Helper to generate secure cookie flags based on server configuration.
+///
+/// # Returns
+///
 /// Returns a string containing cookie security attributes: `HttpOnly`,
 /// `SameSite`, and optionally Secure.
 ///

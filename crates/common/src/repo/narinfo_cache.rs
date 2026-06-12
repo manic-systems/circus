@@ -46,6 +46,7 @@ pub struct UpsertNarInfo<'a> {
 /// Insert or replace the narinfo for one store path.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   sqlx::query(
@@ -79,6 +80,7 @@ pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
 /// Read the narinfo for one store path.
 ///
 /// # Errors
+///
 /// `CiError::NotFound` when no row matches, `CiError::Database` for
 /// underlying sqlx errors.
 pub async fn get(pool: &PgPool, store_path: &str) -> Result<NarInfo> {
@@ -96,6 +98,7 @@ pub async fn get(pool: &PgPool, store_path: &str) -> Result<NarInfo> {
 /// Substituters query `<hash>.narinfo`; this resolves that to a row.
 ///
 /// # Errors
+///
 /// Same as [`get`].
 pub async fn get_by_hash_part(
   pool: &PgPool,
@@ -119,6 +122,7 @@ pub async fn get_by_hash_part(
 /// uploaded by agents through the presigned S3 flow.
 ///
 /// # Errors
+///
 /// Same as [`get`].
 pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
   sqlx::query_as::<_, NarInfo>(
@@ -135,6 +139,7 @@ pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
 /// Total rows. Cheap for admin and metrics surfaces.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn count(pool: &PgPool) -> Result<i64> {
   let (n,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM narinfo_cache")
