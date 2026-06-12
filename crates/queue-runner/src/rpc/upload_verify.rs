@@ -45,7 +45,7 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
     .get(&req.get_url)
     .send()
     .await
-    .with_context(|| format!("GET {}", req.get_url))?
+    .with_context(|| format!("GET {}", redact_url_query(&req.get_url)))?
     .error_for_status()
     .context("uploaded NAR GET returned error")?;
   let stream = response.bytes_stream();
@@ -151,6 +151,13 @@ impl AsyncRead for HashingReader {
       }
     }
     result
+  }
+}
+
+fn redact_url_query(url: &str) -> String {
+  match url.find('?') {
+    Some(pos) => format!("{}?<redacted>", &url[..pos]),
+    None => url.to_owned(),
   }
 }
 
