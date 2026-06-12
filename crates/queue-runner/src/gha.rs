@@ -42,7 +42,7 @@ struct WorkflowDispatch<'a> {
 
 #[derive(Serialize)]
 struct WorkflowInputs<'a> {
-  runner_url:         &'a str,
+  runner_url:         String,
   oidc_audience:      &'a str,
   systems:            String,
   supported_features: String,
@@ -50,7 +50,7 @@ struct WorkflowInputs<'a> {
   max_jobs:           String,
   cores:              String,
   speed_factor:       String,
-  agent_name:         &'a str,
+  agent_name:         String,
 }
 
 #[derive(Debug)]
@@ -221,15 +221,15 @@ impl Autoscaler {
     let body = WorkflowDispatch {
       ref_name: &self.cfg.ref_name,
       inputs:   WorkflowInputs {
-        runner_url:         &self.cfg.runner_url,
+        runner_url:         toml_string(&self.cfg.runner_url)?,
         oidc_audience:      &self.cfg.oidc_audience,
-        systems:            self.cfg.systems.join(","),
-        supported_features: self.cfg.supported_features.join(","),
-        mandatory_features: self.cfg.mandatory_features.join(","),
+        systems:            toml_string_array(&self.cfg.systems)?,
+        supported_features: toml_string_array(&self.cfg.supported_features)?,
+        mandatory_features: toml_string_array(&self.cfg.mandatory_features)?,
         max_jobs:           self.cfg.max_jobs.to_string(),
         cores:              self.cfg.cores.to_string(),
         speed_factor:       self.cfg.speed_factor.to_string(),
-        agent_name:         &self.cfg.agent_name,
+        agent_name:         toml_string(&self.cfg.agent_name)?,
       },
     };
     let response = self
@@ -255,6 +255,14 @@ impl Autoscaler {
     );
     Ok(())
   }
+}
+
+fn toml_string(value: &str) -> color_eyre::Result<String> {
+  serde_json::to_string(value).context("encode TOML string literal")
+}
+
+fn toml_string_array(values: &[String]) -> color_eyre::Result<String> {
+  serde_json::to_string(values).context("encode TOML string array")
 }
 
 async fn load_token(cfg: &GhaConfig) -> color_eyre::Result<String> {
@@ -340,5 +348,18 @@ mod tests {
       shutdown_token: CancellationToken::new(),
     };
     assert!(autoscaler.in_cooldown());
+  }
+
+  #[test]
+  fn workflow_inputs_are_toml_literals() {
+    assert_eq!(
+      toml_string("circus gha").expect("string literal should encode"),
+      "\"circus gha\""
+    );
+    assert_eq!(
+      toml_string_array(&["x86_64-linux".into(), "kvm".into()])
+        .expect("array literal should encode"),
+      "[\"x86_64-linux\",\"kvm\"]"
+    );
   }
 }
