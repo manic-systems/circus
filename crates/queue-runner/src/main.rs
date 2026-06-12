@@ -13,6 +13,7 @@ use circus_queue_runner::{
 };
 use clap::Parser;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
 #[command(name = "circus-queue-runner")]
@@ -44,6 +45,7 @@ async fn main() -> color_eyre::Result<()> {
   let cache_upload_config = config.cache_upload;
   let cache_upload_for_rpc = cache_upload_config.clone();
   let qr_config = config.queue_runner;
+  let gha_config = qr_config.gha.clone();
   let nix_store_dir = config.nix.store_dir;
 
   let workers = cli.workers.unwrap_or(qr_config.workers);
@@ -160,6 +162,26 @@ async fn main() -> color_eyre::Result<()> {
     );
   }
 
+  let gha_shutdown = CancellationToken::new();
+  let gha_handle = if gha_config.enabled {
+    let shutdown = gha_shutdown.clone();
+    let pool = db.pool().clone();
+    let agents = Arc::clone(&agent_pool);
+    Some(tokio::spawn(async move {
+      match circus_queue_runner::gha::Autoscaler::new(
+        gha_config, pool, agents, shutdown,
+      )
+      .await
+      {
+        Ok(autoscaler) => autoscaler.run().await,
+        Err(e) => tracing::error!("GitHub Actions autoscaler disabled: {e}"),
+      }
+    }))
+  } else {
+    tracing::info!("[queue_runner.gha] disabled");
+    None
+  };
+
   tokio::select! {
       result = circus_queue_runner::runner_loop::run(db.pool().clone(), worker_pool, Arc::clone(&hot_config), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
           if let Err(e) = result {
@@ -174,10 +196,16 @@ async fn main() -> color_eyre::Result<()> {
       () = heartbeat_loop(db.pool().clone(), qr_config.poll_interval) => {}
       () = shutdown_signal() => {
           tracing::info!("Shutdown signal received, draining in-flight builds...");
+          gha_shutdown.cancel();
           worker_pool_for_drain.drain();
           worker_pool_for_drain.wait_for_drain().await;
           tracing::info!("All in-flight builds completed");
       }
+  }
+
+  if let Some(handle) = gha_handle {
+    handle.abort();
+    let _ = handle.await;
   }
 
   listener_handle.abort();

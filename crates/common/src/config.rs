@@ -231,6 +231,99 @@ pub struct QueueRunnerConfig {
   /// path. Leave unset to disable the agent path entirely.
   #[serde(default)]
   pub rpc: Option<RpcConfig>,
+
+  /// GitHub Actions autoscaler for ephemeral `circus-agent` workers.
+  #[serde(default)]
+  pub gha: GhaConfig,
+}
+
+/// Runner-driven GitHub Actions autoscaler. When enabled, the queue-runner
+/// dispatches a workflow that starts `circus-agent --ephemeral` on a GitHub
+/// Actions machine.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GhaConfig {
+  pub enabled:                bool,
+  /// GitHub repository slug (`owner/repo`) containing the builder workflow.
+  pub repository:             String,
+  /// Workflow file name or numeric ID accepted by the workflow dispatch API.
+  pub workflow:               String,
+  /// Git ref where the workflow file lives.
+  pub ref_name:               String,
+  /// GitHub token with Actions write access for `repository`.
+  pub token:                  Option<String>,
+  /// File containing the GitHub token. Used when `token` is unset.
+  pub token_file:             Option<PathBuf>,
+  /// Runner URL passed to `circus-agent`, e.g. `circus+tls://host:8443`.
+  pub runner_url:             String,
+  /// Audience requested for the GitHub OIDC token.
+  pub oidc_audience:          String,
+  /// Nix systems advertised by each GitHub Actions agent.
+  pub systems:                Vec<String>,
+  /// Features advertised by each GitHub Actions agent.
+  pub supported_features:     Vec<String>,
+  /// Mandatory features advertised by each GitHub Actions agent.
+  pub mandatory_features:     Vec<String>,
+  pub max_jobs:               u32,
+  pub cores:                  u32,
+  pub speed_factor:           f32,
+  pub agent_name:             String,
+  pub max_inflight:           u32,
+  pub inflight_ttl_secs:      u64,
+  pub scale_up_cooldown_secs: u64,
+  pub poll_interval_secs:     u64,
+}
+
+impl std::fmt::Debug for GhaConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("GhaConfig")
+      .field("enabled", &self.enabled)
+      .field("repository", &self.repository)
+      .field("workflow", &self.workflow)
+      .field("ref_name", &self.ref_name)
+      .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+      .field("token_file", &self.token_file)
+      .field("runner_url", &self.runner_url)
+      .field("oidc_audience", &self.oidc_audience)
+      .field("systems", &self.systems)
+      .field("supported_features", &self.supported_features)
+      .field("mandatory_features", &self.mandatory_features)
+      .field("max_jobs", &self.max_jobs)
+      .field("cores", &self.cores)
+      .field("speed_factor", &self.speed_factor)
+      .field("agent_name", &self.agent_name)
+      .field("max_inflight", &self.max_inflight)
+      .field("inflight_ttl_secs", &self.inflight_ttl_secs)
+      .field("scale_up_cooldown_secs", &self.scale_up_cooldown_secs)
+      .field("poll_interval_secs", &self.poll_interval_secs)
+      .finish()
+  }
+}
+
+impl Default for GhaConfig {
+  fn default() -> Self {
+    Self {
+      enabled:                false,
+      repository:             String::new(),
+      workflow:               "circus-builder.yml".to_owned(),
+      ref_name:               "main".to_owned(),
+      token:                  None,
+      token_file:             None,
+      runner_url:             String::new(),
+      oidc_audience:          "circus-agent".to_owned(),
+      systems:                vec!["x86_64-linux".to_owned()],
+      supported_features:     Vec::new(),
+      mandatory_features:     Vec::new(),
+      max_jobs:               1,
+      cores:                  0,
+      speed_factor:           1.0,
+      agent_name:             "circus-gha".to_owned(),
+      max_inflight:           4,
+      inflight_ttl_secs:      900,
+      scale_up_cooldown_secs: 30,
+      poll_interval_secs:     10,
+    }
+  }
 }
 
 /// Configuration for the capnp-rpc agent endpoint. Used when distributed
@@ -907,6 +1000,7 @@ impl Default for QueueRunnerConfig {
       local_systems:        None,
       local_features:       None,
       rpc:                  None,
+      gha:                  GhaConfig::default(),
     }
   }
 }
@@ -1166,6 +1260,84 @@ impl Config {
             "queue_runner.rpc.oidc.audiences must list at least one audience"
           ));
         }
+      }
+    }
+    if self.queue_runner.gha.enabled {
+      let gha = &self.queue_runner.gha;
+      if self
+        .queue_runner
+        .rpc
+        .as_ref()
+        .is_none_or(|rpc| rpc.oidc.is_none())
+      {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha requires queue_runner.rpc.oidc"
+        ));
+      }
+      if gha.repository.split_once('/').is_none() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.repository must be owner/repo"
+        ));
+      }
+      if gha.workflow.trim().is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.workflow cannot be empty"
+        ));
+      }
+      if gha.ref_name.trim().is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.ref_name cannot be empty"
+        ));
+      }
+      if gha.token.is_none() && gha.token_file.is_none() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha requires token or token_file"
+        ));
+      }
+      if gha.runner_url.trim().is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.runner_url cannot be empty"
+        ));
+      }
+      if gha.oidc_audience.trim().is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.oidc_audience cannot be empty"
+        ));
+      }
+      if let Some(rpc) = self.queue_runner.rpc.as_ref()
+        && let Some(oidc) = rpc.oidc.as_ref()
+        && !oidc.audiences.iter().any(|aud| aud == &gha.oidc_audience)
+      {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.oidc_audience must be listed in \
+           queue_runner.rpc.oidc.audiences"
+        ));
+      }
+      if gha.systems.is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.systems must list at least one system"
+        ));
+      }
+      if gha.max_jobs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.max_jobs must be greater than 0"
+        ));
+      }
+      if gha.speed_factor <= 0.0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.speed_factor must be greater than 0"
+        ));
+      }
+      if gha.max_inflight == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.max_inflight must be greater than 0"
+        ));
+      }
+      if gha.inflight_ttl_secs == 0 || gha.poll_interval_secs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha inflight_ttl_secs and poll_interval_secs must be \
+           greater than 0"
+        ));
       }
     }
     if !matches!(
