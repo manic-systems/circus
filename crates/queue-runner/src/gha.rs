@@ -163,7 +163,7 @@ impl Autoscaler {
     let builds = pending_builds_for_systems(&self.pool, &self.cfg.systems)
       .await
       .context("load pending builds for GHA autoscaler")?;
-    let mut eligible_pending = 0usize;
+    let mut eligible_requirements = Vec::new();
     let mut trusted_cache: HashMap<uuid::Uuid, Option<Option<String>>> =
       HashMap::new();
     for build in builds {
@@ -185,35 +185,44 @@ impl Autoscaler {
       if trusted_repo.as_ref().and_then(|repo| repo.as_deref())
         == Some(self.cfg.repository.as_str())
       {
-        eligible_pending += 1;
+        eligible_requirements.push(build.scheduling_features().to_vec());
       }
     }
 
-    let live_capacity = self
-      .agent_pool
-      .snapshot_all()
-      .into_iter()
-      .filter(|agent| {
-        agent.ephemeral
-          && agent.auth_kind == circus_common::models::AuthKind::Oidc
-          && agent.oidc_repository.as_deref()
-            == Some(self.cfg.repository.as_str())
-          && self
-            .cfg
-            .systems
-            .iter()
-            .any(|system| agent.systems.iter().any(|s| s == system))
-          && supports_required_features(
-            &self.cfg.mandatory_features,
-            &agent.supported_features,
-            &agent.mandatory_features,
-          )
-      })
-      .map(|agent| agent.max_jobs.saturating_sub(agent.current_jobs))
-      .sum();
+    let mut live_slots = Vec::new();
+    for agent in self.agent_pool.snapshot_all().into_iter().filter(|agent| {
+      agent.ephemeral
+        && agent.auth_kind == circus_common::models::AuthKind::Oidc
+        && agent.oidc_repository.as_deref()
+          == Some(self.cfg.repository.as_str())
+        && self
+          .cfg
+          .systems
+          .iter()
+          .any(|system| agent.systems.iter().any(|s| s == system))
+    }) {
+      let free = agent.max_jobs.saturating_sub(agent.current_jobs);
+      for _ in 0..free {
+        live_slots.push(agent.clone());
+      }
+    }
+
+    let mut live_capacity = 0u32;
+    for required in &eligible_requirements {
+      if let Some(pos) = live_slots.iter().position(|agent| {
+        supports_required_features(
+          required,
+          &agent.supported_features,
+          &agent.mandatory_features,
+        )
+      }) {
+        live_slots.swap_remove(pos);
+        live_capacity = live_capacity.saturating_add(1);
+      }
+    }
 
     Ok(Demand {
-      eligible_pending,
+      eligible_pending: eligible_requirements.len(),
       live_capacity,
     })
   }
