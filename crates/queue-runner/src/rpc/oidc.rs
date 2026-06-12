@@ -9,7 +9,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use circus_common::config::RpcOidcConfig;
-use color_eyre::eyre::{Context as _, eyre};
+use color_eyre::eyre::{Context as _, bail, eyre};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
 use tokio::{sync::Mutex, time::Instant};
@@ -69,6 +69,7 @@ pub struct OidcVerifier {
 
 impl OidcVerifier {
   /// # Errors
+  ///
   /// Returns an error if the HTTP client cannot be built.
   pub fn new(cfg: &RpcOidcConfig) -> color_eyre::Result<Self> {
     let http = reqwest::Client::builder()
@@ -89,6 +90,7 @@ impl OidcVerifier {
   /// Verify a presented ID token end to end.
   ///
   /// # Errors
+  ///
   /// Returns an error when the token is malformed, the signature or claims
   /// do not validate, or the repository is not on the allowlist. The caller
   /// logs the detail and returns a generic failure to the agent.
@@ -98,7 +100,7 @@ impl OidcVerifier {
   ) -> color_eyre::Result<VerifiedIdentity> {
     let header = decode_header(token).context("decode JWT header")?;
     if header.alg != Algorithm::RS256 {
-      return Err(eyre!("unexpected JWT alg {:?}, want RS256", header.alg));
+      bail!("unexpected JWT alg {:?}, want RS256", header.alg);
     }
     let kid = header.kid.ok_or_else(|| eyre!("JWT has no kid"))?;
     let jwk = self.jwk_for_kid(&kid).await?;
@@ -120,7 +122,7 @@ impl OidcVerifier {
         .iter()
         .any(|r| r == &claims.repository)
     {
-      return Err(eyre!("repository {} is not allowed", claims.repository));
+      bail!("repository {} is not allowed", claims.repository);
     }
 
     Ok(VerifiedIdentity {

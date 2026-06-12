@@ -61,6 +61,7 @@ struct Demand {
 
 impl Autoscaler {
   /// # Errors
+  ///
   /// Returns an error if the GitHub token cannot be loaded or the HTTP client
   /// cannot be constructed.
   pub async fn new(

@@ -228,6 +228,8 @@ fn owner_repo_from_path(path: &str) -> Option<String> {
 /// Load-based ordering for the configured strategy, used as the tie-break once
 /// builders are ranked by contended surplus.
 ///
+/// # Returns
+///
 /// Returns [`Ordering::Less`] when `a` is the better choice.
 fn strategy_order(
   strategy: &BuilderSchedulingStrategy,

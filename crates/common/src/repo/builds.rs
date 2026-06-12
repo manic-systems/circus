@@ -164,6 +164,9 @@ pub async fn list_pending(
 }
 
 /// Atomically claim a pending build by setting it to running.
+///
+/// # Returns
+///
 /// Returns `None` if the build was already claimed by another worker.
 ///
 /// # Errors
@@ -615,6 +618,9 @@ pub async fn mark_signed(pool: &PgPool, id: Uuid) -> Result<()> {
 }
 
 /// Batch-fetch completed builds by derivation paths.
+///
+/// # Returns
+///
 /// Returns a map from `drv_path` to Build for deduplication.
 ///
 /// # Errors

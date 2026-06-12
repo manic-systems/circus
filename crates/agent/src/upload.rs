@@ -33,7 +33,7 @@ use async_compression::{
   tokio::bufread::{GzipEncoder, XzEncoder, ZstdEncoder},
 };
 use circus_proto::{nar_info, runner};
-use color_eyre::eyre::{Context as _, eyre};
+use color_eyre::eyre::{Context as _, bail, eyre};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, BufReader, ReadBuf};
@@ -250,7 +250,7 @@ async fn upload_one(
     "xz" => Box::pin(XzEncoder::with_quality(buffered, Level::Precise(6))),
     "gzip" => Box::pin(GzipEncoder::new(buffered)),
     "none" | "" => Box::pin(buffered),
-    other => return Err(eyre!("unsupported compression: {other}")),
+    other => bail!("unsupported compression: {other}"),
   };
 
   // Tee the compressed bytes through a hasher + counter while reqwest
@@ -275,13 +275,13 @@ async fn upload_one(
   let status = resp.status();
   if !status.is_success() {
     let text = resp.text().await.unwrap_or_default();
-    return Err(eyre!("S3 PUT returned {status}: {text}"));
+    bail!("S3 PUT returned {status}: {text}");
   }
 
   // Drain the child. nix-store --dump on success returns 0 after EOF.
   let child_status = dump.wait().await?;
   if !child_status.success() {
-    return Err(eyre!("nix-store --dump exited with {child_status}"));
+    bail!("nix-store --dump exited with {child_status}");
   }
 
   // Finalise the rolling hash. `Mutex::into_inner` only works on the
@@ -334,7 +334,7 @@ async fn query_path_info(
   let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
   let out = cmd.output().await.context("nix path-info")?;
   if !out.status.success() {
-    return Err(eyre!("nix path-info exited with {}", out.status));
+    bail!("nix path-info exited with {}", out.status);
   }
   let v: serde_json::Value =
     serde_json::from_slice(&out.stdout).context("parse path-info json")?;
@@ -354,7 +354,7 @@ async fn query_path_info(
         .and_then(|v| v.as_object())
         .ok_or_else(|| eyre!("empty path-info array"))?
     },
-    _ => return Err(eyre!("unexpected path-info shape")),
+    _ => bail!("unexpected path-info shape"),
   };
 
   let nar_hash = obj

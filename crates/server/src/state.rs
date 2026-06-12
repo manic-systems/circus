@@ -103,6 +103,8 @@ impl NixStore {
     })
   }
 
+  /// # Returns
+  ///
   /// Returns the Nix store directory.
   #[must_use]
   pub fn store_dir(&self) -> StoreDir {

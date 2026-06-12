@@ -72,6 +72,8 @@ impl PsiCache {
 /// Read PSI over SSH. `ssh_uri` is expected to come from trusted
 /// admin-configured remote builder settings, not from end-user input.
 ///
+/// # Returns
+///
 /// Returns `None` if anything goes wrong - the caller then treats the builder
 /// as unloaded rather than penalizing it for a transient connectivity blip.
 pub async fn read(ssh_uri: &str, timeout: Duration) -> Option<PsiSnapshot> {

@@ -46,6 +46,9 @@ async fn prune_stale_ephemeral_sessions(pool: &PgPool) {
 }
 
 /// Query the expected output path for a derivation using `nix-store --query`.
+///
+/// # Returns
+///
 /// Returns the first output path, or `None` if the query fails.
 async fn query_drv_output(drv_path: &str) -> Option<String> {
   let out = tokio::process::Command::new("nix-store")

@@ -402,9 +402,7 @@ async fn send_commit_status_immediate(
 
 /// Dispatch commit status notification when a build is created (pending state).
 ///
-/// # Errors
-///
-/// Logs database errors if task creation fails.
+/// Database errors during task creation are logged but not propagated.
 pub async fn dispatch_build_created(
   pool: &PgPool,
   build: &Build,
@@ -434,9 +432,7 @@ pub async fn dispatch_build_created(
 
 /// Dispatch commit status notification when a build starts (running state).
 ///
-/// # Errors
-///
-/// Logs database errors if task creation fails.
+/// Database errors during task creation are logged but not propagated.
 pub async fn dispatch_build_started(
   pool: &PgPool,
   build: &Build,

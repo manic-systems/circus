@@ -56,6 +56,7 @@ pub struct BuilderSession {
 /// All recorded agent sessions, newest activity first.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn list(pool: &PgPool) -> Result<Vec<BuilderSession>> {
   sqlx::query_as::<_, BuilderSession>(
@@ -71,6 +72,7 @@ pub async fn list(pool: &PgPool) -> Result<Vec<BuilderSession>> {
 /// "live agents" panel.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn list_connected(pool: &PgPool) -> Result<Vec<BuilderSession>> {
   sqlx::query_as::<_, BuilderSession>(
@@ -85,6 +87,7 @@ pub async fn list_connected(pool: &PgPool) -> Result<Vec<BuilderSession>> {
 /// One session by its stable `machine_id`.
 ///
 /// # Errors
+///
 /// `CiError::NotFound` when no row matches, `CiError::Database` for
 /// underlying sqlx errors.
 pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
@@ -105,6 +108,7 @@ pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
 /// sync with the in-memory `AgentPool`.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn record_outcome(
   pool: &PgPool,
@@ -138,6 +142,7 @@ pub async fn record_outcome(
 /// in-memory pool tracks connectivity, while this row tracks failure backoff.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
   let row = sqlx::query_as::<_, (bool,)>(
@@ -156,6 +161,7 @@ pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
 /// Persistent agents are never touched.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn prune_stale_ephemeral(
   pool: &PgPool,
@@ -177,6 +183,7 @@ pub async fn prune_stale_ephemeral(
 /// after a crash where the `connected` flag did not get flipped.
 ///
 /// # Errors
+///
 /// Returns the underlying sqlx error.
 pub async fn reset_all_connected(pool: &PgPool) -> Result<u64> {
   let res = sqlx::query(

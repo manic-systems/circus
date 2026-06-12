@@ -699,6 +699,9 @@ async fn read_required_features(drv_path: &str) -> Vec<String> {
 
 /// Detect whether a derivation is a fixed-output derivation by reading the
 /// `.drv` file and checking for `outputHash` in its env vars.
+///
+/// # Returns
+///
 /// Returns `(is_fod, fod_hash)`.
 fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
   let Ok(content) = std::fs::read_to_string(drv_path) else {

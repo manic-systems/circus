@@ -4,7 +4,7 @@
 
 use std::{io::BufReader, sync::Arc};
 
-use color_eyre::eyre::eyre;
+use color_eyre::eyre::{bail, eyre};
 use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
 use tokio_rustls::TlsConnector;
 
@@ -26,16 +26,16 @@ pub fn build_client_connector(
     (Some(cert_file), Some(key_file)) => Some((cert_file, key_file)),
     (None, None) => None,
     (Some(cert_file), None) => {
-      return Err(eyre!(
+      bail!(
         "agent TLS cert_file {} requires key_file",
         cert_file.display()
-      ));
+      );
     },
     (None, Some(key_file)) => {
-      return Err(eyre!(
+      bail!(
         "agent TLS key_file {} requires cert_file",
         key_file.display()
-      ));
+      );
     },
   };
 
@@ -52,9 +52,9 @@ pub fn build_client_connector(
       tracing::warn!(%err, "skipping unparseable system certificate");
     }
     if native.certs.is_empty() {
-      return Err(eyre!(
+      bail!(
         "no system CA certificates found; set tls.ca_file explicitly"
-      ));
+      );
     }
     roots.add_parsable_certificates(native.certs);
   }

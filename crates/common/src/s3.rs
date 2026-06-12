@@ -60,6 +60,8 @@ pub struct Presigner {
 impl Presigner {
   /// Build a presigner from `s3://bucket[/prefix]` plus `[cache_upload.s3]`.
   ///
+  /// # Returns
+  ///
   /// Returns `None` for non-S3 URIs or when explicit credentials are missing.
   /// This helper intentionally does not discover IAM role credentials;
   /// operators should provision the access key/secret through their secret
