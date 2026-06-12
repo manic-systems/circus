@@ -1,0 +1,114 @@
+name: Circus Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_url:
+        required: true
+        type: string
+      oidc_audience:
+        required: true
+        type: string
+      circus_version:
+        required: false
+        type: string
+        default: "latest"
+        description: "Circus release tag to download (empty or 'latest' for newest)"
+      circus_system:
+        required: false
+        type: string
+        default: "linux-amd64"
+        description: "System string matching release assets (linux-amd64, linux-arm64)"
+      systems:
+        required: true
+        type: string
+      supported_features:
+        required: false
+        type: string
+        default: ""
+      mandatory_features:
+        required: false
+        type: string
+        default: ""
+      max_jobs:
+        required: true
+        type: string
+      cores:
+        required: true
+        type: string
+      speed_factor:
+        required: true
+        type: string
+      agent_name:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Request OIDC token
+        env:
+          AUDIENCE: ${{ inputs.oidc_audience }}
+        run: |
+          set -euo pipefail
+          response="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}"
+          )"
+          token="$(jq -r '.value' <<<"$response")"
+          echo "::add-mask::$token"
+          printf 'CIRCUS_AGENT_TOKEN=%s\n' "$token" >>"$GITHUB_ENV"
+
+      - name: Write agent config
+        env:
+          AGENT_NAME: ${{ inputs.agent_name }}
+          RUNNER_URL: ${{ inputs.runner_url }}
+          SYSTEMS: ${{ inputs.systems }}
+          SUPPORTED_FEATURES: ${{ inputs.supported_features }}
+          MANDATORY_FEATURES: ${{ inputs.mandatory_features }}
+          MAX_JOBS: ${{ inputs.max_jobs }}
+          CORES: ${{ inputs.cores }}
+          SPEED_FACTOR: ${{ inputs.speed_factor }}
+        run: |
+          set -euo pipefail
+          cat >"$RUNNER_TEMP/circus-agent.toml" <<EOF
+          [agent]
+          name = ${AGENT_NAME}
+          runner_url = ${RUNNER_URL}
+          systems = ${SYSTEMS}
+          supported_features = ${SUPPORTED_FEATURES}
+          mandatory_features = ${MANDATORY_FEATURES}
+          max_jobs = ${MAX_JOBS}
+          cores = ${CORES}
+          speed_factor = ${SPEED_FACTOR}
+          work_dir = "/tmp/circus-agent"
+
+          [agent.ephemeral]
+          max_builds = 1
+          max_idle_secs = 120
+          unique_name = true
+          EOF
+
+      - name: Download circus-agent binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CIRCUS_VERSION: ${{ inputs.circus_version }}
+          CIRCUS_SYSTEM: ${{ inputs.circus_system }}
+        run: |
+          set -euo pipefail
+          args=(release download --repo manic-systems/circus --pattern "circus-agent-${CIRCUS_SYSTEM}" --output /tmp/circus-agent)
+          if [[ -n "${CIRCUS_VERSION:-}" && "${CIRCUS_VERSION}" != "latest" ]]; then
+            args+=("${CIRCUS_VERSION}")
+          fi
+          gh "${args[@]}"
+          chmod +x /tmp/circus-agent
+
+      - name: Run circus agent
+        run: /tmp/circus-agent --config "$RUNNER_TEMP/circus-agent.toml" --ephemeral
