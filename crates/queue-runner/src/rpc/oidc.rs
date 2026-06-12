@@ -116,11 +116,10 @@ impl OidcVerifier {
       decode::<GitHubClaims>(token, &key, &validation).context("verify JWT")?;
     let claims = data.claims;
 
-    if !self.allowed_repositories.is_empty()
-      && !self
-        .allowed_repositories
-        .iter()
-        .any(|r| r == &claims.repository)
+    if !self
+      .allowed_repositories
+      .iter()
+      .any(|r| r == &claims.repository)
     {
       bail!("repository {} is not allowed", claims.repository);
     }
