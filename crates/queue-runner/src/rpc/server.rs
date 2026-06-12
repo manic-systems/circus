@@ -425,12 +425,12 @@ impl runner::Server for RunnerImpl {
       // JWT presented in the same field is verified against the issuer's JWKS.
       let (auth_kind, oidc_identity) = if verify_token(&cfg.token_hashes, token)
       {
-        ("token", None)
+        (circus_common::models::AuthKind::Token, None)
       } else if let Some(verifier) = cfg.oidc.as_ref() {
         match verifier.verify(token).await {
           Ok(id) => {
             tracing::info!(name = %name, repository = %id.repository, subject = %id.subject, "agent authenticated via OIDC");
-            ("oidc", Some(id))
+            (circus_common::models::AuthKind::Oidc, Some(id))
           },
           Err(e) => {
             tracing::warn!(name = %name, "OIDC auth failed: {e}");
@@ -516,7 +516,7 @@ impl runner::Server for RunnerImpl {
         cpu as i32,
         maxj as i32,
         ephemeral,
-        auth_kind,
+        auth_kind.as_str(),
       )
       .await
       {
@@ -540,7 +540,7 @@ impl runner::Server for RunnerImpl {
         cpu,
         maxj,
         ephemeral,
-        auth_kind.to_owned(),
+        auth_kind,
         oidc_identity.as_ref().map(|id| id.repository.clone()),
         oidc_identity.as_ref().map(|id| id.subject.clone()),
         tx,

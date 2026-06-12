@@ -1,9 +1,55 @@
 //! Data models for CI
 
+use std::fmt;
+
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sqlx::FromRow;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthKind {
+  Token,
+  Oidc,
+}
+
+impl AuthKind {
+  #[must_use]
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::Token => "token",
+      Self::Oidc => "oidc",
+    }
+  }
+}
+
+impl fmt::Display for AuthKind {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(self.as_str())
+  }
+}
+
+impl From<&str> for AuthKind {
+  fn from(s: &str) -> Self {
+    match s {
+      "oidc" => Self::Oidc,
+      _ => Self::Token,
+    }
+  }
+}
+
+impl Serialize for AuthKind {
+  fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(self.as_str())
+  }
+}
+
+impl<'de> Deserialize<'de> for AuthKind {
+  fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+    let s = <&str>::deserialize(d)?;
+    Ok(Self::from(s))
+  }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Project {
