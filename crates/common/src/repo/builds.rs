@@ -127,7 +127,8 @@ pub async fn list_for_jobset_evaluations(
   .map_err(CiError::Database)
 }
 
-/// List pending builds, prioritizing non-aggregate jobs.
+/// List pending builds, prioritizing constrained jobs before fungible ones so
+/// scarce builder capabilities are reserved for the work that needs them.
 ///
 /// `schedulable_capacity` is the fair-share denominator, so it needs to
 /// include agent slots as well as local workers.
@@ -152,9 +153,10 @@ pub async fn list_pending(
      j.scheduling_shares, rc.running ) SELECT b.* FROM builds b JOIN \
      evaluations e ON b.evaluation_id = e.id JOIN active_shares ash ON \
      ash.jobset_id = e.jobset_id WHERE b.status = 'pending' ORDER BY \
-     b.priority DESC, (ash.scheduling_shares::float / \
+     b.priority DESC, cardinality(COALESCE(b.effective_features, \
+     b.required_features)) DESC, (ash.scheduling_shares::float / \
      GREATEST(ash.total_shares, 1) - ash.running::float / GREATEST($2, 1)) \
-     DESC, b.created_at ASC LIMIT $1",
+     DESC, b.created_at ASC, b.id ASC LIMIT $1",
   )
   .bind(limit)
   .bind(schedulable_capacity)
@@ -255,9 +257,10 @@ pub async fn complete(
 }
 
 /// List pending builds in scheduler order: highest priority first, then
-/// oldest first. Mirrors the ordering the queue runner uses (minus the
-/// share-deficit factor, which depends on live worker counts) so the
-/// dashboard queue page can show builds in the order they will be picked.
+/// constrained builds before fungible builds, then oldest first. Mirrors the
+/// ordering the queue runner uses (minus the share-deficit factor, which
+/// depends on live worker counts) so the dashboard queue page can show builds
+/// in the order they will be picked.
 ///
 /// # Errors
 ///
@@ -269,7 +272,8 @@ pub async fn list_pending_in_scheduler_order(
 ) -> Result<Vec<Build>> {
   sqlx::query_as::<_, Build>(
     "SELECT * FROM builds WHERE status = 'pending' ORDER BY priority DESC, \
-     created_at ASC LIMIT $1 OFFSET $2",
+     cardinality(COALESCE(effective_features, required_features)) DESC, \
+     created_at ASC, id ASC LIMIT $1 OFFSET $2",
   )
   .bind(limit)
   .bind(offset)
