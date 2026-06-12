@@ -148,12 +148,26 @@ fn resolve_machine_id(cfg: &AgentConfig, ephemeral: bool) -> Result<Uuid> {
 /// traceability) plus a slice of the random machine ID (for uniqueness).
 fn unique_ephemeral_name(base: &str, machine_id: Uuid) -> String {
   let short = &machine_id.simple().to_string()[..8];
-  match (
+  let suffix = match (
     std::env::var("GITHUB_RUN_ID").ok(),
     std::env::var("GITHUB_RUN_ATTEMPT").ok(),
   ) {
-    (Some(run), Some(attempt)) => format!("{base}-gh{run}.{attempt}-{short}"),
-    (Some(run), None) => format!("{base}-gh{run}-{short}"),
-    _ => format!("{base}-{short}"),
-  }
+    (Some(run), Some(attempt)) => {
+      format!("-gh{run}.{attempt}-{short}")
+    },
+    (Some(run), None) => format!("-gh{run}-{short}"),
+    _ => format!("-{short}"),
+  };
+  const MAX: usize = 128;
+  let available = MAX.saturating_sub(suffix.len());
+  let base = if base.len() > available {
+    let mut end = available;
+    while !base.is_char_boundary(end) {
+      end -= 1;
+    }
+    &base[..end]
+  } else {
+    base
+  };
+  format!("{base}{suffix}")
 }
