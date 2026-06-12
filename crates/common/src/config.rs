@@ -1260,6 +1260,12 @@ impl Config {
             "queue_runner.rpc.oidc.audiences must list at least one audience"
           ));
         }
+        if oidc.allowed_repositories.is_empty() {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.rpc.oidc.allowed_repositories must list at least \
+             one repository"
+          ));
+        }
       }
     }
     if self.queue_runner.gha.enabled {
@@ -1311,6 +1317,18 @@ impl Config {
         return Err(color_eyre::eyre::eyre!(
           "queue_runner.gha.oidc_audience must be listed in \
            queue_runner.rpc.oidc.audiences"
+        ));
+      }
+      if let Some(rpc) = self.queue_runner.rpc.as_ref()
+        && let Some(oidc) = rpc.oidc.as_ref()
+        && !oidc
+          .allowed_repositories
+          .iter()
+          .any(|repo| repo == &gha.repository)
+      {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.repository must be listed in \
+           queue_runner.rpc.oidc.allowed_repositories"
         ));
       }
       if gha.systems.is_empty() {
