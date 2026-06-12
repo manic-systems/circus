@@ -226,9 +226,7 @@ async fn verify_runner_version(
   let payload = response.get().context("version response")?;
   let proto = payload.get_proto()?.to_str()?;
   if proto != PROTO_VERSION {
-    bail!(
-      "proto mismatch: runner={proto} agent={PROTO_VERSION}"
-    );
+    bail!("proto mismatch: runner={proto} agent={PROTO_VERSION}");
   }
   Ok(())
 }
@@ -922,10 +920,7 @@ async fn query_requisites(
     .await
     .context("nix-store --query --requisites")?;
   if !out.status.success() {
-    bail!(
-      "nix-store --query --requisites exited with {}",
-      out.status
-    );
+    bail!("nix-store --query --requisites exited with {}", out.status);
   }
   Ok(
     String::from_utf8_lossy(&out.stdout)

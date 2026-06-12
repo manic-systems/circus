@@ -52,9 +52,7 @@ pub fn build_client_connector(
       tracing::warn!(%err, "skipping unparseable system certificate");
     }
     if native.certs.is_empty() {
-      bail!(
-        "no system CA certificates found; set tls.ca_file explicitly"
-      );
+      bail!("no system CA certificates found; set tls.ca_file explicitly");
     }
     roots.add_parsable_certificates(native.certs);
   }
