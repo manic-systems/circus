@@ -3,12 +3,13 @@
 [manic.systems]: https://github.com/manic.systems
 
 Circus can run builds across a cluster of machines as per our needs in
-[manic.systems]. The data plane is a fleet of long-running **agents**, each
-running on a build host. Agents connect outbound to the queue-runner over a TCP
-socket and stay connected; the runner pushes work down the connection, the agent
-streams logs and results back up. This document, in turn, covers the protocol,
-the lifecycle, the failure model and how the new agent path coexists with the
-legacy SSH dispatch path.
+[manic.systems]. The data plane is a fleet of **agents**, each running on a
+build host. Agents connect outbound to the queue-runner over a TCP socket; the
+runner pushes work down the connection, and the agent streams logs, results, and
+outputs back up. Agents may be long-running hosts or single-session CI machines
+such as GitHub Actions runners. This document covers the protocol, lifecycle,
+failure model, trust boundaries, and how the agent path coexists with legacy SSH
+dispatch.
 
 ## Why not Hydra's (gRPC) Design?
 
@@ -58,15 +59,21 @@ flowchart LR
 
     Builds[("builds<br/>table")]
 
+    GHA["GitHub Actions<br/>workflow dispatch"]
+
     AgentA["circus-agent<br/>host A<br/>x86_64-linux"]
     AgentB["circus-agent<br/>host B<br/>aarch64-linux"]
     AgentC["circus-agent<br/>host C<br/>x86_64-darwin"]
+    AgentD["circus-agent --ephemeral<br/>GitHub runner"]
 
     PG <--> QR
     QR --> Builds
     Builds -->|TCP+TLS<br/>capnp-rpc| AgentA
     Builds -->|TCP+TLS<br/>capnp-rpc| AgentB
     Builds -->|TCP+TLS<br/>capnp-rpc| AgentC
+    QR -->|trusted demand| GHA
+    GHA --> AgentD
+    Builds -->|TCP+TLS<br/>capnp-rpc<br/>OIDC auth| AgentD
 ```
 
 One queue-runner, N agents. The queue-runner owns:
@@ -75,10 +82,10 @@ One queue-runner, N agents. The queue-runner owns:
 - the in-memory `AgentPool` (live capabilities, one per connected agent)
 - scheduling: choosing which agent gets which build
 
-The agent owns:
+Each agent owns:
 
 - the local Nix store on its host
-- one `nix-store --realise` (or equivalent) child process per concurrent build
+- one Nix build process per concurrent build
 - log capture and result reporting
 
 There is no agent-to-agent traffic. Nor do the agents talk to PostgreSQL
@@ -100,7 +107,8 @@ interface Runner {
 }
 
 interface Builder {
-  assign @0 (job :BuildAssignment, log :LogSink, result :ResultSink) -> ();
+  assign @0 (job :BuildAssignment, log :LogSink, result :ResultSink,
+             output :OutputSink) -> ();
   abort @1 (buildId :Text) -> ();
   shutdown @2 (reason :Text) -> ();
 }
@@ -114,8 +122,28 @@ interface LogSink {
   close @1 () -> ();
 }
 
+interface OutputSink {
+  write @0 (chunk :Data) -> ();
+  close @1 () -> ();
+}
+
 interface ResultSink {
   report @0 (result :BuildResult) -> ();
+}
+
+struct AgentInfo {
+  hostname           @0  :Text;
+  name               @1  :Text;
+  machineId          @2  :Text;
+  systems            @3  :List(Text);
+  supportedFeatures  @4  :List(Text);
+  mandatoryFeatures  @5  :List(Text);
+  speedFactor        @6  :Float32;
+  cpuCount           @7  :UInt32;
+  maxJobs            @8  :UInt32;
+  protoVersion       @9  :Text;
+  authToken          @10 :Text;
+  ephemeral          @11 :Bool;
 }
 ```
 
@@ -124,43 +152,47 @@ The flow is as follows
 1. Agent dials TCP (optionally wraps in TLS), starts a capnp-rpc system with no
    bootstrap. Calls `runner.register(info, builder)` and keeps the returned
    `session` capability for heartbeats.
-2. Runner records the agent in `AgentPool`, retains the `Builder` capability,
-   marks the row in `builder_sessions` as live.
-3. WorkerPool dequeues a build. The scheduler picks an agent based on `systems`,
+2. Runner authenticates registration. It first tries bearer-token auth against
+   `[queue_runner.rpc].auth_tokens`; if that fails and `[queue_runner.rpc.oidc]`
+   is configured, it verifies the presented JWT against the issuer JWKS,
+   accepted audiences, and repository allowlist.
+3. Runner records the agent in `AgentPool`, retains the `Builder` capability,
+   marks the row in `builder_sessions` as live, and stores whether the session
+   is ephemeral and whether it authenticated through `token` or `oidc`.
+4. WorkerPool dequeues a build. The scheduler picks an agent based on `systems`,
    `mandatoryFeatures`, current load, speed factor and PSI thresholds. It calls
-   `builder.assign(job, log, result)`. Promise pipelining means the runner can
-   immediately enqueue follow-up calls against `log` and `result` if needed; in
-   practice it just awaits them.
-4. Agent writes log lines via `log.write(chunk)` and ends with `log.close()`. On
+   `builder.assign(job, log, result, output)`. Promise pipelining means the
+   runner can immediately enqueue follow-up calls against these capabilities if
+   needed; in practice it just awaits them.
+5. Agent writes log lines via `log.write(chunk)` and ends with `log.close()`. On
    completion it calls `result.report(BuildResult)`. Both sinks are server-side
    capabilities the runner created and passed down; on the runner side `write`
    appends to the live log file and independently enforces the per-build log
    cap, while `report` accepts exactly one final result before waking the
    scheduler.
-5. The agent calls `session.heartbeat(ping)` every N seconds with load averages,
+6. For non-presigned uploads, the agent streams the output closure through
+   `OutputSink`. For S3 presigned uploads, `output` is null and the agent
+   uploads compressed NAR files directly to S3.
+7. The agent calls `session.heartbeat(ping)` every N seconds with load averages,
    memory, store/build-dir free, current job count, and PSI (`cpuAvg10`,
    `memAvg10`, `ioAvg10`). The runner uses these to gate subsequent dispatch
    decisions.
-6. When the connection drops, capnp-rpc drops the `Builder` capability. The pool
+8. When the connection drops, capnp-rpc drops the `Builder` capability. The pool
    removes the connection only if it is still the live generation for that
    `machineId`, so a stale disconnect cannot evict a replacement connection.
    `AgentPool` notices closed dispatch channels on the next dispatch attempt and
    falls back to the next candidate. Any builds the disconnected agent had in
    flight are marked stuck and reset to `pending` by the orphan sweeper (already
    implemented at `crates/queue-runner/src/runner_loop.rs`).
-7. `register` carries a bearer token. The runner SHA-256 hashes it and compares
-   constant-time against `[queue_runner.rpc].auth_tokens`. If `tls.client_ca` is
-   set, the runner verifies any client cert an agent presents. Client certs
-   remain optional unless `tls.require_client_cert = true` is set, and with
-   `tls.pin_cn = true` the verified cert name must match the agent's registered
-   `name`.
-8. If the runner's cache upload target is S3 and explicit presigning credentials
+9. If the runner's cache upload target is S3 and explicit presigning credentials
    are configured, `BuildAssignment.presignedUpload` asks the agent to upload
    outputs directly. The agent requests PUT URLs for the active
    `(machineId, buildId)` pair, streams each compressed NAR to S3, then calls
    `notifyUploadComplete`. The runner verifies the upload was presigned for that
-   live build/path before persisting narinfo and clears the expected-upload
-   state when the build completes or disconnects.
+   live build/path, fetches the uploaded object back from S3, verifies the
+   compressed file hash/size, decompresses it, recomputes the canonical NAR
+   hash/size, and only then signs and persists narinfo. Expected-upload state is
+   cleared when the build completes or disconnects.
 
 ## Scheduling
 
@@ -175,14 +207,18 @@ with a target `system`:
    recent heartbeat has any of `cpuAvg10 / memAvg10 / ioAvg10` above the
    threshold. Heartbeats older than `heartbeat_ttl_secs` are treated as
    "unknown" (advisory only, never penalise).
-3. Apply the configured strategy. `SpeedFactorOnly` orders by
+3. Drop ephemeral or OIDC-authenticated candidates unless the build came from a
+   trusted project ref. A trusted ref is a concrete jobset branch from a
+   non-PR/non-MR evaluation. For OIDC sessions, the token repository must also
+   match the project repository.
+4. Apply the configured strategy. `SpeedFactorOnly` orders by
    `speedFactor DESC`. `CpuCoreCountWithSpeedFactor` orders by
    `cpuCount * speedFactor DESC`. `Dynamic` orders by
    `(max_jobs - current_jobs) * speedFactor DESC`, so an idle agent wins over a
    partially-loaded faster one.
-4. Try candidates in order, sending a `DispatchCommand` through the per-agent
+5. Try candidates in order, sending a `DispatchCommand` through the per-agent
    mpsc. On `Disconnected`, fall through to the next candidate.
-5. If no agent matches, fall back to SSH dispatch (legacy path) when a
+6. If no agent matches, fall back to SSH dispatch (legacy path) when a
    `remote_builders` row matches by system; failing that, leave the build
    pending and try again on the next tick.
 
@@ -204,6 +240,10 @@ lets clusters mix:
 A `remote_builder` row whose `name` matches a connected agent is upgraded: the
 SSH path becomes a cold standby and the agent path is preferred.
 
+When `[queue_runner].ssh_require_host_key = true`, the SSH path only uses remote
+builders that have a recorded `public_host_key`. Without it, the runner skips
+that row instead of relying on OpenSSH `accept-new`.
+
 ## Cluster setup
 
 Single queue-runner, multiple agents:
@@ -214,6 +254,7 @@ Single queue-runner, multiple agents:
 poll_interval = 5
 work_dir      = "/var/lib/circus/queue-runner"
 psi_threshold = 80.0 # 0..100, advisory; null disables
+ssh_require_host_key = true
 
 [queue_runner.rpc]
 bind               = "0.0.0.0:8443"
@@ -221,6 +262,24 @@ bind               = "0.0.0.0:8443"
 auth_tokens        = [ "abcdef0123...sha256-of-the-raw-token" ]
 max_connections    = 256
 heartbeat_ttl_secs = 60
+cache_substituter  = "https://ci.example.org/nix-cache/"
+cache_public_key   = "circus-cache:..."
+
+[queue_runner.rpc.oidc]
+issuer               = "https://token.actions.githubusercontent.com"
+audiences            = [ "circus-agent" ]
+allowed_repositories = [ "example/circus" ]
+
+[queue_runner.gha]
+enabled       = true
+repository    = "example/circus"
+workflow      = "circus-builder.yml"
+ref_name      = "main"
+token_file    = "/run/credentials/circus-queue-runner/github-token"
+runner_url    = "circus+tls://runner.internal:8443"
+oidc_audience = "circus-agent"
+systems       = [ "x86_64-linux" ]
+max_inflight  = 4
 
 [cache_upload]
 enabled                    = true
@@ -262,12 +321,25 @@ speed_factor            = 4.0
 heartbeat_interval_secs = 10
 reconnect_delay_secs    = 5
 work_dir                = "/var/lib/circus-agent"
+cores                   = 8
 
 # required for circus+tls://
 [agent.tls]
 ca_file   = "/etc/circus/tls/runner.ca.crt" # required: trusts the runner cert
 cert_file = "/etc/circus/tls/build-01.crt"  # optional: client identity (mTLS)
 key_file  = "/etc/circus/tls/build-01.key"  # omit cert_file + key_file for token-only
+```
+
+For CI builders, set `agent.ephemeral` or pass `--ephemeral`. Ephemeral agents
+generate a fresh machine ID, optionally append a unique suffix to their name,
+drain in-flight work, and exit instead of reconnecting:
+
+```toml
+[agent.ephemeral]
+max_builds        = 1
+max_lifetime_secs = 3600
+max_idle_secs     = 120
+unique_name       = true
 ```
 
 The agent runs as a Systemd service. A NixOS module is provided at
@@ -289,14 +361,47 @@ There is no flag day. The runner prefers connected agents over SSH on a
 per-dispatch basis; flipping a host between the two transports is purely a
 matter of which service is running.
 
-### Security
+## GitHub Actions Ephemeral Pool
+
+`[queue_runner.gha]` lets the queue-runner scale an ephemeral GitHub Actions
+pool when trusted builds are waiting for capacity. The runner does not hand
+GitHub arbitrary work. It only dispatches the configured workflow when a pending
+build is eligible for ephemeral execution, the build's trusted repository
+matches `queue_runner.gha.repository`, configured systems/features match, and
+there is room under `max_inflight`.
+
+The workflow lives in the same repository as `queue_runner.gha.repository`.
+Circus ships `.github/workflows/circus-builder.yml`, which:
+
+1. receives workflow-dispatch inputs from the queue-runner,
+2. requests a GitHub OIDC ID token for `oidc_audience`,
+3. writes a temporary `circus-agent.toml`,
+4. runs `circus-agent --ephemeral`.
+
+The GitHub token configured through `token` or `token_file` must be allowed to
+create workflow dispatch events for that repository. The workflow itself needs
+`id-token: write`, because the agent authenticates to the runner with the OIDC
+JWT in the existing `auth_token` field. `queue_runner.rpc.oidc.audiences` must
+include `queue_runner.gha.oidc_audience`, and
+`queue_runner.rpc.oidc.allowed_repositories` must include the GitHub repository.
+
+The autoscaler tracks launches in memory with `inflight_ttl_secs` and
+`scale_up_cooldown_secs` so a slow-to-register runner does not cause an
+unbounded workflow-dispatch loop. This is capacity control only; scheduling
+trust is still enforced by the normal agent scheduler before each build is
+assigned.
+
+## Security
 
 - Bearer token authentication on `register`. Tokens are issued by the operator
   out of band. The runner stores SHA-256 hex digests in
   `[queue_runner.rpc].auth_tokens`; the agent sends the raw token and the runner
   hashes + compares digest bytes in constant time. Config validation rejects
-  malformed token digests. The `builder_sessions` table has an `auth_token_hash`
-  column reserved for per-agent tokens but no code path consults it yet.
+  malformed token digests.
+- OIDC authentication on `register` when `[queue_runner.rpc.oidc]` is set. The
+  runner verifies the issuer, JWKS signature, expiry, accepted audience,
+  subject, and repository allowlist before accepting the session. The verified
+  repository is stored with the live session for scheduling decisions.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
   `[queue_runner.rpc].tls`, and setting `client_ca` attaches a
   `WebPkiClientVerifier` for any client cert an agent presents. Agents may still
@@ -318,5 +423,10 @@ matter of which service is running.
 - Presigned uploads are tied to the registered connection, active build ID,
   store path, NAR hash, NAR size, compression and S3 object path.
   `notifyUploadComplete` fails if any of those values differ from the presigned
-  request, and pending upload expectations are discarded when the dispatch
-  finishes.
+  request. Before signing narinfo, the runner fetches the uploaded object,
+  verifies file hash/size, recomputes the uncompressed NAR hash/size, and
+  rejects mismatches without persisting anything. Pending upload expectations
+  are discarded when the dispatch finishes.
+- Ephemeral and OIDC-authenticated agents only receive trusted-ref builds. PR/MR
+  evaluations and jobsets without a concrete branch stay on persistent agents,
+  local builds, or the SSH path.
