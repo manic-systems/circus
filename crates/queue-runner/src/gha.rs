@@ -222,15 +222,15 @@ impl Autoscaler {
     let body = WorkflowDispatch {
       ref_name: &self.cfg.ref_name,
       inputs:   WorkflowInputs {
-        runner_url:         toml_string(&self.cfg.runner_url)?,
+        runner_url:         json_string(&self.cfg.runner_url)?,
         oidc_audience:      &self.cfg.oidc_audience,
-        systems:            toml_string_array(&self.cfg.systems)?,
-        supported_features: toml_string_array(&self.cfg.supported_features)?,
-        mandatory_features: toml_string_array(&self.cfg.mandatory_features)?,
+        systems:            json_string_array(&self.cfg.systems)?,
+        supported_features: json_string_array(&self.cfg.supported_features)?,
+        mandatory_features: json_string_array(&self.cfg.mandatory_features)?,
         max_jobs:           self.cfg.max_jobs.to_string(),
         cores:              self.cfg.cores.to_string(),
         speed_factor:       self.cfg.speed_factor.to_string(),
-        agent_name:         toml_string(&self.cfg.agent_name)?,
+        agent_name:         json_string(&self.cfg.agent_name)?,
       },
     };
     let response = self
@@ -258,12 +258,12 @@ impl Autoscaler {
   }
 }
 
-fn toml_string(value: &str) -> color_eyre::Result<String> {
-  serde_json::to_string(value).context("encode TOML string literal")
+fn json_string(value: &str) -> color_eyre::Result<String> {
+  serde_json::to_string(value).context("encode JSON string literal")
 }
 
-fn toml_string_array(values: &[String]) -> color_eyre::Result<String> {
-  serde_json::to_string(values).context("encode TOML string array")
+fn json_string_array(values: &[String]) -> color_eyre::Result<String> {
+  serde_json::to_string(values).context("encode JSON string array")
 }
 
 async fn load_token(cfg: &GhaConfig) -> color_eyre::Result<String> {
@@ -352,13 +352,13 @@ mod tests {
   }
 
   #[test]
-  fn workflow_inputs_are_toml_literals() {
+  fn workflow_inputs_are_json_literals() {
     assert_eq!(
-      toml_string("circus gha").expect("string literal should encode"),
+      json_string("circus gha").expect("string literal should encode"),
       "\"circus gha\""
     );
     assert_eq!(
-      toml_string_array(&["x86_64-linux".into(), "kvm".into()])
+      json_string_array(&["x86_64-linux".into(), "kvm".into()])
         .expect("array literal should encode"),
       "[\"x86_64-linux\",\"kvm\"]"
     );
