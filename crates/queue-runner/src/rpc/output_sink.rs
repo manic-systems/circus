@@ -25,6 +25,7 @@ struct State {
   child:  Option<Child>,
   stdin:  Option<ChildStdin>,
   closed: bool,
+  total:  u64,
 }
 
 impl OutputSinkImpl {
@@ -37,6 +38,7 @@ impl OutputSinkImpl {
           child:  None,
           stdin:  None,
           closed: false,
+          total:  0,
         }),
       }),
     }
@@ -82,6 +84,14 @@ impl output_sink::Server for OutputSinkImpl {
       let mut state = inner.state.lock().await;
       if state.closed {
         return Err(capnp::Error::failed("output sink is closed".into()));
+      }
+      state.total = state.total.saturating_add(chunk.len() as u64);
+      if state.total > limits::MAX_IMPORT_TOTAL_BYTES {
+        return Err(capnp::Error::failed(format!(
+          "imported closure exceeds {} bytes for build {}",
+          limits::MAX_IMPORT_TOTAL_BYTES,
+          inner.build_id
+        )));
       }
       if state.child.is_none() {
         let (child, stdin) = spawn_import().map_err(|e| {
