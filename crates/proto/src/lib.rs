@@ -31,6 +31,7 @@ pub mod limits {
   pub const MAX_PRESIGNED_URL_REQUESTS: u32 = 128;
   pub const MAX_LOG_CHUNK_BYTES: usize = 1024 * 1024;
   pub const MAX_NAR_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+  pub const MAX_IMPORT_TOTAL_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 }
 
 pub mod nix_log;
