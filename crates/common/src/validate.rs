@@ -384,6 +384,18 @@ fn validate_ssh_host_key(key: &str) -> Result<(), String> {
         .to_string(),
     );
   };
+  // The key type must sit at index 0 or 1. A leading comment makes ssh
+  // ignore the whole line.
+  if type_idx > 1 {
+    return Err(
+      "public_host_key has unexpected tokens before the key type".to_string(),
+    );
+  }
+  if type_idx == 1 && tokens[0].starts_with('#') {
+    return Err(
+      "public_host_key host pattern must not be a comment".to_string(),
+    );
+  }
   let Some(blob) = tokens.get(type_idx + 1) else {
     return Err(
       "public_host_key is missing its base64 key material".to_string(),
