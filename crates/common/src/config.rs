@@ -1295,6 +1295,15 @@ impl Config {
           ));
         }
       }
+      if rpc.tls.is_none()
+        && (rpc.oidc.is_some() || !rpc.auth_tokens.is_empty())
+      {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.rpc.tls is required when auth_tokens or oidc are \
+           configured; registration credentials must not be accepted over \
+           plaintext"
+        ));
+      }
     }
     for (idx, pool) in self.queue_runner.ephemeral_pools.iter().enumerate() {
       if self
@@ -1356,6 +1365,12 @@ impl Config {
         return Err(color_eyre::eyre::eyre!(
           "queue_runner.ephemeral_pools[{idx}].github_actions.runner_url \
            cannot be empty"
+        ));
+      }
+      if !gha.runner_url.starts_with("circus+tls://") {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.gha.runner_url must use the circus+tls:// scheme so \
+           the dispatched agent sends its OIDC token over TLS"
         ));
       }
       if gha.oidc_audience.trim().is_empty() {
