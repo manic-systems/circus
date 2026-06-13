@@ -115,8 +115,9 @@ pub struct EphemeralConfig {
   #[serde(default)]
   pub max_builds: Option<u32>,
 
-  /// Hard cap on session wall-clock (seconds). `None` = no cap.
-  #[serde(default)]
+  /// Hard cap on session wall-clock in seconds, [`None`] for no cap. Defaults
+  /// to a 6h runaway bound, recovered by the orphan sweeper if hit.
+  #[serde(default = "default_max_lifetime")]
   pub max_lifetime_secs: Option<u64>,
 
   /// Exit after this many seconds with no running builds.
@@ -133,7 +134,7 @@ impl Default for EphemeralConfig {
   fn default() -> Self {
     Self {
       max_builds:        None,
-      max_lifetime_secs: None,
+      max_lifetime_secs: default_max_lifetime(),
       max_idle_secs:     default_max_idle(),
       unique_name:       true,
     }
@@ -167,6 +168,13 @@ fn default_work_dir() -> PathBuf {
 }
 const fn default_max_idle() -> u64 {
   120
+}
+#[expect(
+  clippy::unnecessary_wraps,
+  reason = "serde default must match the Option<u64> field type"
+)]
+const fn default_max_lifetime() -> Option<u64> {
+  Some(6 * 60 * 60)
 }
 const fn default_true() -> bool {
   true
