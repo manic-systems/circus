@@ -107,7 +107,10 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     rpc.bootstrap(rpc_twoparty_capnp::Side::Server);
   let disconnector = rpc.get_disconnector();
 
-  let lifecycle = cfg.ephemeral.as_ref().map(|_| Arc::new(Lifecycle::new()));
+  let lifecycle = cfg
+    .ephemeral
+    .as_ref()
+    .map(|e| Arc::new(Lifecycle::new(e.max_builds)));
 
   let local_builder: builder::Client = capnp_rpc::new_client(BuilderImpl::new(
     cfg.max_jobs,
@@ -414,6 +417,10 @@ static JOB_COUNTER: AtomicU32 = AtomicU32::new(0);
 struct Lifecycle {
   /// Builds that have reported a result this session.
   completed:   AtomicU32,
+  /// Builds accepted this session, capped at `max_builds`.
+  accepted:    AtomicU32,
+  /// Exit after this many accepted builds. `None` = unbounded.
+  max_builds:  Option<u32>,
   /// Set on exit so `assign` refuses further work while draining.
   draining:    AtomicBool,
   /// Last assign/completion time; seeded to connect time so an idle agent
@@ -422,10 +429,12 @@ struct Lifecycle {
 }
 
 impl Lifecycle {
-  fn new() -> Self {
+  fn new(max_builds: Option<u32>) -> Self {
     Self {
-      completed:   AtomicU32::new(0),
-      draining:    AtomicBool::new(false),
+      completed: AtomicU32::new(0),
+      accepted: AtomicU32::new(0),
+      max_builds,
+      draining: AtomicBool::new(false),
       last_active: Mutex::new(Instant::now()),
     }
   }
@@ -436,6 +445,27 @@ impl Lifecycle {
 
   fn is_draining(&self) -> bool {
     self.draining.load(Ordering::Relaxed)
+  }
+
+  /// Reserve one build against `max_builds`, draining at the cap so the
+  /// agent never accepts one past it.
+  fn reserve_build(&self) -> bool {
+    if self.is_draining() {
+      return false;
+    }
+    let Some(max) = self.max_builds else {
+      return true;
+    };
+    let prev = self.accepted.fetch_add(1, Ordering::AcqRel);
+    if prev >= max {
+      self.accepted.fetch_sub(1, Ordering::AcqRel);
+      self.draining.store(true, Ordering::Relaxed);
+      return false;
+    }
+    if prev + 1 >= max {
+      self.draining.store(true, Ordering::Relaxed);
+    }
+    true
   }
 }
 
@@ -622,6 +652,13 @@ impl builder::Server for BuilderImpl {
           return Err(capnp::Error::failed(format!(
             "build_id {build_id} is already running"
           )));
+        }
+        if let Some(l) = inner.lifecycle.as_ref()
+          && !l.reserve_build()
+        {
+          return Err(capnp::Error::failed(
+            "agent reached max_builds; draining".into(),
+          ));
         }
         g.insert(build_id, cancel.clone());
       }
