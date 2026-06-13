@@ -828,6 +828,7 @@ async fn run_build(
     &runner_caps,
     &psi_cache,
     psi_check_timeout,
+    require_host_key,
   )
   .await
   else {
