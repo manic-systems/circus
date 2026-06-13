@@ -68,7 +68,7 @@ pub async fn run_nix_build_remote(
     None
   };
 
-  let ssh_opts = build_ssh_opts(ssh_key_file, known_hosts.as_ref());
+  let ssh_opts = build_ssh_opts(ssh_key_file, known_hosts.as_ref())?;
 
   let result = run_nix_build_command(
     args,
@@ -91,27 +91,41 @@ pub async fn run_nix_build_remote(
 fn build_ssh_opts(
   ssh_key_file: Option<&str>,
   known_hosts: Option<&tempfile::NamedTempFile>,
-) -> String {
+) -> Result<String> {
   let mut opts: Vec<String> = SSH_HARDENING_OPTS
     .iter()
     .map(|s| (*s).to_string())
     .collect();
 
   if let Some(key_file) = ssh_key_file {
+    // NIX_SSHOPTS is whitespace-split with no quoting
+    if key_file.contains(char::is_whitespace) {
+      return Err(CiError::Build(format!(
+        "ssh_key_file contains whitespace, unrepresentable in NIX_SSHOPTS: \
+         {key_file}"
+      )));
+    }
     opts.push("-i".into());
     opts.push(key_file.into());
   }
 
   opts.push("-o".into());
   if let Some(file) = known_hosts {
+    let path = file.path().display().to_string();
+    if path.contains(char::is_whitespace) {
+      return Err(CiError::Build(format!(
+        "known_hosts temp path contains whitespace, unrepresentable in \
+         NIX_SSHOPTS: {path}"
+      )));
+    }
     opts.push("StrictHostKeyChecking=yes".into());
     opts.push("-o".into());
-    opts.push(format!("UserKnownHostsFile={}", file.path().display()));
+    opts.push(format!("UserKnownHostsFile={path}"));
   } else {
     opts.push("StrictHostKeyChecking=accept-new".into());
   }
 
-  opts.join(" ")
+  Ok(opts.join(" "))
 }
 
 /// Write a builder's recorded host key to a throwaway `known_hosts` file.
@@ -171,8 +185,13 @@ fn ssh_host_from_store_uri(store_uri: &str) -> String {
     .map_or(after_scheme, |(_, rest)| rest);
   // Drop any query string / store params.
   let host_port = after_user.split(['?', '/']).next().unwrap_or(after_user);
+  if host_port.starts_with('[') {
+    return host_port.to_string();
+  }
   match host_port.rsplit_once(':') {
-    Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) => {
+    Some((host, port))
+      if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) =>
+    {
       format!("[{host}]:{port}")
     },
     _ => host_port.to_string(),
@@ -457,7 +476,8 @@ mod tests {
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY",
     )
     .unwrap();
-    let opts = build_ssh_opts(Some("/var/lib/circus/id_ed25519"), Some(&kh));
+    let opts =
+      build_ssh_opts(Some("/var/lib/circus/id_ed25519"), Some(&kh)).unwrap();
     assert!(opts.contains("StrictHostKeyChecking=yes"));
     assert!(opts.contains("UserKnownHostsFile="));
     assert!(opts.contains("IdentitiesOnly=yes"));
@@ -469,7 +489,7 @@ mod tests {
 
   #[test]
   fn ssh_opts_fall_back_to_accept_new_without_host_key() {
-    let opts = build_ssh_opts(Some("/key"), None);
+    let opts = build_ssh_opts(Some("/key"), None).unwrap();
     assert!(opts.contains("StrictHostKeyChecking=accept-new"));
     assert!(!opts.contains("UserKnownHostsFile="));
     assert!(opts.contains("IdentitiesOnly=yes"));
@@ -477,7 +497,7 @@ mod tests {
 
   #[test]
   fn ssh_opts_without_key_file_omits_identity_flag() {
-    let opts = build_ssh_opts(None, None);
+    let opts = build_ssh_opts(None, None).unwrap();
     assert!(!opts.contains("-i "));
     assert!(opts.contains("BatchMode=yes"));
   }
@@ -518,6 +538,14 @@ mod tests {
     assert_eq!(
       ssh_host_from_store_uri("ssh://host.example?compress=true"),
       "host.example"
+    );
+    assert_eq!(
+      ssh_host_from_store_uri("ssh://[2001:db8::1]:22"),
+      "[2001:db8::1]:22"
+    );
+    assert_eq!(
+      ssh_host_from_store_uri("ssh://root@[2001:db8::1]"),
+      "[2001:db8::1]"
     );
   }
 

@@ -289,6 +289,7 @@ pub async fn reserve_venue(
   runner_caps: &crate::caps::RunnerCaps,
   psi_cache: &crate::psi::PsiCache,
   psi_check_timeout: Duration,
+  require_host_key: bool,
 ) -> Option<ExecutionReservation> {
   if let Some(system) = system
     && let Some((meta, snap, slot)) = select_and_reserve_agent(
@@ -318,6 +319,11 @@ pub async fn reserve_venue(
       Ok(builders) => {
         let mut any = false;
         for b in &builders {
+          // An unpinned builder is ineligible when host-key checking is
+          // mandatory.
+          if require_host_key && b.public_host_key.is_none() {
+            continue;
+          }
           if !supports_required_features(
             features,
             &b.supported_features,
