@@ -572,7 +572,7 @@ pub async fn run_on_agent(
   }
 }
 
-async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
+pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
   let Ok(out) = tokio::process::Command::new("nix-store")
     .args(["--query", "--outputs", drv_path])
     .output()

@@ -35,13 +35,20 @@ pub struct VerifyRequest {
   pub file_size:   Option<u64>,
 }
 
+fn http_client() -> &'static reqwest::Client {
+  static CLIENT: std::sync::OnceLock<reqwest::Client> =
+    std::sync::OnceLock::new();
+  CLIENT.get_or_init(|| {
+    reqwest::Client::builder()
+      .connect_timeout(Duration::from_secs(10))
+      .timeout(Duration::from_secs(30))
+      .build()
+      .expect("build upload-verify HTTP client")
+  })
+}
+
 pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
-  let http = reqwest::Client::builder()
-    .connect_timeout(Duration::from_secs(10))
-    .timeout(Duration::from_secs(30))
-    .build()
-    .context("build upload-verify HTTP client")?;
-  let response = http
+  let response = http_client()
     .get(&req.get_url)
     .send()
     .await
@@ -79,6 +86,15 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
     }
     nar_hasher.update(&buf[..n]);
     nar_size = nar_size.saturating_add(n as u64);
+    // Abort once the decompressed stream passes the declared size, bounding
+    // a malicious or mismatched upload.
+    if nar_size > req.nar_size {
+      bail!(
+        "uploaded NAR exceeds declared size {}: decompressed at least \
+         {nar_size} bytes",
+        req.nar_size
+      );
+    }
   }
   drop(reader);
 
@@ -121,8 +137,12 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
     );
   }
 
+  // Store and sign in Nix sha256 base32, the form a client re-encodes the
+  // nar hash to before verifying.
+  let nar_hash = format!("sha256:{}", encode_nix_base32_sha256(&computed_nar));
+
   Ok(UploadedNar {
-    nar_hash: req.nar_hash,
+    nar_hash,
     nar_size,
     file_hash,
     file_size,
@@ -196,6 +216,24 @@ fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
   bail!("unsupported sha256 hash format: {text}")
 }
 
+fn encode_nix_base32_sha256(bytes: &[u8]) -> String {
+  const ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
+  let len = 52;
+  let mut out = String::with_capacity(len);
+  for pos in 0..len {
+    let n = len - 1 - pos;
+    let bit = n * 5;
+    let byte = bit / 8;
+    let offset = bit % 8;
+    let mut value = u16::from(bytes[byte]) >> offset;
+    if byte + 1 < bytes.len() {
+      value |= u16::from(bytes[byte + 1]) << (8 - offset);
+    }
+    out.push(ALPHABET[(value & 0x1F) as usize] as char);
+  }
+  out
+}
+
 fn decode_nix_base32_sha256(text: &str) -> color_eyre::Result<Vec<u8>> {
   const ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
   if text.len() != 52 {
@@ -242,5 +280,16 @@ mod tests {
     let bytes = [0u8; 32];
     let text = format!("sha256-{}", B64.encode(bytes));
     assert!(hash_matches(&text, &bytes).expect("SRI hash should parse"));
+  }
+
+  #[test]
+  fn nix_base32_roundtrip() {
+    for bytes in [[0u8; 32], [0xFF; 32], core::array::from_fn(|i| i as u8)] {
+      let encoded = super::encode_nix_base32_sha256(&bytes);
+      assert_eq!(encoded.len(), 52);
+      let decoded =
+        super::decode_nix_base32_sha256(&encoded).expect("re-decode");
+      assert_eq!(decoded, bytes);
+    }
   }
 }

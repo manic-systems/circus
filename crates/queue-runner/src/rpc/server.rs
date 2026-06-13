@@ -628,6 +628,24 @@ impl runner::Server for RunnerImpl {
         ));
       }
 
+      // Only the build drv outputs may be uploaded, else an agent could sign
+      // a narinfo for an arbitrary input-addressed path. An empty set means a
+      // CA or unresolvable drv, so fall through to hash verification.
+      let drv_outputs: std::collections::HashSet<String> =
+        match circus_common::repo::builds::get(&self.db_pool, build_id).await {
+          Ok(build) => {
+            crate::dispatch::read_drv_outputs(&build.drv_path)
+              .await
+              .into_iter()
+              .collect()
+          },
+          Err(e) => {
+            return Err(capnp::Error::failed(format!(
+              "cannot resolve build {build_id} for upload authorization: {e}"
+            )));
+          },
+        };
+
       let mut out = results.get().init_responses(req_list.len());
       for (i, req) in req_list.iter().enumerate() {
         let store_path = req.get_store_path()?.to_str()?.to_owned();
@@ -641,6 +659,12 @@ impl runner::Server for RunnerImpl {
         {
           let msg = e.to_string();
           slot.set_error_message(msg.as_str());
+          continue;
+        }
+        if !drv_outputs.is_empty() && !drv_outputs.contains(&store_path) {
+          slot.set_error_message(
+            "store path is not an output of this build's derivation",
+          );
           continue;
         }
         let Some(p) = presigner.as_ref() else {
@@ -693,7 +717,7 @@ impl runner::Server for RunnerImpl {
       let nar_hash = info.get_nar_hash()?.to_str()?.to_owned();
       let nar_size = info.get_nar_size();
       let file_hash = info.get_file_hash()?.to_str()?.to_owned();
-      let file_size = info.get_file_size() as i64;
+      let file_size = info.get_file_size();
       let compression = info.get_compression()?.to_str()?.to_owned();
       let url = info.get_url()?.to_str()?.to_owned();
       let deriver = {
@@ -761,7 +785,7 @@ impl runner::Server for RunnerImpl {
           nar_hash: nar_hash.clone(),
           nar_size,
           file_hash: (!file_hash.is_empty()).then(|| file_hash.clone()),
-          file_size: (file_size > 0).then_some(file_size as u64),
+          file_size: (file_size > 0).then_some(file_size),
         },
       ))
       .await
@@ -785,11 +809,9 @@ impl runner::Server for RunnerImpl {
       let file_size_opt =
         (compression != "none").then_some(verified.file_size as i64);
 
-      // Sign the narinfo on the runner side. The fingerprint is the canonical
-      // Nix narinfo signing input:
-      // `<storePath>;<narHash>;<narSize>;<references>` (refs comma-
-      // joined). Never persist an agent-supplied signature; only a runner-
-      // minted signature makes the uploaded NAR servable by circus-server.
+      // Sign over the canonical Nix fingerprint (store path, nar hash, nar
+      // size, refs) with the nar hash in sha256 base32. Never persist an
+      // agent signature, only a runner-minted one is servable.
       let signed_sig = if let Some(key_file) = &self_cfg.signing_key_file {
         match sign_fingerprint(
           key_file,
@@ -870,9 +892,13 @@ async fn sign_fingerprint(
   // seed alone.
   let key = Ed25519KeyPair::from_seed_unchecked(&secret[..32])
     .map_err(|e| eyre!("ring rejected key seed: {e}"))?;
+  // Nix builds the fingerprint from a sorted StorePathSet and re-sorts the
+  // references when verifying so the signed order must match.
+  let mut sorted_refs = references.to_vec();
+  sorted_refs.sort();
   let fingerprint = format!(
-    "{store_path};{nar_hash};{nar_size};{}",
-    references.join(",")
+    "1;{store_path};{nar_hash};{nar_size};{}",
+    sorted_refs.join(",")
   );
   let sig = key.sign(fingerprint.as_bytes());
   Ok(format!("{name}:{}", B64.encode(sig.as_ref())))
