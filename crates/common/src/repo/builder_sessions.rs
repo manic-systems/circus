@@ -156,9 +156,10 @@ pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
   Ok(row.is_some_and(|(schedulable,)| schedulable))
 }
 
-/// Delete disconnected ephemeral sessions whose last activity is older than
-/// `ttl_secs`, so the table doesn't accumulate one dead row per CI run.
-/// Persistent agents are never touched.
+/// Delete stale ephemeral sessions. A force-killed runner never flips
+/// connected to false, so also reap connected rows whose `last_seen` is
+/// older than `ttl_secs`. A null `last_seen` is kept, and persistent agents are
+/// never touched.
 ///
 /// # Errors
 ///
@@ -168,9 +169,10 @@ pub async fn prune_stale_ephemeral(
   ttl_secs: i64,
 ) -> Result<u64> {
   let res = sqlx::query(
-    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND connected = \
+    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND ( (connected = \
      FALSE AND (last_seen IS NULL OR last_seen < NOW() - make_interval(secs \
-     => $1))",
+     => $1))) OR (connected = TRUE AND last_seen IS NOT NULL AND last_seen < \
+     NOW() - make_interval(secs => $1)) )",
   )
   .bind(ttl_secs as f64)
   .execute(pool)
