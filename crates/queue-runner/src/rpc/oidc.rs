@@ -17,6 +17,10 @@ use tokio::{sync::Mutex, time::Instant};
 /// Refresh cached JWKS at least this often even if every `kid` still resolves.
 const JWKS_TTL: Duration = Duration::from_hours(1);
 
+/// Floor between JWKS refreshes so a flood of tokens with unknown kids cannot
+/// drive one outbound fetch per token.
+const MIN_REFRESH_INTERVAL: Duration = Duration::from_mins(1);
+
 /// Identity extracted from a verified ID token. Phase-4 ref gating consumes
 /// the subject/ref; registration only needs `repository`.
 #[derive(Debug, Clone)]
@@ -59,9 +63,10 @@ struct Jwk {
 
 #[derive(Default)]
 struct CacheState {
-  keys:              HashMap<String, Jwk>,
-  fetched_at:        Option<Instant>,
-  resolved_jwks_uri: Option<String>,
+  keys:               HashMap<String, Jwk>,
+  fetched_at:         Option<Instant>,
+  last_refresh_start: Option<Instant>,
+  resolved_jwks_uri:  Option<String>,
 }
 
 pub struct OidcVerifier {
@@ -187,6 +192,16 @@ impl OidcVerifier {
   }
 
   async fn refresh(&self) -> color_eyre::Result<()> {
+    {
+      let mut cache = self.cache.lock().await;
+      if cache
+        .last_refresh_start
+        .is_some_and(|t| t.elapsed() < MIN_REFRESH_INTERVAL)
+      {
+        return Ok(());
+      }
+      cache.last_refresh_start = Some(Instant::now());
+    }
     let uri = self.resolve_jwks_uri().await?;
     let set: JwkSet = self
       .http
@@ -231,6 +246,15 @@ impl OidcVerifier {
       .json()
       .await
       .context("parse OIDC discovery")?;
+
+    // Pin jwks_uri to the issuer origin
+    if !same_origin(&self.issuer, &disc.jwks_uri) {
+      bail!(
+        "discovered jwks_uri {} is not same-origin as issuer {}",
+        disc.jwks_uri,
+        self.issuer
+      );
+    }
     self.cache.lock().await.resolved_jwks_uri = Some(disc.jwks_uri.clone());
     Ok(disc.jwks_uri)
   }
@@ -291,4 +315,13 @@ mod tests {
     ));
     assert!(!optional_claim_allowed(None, &["required".into()]));
   }
+}
+
+fn same_origin(issuer: &str, uri: &str) -> bool {
+  let (Ok(a), Ok(b)) = (url::Url::parse(issuer), url::Url::parse(uri)) else {
+    return false;
+  };
+  a.scheme() == b.scheme()
+    && a.host_str() == b.host_str()
+    && a.port_or_known_default() == b.port_or_known_default()
 }

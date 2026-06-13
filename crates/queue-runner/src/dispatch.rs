@@ -195,6 +195,7 @@ fn candidate_allowed_for_trusted_build(
   let Some(trusted) = trusted else {
     return false;
   };
+  // OIDC agents are pinned to their token repo
   agent
     .oidc_repository
     .as_deref()

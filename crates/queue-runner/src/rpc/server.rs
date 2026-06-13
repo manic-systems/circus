@@ -487,7 +487,10 @@ impl runner::Server for RunnerImpl {
       let speed = info.get_speed_factor();
       let cpu = info.get_cpu_count();
       let maxj = info.get_max_jobs();
-      let ephemeral = info.get_ephemeral();
+
+      // An OIDC identity is always ephemeral.
+      let ephemeral = info.get_ephemeral()
+        || auth_kind == circus_common::models::AuthKind::Oidc;
       validate_agent_capacity(&systems, speed, cpu, maxj)?;
 
       let connection_id = Uuid::new_v4();
