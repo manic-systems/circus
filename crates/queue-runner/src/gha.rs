@@ -61,6 +61,7 @@ struct WorkflowInputs<'a> {
 struct Demand {
   eligible_pending: usize,
   live_capacity:    u32,
+  live_agents:      u32,
 }
 
 impl Autoscaler {
@@ -77,6 +78,8 @@ impl Autoscaler {
     let token = load_token(&cfg.github_actions).await?;
     let http = reqwest::Client::builder()
       .user_agent("circus-queue-runner")
+      .connect_timeout(Duration::from_secs(10))
+      .timeout(Duration::from_secs(30))
       .build()
       .context("build GitHub Actions autoscaler HTTP client")?;
     Ok(Self {
@@ -124,9 +127,11 @@ impl Autoscaler {
     }
     let demand = self.demand().await?;
     let pending = demand.eligible_pending as u32;
-    let available = demand
-      .live_capacity
-      .saturating_add(self.inflight.len() as u32);
+    // A registered launch already shows in live_capacity, so only count
+    // inflight launches without an agent yet.
+    let pending_inflight =
+      (self.inflight.len() as u32).saturating_sub(demand.live_agents);
+    let available = demand.live_capacity.saturating_add(pending_inflight);
     let deficit = pending.saturating_sub(available);
     let remaining_inflight = self
       .cfg
@@ -138,7 +143,12 @@ impl Autoscaler {
     }
 
     for _ in 0..launches {
-      self.dispatch_workflow().await?;
+      if let Err(e) = self.dispatch_workflow().await {
+        // Cooldown on failure too, so a transient error does not respin the
+        // loop.
+        self.last_scale_up = Some(Instant::now());
+        return Err(e);
+      }
       self.inflight.push_back(InflightLaunch {
         launched_at: Instant::now(),
       });
@@ -203,24 +213,44 @@ impl Autoscaler {
     }
 
     let gha = &self.cfg.github_actions;
+    let live: Vec<_> = self
+      .agent_pool
+      .snapshot_all()
+      .into_iter()
+      .filter(|agent| {
+        agent.ephemeral
+          && agent.auth_kind == circus_common::models::AuthKind::Oidc
+          && agent.oidc_repository.as_deref()
+            == Some(gha.workflow_repository.as_str())
+          && agent_name_matches_pool(&agent.name, &self.cfg.name)
+          && self
+            .cfg
+            .systems
+            .iter()
+            .any(|system| agent.systems.iter().any(|s| s == system))
+      })
+      .collect();
+    let live_agents = live.len() as u32;
+
     let mut live_slots = Vec::new();
-    for agent in self.agent_pool.snapshot_all().into_iter().filter(|agent| {
-      agent.ephemeral
-        && agent.auth_kind == circus_common::models::AuthKind::Oidc
-        && agent.oidc_repository.as_deref()
-          == Some(gha.workflow_repository.as_str())
-        && agent_name_matches_pool(&agent.name, &self.cfg.name)
-        && self
-          .cfg
-          .systems
-          .iter()
-          .any(|system| agent.systems.iter().any(|s| s == system))
-    }) {
+    for agent in &live {
       let free = agent.max_jobs.saturating_sub(agent.current_jobs);
       for _ in 0..free {
         live_slots.push(agent.clone());
       }
     }
+
+    // Total order on both sides so capacity does not depend on HashMap
+    // iteration order. Constrained builds take the least-capable slot.
+    eligible_requirements.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+    live_slots.sort_by(|a, b| {
+      a.supported_features
+        .len()
+        .cmp(&b.supported_features.len())
+        .then_with(|| a.supported_features.cmp(&b.supported_features))
+        .then_with(|| a.mandatory_features.cmp(&b.mandatory_features))
+        .then_with(|| a.machine_id.cmp(&b.machine_id))
+    });
 
     let mut live_capacity = 0u32;
     for required in &eligible_requirements {
@@ -231,7 +261,7 @@ impl Autoscaler {
           &agent.mandatory_features,
         )
       }) {
-        live_slots.swap_remove(pos);
+        live_slots.remove(pos);
         live_capacity = live_capacity.saturating_add(1);
       }
     }
@@ -239,6 +269,7 @@ impl Autoscaler {
     Ok(Demand {
       eligible_pending: eligible_requirements.len(),
       live_capacity,
+      live_agents,
     })
   }
 

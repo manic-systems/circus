@@ -484,6 +484,7 @@ async fn select_and_reserve_agent(
     );
     sa.cmp(&sb)
       .then_with(|| strategy_order(strategy, &a.1, &b.1))
+      .then_with(|| a.1.machine_id.cmp(&b.1.machine_id))
   });
 
   eligible.into_iter().find_map(|(meta, snap)| {
