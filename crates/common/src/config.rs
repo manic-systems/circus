@@ -512,7 +512,7 @@ impl std::fmt::Debug for GitHubOAuthConfig {
   }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 // Manual Default impl below so the default tree fed into `config-rs` matches
 // the per-field `#[serde(default = ...)]` annotations. `#[derive(Default)]`
@@ -540,6 +540,38 @@ pub struct NotificationsConfig {
   /// Polling interval for retry worker in seconds (default 5)
   #[serde(default = "default_notification_poll_interval")]
   pub retry_poll_interval: u64,
+}
+
+impl std::fmt::Debug for NotificationsConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("NotificationsConfig")
+      .field(
+        "webhook_url",
+        &self.webhook_url.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field(
+        "github_token",
+        &self.github_token.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field("gitea_url", &self.gitea_url)
+      .field(
+        "gitea_token",
+        &self.gitea_token.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field("gitlab_url", &self.gitlab_url)
+      .field(
+        "gitlab_token",
+        &self.gitlab_token.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field("email", &self.email)
+      .field("alerts", &self.alerts)
+      .field("slack", &self.slack)
+      .field("enable_retry_queue", &self.enable_retry_queue)
+      .field("max_retry_attempts", &self.max_retry_attempts)
+      .field("retention_days", &self.retention_days)
+      .field("retry_poll_interval", &self.retry_poll_interval)
+      .finish()
+  }
 }
 
 impl Default for NotificationsConfig {
@@ -614,7 +646,7 @@ pub struct LdapConfig {
   pub enabled:          bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct EmailConfig {
   pub smtp_host:       String,
   pub smtp_port:       u16,
@@ -624,6 +656,24 @@ pub struct EmailConfig {
   pub to_addresses:    Vec<String>,
   pub tls:             bool,
   pub on_failure_only: bool,
+}
+
+impl std::fmt::Debug for EmailConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("EmailConfig")
+      .field("smtp_host", &self.smtp_host)
+      .field("smtp_port", &self.smtp_port)
+      .field("smtp_user", &self.smtp_user)
+      .field(
+        "smtp_password",
+        &self.smtp_password.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field("from_address", &self.from_address)
+      .field("to_addresses", &self.to_addresses)
+      .field("tls", &self.tls)
+      .field("on_failure_only", &self.on_failure_only)
+      .finish()
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -696,7 +746,7 @@ impl Default for CacheUploadConfig {
 }
 
 /// S3-specific cache configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
 pub struct S3CacheConfig {
@@ -716,6 +766,26 @@ pub struct S3CacheConfig {
   pub endpoint_url:      Option<String>,
   /// Whether to use path-style addressing (for `MinIO` compatibility)
   pub use_path_style:    bool,
+}
+
+impl std::fmt::Debug for S3CacheConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("S3CacheConfig")
+      .field("region", &self.region)
+      .field("prefix", &self.prefix)
+      .field("access_key_id", &self.access_key_id)
+      .field(
+        "secret_access_key",
+        &self.secret_access_key.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field(
+        "session_token",
+        &self.session_token.as_ref().map(|_| "[REDACTED]"),
+      )
+      .field("endpoint_url", &self.endpoint_url)
+      .field("use_path_style", &self.use_path_style)
+      .finish()
+  }
 }
 
 /// Declarative project/jobset/api-key/user definitions.
@@ -1619,6 +1689,46 @@ fn apply_env_overrides_for_option_fields(config: &mut Config) {
     && let Ok(parsed) = v.parse()
   {
     config.gc.cleanup_interval = parsed;
+  }
+}
+
+const SECRET_KEYS: &[&str] = &[
+  "api_key",
+  "client_secret",
+  "gitea_token",
+  "github_token",
+  "gitlab_token",
+  "secret_access_key",
+  "session_token",
+  "smtp_password",
+  "token",
+  "webhook_secret_encryption_key",
+  "webhook_url",
+];
+
+/// Replace secret values in a serialized config with `"***"`.
+pub fn redact_secrets(value: &mut toml::Value) {
+  match value {
+    toml::Value::Table(table) => {
+      for (key, val) in table.iter_mut() {
+        if let toml::Value::String(s) = val {
+          if SECRET_KEYS.contains(&key.as_str())
+            || s.starts_with("postgresql://")
+            || s.starts_with("postgres://")
+          {
+            *s = "***".into();
+          }
+        } else {
+          redact_secrets(val);
+        }
+      }
+    },
+    toml::Value::Array(arr) => {
+      for item in arr {
+        redact_secrets(item);
+      }
+    },
+    _ => {},
   }
 }
 

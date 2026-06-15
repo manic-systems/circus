@@ -544,6 +544,7 @@ pub struct WebhookConfig {
   pub project_id:  Uuid,
   pub forge_type:  String,
   /// Encrypted webhook secret. See struct docs.
+  #[serde(skip_serializing)]
   pub secret_hash: Option<String>,
   pub enabled:     bool,
   pub created_at:  DateTime<Utc>,
@@ -597,6 +598,7 @@ pub struct RemoteBuilder {
   pub mandatory_features:   Vec<String>,
   pub enabled:              bool,
   pub public_host_key:      Option<String>,
+  #[serde(skip_serializing)]
   pub ssh_key_file:         Option<String>,
   pub created_at:           DateTime<Utc>,
   pub consecutive_failures: i32,
@@ -627,6 +629,7 @@ pub struct User {
   pub username:         String,
   pub email:            String,
   pub full_name:        Option<String>,
+  #[serde(skip_serializing)]
   pub password_hash:    Option<String>,
   pub user_type:        UserType,
   pub role:             String,

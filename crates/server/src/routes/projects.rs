@@ -5,6 +5,7 @@ use axum::{
   http::Extensions,
   routing::{delete, get, post},
 };
+use chrono::{DateTime, Utc};
 use circus_common::{
   CreateJobset,
   CreateProject,
@@ -18,7 +19,7 @@ use circus_common::{
   models::CreateWebhookConfig,
   nix_probe,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -27,6 +28,27 @@ use crate::{
   permissions::{self, Permission},
   state::AppState,
 };
+
+#[derive(Debug, Serialize)]
+struct WebhookConfigResponse {
+  id:         Uuid,
+  project_id: Uuid,
+  forge_type: String,
+  enabled:    bool,
+  created_at: DateTime<Utc>,
+}
+
+impl From<WebhookConfig> for WebhookConfigResponse {
+  fn from(c: WebhookConfig) -> Self {
+    Self {
+      id:         c.id,
+      project_id: c.project_id,
+      forge_type: c.forge_type,
+      enabled:    c.enabled,
+      created_at: c.created_at,
+    }
+  }
+}
 
 async fn list_projects(
   State(state): State<AppState>,
@@ -304,12 +326,17 @@ struct CreateWebhookBody {
 async fn list_project_webhooks(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
-) -> Result<Json<Vec<WebhookConfig>>, ApiError> {
+) -> Result<Json<Vec<WebhookConfigResponse>>, ApiError> {
   let configs =
     circus_common::repo::webhook_configs::list_for_project(&state.pool, id)
       .await
       .map_err(ApiError)?;
-  Ok(Json(configs))
+  Ok(Json(
+    configs
+      .into_iter()
+      .map(WebhookConfigResponse::from)
+      .collect(),
+  ))
 }
 
 async fn create_project_webhook(
@@ -317,7 +344,7 @@ async fn create_project_webhook(
   State(state): State<AppState>,
   Path(project_id): Path<Uuid>,
   Json(body): Json<CreateWebhookBody>,
-) -> Result<Json<WebhookConfig>, ApiError> {
+) -> Result<Json<WebhookConfigResponse>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
 
   // Validate forge type
@@ -350,7 +377,7 @@ async fn create_project_webhook(
   .await
   .map_err(ApiError)?;
 
-  Ok(Json(config))
+  Ok(Json(WebhookConfigResponse::from(config)))
 }
 
 #[derive(Deserialize)]
