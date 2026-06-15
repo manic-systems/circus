@@ -68,8 +68,8 @@ jobs:
 
       - name: Build all circus packages
         run: |
-          nix build .#circus-admin .#circus-agent .#circus-agent-static \
-                    .#circus-evaluator .#circus-migrate-cli \
+          nix build .#circus-cli .#circus-agent .#circus-agent-static \
+                    .#circus-evaluator \
                     .#circus-queue-runner .#circus-server -L --no-link
 
   build:
@@ -81,11 +81,10 @@ jobs:
       fail-fast: false
       matrix:
         package:
-          - circus-admin
+          - circus-cli
           - circus-agent
           - circus-agent-static
           - circus-evaluator
-          - circus-migrate-cli
           - circus-queue-runner
           - circus-server
     steps:

@@ -62,7 +62,7 @@ in {
       package = mkDefault circus-packages.circus-server;
       evaluatorPackage = mkDefault circus-packages.circus-evaluator;
       queueRunnerPackage = mkDefault circus-packages.circus-queue-runner;
-      migratePackage = mkDefault circus-packages.circus-migrate-cli;
+      migratePackage = mkDefault circus-packages.circus-cli;
 
       server.enable = true;
       evaluator.enable = true;

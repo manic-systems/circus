@@ -53,7 +53,7 @@ testers.runNixOSTest {
         package = circus-packages.circus-server;
         evaluatorPackage = circus-packages.circus-evaluator;
         queueRunnerPackage = circus-packages.circus-queue-runner;
-        migratePackage = circus-packages.circus-migrate-cli;
+        migratePackage = circus-packages.circus-cli;
 
         server.enable = true;
         evaluator.enable = true;

@@ -61,7 +61,7 @@ jobs:
       - name: Build all circus packages
         run: |
           nix build .#circus-server .#circus-evaluator .#circus-queue-runner \
-                    .#circus-migrate-cli .#circus-agent -L --no-link
+                    .#circus-cli .#circus-agent -L --no-link
 
   vm-test:
     name: ${{ matrix.name }}

@@ -51,14 +51,10 @@ jobs:
             binary: circus-agent
             os: ubuntu-latest
             suffix: agent-linux-amd64
-          - package: circus-admin
-            binary: circus-admin
+          - package: circus-cli
+            binary: circusctl
             os: ubuntu-latest
-            suffix: admin-linux-amd64
-          - package: circus-migrate-cli
-            binary: circus-migrate
-            os: ubuntu-latest
-            suffix: migrate-linux-amd64
+            suffix: ctl-linux-amd64
     uses: manic-systems/workflows/.github/workflows/rust-build.yml@tmp
     with:
       upload: true
@@ -94,14 +90,10 @@ jobs:
             binary: circus-agent
             os: ubuntu-24.04-arm
             suffix: agent-linux-arm64
-          - package: circus-admin
-            binary: circus-admin
+          - package: circus-cli
+            binary: circusctl
             os: ubuntu-24.04-arm
-            suffix: admin-linux-arm64
-          - package: circus-migrate-cli
-            binary: circus-migrate
-            os: ubuntu-24.04-arm
-            suffix: migrate-linux-arm64
+            suffix: ctl-linux-arm64
     uses: manic-systems/workflows/.github/workflows/rust-build.yml@tmp
     with:
       upload: true

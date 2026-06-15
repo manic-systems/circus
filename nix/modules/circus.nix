@@ -598,7 +598,7 @@ in {
         example = [
           {
             name = "admin";
-            keyFile = "/run/secrets/circus-admin-key";
+            keyFile = "/run/secrets/circusctl-admin-key";
             role = "admin";
           }
           {
@@ -621,7 +621,7 @@ in {
         example = {
           admin = {
             email = "admin@example.com";
-            passwordFile = "/run/secrets/circus-admin-password";
+            passwordFile = "/run/secrets/circusctl-admin-password";
             role = "admin";
           };
           readonly = {
@@ -757,7 +757,7 @@ in {
           path = with pkgs; [nix zstd];
 
           serviceConfig = {
-            ExecStartPre = "${cfg.migratePackage}/bin/circus-migrate up ${finalSettings.database.url or "postgresql:///circus?host=/run/postgresql"}";
+            ExecStartPre = "${cfg.migratePackage}/bin/circusctl migrate up ${finalSettings.database.url or "postgresql:///circus?host=/run/postgresql"}";
             ExecStart = "${cfg.package}/bin/circus-server";
             Restart = "on-failure";
             RestartSec = 5;

@@ -84,13 +84,12 @@
         demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
         # circus Packages
-        circus-admin = callCratePackage ./nix/packages/circus-admin.nix;
+        circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
         circus-agent = (callCratePackage ./nix/packages/circus-agent.nix).override {
           commonArgs = agentArgs;
           cargoArtifacts = agentArtifacts;
         };
         circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
-        circus-migrate-cli = callCratePackage ./nix/packages/circus-migrate-cli.nix;
         circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
         circus-server = callCratePackage ./nix/packages/circus-server.nix;
       }

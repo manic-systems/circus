@@ -6,7 +6,7 @@
 craneLib.buildPackage (commonArgs
   // {
     inherit cargoArtifacts;
-    pname = "circus-migrate-cli";
-    cargoExtraArgs = "--package circus-migrate-cli";
+    pname = "circus-cli";
+    cargoExtraArgs = "--package circus-cli --bin circusctl";
     useNextest = true;
   })

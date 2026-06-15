@@ -72,7 +72,7 @@
         package = circusPkgs.circus-server;
         evaluatorPackage = circusPkgs.circus-evaluator;
         queueRunnerPackage = circusPkgs.circus-queue-runner;
-        migratePackage = circusPkgs.circus-migrate-cli;
+        migratePackage = circusPkgs.circus-cli;
 
         server.enable = true;
         evaluator.enable = true;
@@ -127,7 +127,7 @@
 
     # Useful tools inside the VM
     environment.systemPackages = with pkgs; [
-      circusPkgs.circus-admin
+      circusPkgs.circus-cli
       curl
       jq
       btop
