@@ -84,6 +84,7 @@ testers.runNixOSTest {
             strict_errors = false;
             rpc = {
               bind = "0.0.0.0:8443";
+              allow_plaintext = true;
               max_connections = 64;
               heartbeat_ttl_secs = 30;
               auth_tokens = [
