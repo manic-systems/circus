@@ -11,6 +11,9 @@ testers.runNixOSTest {
       ../common/container.nix
     ];
     _module.args.self = self;
+
+    # Webhook creation encrypts secrets; provide a key so the endpoint works.
+    config.services.circus.settings.server.webhook_secret_encryption_key = "test-webhook-encryption-key";
   };
 
   # Webhook and PR integration tests
