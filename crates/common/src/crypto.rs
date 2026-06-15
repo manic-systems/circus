@@ -1,4 +1,13 @@
-//! Process-wide rustls crypto provider setup.
+//! Process-wide rustls crypto provider setup and small crypto helpers.
+
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use ring::{aead, rand};
+use sha2::{Digest, Sha256};
+
+use crate::error::{CiError, Result};
+
+const WEBHOOK_SECRET_PREFIX: &str = "v1";
+const NONCE_LEN: usize = 12;
 
 /// Pin ring as the process-level rustls [`CryptoProvider`].
 ///
@@ -12,4 +21,81 @@ pub fn install_crypto_provider() -> color_eyre::Result<()> {
     .map_err(|_| {
       color_eyre::eyre::eyre!("a rustls CryptoProvider is already installed")
     })
+}
+
+/// Encrypt a webhook secret for database storage.
+///
+/// # Errors
+///
+/// Returns an error when no key is configured or encryption fails.
+pub fn encrypt_webhook_secret(
+  secret: &str,
+  key: Option<&str>,
+) -> Result<String> {
+  let key = webhook_aead_key(key)?;
+  let rng = rand::SystemRandom::new();
+  let mut nonce_bytes = [0u8; NONCE_LEN];
+  rand::SecureRandom::fill(&rng, &mut nonce_bytes).map_err(|_| {
+    CiError::Config("Failed to generate webhook secret nonce".into())
+  })?;
+
+  let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
+  let mut ciphertext = secret.as_bytes().to_vec();
+  key
+    .seal_in_place_append_tag(nonce, aead::Aad::empty(), &mut ciphertext)
+    .map_err(|_| CiError::Config("Failed to encrypt webhook secret".into()))?;
+
+  Ok(format!(
+    "{WEBHOOK_SECRET_PREFIX}:{}:{}",
+    STANDARD.encode(nonce_bytes),
+    STANDARD.encode(ciphertext)
+  ))
+}
+
+/// Decrypt a webhook secret loaded from database storage.
+///
+/// Plaintext values are returned unchanged so existing configured webhooks with
+/// secrets keep working until they are recreated or upserted.
+///
+/// # Errors
+///
+/// Returns an error when encrypted data cannot be decrypted.
+pub fn decrypt_webhook_secret(
+  value: &str,
+  key: Option<&str>,
+) -> Result<String> {
+  let Some(rest) = value.strip_prefix("v1:") else {
+    return Ok(value.to_string());
+  };
+  let (nonce, ciphertext) = rest.split_once(':').ok_or_else(|| {
+    CiError::Config("Invalid encrypted webhook secret format".into())
+  })?;
+
+  let key = webhook_aead_key(key)?;
+  let nonce_bytes = STANDARD
+    .decode(nonce)
+    .map_err(|_| CiError::Config("Invalid webhook secret nonce".into()))?;
+  let nonce = aead::Nonce::try_assume_unique_for_key(&nonce_bytes)
+    .map_err(|_| CiError::Config("Invalid webhook secret nonce".into()))?;
+  let mut plaintext = STANDARD
+    .decode(ciphertext)
+    .map_err(|_| CiError::Config("Invalid webhook secret ciphertext".into()))?;
+
+  let plaintext = key
+    .open_in_place(nonce, aead::Aad::empty(), &mut plaintext)
+    .map_err(|_| CiError::Config("Failed to decrypt webhook secret".into()))?;
+  String::from_utf8(plaintext.to_vec())
+    .map_err(|_| CiError::Config("Webhook secret is not valid UTF-8".into()))
+}
+
+fn webhook_aead_key(key: Option<&str>) -> Result<aead::LessSafeKey> {
+  let key = key.filter(|key| !key.trim().is_empty()).ok_or_else(|| {
+    CiError::Config("server.webhook_secret_encryption_key is required".into())
+  })?;
+  let digest = Sha256::digest(key.as_bytes());
+  let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, digest.as_slice())
+    .map_err(|_| {
+      CiError::Config("Invalid webhook secret encryption key".into())
+    })?;
+  Ok(aead::LessSafeKey::new(unbound))
 }

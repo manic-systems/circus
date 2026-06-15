@@ -72,7 +72,12 @@ async fn main() -> color_eyre::Result<()> {
   let db = Database::new(config.database.clone()).await?;
 
   // Bootstrap declarative projects, jobsets, and API keys from config
-  circus_common::bootstrap::run(db.pool(), &config.declarative).await?;
+  circus_common::bootstrap::run(
+    db.pool(),
+    &config.declarative,
+    config.server.webhook_secret_encryption_key.as_deref(),
+  )
+  .await?;
 
   // Per-process CSRF secret. Concatenating two v4 UUIDs gives 32 bytes of
   // entropy from the system CSPRNG with no extra dependency.
