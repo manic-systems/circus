@@ -144,7 +144,7 @@ together.
 - **queue-runner** (`circus-queue-runner`): Build dispatch with semaphore-based
   worker pool
 - **agent** (`circus-agent`): Persistent build host that receives work over RPC
-- **admin CLI** (`circus-admin`): API-backed command line interface for common
+- **CLI** (`circusctl`): API-backed command line interface for common
   administration tasks
 - **common** (`circus-common`): Shared models, database layer, repository
   helpers, bootstrap, and validation
@@ -156,7 +156,7 @@ together.
 - **s3** (`circus-s3`): S3 signing and cache upload helpers
 - **logs** (`circus-logs`): Tracing configuration and initialization
 - **proto** (`circus-proto`): Cap'n Proto schema and generated RPC bindings
-- **migrate-cli** (`circus-migrate`): Database migration CLI
+- **migration commands** (`circusctl migrate`): Database migration CLI
 - **migrations** (`circus-migrations`): SQL migration files and runtime
 - **xtask** (`circus-xtask`): Developer tooling (API docs generation and route
   drift checks)

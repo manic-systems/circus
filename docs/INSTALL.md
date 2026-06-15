@@ -29,8 +29,7 @@ packages. You may also use `nix shell` to acquire the necessary components.
 2. Run migrations from the checkout:
 
    ```bash
-   # Run migrations
-   $ cargo run -p circus-migrate-cli -- up postgresql://circus@localhost/circus
+   $ cargo run -p circus-cli -- migrate up postgresql://circus@localhost/circus
    ```
 
 3. Start the server:
@@ -59,7 +58,7 @@ The source quickstart starts with an empty database. Create the first admin API
 key with the [authentication bootstrapping](#authentication-bootstrapping)
 steps, or seed it declaratively before first server startup.
 
-For installed binaries, the equivalent commands are `circus-migrate`,
+For installed binaries, the equivalent commands are `circusctl migrate`,
 `circus-server`, `circus-evaluator`, and `circus-queue-runner`.
 
 ## Demo VM
@@ -93,34 +92,33 @@ the demo VM.
 
 Log in to the dashboard at `http://localhost:3000/login` using the admin key.
 
-### Example Admin CLI Calls
+### Example CLI Calls
 
 Circus is designed as a server, and the dashboard is a convenient wrapper around
-the API. For routine administration, prefer `circus-admin`; it provides neat
-little tables, clear errors, and safer request construction than ad-hoc shell
-snippets.
+the API. For routine administration, prefer `circusctl`; it provides neat little
+tables, clear errors, and safer request construction than ad-hoc shell snippets.
 
 ```bash
 # Health check
-$ circus-admin --url http://localhost:3000 health
+$ circusctl --url http://localhost:3000 health
 
 # Use an admin key for privileged commands
 $ export CIRCUS_URL=http://localhost:3000
 $ export CIRCUS_API_KEY=circus_demo_admin_key
 
 # System status
-$ circus-admin status
+$ circusctl admin status
 
 # Create a project
-$ circus-admin projects create \
+$ circusctl projects create \
   --name my-project \
   --repository-url https://github.com/NixOS/nixpkgs
 
 # List projects
-$ circus-admin projects list
+$ circusctl projects list
 
 # Create an additional read-only API key
-$ circus-admin api-keys create --name readonly-demo --role read-only
+$ circusctl admin api-keys create --name readonly-demo --role read-only
 ```
 
 ### Inside the VM
@@ -134,7 +132,7 @@ $ systemctl status circus-server
 $ journalctl -u circus-server -f
 
 # Check instance health
-$ circus-admin health
+$ circusctl health
 
 # View metrics
 $ curl -sf localhost:3000/prometheus
@@ -447,13 +445,13 @@ changes.
 
 ```bash
 # Run pending migrations
-$ circus-migrate -- up <database_url>
+$ circusctl migrate up <database_url>
 
 # Validate schema
-$ circus-migrate -- validate <database_url>
+$ circusctl migrate validate <database_url>
 
 # Create a new migration file
-$ circus-migrate -- create <name>
+$ circusctl migrate create <name>
 ```
 
 ## Deploying on NixOS
@@ -477,7 +475,7 @@ Circus ships a NixOS module at `nixosModules.default`. Minimal configuration:
           services.circus = {
             enable = true;
             package = circus.packages.x86_64-linux.circus-server;
-            migratePackage = circus.packages.x86_64-linux.circus-migrate-cli;
+            migratePackage = circus.packages.x86_64-linux.circus-cli;
 
             server.enable = true;
             # evaluator.enable = true;
@@ -505,7 +503,7 @@ in {
     package = circusPkgs.circus-server;
     evaluatorPackage = circusPkgs.circus-evaluator;
     queueRunnerPackage = circusPkgs.circus-queue-runner;
-    migratePackage = circusPkgs.circus-migrate-cli;
+    migratePackage = circusPkgs.circus-cli;
 
     server.enable = true;
     evaluator.enable = true;
@@ -783,7 +781,7 @@ $ sudo -u circus psql -U circus -d circus -c \
 <!--markdownlint-enable MD013-->
 
 > [!TIP]
-> Subsequent keys can be created with `circus-admin api-keys create` or the
+> Subsequent keys can be created with `circusctl admin api-keys create` or the
 > admin dashboard using this initial admin key.
 
 ## Monitoring
@@ -800,7 +798,7 @@ scrape_configs:
 ```
 
 The `/health` endpoint reports database and service status. Administrative
-status is available through `circus-admin status` or `/api/v1/admin/system`.
+status is available through `circusctl admin status` or `/api/v1/admin/system`.
 
 ## Backup and Restore
 

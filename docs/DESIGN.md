@@ -127,11 +127,11 @@ streaming, result reporting, and presigned upload negotiation. The proto crate
 is versioned independently so the runner and agent can detect protocol
 mismatches at connection time.
 
-### `circus-migrate-cli` and `circus-migrations`
+### `circusctl migrate` and `circus-migrations`
 
-These crates manage database schema changes. `circus-migrate-cli` is the CLI
-entry point (typically invoked as `circus-migrate`), and `circus-migrations`
-contains the SQL migration files and runtime support.
+These components manage database schema changes. `circusctl migrate` is the CLI
+entry point, and `circus-migrations` contains the SQL migration files and
+runtime support.
 
 ### `xtask`
 

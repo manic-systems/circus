@@ -11,7 +11,7 @@ Circus has three main user interfaces:
 - The web dashboard at `/` for browsing projects, evaluations, builds, logs,
   queues, channels, news, and administration pages.
 - The REST API under `/api/v1` for automation.
-- `circus-admin` for common administrative API calls from a terminal.
+- `circusctl` for API calls from a terminal.
 
 ## End Users
 
@@ -216,20 +216,20 @@ GET /api/v1/openapi.json
 While Circus provides a large API surface for scripted operations,
 administrators that juggle between projects, jobsets, users, API keys, builders,
 notifications, channels, evaluations, queued builds, and operational health
-(potentially much more in the future) may prefer `circus-admin` for routine
-tasks because it constructs API requests safely, and pretty-prints (with cool
-tables) by default.
+(potentially much more in the future) may prefer `circusctl` for routine tasks
+because it constructs API requests safely, and pretty-prints (with cool tables)
+by default.
 
 Set these environment variables once per shell:
 
 ```bash
-# Set variables required by the circus-admin tool
+# Set variables required by the circusctl tool
 $ export CIRCUS_URL=https://ci.example.org
 $ export CIRCUS_API_KEY=<admin-api-key>
 ```
 
 > [!TIP]
-> Add `--json` to most `circus-admin` commands when machine-readable output is
+> Add `--json` to most `circusctl` commands when machine-readable output is
 > needed.
 
 ### Health and System Status
@@ -238,10 +238,10 @@ The admin CLI can be used to query various status fields:
 
 ```bash
 # Public health check
-$ circus-admin health
+$ circusctl health
 
 # Admin system status
-$ circus-admin status
+$ circusctl admin status
 ```
 
 Operational HTTP endpoints:
@@ -258,21 +258,21 @@ outputs, remote builders, API keys, and notification tasks.
 
 ### API Keys
 
-API keys authenticate API and `circus-admin` requests. Keys are stored hashed;
-the cleartext key is only shown when created.
+API keys authenticate API and `circusctl` requests. Keys are stored hashed; the
+cleartext key is only shown when created.
 
 ```bash
 # List app api-keys via administration CLI
-$ circus-admin api-keys list
+$ circusctl admin api-keys list
 
 # Create a new key with a specific role.
-$ circus-admin api-keys create --name deploy-bot --role admin
+$ circusctl admin api-keys create --name deploy-bot --role admin
 
 # Or a read-only key
-$ circus-admin api-keys create --name readonly-dashboard --role read-only
+$ circusctl admin api-keys create --name readonly-dashboard --role read-only
 
 # Revoke an API key by-id
-$ circus-admin api-keys revoke <api-key-id>
+$ circusctl admin api-keys revoke <api-key-id>
 ```
 
 There are a few roles that you may choose to assign based on what privileges you
@@ -299,26 +299,26 @@ LDAP users can also receive sessions when those integrations are configured.
 
 ```bash
 # List all users
-$ circus-admin users list
+$ circusctl admin users list
 
 # Create a new user
-$ circus-admin users create \
+$ circusctl admin users create \
   --username alice \
   --email alice@example.org \
   --password 'change-me' \
   --role read-only
 
 # Assign a role to a user
-$ circus-admin users set-role <user-id> --role admin
+$ circusctl admin users set-role <user-id> --role admin
 
 # Disable a user's login, preventing them from logging in
-$ circus-admin users disable <user-id>
+$ circusctl admin users disable <user-id>
 
 # Re-enable a user's login
-$ circus-admin users enable <user-id>
+$ circusctl admin users enable <user-id>
 
 # Fully delete a user from the database
-$ circus-admin users delete <user-id>
+$ circusctl admin users delete <user-id>
 ```
 
 Users can update their own profile through `/api/v1/me` and change their
@@ -333,16 +333,16 @@ Basic project commands:
 
 ```bash
 # List all projects
-$ circus-admin projects list
+$ circusctl projects list
 
 # Create a new project from the CLI
-$ circus-admin projects create \
+$ circusctl projects create \
   --name nixpkgs \
   --repository-url https://github.com/NixOS/nixpkgs \
   --description "Nixpkgs CI"
 
 # Delete a project by ID
-$ circus-admin projects delete <project-id>
+$ circusctl projects delete <project-id>
 ```
 
 Dashboard workflows:
@@ -387,13 +387,13 @@ Administrative commands:
 
 ```bash
 # List all evaluations
-$ circus-admin evaluations list
+$ circusctl evaluations list
 
 # List all evaluations for a specific jobset, with a specific status
-$ circus-admin evaluations list --jobset-id <jobset-id> --status completed
+$ circusctl evaluations list --jobset-id <jobset-id> --status completed
 
 # Trigger an evaluation for a jobset with a commit hash
-$ circus-admin evaluations trigger \
+$ circusctl evaluations trigger \
   --jobset-id <jobset-id> \
   --commit-hash <git-commit>
 ```
@@ -402,7 +402,7 @@ Pull-request metadata can be included when triggering manually:
 
 ```bash
 # Alternatively, track a pull request
-$ circus-admin evaluations trigger \
+$ circusctl evaluations trigger \
   --jobset-id <jobset-id> \
   --commit-hash <git-commit> \
   --pr-number 42 \
@@ -433,23 +433,23 @@ authorized users can inspect, cancel, restart, reprioritize, and pin builds.
 
 ```bash
 # List all builds
-$ circus-admin builds list
+$ circusctl builds list
 
 # List all failed builds for a specific system
-$ circus-admin builds list --status failed --system x86_64-linux
+$ circusctl builds list --status failed --system x86_64-linux
 
 # Cancel a build by ID
-$ circus-admin builds cancel <build-id>
+$ circusctl builds cancel <build-id>
 
 # Restart a build by ID
-$ circus-admin builds restart <build-id>
+$ circusctl builds restart <build-id>
 
 # Bump a build's priority, also by ID
-$ circus-admin builds bump <build-id>
+$ circusctl builds bump <build-id>
 
 # Whether to pin a build to survive future garbage collections.
-$ circus-admin builds keep <build-id> --value true
-$ circus-admin builds keep <build-id> --value false
+$ circusctl builds keep <build-id> --value true
+$ circusctl builds keep <build-id> --value false
 ```
 
 `bump` only applies to builds still in `pending` state. Each call adds `10` to
@@ -466,9 +466,9 @@ whose target is a kept product path.
 Admins can inspect retained outputs from the dashboard's **Administration** page
 under **Pinned Build Outputs**. The table shows the build, output name, store
 path, and recorded GC root. Use **Unpin Build** there, or run
-`circus-admin
-builds keep <build-id> --value false`, to make all outputs for
-that build eligible for normal GC cleanup again after their roots age out.
+`circusctl
+builds keep <build-id> --value false`, to make all outputs for that
+build eligible for normal GC cleanup again after their roots age out.
 
 The same data is available through the admin API:
 
@@ -486,7 +486,7 @@ $ curl -X POST -H "Authorization: Bearer $CIRCUS_API_KEY" \
 
 Circus supports two distributed build paths:
 
-- SSH remote builders, configured through the admin API or `circus-admin`.
+- SSH remote builders, configured through the admin API or `circusctl`.
 - Persistent `circus-agent` processes that connect to the queue-runner over
   Cap'n Proto RPC.
 
@@ -494,10 +494,10 @@ SSH remote builder commands:
 
 ```bash
 # List all builders
-$ circus-admin builders list
+$ circusctl admin builders list
 
 # Add a new builder
-$ circus-admin builders add \
+$ circusctl admin builders add \
   --name builder-1 \
   --ssh-uri builder-1.example.org \
   --systems x86_64-linux,aarch64-linux \
@@ -505,13 +505,13 @@ $ circus-admin builders add \
   --speed-factor 1
 
 # Temporarily disable a builder
-$ circus-admin builders disable <builder-id>
+$ circusctl admin builders disable <builder-id>
 
 # Re-enable a builder
-$ circus-admin builders enable <builder-id>
+$ circusctl admin builders enable <builder-id>
 
 # Remove a builder
-$ circus-admin builders remove <builder-id>
+$ circusctl admin builders remove <builder-id>
 ```
 
 Optional builder metadata:
@@ -555,10 +555,10 @@ Notification task commands:
 
 ```bash
 # List all build notifications
-$ circus-admin notifications list
+$ circusctl admin notifications list
 
 # Retry a notification by task ID
-$ circus-admin notifications retry <task-id>
+$ circusctl admin notifications retry <task-id>
 ```
 
 Project notification configuration is available from:
@@ -635,15 +635,15 @@ The dashboard page is `/news`.
 
 ### Config Management
 
-`circus-admin` can read or replace the server's declarative config body through
-the admin API:
+`circusctl` can read or replace the server's declarative config body through the
+admin API:
 
 ```bash
 # View the *active* configuration
-$ circus-admin config get
+$ circusctl admin config get
 
 # Replace the server's configured TOML file body
-$ circus-admin config apply ./circus.toml
+$ circusctl admin config apply ./circus.toml
 ```
 
 This updates the config file body exposed by the server. This feature is
@@ -658,7 +658,7 @@ Use the audit log to inspect recent administrative actions:
 
 ```bash
 # Check audit log with an entry limit
-$ circus-admin audit --limit 100
+$ circusctl admin audit --limit 100
 ```
 
 API endpoint:
