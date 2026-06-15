@@ -1712,7 +1712,10 @@ mod tests {
         "#;
 
     let config: ServerConfig = toml::from_str(toml_str).unwrap();
-    assert_eq!(config.page_access.projects, PageAccessLevel::Public);
+    // `projects` is not set in the TOML above, so it keeps its default. The
+    // secure default is `Authenticated` (the dashboard does not expose the
+    // project list anonymously unless an operator opts in).
+    assert_eq!(config.page_access.projects, PageAccessLevel::Authenticated);
     assert_eq!(
       config.page_access.evaluations,
       PageAccessLevel::Authenticated
