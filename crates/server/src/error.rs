@@ -33,6 +33,7 @@ impl IntoResponse for ApiError {
         (StatusCode::FORBIDDEN, "FORBIDDEN", msg.clone())
       },
       CiError::NixEval(msg) => {
+        tracing::warn!(message = %msg, "Nix evaluation error in API handler");
         let is_disk_full =
           msg.to_lowercase().contains("no space left on device")
             || msg.to_lowercase().contains("disk full")
@@ -44,19 +45,13 @@ impl IntoResponse for ApiError {
           (
             StatusCode::INSUFFICIENT_STORAGE,
             "DISK_FULL",
-            format!(
-              "{msg}\n\nDISK SPACE ISSUE DETECTED:\nThe server has run out of \
-               disk space. Please free up space:\n- Run `nix-collect-garbage \
-               -d` to clean the Nix store\n- Clear the evaluator work \
-               directory: `rm -rf /tmp/circus-evaluator/*`\n- Clear build \
-               logs if configured"
-            ),
+            "Server storage is exhausted".to_string(),
           )
         } else {
           (
             StatusCode::UNPROCESSABLE_ENTITY,
             "NIX_EVAL_ERROR",
-            msg.clone(),
+            "Nix evaluation failed".to_string(),
           )
         }
       },
