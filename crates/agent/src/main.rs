@@ -212,7 +212,10 @@ async fn run_supervisor(
   if cfg.ephemeral.is_some() {
     match session::run_once(&cfg, machine_id).await {
       Ok(()) => tracing::info!("ephemeral session ended; exiting"),
-      Err(e) => tracing::warn!(error = %e, "ephemeral session failed; exiting"),
+      Err(e) => {
+        tracing::warn!(error = %e, "ephemeral session failed; exiting");
+        return Err(e);
+      },
     }
     return Ok(());
   }
