@@ -62,6 +62,13 @@ async fn main() -> color_eyre::Result<()> {
     &config.server.allowed_url_schemes,
   );
 
+  if config.server.webhook_secret_encryption_key.is_none() {
+    tracing::warn!(
+      "server.webhook_secret_encryption_key is not set - webhook secrets will \
+       be stored in plaintext in the database"
+    );
+  }
+
   if config.cache.secret_key_file.is_some() {
     tracing::warn!(
       "[cache] secret_key_file no longer signs narinfos on the fly; configure \
