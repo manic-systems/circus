@@ -17,6 +17,15 @@ struct Cli {
 
   #[arg(short, long)]
   port: Option<u16>,
+
+  /// Run API/public routes only; do not mount bundled dashboard HTML or
+  /// assets.
+  #[arg(long, conflicts_with = "ui")]
+  headless: bool,
+
+  /// Force mounting the bundled dashboard UI even if config disables it.
+  #[arg(long)]
+  ui: bool,
 }
 
 #[expect(
@@ -54,13 +63,18 @@ async fn main() -> color_eyre::Result<()> {
   color_eyre::install()?;
   circus_common::install_crypto_provider()?;
 
-  let config = Config::load()?;
+  let mut config = Config::load()?;
   circus_common::init_tracing(&config.tracing);
 
   let cli = Cli::parse();
 
   let host = cli.host.unwrap_or_else(|| config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);
+  if cli.headless {
+    config.server.ui_enabled = false;
+  } else if cli.ui {
+    config.server.ui_enabled = true;
+  }
 
   circus_common::validate::warn_insecure_schemes(
     &config.server.allowed_url_schemes,
@@ -128,7 +142,15 @@ async fn main() -> color_eyre::Result<()> {
   let app = routes::router(state, &config.server);
 
   let bind_addr = format!("{host}:{port}");
-  tracing::info!("Starting CI Server on {}", bind_addr);
+  tracing::info!(
+    mode = if config.server.ui_enabled {
+      "full"
+    } else {
+      "headless"
+    },
+    "Starting CI Server on {}",
+    bind_addr
+  );
 
   let listener = TcpListener::bind(&bind_addr).await?;
   let app = app.into_make_service_with_connect_info::<SocketAddr>();

@@ -318,6 +318,24 @@ pub(super) struct ProjectSummaryView {
   pub(super) last_eval_status: String,
   pub(super) last_eval_class:  String,
   pub(super) last_eval_time:   String,
+  pub(super) failing_jobs:     i64,
+  pub(super) queued_jobs:      i64,
+  pub(super) systems:          String,
+  pub(super) updated_at:       String,
+}
+
+pub(super) struct QueueSystemView {
+  pub(super) system: String,
+  pub(super) count:  i64,
+}
+
+pub(super) struct WorkerSummaryView {
+  pub(super) name:         String,
+  pub(super) system:       String,
+  pub(super) status_text:  String,
+  pub(super) status_class: String,
+  pub(super) current_jobs: i32,
+  pub(super) max_jobs:     i32,
 }
 
 pub(super) struct ApiKeyView {

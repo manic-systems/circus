@@ -15,6 +15,7 @@ pub mod metrics;
 pub mod news;
 pub mod oauth;
 pub mod openapi;
+pub mod operator;
 pub mod projects;
 pub mod search;
 pub(crate) mod serde_util;
@@ -144,6 +145,47 @@ async fn serve_style_css() -> Response {
   .into_response()
 }
 
+pub fn api_router(state: AppState) -> Router<AppState> {
+  Router::new()
+    .merge(projects::router())
+    .merge(jobsets::router())
+    .merge(evaluations::router())
+    .merge(builds::router())
+    .merge(logs::router())
+    .merge(auth::router())
+    .merge(users::router())
+    .merge(search::router())
+    .merge(channels::router())
+    .merge(news::router())
+    .merge(admin::router())
+    .merge(operator::router())
+    .route_layer(middleware::from_fn_with_state(state, require_api_key))
+}
+
+pub fn public_router() -> Router<AppState> {
+  Router::new()
+    .merge(health::router())
+    .merge(badges::router())
+    .merge(cache::router())
+    .merge(channel_manifests::router())
+    .merge(openapi::router())
+    .merge(metrics::router())
+    // Webhooks use their own HMAC auth, outside the API key gate.
+    .merge(webhooks::router())
+    // OAuth and LDAP routes use their own auth mechanisms.
+    .merge(oauth::router())
+    .merge(ldap::router())
+}
+
+pub fn ui_router(state: AppState) -> Router<AppState> {
+  Router::new()
+    .route("/static/style.css", get(serve_style_css))
+    .merge(
+      dashboard::router()
+        .route_layer(middleware::from_fn_with_state(state, extract_session)),
+    )
+}
+
 pub fn router(state: AppState, config: &ServerConfig) -> Router {
   let cors_layer = if config.cors_permissive {
     tracing::warn!(
@@ -166,45 +208,14 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
   };
 
   let mut app = Router::new()
-        // Static assets
-        .route("/static/style.css", get(serve_style_css))
-        // Dashboard routes (SSR templates) with session extraction
-        .merge(dashboard::router().route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            extract_session,
-        )))
-        // API routes
-        .nest(
-            "/api/v1",
-            Router::new()
-                .merge(projects::router())
-                .merge(jobsets::router())
-                .merge(evaluations::router())
-                .merge(builds::router())
-                .merge(logs::router())
-                .merge(auth::router())
-                .merge(users::router())
-                .merge(search::router())
-                .merge(channels::router())
-                .merge(news::router())
-                .merge(admin::router())
-                .route_layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    require_api_key,
-                )),
-        )
-        .merge(health::router())
-        .merge(badges::router())
-        .merge(cache::router())
-        .merge(channel_manifests::router())
-        .merge(openapi::router())
-        .merge(metrics::router())
-        // Webhooks use their own HMAC auth, outside the API key gate
-        .merge(webhooks::router())
-        // OAuth routes use their own auth mechanism
-        .merge(oauth::router())
-        // LDAP login (no API key, uses bind to authenticate)
-        .merge(ldap::router())
+    .nest("/api/v1", api_router(state.clone()))
+    .merge(public_router());
+
+  if config.ui_enabled {
+    app = app.merge(ui_router(state.clone()));
+  }
+
+  app = app
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer)
         .layer(RequestBodyLimitLayer::new(config.max_body_size))

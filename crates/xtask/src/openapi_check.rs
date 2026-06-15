@@ -26,6 +26,7 @@ pub const API_MODULES: &[&str] = &[
   "jobsets",
   "logs",
   "news",
+  "operator",
   "projects",
   "search",
   "users",

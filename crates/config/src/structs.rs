@@ -103,6 +103,8 @@ pub struct ServerConfig {
   /// Allow admins to read and replace the config file through the
   /// dashboard/API.
   pub config_editor_enabled:              bool,
+  /// Mount the bundled server-rendered dashboard and static UI assets.
+  pub ui_enabled:                         bool,
   /// Require a valid API key/session for read-only `/api/v1` requests.
   #[serde(default = "default_true")]
   pub require_api_key_for_reads:          bool,
@@ -974,6 +976,7 @@ impl Default for ServerConfig {
       ldap:                               None,
       page_access:                        PageAccessConfig::default(),
       config_editor_enabled:              false,
+      ui_enabled:                         true,
       require_api_key_for_reads:          true,
       webhook_secret_encryption_key:      None,
       webhook_secret_encryption_key_file: None,

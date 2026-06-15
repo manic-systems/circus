@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 use super::{
   shared::{
+    BuildView,
     DashboardContext,
     DashboardPage,
     EvalSummaryView,
@@ -31,8 +32,11 @@ use super::{
     Pagination,
     ProjectSummaryView,
     QueueBuildView,
+    QueueSystemView,
     RenderExt,
     StarredJobView,
+    WorkerSummaryView,
+    auth_name,
     build_view,
     build_view_with_context,
     decode_build_log,
@@ -40,6 +44,7 @@ use super::{
     eval_badge,
     eval_view,
     eval_view_with_context,
+    parse_build_error,
     status_badge,
   },
   templates::{
@@ -60,7 +65,7 @@ use super::{
     StarredTemplate,
   },
 };
-use crate::state::AppState;
+use crate::{operator, state::AppState};
 
 #[derive(serde::Deserialize)]
 pub(super) struct PageParams {
@@ -113,6 +118,68 @@ pub(super) fn format_elapsed(secs: i64) -> String {
   }
 }
 
+fn operator_build_view(b: &operator::OperatorBuild) -> BuildView {
+  BuildView {
+    id:            b.id,
+    job_name:      b.job_name.clone(),
+    project_id:    b.project_id,
+    project_name:  b.project_name.clone(),
+    jobset_id:     b.jobset_id,
+    jobset_name:   b.jobset_name.clone(),
+    status_text:   b.status_text.clone(),
+    status_class:  b.status_class.clone(),
+    system:        b.system.clone(),
+    created_at:    b.created_at.clone(),
+    started_at:    b.started_at.clone(),
+    completed_at:  b.completed_at.clone(),
+    duration:      b.duration.clone(),
+    started_epoch: b.started_epoch,
+    priority:      b.priority,
+    is_aggregate:  b.is_aggregate,
+    signed:        b.signed,
+    drv_path:      b.drv_path.clone(),
+    output_path:   b.output_path.clone(),
+    error_message: b.error_message.clone(),
+    error_lines:   parse_build_error(&b.error_message),
+    has_log:       b.has_log,
+  }
+}
+
+fn operator_project_view(p: &operator::OperatorProject) -> ProjectSummaryView {
+  ProjectSummaryView {
+    id:               p.id,
+    name:             p.name.clone(),
+    jobset_count:     p.jobset_count,
+    last_eval_status: p.last_eval_status.clone(),
+    last_eval_class:  p.last_eval_class.clone(),
+    last_eval_time:   p.last_eval_time.clone(),
+    failing_jobs:     p.failing_jobs,
+    queued_jobs:      p.queued_jobs,
+    systems:          p.systems.clone(),
+    updated_at:       p.updated_at.clone(),
+  }
+}
+
+fn operator_queue_system_view(
+  item: &operator::OperatorQueueSystem,
+) -> QueueSystemView {
+  QueueSystemView {
+    system: item.system.clone(),
+    count:  item.count,
+  }
+}
+
+fn operator_worker_view(w: &operator::OperatorWorker) -> WorkerSummaryView {
+  WorkerSummaryView {
+    name:         w.name.clone(),
+    system:       w.system.clone(),
+    status_text:  w.status_text.clone(),
+    status_class: w.status_class.clone(),
+    current_jobs: w.current_jobs,
+    max_jobs:     w.max_jobs,
+  }
+}
+
 /// Render the dashboard landing page at `/`: aggregate build stats,
 /// recent builds and evaluations, project summaries with last-eval
 /// status, and announcements.
@@ -122,12 +189,7 @@ pub(super) async fn home(
 ) -> Result<Html<String>, Response> {
   enforce_page_access(&state.config.server, &ctx, DashboardPage::Home)?;
   let include_hidden = ctx.is_admin;
-  let build_stats = circus_common::repo::builds::get_stats(&state.pool)
-    .await
-    .unwrap_or_default();
-  let builds = circus_common::repo::builds::list_recent(&state.pool, 10)
-    .await
-    .unwrap_or_default();
+  let overview = operator::overview(&state, include_hidden).await;
   let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
     &state.pool,
     None,
@@ -142,67 +204,37 @@ pub(super) async fn home(
     .await
     .unwrap_or_default();
 
-  // Fetch project summaries
-  let all_projects = circus_common::repo::projects::list(&state.pool, 10, 0)
-    .await
-    .unwrap_or_default();
-  let mut project_summaries = Vec::new();
-  for p in &all_projects {
-    let jobset_count =
-      circus_common::repo::jobsets::count_for_project(&state.pool, p.id)
-        .await
-        .unwrap_or(0);
-    let jobsets =
-      circus_common::repo::jobsets::list_for_project(&state.pool, p.id, 100, 0)
-        .await
-        .unwrap_or_default();
-    let mut last_eval: Option<Evaluation> = None;
-    for js in &jobsets {
-      let js_evals =
-        circus_common::repo::evaluations::list_filtered_with_visibility(
-          &state.pool,
-          Some(js.id),
-          None,
-          1,
-          0,
-          include_hidden,
-        )
-        .await
-        .unwrap_or_default();
-      if let Some(e) = js_evals.into_iter().next()
-        && last_eval
-          .as_ref()
-          .is_none_or(|le| e.evaluation_time > le.evaluation_time)
-      {
-        last_eval = Some(e);
-      }
-    }
-    let (status, class, time) = last_eval.as_ref().map_or_else(
-      || ("-".into(), "pending".into(), "-".into()),
-      |e| {
-        let (t, c) = eval_badge(&e.status);
-        (t, c, e.evaluation_time.format("%Y-%m-%d %H:%M").to_string())
-      },
-    );
-    project_summaries.push(ProjectSummaryView {
-      id: p.id,
-      name: p.name.clone(),
-      jobset_count,
-      last_eval_status: status,
-      last_eval_class: class,
-      last_eval_time: time,
-    });
-  }
-
   let tmpl = HomeTemplate {
-    total_builds: build_stats.total_builds.unwrap_or(0),
-    completed_builds: build_stats.completed_builds.unwrap_or(0),
-    failed_builds: build_stats.failed_builds.unwrap_or(0),
-    running_builds: build_stats.running_builds.unwrap_or(0),
-    pending_builds: build_stats.pending_builds.unwrap_or(0),
-    recent_builds: builds.iter().map(build_view).collect(),
+    total_builds: overview.total_builds,
+    completed_builds: overview.completed_builds,
+    failed_builds: overview.failed_builds,
+    running_builds: overview.running_builds,
+    pending_builds: overview.pending_builds,
+    recent_builds: overview
+      .recent_builds
+      .iter()
+      .map(operator_build_view)
+      .collect(),
+    failed_builds_list: overview
+      .failed_builds_list
+      .iter()
+      .map(operator_build_view)
+      .collect(),
     recent_evals: evals.iter().map(eval_view).collect(),
-    projects: project_summaries,
+    projects: overview
+      .projects
+      .iter()
+      .map(operator_project_view)
+      .collect(),
+    queue_by_system: overview
+      .queue_by_system
+      .iter()
+      .map(operator_queue_system_view)
+      .collect(),
+    workers: overview.workers.iter().map(operator_worker_view).collect(),
+    worker_online: overview.worker_online,
+    worker_total: overview.worker_total,
+    refreshed_at: overview.refreshed_at,
     announcements,
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name.clone(),

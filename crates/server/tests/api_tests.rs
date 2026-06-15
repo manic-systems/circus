@@ -164,6 +164,85 @@ async fn test_health_endpoint() {
 }
 
 #[tokio::test]
+async fn test_headless_mode_keeps_api_and_health_but_disables_ui() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let mut config = circus_common::config::Config::default();
+  config.server.ui_enabled = false;
+  let app = build_app_with_config(pool, config);
+
+  let health = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(health.status(), StatusCode::OK);
+
+  let overview = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/operator/overview")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(overview.status(), StatusCode::OK);
+
+  let root = app
+    .clone()
+    .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(root.status(), StatusCode::NOT_FOUND);
+
+  let css = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/style.css")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(css.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_full_mode_serves_ui_and_static_assets() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let app = build_app(pool);
+  let root = app
+    .clone()
+    .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(root.status(), StatusCode::OK);
+
+  let css = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/style.css")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(css.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_project_endpoints() {
   let Some(pool) = get_pool().await else {
     return;

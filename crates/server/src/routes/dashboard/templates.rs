@@ -28,25 +28,33 @@ use super::shared::{
   JobStatusRow,
   ProjectSummaryView,
   QueueBuildView,
+  QueueSystemView,
   StarredJobView,
   UserView,
+  WorkerSummaryView,
 };
 use crate::permissions::UiPermissions;
 
 #[derive(Template)]
 #[template(path = "home.html")]
 pub(super) struct HomeTemplate {
-  pub(super) total_builds:     i64,
-  pub(super) completed_builds: i64,
-  pub(super) failed_builds:    i64,
-  pub(super) running_builds:   i64,
-  pub(super) pending_builds:   i64,
-  pub(super) recent_builds:    Vec<BuildView>,
-  pub(super) recent_evals:     Vec<EvalView>,
-  pub(super) projects:         Vec<ProjectSummaryView>,
-  pub(super) announcements:    Vec<NewsItem>,
-  pub(super) is_admin:         bool,
-  pub(super) auth_name:        String,
+  pub(super) total_builds:       i64,
+  pub(super) completed_builds:   i64,
+  pub(super) failed_builds:      i64,
+  pub(super) running_builds:     i64,
+  pub(super) pending_builds:     i64,
+  pub(super) recent_builds:      Vec<BuildView>,
+  pub(super) failed_builds_list: Vec<BuildView>,
+  pub(super) recent_evals:       Vec<EvalView>,
+  pub(super) projects:           Vec<ProjectSummaryView>,
+  pub(super) queue_by_system:    Vec<QueueSystemView>,
+  pub(super) workers:            Vec<WorkerSummaryView>,
+  pub(super) worker_online:      i64,
+  pub(super) worker_total:       i64,
+  pub(super) refreshed_at:       String,
+  pub(super) announcements:      Vec<NewsItem>,
+  pub(super) is_admin:           bool,
+  pub(super) auth_name:          String,
 }
 
 #[derive(Template)]
@@ -270,6 +278,139 @@ pub(super) struct PinnedOutputView {
   pub(super) path:               String,
   pub(super) gc_root_path:       String,
   pub(super) product_created_at: String,
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn build(
+    id: Uuid,
+    job_name: &str,
+    status_text: &str,
+    status_class: &str,
+  ) -> BuildView {
+    BuildView {
+      id,
+      job_name: job_name.into(),
+      project_id: Some(Uuid::nil()),
+      project_name: "nh".into(),
+      jobset_id: Some(Uuid::nil()),
+      jobset_name: "default".into(),
+      status_text: status_text.into(),
+      status_class: status_class.into(),
+      system: "aarch64-linux".into(),
+      created_at: "2026-06-15 09:27".into(),
+      started_at: String::new(),
+      completed_at: String::new(),
+      duration: "1m 12s".into(),
+      started_epoch: None,
+      priority: 0,
+      is_aggregate: false,
+      signed: false,
+      drv_path: "/nix/store/very-long-derivation-path-that-should-truncate.drv"
+        .into(),
+      output_path: "/nix/store/very-long-output-path-that-should-truncate"
+        .into(),
+      error_message: String::new(),
+      error_lines: Vec::new(),
+      has_log: true,
+    }
+  }
+
+  fn dashboard(
+    recent_builds: Vec<BuildView>,
+    failed_builds_list: Vec<BuildView>,
+  ) -> HomeTemplate {
+    HomeTemplate {
+      total_builds: 1859,
+      completed_builds: 1480,
+      failed_builds: 272,
+      running_builds: 1,
+      pending_builds: 70,
+      recent_builds,
+      failed_builds_list,
+      recent_evals: Vec::new(),
+      projects: vec![ProjectSummaryView {
+        id:               Uuid::nil(),
+        name:
+          "very-long-project-name-that-needs-predictable-truncation".into(),
+        jobset_count:     2,
+        last_eval_status: "Completed".into(),
+        last_eval_class:  "completed".into(),
+        last_eval_time:   "2026-06-15 09:20".into(),
+        failing_jobs:     3,
+        queued_jobs:      5,
+        systems:          "x86_64-linux, aarch64-linux".into(),
+        updated_at:       "2026-06-15 09:21".into(),
+      }],
+      queue_by_system: vec![QueueSystemView {
+        system: "aarch64-linux".into(),
+        count:  70,
+      }],
+      workers: vec![WorkerSummaryView {
+        name:         "builder-01".into(),
+        system:       "aarch64-linux".into(),
+        status_text:  "busy".into(),
+        status_class: "running".into(),
+        current_jobs: 1,
+        max_jobs:     4,
+      }],
+      worker_online: 1,
+      worker_total: 1,
+      refreshed_at: "09:27 UTC".into(),
+      announcements: Vec::new(),
+      is_admin: true,
+      auth_name: "operator".into(),
+    }
+  }
+
+  #[test]
+  fn dashboard_renders_operator_console_with_failures_first() {
+    let html = dashboard(
+      vec![build(Uuid::nil(), "checks.default", "Failed", "failed")],
+      vec![build(Uuid::nil(), "checks.default", "Failed", "failed")],
+    )
+    .render()
+    .expect("render dashboard");
+    assert!(html.contains("Build farm"));
+    assert!(html.contains("Failures"));
+    assert!(html.contains("/builds?status=failed"));
+    assert!(html.contains("badge-failed"));
+    assert!(html.contains("data-table dense-table"));
+    assert!(!html.contains("stat-card"));
+    assert!(!html.contains("Dashboard"));
+  }
+
+  #[test]
+  fn dashboard_renders_empty_states_without_database() {
+    let html = dashboard(Vec::new(), Vec::new())
+      .render()
+      .expect("render empty dashboard");
+    assert!(html.contains("No builds yet"));
+    assert!(html.contains("No failed builds"));
+    assert!(html.contains("filter project, job, system"));
+  }
+
+  #[test]
+  fn dashboard_long_names_have_titles_for_truncation() {
+    let html = dashboard(
+      vec![build(
+        Uuid::nil(),
+        "very.long.job.name.with.many.components.default",
+        "Running",
+        "running",
+      )],
+      Vec::new(),
+    )
+    .render()
+    .expect("render long names");
+    assert!(html.contains("class=\"truncate\""));
+    assert!(
+      html
+        .contains("title=\"very.long.job.name.with.many.components.default\"")
+    );
+  }
 }
 
 #[derive(Template)]

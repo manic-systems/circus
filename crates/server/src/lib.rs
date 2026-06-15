@@ -3,6 +3,7 @@
 pub mod audit;
 pub mod auth_middleware;
 pub mod error;
+pub mod operator;
 pub mod permissions;
 pub mod routes;
 pub mod session_cookie;

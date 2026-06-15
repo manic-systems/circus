@@ -438,6 +438,12 @@ pub fn document() -> Value {
       },
       "/builds/stats":  { "get": { "summary": "Build statistics",      "responses": { "200": { "description": "Stats" } } } },
       "/builds/recent": { "get": { "summary": "Most recent builds",    "responses": { "200": { "description": "Array" } } } },
+      "/operator/overview": { "get": { "summary": "Operator dashboard overview", "responses": { "200": { "description": "Operator overview DTO" } } } },
+      "/operator/failures": { "get": { "summary": "Recent failed builds with project context", "responses": { "200": { "description": "Array of operator builds" } } } },
+      "/operator/recent-builds": { "get": { "summary": "Recent builds with project context", "responses": { "200": { "description": "Array of operator builds" } } } },
+      "/operator/projects": { "get": { "summary": "Project summaries for operator dashboards", "responses": { "200": { "description": "Array of operator projects" } } } },
+      "/operator/queue": { "get": { "summary": "Queued builds grouped by system", "responses": { "200": { "description": "Array of system queue counts" } } } },
+      "/operator/workers": { "get": { "summary": "Worker status summaries", "responses": { "200": { "description": "Array of worker summaries" } } } },
       "/builds/{id}": {
         "get": { "summary": "Get a build",
           "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
