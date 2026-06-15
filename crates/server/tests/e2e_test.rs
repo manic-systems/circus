@@ -290,21 +290,20 @@ async fn test_e2e_project_eval_build_flow() {
 
   // 16. Test the HTTP API layer
   let config = circus_config::Config::default();
-  let server_config = config.server.clone();
   let state = circus_server::state::AppState {
-    pool: pool.clone(),
-    nix_store: circus_server::state::NixStore::new(
+    pool:          pool.clone(),
+    nix_store:     circus_server::state::NixStore::new(
       config.nix.store_dir.clone(),
     )
     .unwrap(),
-    config,
-    sessions: std::sync::Arc::new(dashmap::DashMap::new()),
+    config:        config.clone(),
+    sessions:      std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
-    http_client: reqwest::Client::new(),
-    csrf_secret: std::sync::Arc::new([0u8; 32]),
-    email_regex: None,
+    http_client:   reqwest::Client::new(),
+    csrf_secret:   std::sync::Arc::new([0u8; 32]),
+    email_regex:   None,
   };
-  let app = circus_server::routes::router(state, &server_config);
+  let app = circus_server::routes::router(state, &config);
 
   // GET /health
   let resp = app

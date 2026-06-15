@@ -205,6 +205,9 @@ configuration or the Nix store.
 | `server`             | `ldap.tls_ca_cert`                                     | none                                                | Custom CA cert for LDAP TLS                      |
 | `server`             | `email_validation_regex`                               | none                                                | Custom regex for email validation                |
 | `server.page_access` | per page                                               | mixed                                               | Dashboard page visibility policy                 |
+| `ui`                 | `enabled`                                              | `true`                                              | Mount bundled dashboard and static UI routes     |
+| `ui`                 | `dashboard`                                            | `true`                                              | Mount server-rendered dashboard/login pages      |
+| `ui`                 | `assets`                                               | `true`                                              | Serve bundled static UI assets                   |
 | `evaluator`          | `poll_interval`                                        | `60`                                                | Seconds between git poll cycles                  |
 | `evaluator`          | `git_timeout`                                          | `600`                                               | Git operation timeout (seconds)                  |
 | `evaluator`          | `nix_timeout`                                          | `1800`                                              | Nix evaluation timeout (seconds)                 |
@@ -588,8 +591,7 @@ The flake exposes one package per binary:
 $ nix build .#circus-server
 $ nix build .#circus-evaluator
 $ nix build .#circus-queue-runner
-$ nix build .#circus-admin
-$ nix build .#circus-migrate-cli
+$ nix build .#circus-cli
 $ nix build .#circus-agent
 ```
 
@@ -599,8 +601,7 @@ For local source builds without Nix packaging, use Cargo package names:
 $ cargo build -p circus-server
 $ cargo build -p circus-evaluator
 $ cargo build -p circus-queue-runner
-$ cargo build -p circus-admin
-$ cargo build -p circus-migrate-cli
+$ cargo build -p circus-cli
 $ cargo build -p circus-agent
 ```
 

@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
   pub database:      DatabaseConfig,
   pub server:        ServerConfig,
+  #[serde(default)]
+  pub ui:            UiConfig,
   pub evaluator:     EvaluatorConfig,
   pub queue_runner:  QueueRunnerConfig,
   pub gc:            GcConfig,
@@ -103,8 +105,6 @@ pub struct ServerConfig {
   /// Allow admins to read and replace the config file through the
   /// dashboard/API.
   pub config_editor_enabled:              bool,
-  /// Mount the bundled server-rendered dashboard and static UI assets.
-  pub ui_enabled:                         bool,
   /// Require a valid API key/session for read-only `/api/v1` requests.
   #[serde(default = "default_true")]
   pub require_api_key_for_reads:          bool,
@@ -112,6 +112,30 @@ pub struct ServerConfig {
   pub webhook_secret_encryption_key:      Option<String>,
   /// Path to a file containing the webhook secret encryption key.
   pub webhook_secret_encryption_key_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+  /// Mount any bundled UI route. Disable this for API-only/headless
+  /// deployments.
+  pub enabled:   bool,
+  /// Mount server-rendered dashboard, login, and logout pages.
+  pub dashboard: bool,
+  /// Serve bundled static UI assets.
+  pub assets:    bool,
+}
+
+impl UiConfig {
+  #[must_use]
+  pub const fn dashboard_enabled(&self) -> bool {
+    self.enabled && self.dashboard
+  }
+
+  #[must_use]
+  pub const fn assets_enabled(&self) -> bool {
+    self.enabled && self.assets
+  }
 }
 
 #[derive(
@@ -976,10 +1000,19 @@ impl Default for ServerConfig {
       ldap:                               None,
       page_access:                        PageAccessConfig::default(),
       config_editor_enabled:              false,
-      ui_enabled:                         true,
       require_api_key_for_reads:          true,
       webhook_secret_encryption_key:      None,
       webhook_secret_encryption_key_file: None,
+    }
+  }
+}
+
+impl Default for UiConfig {
+  fn default() -> Self {
+    Self {
+      enabled:   true,
+      dashboard: true,
+      assets:    true,
     }
   }
 }

@@ -38,7 +38,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
-use circus_config::ServerConfig;
+use circus_config::Config;
 use dashmap::DashMap;
 use tower_http::{
   cors::{AllowOrigin, Any, CorsLayer},
@@ -177,17 +177,26 @@ pub fn public_router() -> Router<AppState> {
     .merge(ldap::router())
 }
 
-pub fn ui_router(state: AppState) -> Router<AppState> {
-  Router::new()
-    .route("/static/style.css", get(serve_style_css))
-    .merge(
+pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
+  let mut router = Router::new();
+
+  if config.ui.assets_enabled() {
+    router = router.route("/static/style.css", get(serve_style_css));
+  }
+
+  if config.ui.dashboard_enabled() {
+    router = router.merge(
       dashboard::router()
         .route_layer(middleware::from_fn_with_state(state, extract_session)),
-    )
+    );
+  }
+
+  router
 }
 
-pub fn router(state: AppState, config: &ServerConfig) -> Router {
-  let cors_layer = if config.cors_permissive {
+pub fn router(state: AppState, config: &Config) -> Router {
+  let server_config = &config.server;
+  let cors_layer = if server_config.cors_permissive {
     tracing::warn!(
       "server.cors_permissive is enabled; CORS credentials are disabled"
     );
@@ -196,10 +205,10 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
       .allow_methods(Any)
       .allow_headers(Any)
       .allow_credentials(false)
-  } else if config.allowed_origins.is_empty() {
+  } else if server_config.allowed_origins.is_empty() {
     CorsLayer::new()
   } else {
-    let origins: Vec<HeaderValue> = config
+    let origins: Vec<HeaderValue> = server_config
       .allowed_origins
       .iter()
       .filter_map(|o| o.parse().ok())
@@ -211,14 +220,14 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
     .nest("/api/v1", api_router(state.clone()))
     .merge(public_router());
 
-  if config.ui_enabled {
-    app = app.merge(ui_router(state.clone()));
+  if config.ui.enabled {
+    app = app.merge(ui_router(state.clone(), config));
   }
 
   app = app
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer)
-        .layer(RequestBodyLimitLayer::new(config.max_body_size))
+        .layer(RequestBodyLimitLayer::new(server_config.max_body_size))
         // Security headers
         .layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -235,7 +244,7 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
 
   // Add rate limiting if configured
   if let (Some(rps), Some(burst)) =
-    (config.rate_limit_rps, config.rate_limit_burst)
+    (server_config.rate_limit_rps, server_config.rate_limit_burst)
   {
     let rl_state = Arc::new(RateLimitState {
       buckets:      DashMap::new(),

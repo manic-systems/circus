@@ -71,9 +71,9 @@ async fn main() -> color_eyre::Result<()> {
   let host = cli.host.unwrap_or_else(|| config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);
   if cli.headless {
-    config.server.ui_enabled = false;
+    config.ui.enabled = false;
   } else if cli.ui {
-    config.server.ui_enabled = true;
+    config.ui.enabled = true;
   }
 
   circus_common::validate::warn_insecure_schemes(
@@ -139,11 +139,11 @@ async fn main() -> color_eyre::Result<()> {
   // Start background session cleanup to prevent memory leaks
   state.spawn_session_cleanup();
 
-  let app = routes::router(state, &config.server);
+  let app = routes::router(state, &config);
 
   let bind_addr = format!("{host}:{port}");
   tracing::info!(
-    mode = if config.server.ui_enabled {
+    mode = if config.ui.enabled {
       "full"
     } else {
       "headless"

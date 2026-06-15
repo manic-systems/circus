@@ -33,21 +33,20 @@ async fn get_pool() -> Option<sqlx::PgPool> {
 
 fn build_app(pool: sqlx::PgPool) -> axum::Router {
   let config = circus_config::Config::default();
-  let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
     nix_store: circus_server::state::NixStore::new(
       config.nix.store_dir.clone(),
     )
     .unwrap(),
-    config,
+    config: config.clone(),
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
   };
-  circus_server::routes::router(state, &server_config)
+  circus_server::routes::router(state, &config)
 }
 
 #[tokio::test]
@@ -57,14 +56,13 @@ async fn test_router_no_duplicate_routes() {
   };
 
   let config = circus_config::Config::default();
-  let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
     nix_store: circus_server::state::NixStore::new(
       config.nix.store_dir.clone(),
     )
     .unwrap(),
-    config,
+    config: config.clone(),
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
     http_client: reqwest::Client::new(),
@@ -72,28 +70,27 @@ async fn test_router_no_duplicate_routes() {
     email_regex: None,
   };
 
-  let _app = circus_server::routes::router(state, &server_config);
+  let _app = circus_server::routes::router(state, &config);
 }
 
 fn build_app_with_config(
   pool: sqlx::PgPool,
   config: circus_config::Config,
 ) -> axum::Router {
-  let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
     nix_store: circus_server::state::NixStore::new(
       config.nix.store_dir.clone(),
     )
     .unwrap(),
-    config,
+    config: config.clone(),
     sessions: std::sync::Arc::new(dashmap::DashMap::new()),
     narinfo_cache: circus_server::state::AppState::new_narinfo_cache(),
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
   };
-  circus_server::routes::router(state, &server_config)
+  circus_server::routes::router(state, &config)
 }
 
 fn build_app_public_reads(pool: sqlx::PgPool) -> axum::Router {
@@ -169,8 +166,8 @@ async fn test_headless_mode_keeps_api_and_health_but_disables_ui() {
     return;
   };
 
-  let mut config = circus_common::config::Config::default();
-  config.server.ui_enabled = false;
+  let mut config = circus_config::Config::default();
+  config.ui.enabled = false;
   let app = build_app_with_config(pool, config);
 
   let health = app
@@ -240,6 +237,64 @@ async fn test_full_mode_serves_ui_and_static_assets() {
     .await
     .unwrap();
   assert_eq!(css.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_ui_dashboard_can_be_disabled_independently() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let mut config = circus_config::Config::default();
+  config.ui.dashboard = false;
+  let app = build_app_with_config(pool, config);
+
+  let root = app
+    .clone()
+    .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(root.status(), StatusCode::NOT_FOUND);
+
+  let css = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/style.css")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(css.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_ui_assets_can_be_disabled_independently() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let mut config = circus_config::Config::default();
+  config.ui.assets = false;
+  let app = build_app_with_config(pool, config);
+
+  let root = app
+    .clone()
+    .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(root.status(), StatusCode::OK);
+
+  let css = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/style.css")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(css.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
