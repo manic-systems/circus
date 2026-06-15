@@ -12,6 +12,7 @@ async fn test_database_connection() -> color_eyre::Result<()> {
     max_connections: 5,
     min_connections: 1,
     connect_timeout: 5, // Short timeout for test
+    url_file:        None,
     idle_timeout:    600,
     max_lifetime:    1800,
   };
@@ -94,6 +95,7 @@ async fn test_connection_info() -> color_eyre::Result<()> {
     max_connections: 5,
     min_connections: 1,
     connect_timeout: 5, // Short timeout for test
+    url_file:        None,
     idle_timeout:    600,
     max_lifetime:    1800,
   })
@@ -130,6 +132,7 @@ async fn test_pool_stats() -> color_eyre::Result<()> {
     max_connections: 5,
     min_connections: 1,
     connect_timeout: 5, // Short timeout for test
+    url_file:        None,
     idle_timeout:    600,
     max_lifetime:    1800,
   })
@@ -163,6 +166,7 @@ async fn test_database_config_validation() -> color_eyre::Result<()> {
     max_connections: 10,
     min_connections: 2,
     connect_timeout: 30,
+    url_file:        None,
     idle_timeout:    600,
     max_lifetime:    1800,
   };
@@ -183,6 +187,7 @@ async fn test_database_config_validation() -> color_eyre::Result<()> {
     max_connections: 0,
     min_connections: 1,
     connect_timeout: 30,
+    url_file:        None,
     idle_timeout:    600,
     max_lifetime:    1800,
   };
@@ -194,6 +199,7 @@ async fn test_database_config_validation() -> color_eyre::Result<()> {
     max_connections: 5,
     min_connections: 10,
     connect_timeout: 30,
+    url_file:        None,
     idle_timeout:    600,
     max_lifetime:    1800,
   };

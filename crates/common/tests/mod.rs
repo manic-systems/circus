@@ -19,6 +19,7 @@ async fn test_database_connection_full() -> color_eyre::Result<()> {
   let config = DatabaseConfig {
     url:             "postgresql://postgres:password@localhost/circus_test"
       .to_string(),
+    url_file:        None,
     max_connections: 5,
     min_connections: 1,
     connect_timeout: 5, // Short timeout for test
