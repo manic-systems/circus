@@ -28,20 +28,24 @@ async fn get_build_log(
   )
   .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
 
-  match log_storage.read_log(&id) {
-    Ok(Some(content)) => {
+  let path = log_storage.log_path(&id);
+  let Some(path) =
+    crate::routes::canonical_log_file(&state.config.logs.log_dir, &path).await
+  else {
+    return Ok(
+      (StatusCode::NOT_FOUND, "No log available for this build")
+        .into_response(),
+    );
+  };
+
+  match tokio::fs::read_to_string(path).await {
+    Ok(content) => {
       Ok(
         (
           StatusCode::OK,
           [("content-type", "text/plain; charset=utf-8")],
           content,
         )
-          .into_response(),
-      )
-    },
-    Ok(None) => {
-      Ok(
-        (StatusCode::NOT_FOUND, "No log available for this build")
           .into_response(),
       )
     },
@@ -67,6 +71,7 @@ async fn stream_build_log(
 
   let active_path = log_storage.log_path_for_active(&id);
   let final_path = log_storage.log_path(&id);
+  let log_dir = state.config.logs.log_dir.clone();
   let pool = state.pool.clone();
   let build_id = build.id;
 
@@ -93,6 +98,11 @@ async fn stream_build_log(
               return;
           }
           if active_path.exists() { active_path.clone() } else { final_path.clone() }
+      };
+
+      let Some(path) = crate::routes::canonical_log_file(&log_dir, &path).await else {
+        yield Ok(Event::default().data("Log file is unavailable"));
+        return;
       };
 
       let Ok(file) = tokio::fs::File::open(&path).await else {

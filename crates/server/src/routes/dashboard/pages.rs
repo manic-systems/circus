@@ -939,6 +939,16 @@ pub(super) async fn build_log(
       (StatusCode::NOT_FOUND, "No log for this build").into_response(),
     );
   };
+  let Some(path) = crate::routes::canonical_log_file(
+    &state.config.logs.log_dir,
+    std::path::Path::new(path),
+  )
+  .await
+  else {
+    return Ok(
+      (StatusCode::NOT_FOUND, "Log file is unavailable").into_response(),
+    );
+  };
 
   let Ok(raw) = tokio::fs::read_to_string(path).await else {
     return Ok(
