@@ -290,10 +290,9 @@ async fn evaluate_flake(
     cmd.arg("--meta");
     // `inputDrvs` is what create_builds_from_eval wires into build_dependencies
     cmd.arg("--show-input-drvs");
-    // Evaluation must never mutate the consumer's flake.lock. Without this,
-    // nix-eval-jobs can race against the checked-out working tree and write a
-    // refreshed lock that the next eval then disagrees with.
-    cmd.arg("--no-write-lock-file");
+    // nix-eval-jobs does not support --no-write-lock-file; it does not
+    // write lock files during evaluation so the flag is unnecessary here.
+    // The nix-native commands (nix eval, nix flake show) DO pass it.
     cmd.kill_on_drop(true);
 
     if config.restrict_eval {
@@ -304,6 +303,13 @@ async fn evaluate_flake(
     }
     for input in inputs {
       if input.input_type == "git" {
+        circus_common::validate::validate_jobset_input(
+          &input.name,
+          &input.input_type,
+          &input.value,
+          input.revision.as_deref(),
+        )
+        .map_err(|e| CiError::NixEval(format!("Invalid jobset input: {e}")))?;
         cmd.args(["--override-input", &input.name, &input.value]);
       }
     }
@@ -334,13 +340,15 @@ async fn evaluate_flake(
 
         Ok(result)
       },
-      _ => {
-        tracing::info!("nix-eval-jobs unavailable, falling back to nix eval");
-        let jobs = evaluate_with_nix_eval(repo_path, &effective_expr).await?;
-        Ok(EvalResult {
-          jobs,
-          error_count: 0,
-        })
+      Ok(out) => {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        tracing::warn!(stderr = %stderr, "nix-eval-jobs failed");
+        Err(CiError::NixEval("Nix evaluation failed".to_string()))
+      },
+      Err(e) => {
+        Err(CiError::NixEval(format!(
+          "Failed to run nix-eval-jobs: {e}"
+        )))
       },
     }
   })
@@ -354,13 +362,14 @@ async fn evaluate_flake(
 async fn evaluate_all_nixos_configs(
   repo_path: &Path,
   _timeout: Duration,
-  _config: &EvaluatorConfig,
+  config: &EvaluatorConfig,
   _inputs: &[JobsetInput],
 ) -> Result<EvalResult> {
   let flake_ref = format!("{}#nixosConfigurations", repo_path.display());
 
   let expr = "builtins.mapAttrs (_: v: v.config.system.build.toplevel)";
-  let output = tokio::process::Command::new("nix")
+  let mut cmd = tokio::process::Command::new("nix");
+  cmd
     .args([
       "eval",
       "--json",
@@ -369,12 +378,16 @@ async fn evaluate_all_nixos_configs(
       expr,
       "--no-write-lock-file",
     ])
-    .kill_on_drop(true)
-    .output()
-    .await
-    .map_err(|e| {
-      CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
-    })?;
+    .kill_on_drop(true);
+  if config.restrict_eval {
+    cmd.args(["--option", "restrict-eval", "true"]);
+  }
+  if !config.allow_ifd {
+    cmd.args(["--option", "allow-import-from-derivation", "false"]);
+  }
+  let output = cmd.output().await.map_err(|e| {
+    CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
+  })?;
 
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -465,7 +478,18 @@ async fn evaluate_legacy(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
 ) -> Result<EvalResult> {
+  let repo_path = repo_path.canonicalize().map_err(|e| {
+    CiError::NixEval(format!("Failed to canonicalize repository path: {e}"))
+  })?;
   let expr_path = repo_path.join(nix_expression);
+  let expr_path = expr_path.canonicalize().map_err(|e| {
+    CiError::NixEval(format!("Failed to canonicalize nix expression path: {e}"))
+  })?;
+  if !expr_path.starts_with(&repo_path) {
+    return Err(CiError::NixEval(
+      "Nix expression path escapes repository checkout".to_string(),
+    ));
+  }
 
   tokio::time::timeout(timeout, async {
     // Try nix-eval-jobs without --flake for legacy expressions
@@ -482,12 +506,28 @@ async fn evaluate_legacy(
       cmd.args(["--option", "allow-import-from-derivation", "false"]);
     }
     for input in inputs {
+      circus_common::validate::validate_jobset_input(
+        &input.name,
+        &input.input_type,
+        &input.value,
+        input.revision.as_deref(),
+      )
+      .map_err(|e| CiError::NixEval(format!("Invalid jobset input: {e}")))?;
       match input.input_type.as_str() {
-        // Legacy expressions can't take a git override the way flakes do,
-        // but the input value (a fetched path) is meaningful as a path
-        // argument. Threading it through as --arg preserves the input's
-        // effect on evaluation instead of silently dropping it.
-        "string" | "path" | "git" => {
+        "string" | "git" => {
+          cmd.args(["--argstr", &input.name, &input.value]);
+        },
+        "boolean" => {
+          if input.value == "true" || input.value == "false" {
+            cmd.args(["--arg", &input.name, &input.value]);
+          } else {
+            return Err(CiError::NixEval(format!(
+              "Invalid boolean input '{}': expected true or false",
+              input.name
+            )));
+          }
+        },
+        "build" => {
           cmd.args(["--arg", &input.name, &input.value]);
         },
         _ => {
@@ -507,62 +547,15 @@ async fn evaluate_legacy(
         let stdout = String::from_utf8_lossy(&out.stdout);
         Ok(parse_eval_output(&stdout))
       },
-      _ => {
-        // Degraded path: nix-eval-jobs unavailable. The fabricated jobs below
-        // have no name, system, outputs, input_drvs, or constituents, which
-        // breaks per-system scheduling, dep wiring, FOD detection, and dedup.
-        // This should be rare; log loudly so the deployment notices.
-        tracing::error!(
-          "nix-eval-jobs unavailable for legacy expr; falling back to \
-           nix-instantiate. Scheduling, dependency wiring, and dedup will be \
-           degraded for this evaluation."
-        );
-        let output = tokio::process::Command::new("nix-instantiate")
-          .arg(&expr_path)
-          .arg("--strict")
-          .arg("--json")
-          .kill_on_drop(true)
-          .output()
-          .await
-          .map_err(|e| {
-            CiError::NixEval(format!("nix-instantiate failed: {e}"))
-          })?;
-
-        if !output.status.success() {
-          let stderr = String::from_utf8_lossy(&output.stderr);
-          return Err(CiError::NixEval(format!(
-            "nix-instantiate failed: {stderr}"
-          )));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // nix-instantiate --json outputs the derivation path(s)
-        let drv_paths: Vec<String> =
-          serde_json::from_str(&stdout).map_err(|e| {
-            CiError::NixEval(format!(
-              "Failed to parse nix-instantiate output: {e}"
-            ))
-          })?;
-        let jobs: Vec<NixJob> = drv_paths
-          .into_iter()
-          .enumerate()
-          .map(|(i, drv_path)| {
-            NixJob {
-              name: format!("job-{i}"),
-              drv_path,
-              system: None,
-              outputs: None,
-              input_drvs: None,
-              constituents: None,
-              meta: NixMeta::default(),
-            }
-          })
-          .collect();
-
-        Ok(EvalResult {
-          jobs,
-          error_count: 0,
-        })
+      Ok(out) => {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        tracing::warn!(stderr = %stderr, "legacy nix-eval-jobs failed");
+        Err(CiError::NixEval("Nix evaluation failed".to_string()))
+      },
+      Err(e) => {
+        Err(CiError::NixEval(format!(
+          "Failed to run nix-eval-jobs: {e}"
+        )))
       },
     }
   })
@@ -681,87 +674,6 @@ fn parse_derivation_show(value: &serde_json::Value) -> Option<ShownDerivation> {
     outputs,
     input_drvs,
   })
-}
-
-async fn evaluate_with_nix_eval(
-  repo_path: &Path,
-  nix_expression: &str,
-) -> Result<Vec<NixJob>> {
-  let flake_ref = format!("{}#{}", repo_path.display(), nix_expression);
-
-  let output = tokio::process::Command::new("nix")
-    .args(["eval", "--json", &flake_ref])
-    .kill_on_drop(true)
-    .output()
-    .await
-    .map_err(|e| CiError::NixEval(format!("Failed to run nix eval: {e}")))?;
-
-  if !output.status.success() {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    return Err(CiError::NixEval(format!("nix eval failed: {stderr}")));
-  }
-
-  // Parse the JSON output - expecting an attrset of name -> derivation
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let value: serde_json::Value =
-    serde_json::from_str(&stdout).map_err(|e| {
-      CiError::NixEval(format!("Failed to parse nix eval output: {e}"))
-    })?;
-
-  let entries = flatten_attrs("", &value);
-
-  let mut jobs = Vec::new();
-  for (name, eval_path) in entries {
-    // nix eval stringifies derivations to outPath. Resolve the attr with
-    // nix derivation show so queue-runner receives the buildable .drv path.
-    let drv_ref =
-      format!("{}#{}.{}", repo_path.display(), nix_expression, name);
-    let drv_output = tokio::process::Command::new("nix")
-      .args(["derivation", "show", &drv_ref])
-      .kill_on_drop(true)
-      .output()
-      .await;
-
-    let shown = match drv_output {
-      Ok(out) if out.status.success() => {
-        let drv_stdout = String::from_utf8_lossy(&out.stdout);
-        serde_json::from_str::<serde_json::Value>(&drv_stdout)
-          .ok()
-          .and_then(|drv_json| parse_derivation_show(&drv_json))
-      },
-      _ => None,
-    };
-
-    let (drv_path, system, outputs, input_drvs) = if let Some(shown) = shown {
-      (
-        shown.drv_path,
-        shown.system,
-        shown.outputs,
-        shown.input_drvs,
-      )
-    } else if is_store_drv_path(&eval_path) {
-      (eval_path, None, None, None)
-    } else {
-      tracing::warn!(
-        attr = %name,
-        eval_path = %eval_path,
-        "Skipping nix eval attr because it did not resolve to a drv path"
-      );
-      continue;
-    };
-
-    jobs.push(NixJob {
-      name: name.clone(),
-      drv_path,
-      system,
-      outputs,
-      input_drvs,
-      constituents: None,
-      meta: NixMeta::default(),
-    });
-  }
-
-  Ok(jobs)
 }
 
 #[cfg(test)]
