@@ -4,7 +4,10 @@ use std::{
   time::{Duration, Instant},
 };
 
-use circus_common::{config::GhaConfig, models::Build};
+use circus_common::{
+  config::{EphemeralPoolConfig, GithubActionsPoolConfig},
+  models::Build,
+};
 use color_eyre::eyre::{Context as _, bail};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -18,7 +21,7 @@ use crate::{
 const GITHUB_API_VERSION: &str = "2026-03-10";
 
 pub struct Autoscaler {
-  cfg:            GhaConfig,
+  cfg:            EphemeralPoolConfig,
   token:          String,
   http:           reqwest::Client,
   pool:           PgPool,
@@ -42,8 +45,9 @@ struct WorkflowDispatch<'a> {
 
 #[derive(Serialize)]
 struct WorkflowInputs<'a> {
-  runner_url:         String,
+  runner_url:         &'a str,
   oidc_audience:      &'a str,
+  agent_binary_url:   &'a str,
   systems:            String,
   supported_features: String,
   mandatory_features: String,
@@ -65,12 +69,12 @@ impl Autoscaler {
   /// Returns an error if the GitHub token cannot be loaded or the HTTP client
   /// cannot be constructed.
   pub async fn new(
-    cfg: GhaConfig,
+    cfg: EphemeralPoolConfig,
     pool: PgPool,
     agent_pool: Arc<AgentPool>,
     shutdown_token: CancellationToken,
   ) -> color_eyre::Result<Self> {
-    let token = load_token(&cfg).await?;
+    let token = load_token(&cfg.github_actions).await?;
     let http = reqwest::Client::builder()
       .user_agent("circus-queue-runner")
       .build()
@@ -89,9 +93,10 @@ impl Autoscaler {
 
   pub async fn run(mut self) {
     tracing::info!(
-      repository = %self.cfg.repository,
-      workflow = %self.cfg.workflow,
-      ref_name = %self.cfg.ref_name,
+      pool = %self.cfg.name,
+      repository = %self.cfg.github_actions.workflow_repository,
+      workflow = %self.cfg.github_actions.workflow,
+      ref_name = %self.cfg.github_actions.ref_name,
       systems = ?self.cfg.systems,
       "GitHub Actions autoscaler started"
     );
@@ -182,19 +187,29 @@ impl Autoscaler {
           trusted_cache.insert(build.evaluation_id, repo.clone());
           repo
         };
-      if trusted_repo.as_ref().and_then(|repo| repo.as_deref())
-        == Some(self.cfg.repository.as_str())
+      if trusted_repo
+        .as_ref()
+        .and_then(|repo| repo.as_deref())
+        .is_some_and(|repo| {
+          self
+            .cfg
+            .allowed_build_repositories
+            .iter()
+            .any(|r| r == repo)
+        })
       {
         eligible_requirements.push(build.scheduling_features().to_vec());
       }
     }
 
+    let gha = &self.cfg.github_actions;
     let mut live_slots = Vec::new();
     for agent in self.agent_pool.snapshot_all().into_iter().filter(|agent| {
       agent.ephemeral
         && agent.auth_kind == circus_common::models::AuthKind::Oidc
         && agent.oidc_repository.as_deref()
-          == Some(self.cfg.repository.as_str())
+          == Some(gha.workflow_repository.as_str())
+        && agent_name_matches_pool(&agent.name, &self.cfg.name)
         && self
           .cfg
           .systems
@@ -228,26 +243,28 @@ impl Autoscaler {
   }
 
   async fn dispatch_workflow(&self) -> color_eyre::Result<()> {
+    let gha = &self.cfg.github_actions;
     let (owner, repo) =
-      self.cfg.repository.split_once('/').ok_or_else(|| {
+      gha.workflow_repository.split_once('/').ok_or_else(|| {
         color_eyre::eyre::eyre!("repository must be owner/repo")
       })?;
-    let workflow = urlencoding::encode(&self.cfg.workflow);
+    let workflow = urlencoding::encode(&gha.workflow);
     let url = format!(
       "https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow}/dispatches"
     );
     let body = WorkflowDispatch {
-      ref_name: &self.cfg.ref_name,
+      ref_name: &gha.ref_name,
       inputs:   WorkflowInputs {
-        runner_url:         json_string(&self.cfg.runner_url)?,
-        oidc_audience:      &self.cfg.oidc_audience,
-        systems:            json_string_array(&self.cfg.systems)?,
-        supported_features: json_string_array(&self.cfg.supported_features)?,
-        mandatory_features: json_string_array(&self.cfg.mandatory_features)?,
+        runner_url:         &gha.runner_url,
+        oidc_audience:      &gha.oidc_audience,
+        agent_binary_url:   &gha.agent_binary_url,
+        systems:            csv(&self.cfg.systems),
+        supported_features: csv(&self.cfg.supported_features),
+        mandatory_features: csv(&self.cfg.mandatory_features),
         max_jobs:           self.cfg.max_jobs.to_string(),
         cores:              self.cfg.cores.to_string(),
         speed_factor:       self.cfg.speed_factor.to_string(),
-        agent_name:         json_string(&self.cfg.agent_name)?,
+        agent_name:         self.cfg.name.clone(),
       },
     };
     let response = self
@@ -266,31 +283,37 @@ impl Autoscaler {
       bail!("GitHub workflow dispatch returned {status}: {text}");
     }
     tracing::info!(
-      repository = %self.cfg.repository,
-      workflow = %self.cfg.workflow,
-      ref_name = %self.cfg.ref_name,
+      pool = %self.cfg.name,
+      repository = %gha.workflow_repository,
+      workflow = %gha.workflow,
+      ref_name = %gha.ref_name,
       "dispatched GitHub Actions builder workflow"
     );
     Ok(())
   }
 }
 
-fn json_string(value: &str) -> color_eyre::Result<String> {
-  serde_json::to_string(value).context("encode JSON string literal")
+fn csv(values: &[String]) -> String {
+  values.join(",")
 }
 
-fn json_string_array(values: &[String]) -> color_eyre::Result<String> {
-  serde_json::to_string(values).context("encode JSON string array")
+fn agent_name_matches_pool(agent_name: &str, pool_name: &str) -> bool {
+  agent_name == pool_name
+    || agent_name
+      .strip_prefix(pool_name)
+      .is_some_and(|suffix| suffix.starts_with('-'))
 }
 
-async fn load_token(cfg: &GhaConfig) -> color_eyre::Result<String> {
+async fn load_token(
+  cfg: &GithubActionsPoolConfig,
+) -> color_eyre::Result<String> {
   if let Some(token) = cfg.token.as_deref()
     && !token.trim().is_empty()
   {
     return Ok(token.trim().to_owned());
   }
   let Some(path) = cfg.token_file.as_ref() else {
-    bail!("queue_runner.gha requires token or token_file");
+    bail!("github_actions pool requires token or token_file");
   };
   let token = tokio::fs::read_to_string(path)
     .await
@@ -328,9 +351,9 @@ mod tests {
   #[tokio::test]
   async fn prunes_expired_inflight_launches() {
     let mut autoscaler = Autoscaler {
-      cfg:            GhaConfig {
+      cfg:            EphemeralPoolConfig {
         inflight_ttl_secs: 1,
-        ..GhaConfig::default()
+        ..EphemeralPoolConfig::default()
       },
       token:          "token".into(),
       http:           test_http_client(),
@@ -352,9 +375,9 @@ mod tests {
   #[tokio::test]
   async fn cooldown_blocks_immediate_second_scale_up() {
     let autoscaler = Autoscaler {
-      cfg:            GhaConfig {
+      cfg:            EphemeralPoolConfig {
         scale_up_cooldown_secs: 30,
-        ..GhaConfig::default()
+        ..EphemeralPoolConfig::default()
       },
       token:          "token".into(),
       http:           test_http_client(),
@@ -369,15 +392,23 @@ mod tests {
   }
 
   #[test]
-  fn workflow_inputs_are_json_literals() {
+  fn workflow_inputs_are_plain_csv_values() {
     assert_eq!(
-      json_string("circus gha").expect("string literal should encode"),
-      "\"circus gha\""
+      csv(&["x86_64-linux".into(), "kvm".into()]),
+      "x86_64-linux,kvm"
     );
-    assert_eq!(
-      json_string_array(&["x86_64-linux".into(), "kvm".into()])
-        .expect("array literal should encode"),
-      "[\"x86_64-linux\",\"kvm\"]"
-    );
+  }
+
+  #[test]
+  fn pool_agent_names_match_unique_ephemeral_suffixes() {
+    assert!(agent_name_matches_pool("gha-linux", "gha-linux"));
+    assert!(agent_name_matches_pool(
+      "gha-linux-gh123.1-deadbeef",
+      "gha-linux"
+    ));
+    assert!(!agent_name_matches_pool(
+      "other-gh123.1-deadbeef",
+      "gha-linux"
+    ));
   }
 }

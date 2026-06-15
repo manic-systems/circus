@@ -232,96 +232,106 @@ pub struct QueueRunnerConfig {
   #[serde(default)]
   pub rpc: Option<RpcConfig>,
 
-  /// GitHub Actions autoscaler for ephemeral `circus-agent` workers.
+  /// GitHub Actions-backed ephemeral `circus-agent` pools.
   #[serde(default)]
-  pub gha: GhaConfig,
+  pub ephemeral_pools: Vec<EphemeralPoolConfig>,
 }
 
-/// Runner-driven GitHub Actions autoscaler. When enabled, the queue-runner
-/// dispatches a workflow that starts `circus-agent --ephemeral` on a GitHub
-/// Actions machine.
+/// Runner-driven ephemeral builder pool. Each pool represents one class of
+/// short-lived GitHub Actions agents with a single capability profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EphemeralPoolConfig {
+  /// Stable pool name. Used as the base agent name and for autoscaler logs.
+  pub name:                       String,
+  /// Source repositories this pool is allowed to build for (`owner/repo`).
+  pub allowed_build_repositories: Vec<String>,
+  /// Nix systems advertised by each GitHub Actions agent.
+  pub systems:                    Vec<String>,
+  /// Features advertised by each GitHub Actions agent.
+  pub supported_features:         Vec<String>,
+  /// Mandatory features advertised by each GitHub Actions agent.
+  pub mandatory_features:         Vec<String>,
+  pub max_jobs:                   u32,
+  pub cores:                      u32,
+  pub speed_factor:               f32,
+  pub max_inflight:               u32,
+  pub inflight_ttl_secs:          u64,
+  pub scale_up_cooldown_secs:     u64,
+  pub poll_interval_secs:         u64,
+  /// GitHub Actions launch settings for this pool.
+  pub github_actions:             GithubActionsPoolConfig,
+}
+
+/// GitHub Actions workflow dispatch settings for an ephemeral pool.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct GhaConfig {
-  pub enabled:                bool,
+pub struct GithubActionsPoolConfig {
   /// GitHub repository slug (`owner/repo`) containing the builder workflow.
-  pub repository:             String,
+  pub workflow_repository: String,
   /// Workflow file name or numeric ID accepted by the workflow dispatch API.
-  pub workflow:               String,
+  pub workflow:            String,
   /// Git ref where the workflow file lives.
-  pub ref_name:               String,
+  pub ref_name:            String,
   /// GitHub token with Actions write access for `repository`.
-  pub token:                  Option<String>,
+  pub token:               Option<String>,
   /// File containing the GitHub token. Used when `token` is unset.
-  pub token_file:             Option<PathBuf>,
+  pub token_file:          Option<PathBuf>,
   /// Runner URL passed to `circus-agent`, e.g. `circus+tls://host:8443`.
-  pub runner_url:             String,
+  pub runner_url:          String,
   /// Audience requested for the GitHub OIDC token.
-  pub oidc_audience:          String,
-  /// Nix systems advertised by each GitHub Actions agent.
-  pub systems:                Vec<String>,
-  /// Features advertised by each GitHub Actions agent.
-  pub supported_features:     Vec<String>,
-  /// Mandatory features advertised by each GitHub Actions agent.
-  pub mandatory_features:     Vec<String>,
-  pub max_jobs:               u32,
-  pub cores:                  u32,
-  pub speed_factor:           f32,
-  pub agent_name:             String,
-  pub max_inflight:           u32,
-  pub inflight_ttl_secs:      u64,
-  pub scale_up_cooldown_secs: u64,
-  pub poll_interval_secs:     u64,
+  pub oidc_audience:       String,
+  /// Exact agent binary URL downloaded by the workflow. Pin this to the same
+  /// Circus revision/protocol version as the queue-runner.
+  pub agent_binary_url:    String,
 }
 
-impl std::fmt::Debug for GhaConfig {
+impl std::fmt::Debug for GithubActionsPoolConfig {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("GhaConfig")
-      .field("enabled", &self.enabled)
-      .field("repository", &self.repository)
+    f.debug_struct("GithubActionsPoolConfig")
+      .field("workflow_repository", &self.workflow_repository)
       .field("workflow", &self.workflow)
       .field("ref_name", &self.ref_name)
       .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
       .field("token_file", &self.token_file)
       .field("runner_url", &self.runner_url)
       .field("oidc_audience", &self.oidc_audience)
-      .field("systems", &self.systems)
-      .field("supported_features", &self.supported_features)
-      .field("mandatory_features", &self.mandatory_features)
-      .field("max_jobs", &self.max_jobs)
-      .field("cores", &self.cores)
-      .field("speed_factor", &self.speed_factor)
-      .field("agent_name", &self.agent_name)
-      .field("max_inflight", &self.max_inflight)
-      .field("inflight_ttl_secs", &self.inflight_ttl_secs)
-      .field("scale_up_cooldown_secs", &self.scale_up_cooldown_secs)
-      .field("poll_interval_secs", &self.poll_interval_secs)
+      .field("agent_binary_url", &self.agent_binary_url)
       .finish()
   }
 }
 
-impl Default for GhaConfig {
+impl Default for EphemeralPoolConfig {
   fn default() -> Self {
     Self {
-      enabled:                false,
-      repository:             String::new(),
-      workflow:               "circus-builder.yml".to_owned(),
-      ref_name:               "main".to_owned(),
-      token:                  None,
-      token_file:             None,
-      runner_url:             String::new(),
-      oidc_audience:          "circus-agent".to_owned(),
-      systems:                vec!["x86_64-linux".to_owned()],
-      supported_features:     Vec::new(),
-      mandatory_features:     Vec::new(),
-      max_jobs:               1,
-      cores:                  0,
-      speed_factor:           1.0,
-      agent_name:             "circus-gha".to_owned(),
-      max_inflight:           4,
-      inflight_ttl_secs:      900,
-      scale_up_cooldown_secs: 30,
-      poll_interval_secs:     10,
+      name:                       "gha-x86_64-linux".to_owned(),
+      allowed_build_repositories: Vec::new(),
+      systems:                    vec!["x86_64-linux".to_owned()],
+      supported_features:         Vec::new(),
+      mandatory_features:         Vec::new(),
+      max_jobs:                   1,
+      cores:                      0,
+      speed_factor:               1.0,
+      max_inflight:               4,
+      inflight_ttl_secs:          900,
+      scale_up_cooldown_secs:     30,
+      poll_interval_secs:         10,
+      github_actions:             GithubActionsPoolConfig::default(),
+    }
+  }
+}
+
+impl Default for GithubActionsPoolConfig {
+  fn default() -> Self {
+    Self {
+      workflow_repository: String::new(),
+      workflow:            "circus-builder.yml".to_owned(),
+      ref_name:            "main".to_owned(),
+      token:               None,
+      token_file:          None,
+      runner_url:          String::new(),
+      oidc_audience:       "circus-agent".to_owned(),
+      agent_binary_url:    String::new(),
     }
   }
 }
@@ -396,6 +406,24 @@ pub struct RpcOidcConfig {
   /// `owner/repo` slugs allowed to register. Empty = reject all.
   #[serde(default)]
   pub allowed_repositories: Vec<String>,
+
+  /// Exact `sub` claim values allowed to register. Empty disables this check.
+  #[serde(default)]
+  pub allowed_subjects: Vec<String>,
+
+  /// Accepted `sub` claim prefixes. Empty disables this check.
+  #[serde(default)]
+  pub allowed_subject_prefixes: Vec<String>,
+
+  /// Exact GitHub `workflow_ref` claim values allowed to register. Empty
+  /// disables this check.
+  #[serde(default)]
+  pub allowed_workflow_refs: Vec<String>,
+
+  /// Exact GitHub `ref` claim values allowed to register. Empty disables this
+  /// check.
+  #[serde(default)]
+  pub allowed_refs: Vec<String>,
 }
 
 fn default_oidc_issuer() -> String {
@@ -1000,7 +1028,7 @@ impl Default for QueueRunnerConfig {
       local_systems:        None,
       local_features:       None,
       rpc:                  None,
-      gha:                  GhaConfig::default(),
+      ephemeral_pools:      Vec::new(),
     }
   }
 }
@@ -1268,8 +1296,7 @@ impl Config {
         }
       }
     }
-    if self.queue_runner.gha.enabled {
-      let gha = &self.queue_runner.gha;
+    for (idx, pool) in self.queue_runner.ephemeral_pools.iter().enumerate() {
       if self
         .queue_runner
         .rpc
@@ -1277,37 +1304,70 @@ impl Config {
         .is_none_or(|rpc| rpc.oidc.is_none())
       {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha requires queue_runner.rpc.oidc"
+          "queue_runner.ephemeral_pools[{idx}] requires queue_runner.rpc.oidc"
         ));
       }
-      if gha.repository.split_once('/').is_none() {
+      let gha = &pool.github_actions;
+      if pool.name.trim().is_empty() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.repository must be owner/repo"
+          "queue_runner.ephemeral_pools[{idx}].name cannot be empty"
+        ));
+      }
+      if pool.allowed_build_repositories.is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.ephemeral_pools[{idx}].allowed_build_repositories \
+           must list at least one repository"
+        ));
+      }
+      for (repo_idx, repo) in pool.allowed_build_repositories.iter().enumerate()
+      {
+        if repo.split_once('/').is_none() {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.ephemeral_pools[{idx}].\
+             allowed_build_repositories[{repo_idx}] must be owner/repo"
+          ));
+        }
+      }
+      if gha.workflow_repository.split_once('/').is_none() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.ephemeral_pools[{idx}].github_actions.\
+           workflow_repository must be owner/repo"
         ));
       }
       if gha.workflow.trim().is_empty() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.workflow cannot be empty"
+          "queue_runner.ephemeral_pools[{idx}].github_actions.workflow cannot \
+           be empty"
         ));
       }
       if gha.ref_name.trim().is_empty() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.ref_name cannot be empty"
+          "queue_runner.ephemeral_pools[{idx}].github_actions.ref_name cannot \
+           be empty"
         ));
       }
       if gha.token.is_none() && gha.token_file.is_none() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha requires token or token_file"
+          "queue_runner.ephemeral_pools[{idx}].github_actions requires token \
+           or token_file"
         ));
       }
       if gha.runner_url.trim().is_empty() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.runner_url cannot be empty"
+          "queue_runner.ephemeral_pools[{idx}].github_actions.runner_url \
+           cannot be empty"
         ));
       }
       if gha.oidc_audience.trim().is_empty() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.oidc_audience cannot be empty"
+          "queue_runner.ephemeral_pools[{idx}].github_actions.oidc_audience \
+           cannot be empty"
+        ));
+      }
+      if gha.agent_binary_url.trim().is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.ephemeral_pools[{idx}].github_actions.\
+           agent_binary_url cannot be empty"
         ));
       }
       if let Some(rpc) = self.queue_runner.rpc.as_ref()
@@ -1315,8 +1375,8 @@ impl Config {
         && !oidc.audiences.iter().any(|aud| aud == &gha.oidc_audience)
       {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.oidc_audience must be listed in \
-           queue_runner.rpc.oidc.audiences"
+          "queue_runner.ephemeral_pools[{idx}].github_actions.oidc_audience \
+           must be listed in queue_runner.rpc.oidc.audiences"
         ));
       }
       if let Some(rpc) = self.queue_runner.rpc.as_ref()
@@ -1324,37 +1384,77 @@ impl Config {
         && !oidc
           .allowed_repositories
           .iter()
-          .any(|repo| repo == &gha.repository)
+          .any(|repo| repo == &gha.workflow_repository)
       {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.repository must be listed in \
+          "queue_runner.ephemeral_pools[{idx}].github_actions.\
+           workflow_repository must be listed in \
            queue_runner.rpc.oidc.allowed_repositories"
         ));
       }
-      if gha.systems.is_empty() {
+      if let Some(rpc) = self.queue_runner.rpc.as_ref()
+        && let Some(oidc) = rpc.oidc.as_ref()
+        && oidc.allowed_subjects.is_empty()
+        && oidc.allowed_subject_prefixes.is_empty()
+        && oidc.allowed_workflow_refs.is_empty()
+      {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.systems must list at least one system"
+          "queue_runner.ephemeral_pools[{idx}] requires at least one OIDC \
+           subject or workflow_ref restriction"
         ));
       }
-      if gha.max_jobs == 0 {
+      if self
+        .queue_runner
+        .rpc
+        .as_ref()
+        .and_then(|rpc| rpc.cache_substituter.as_ref())
+        .is_none()
+      {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.max_jobs must be greater than 0"
+          "queue_runner.ephemeral_pools[{idx}] requires \
+           queue_runner.rpc.cache_substituter so fresh CI agents can realise \
+           assigned derivations"
         ));
       }
-      if gha.speed_factor <= 0.0 {
+      if self
+        .queue_runner
+        .rpc
+        .as_ref()
+        .and_then(|rpc| rpc.cache_public_key.as_ref())
+        .is_none()
+      {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.speed_factor must be greater than 0"
+          "queue_runner.ephemeral_pools[{idx}] requires \
+           queue_runner.rpc.cache_public_key for the derivation substituter"
         ));
       }
-      if gha.max_inflight == 0 {
+      if pool.systems.is_empty() {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.max_inflight must be greater than 0"
+          "queue_runner.ephemeral_pools[{idx}].systems must list at least one \
+           system"
         ));
       }
-      if gha.inflight_ttl_secs == 0 || gha.poll_interval_secs == 0 {
+      if pool.max_jobs == 0 {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha inflight_ttl_secs and poll_interval_secs must be \
-           greater than 0"
+          "queue_runner.ephemeral_pools[{idx}].max_jobs must be greater than 0"
+        ));
+      }
+      if pool.speed_factor <= 0.0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.ephemeral_pools[{idx}].speed_factor must be greater \
+           than 0"
+        ));
+      }
+      if pool.max_inflight == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.ephemeral_pools[{idx}].max_inflight must be greater \
+           than 0"
+        ));
+      }
+      if pool.inflight_ttl_secs == 0 || pool.poll_interval_secs == 0 {
+        return Err(color_eyre::eyre::eyre!(
+          "queue_runner.ephemeral_pools[{idx}] inflight_ttl_secs and \
+           poll_interval_secs must be greater than 0"
         ));
       }
     }

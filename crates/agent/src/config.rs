@@ -173,16 +173,23 @@ const fn default_true() -> bool {
 }
 
 impl AgentConfig {
+  fn chosen_path(path: Option<&Path>) -> (PathBuf, bool) {
+    let env_path = std::env::var("CIRCUS_AGENT_CONFIG").ok().map(PathBuf::from);
+    let explicit = path.is_some() || env_path.is_some();
+    let chosen = path
+      .map(Path::to_path_buf)
+      .or(env_path)
+      .unwrap_or_else(|| PathBuf::from("/etc/circus-agent.toml"));
+    (chosen, explicit)
+  }
+
   /// Load from explicit path, env var, or the default location.
   ///
   /// # Errors
   ///
   /// Returns the underlying `config` error on missing file or parse failure.
   pub fn load(path: Option<&Path>) -> Result<Self, config::ConfigError> {
-    let chosen = path
-      .map(Path::to_path_buf)
-      .or_else(|| std::env::var("CIRCUS_AGENT_CONFIG").ok().map(PathBuf::from))
-      .unwrap_or_else(|| PathBuf::from("/etc/circus-agent.toml"));
+    let (chosen, _) = Self::chosen_path(path);
 
     let cfg = config::Config::builder()
       .add_source(config::File::from(chosen.as_path()))
@@ -203,5 +210,18 @@ impl AgentConfig {
     }
 
     Ok(parsed)
+  }
+
+  /// Load config if an explicit config is set or the default file exists.
+  /// Returns `Ok(None)` when no config file was requested and the default path
+  /// is absent, allowing CLI-only ephemeral launches.
+  pub fn load_if_available(
+    path: Option<&Path>,
+  ) -> Result<Option<Self>, config::ConfigError> {
+    let (chosen, explicit) = Self::chosen_path(path);
+    if !explicit && !chosen.exists() {
+      return Ok(None);
+    }
+    Self::load(Some(&chosen)).map(Some)
   }
 }

@@ -21,15 +21,21 @@ const JWKS_TTL: Duration = Duration::from_hours(1);
 /// the subject/ref; registration only needs `repository`.
 #[derive(Debug, Clone)]
 pub struct VerifiedIdentity {
-  pub repository: String,
-  pub subject:    String,
+  pub repository:   String,
+  pub subject:      String,
+  pub workflow_ref: Option<String>,
+  pub ref_name:     Option<String>,
 }
 
 #[derive(Deserialize)]
 struct GitHubClaims {
-  repository: String,
+  repository:   String,
   #[serde(default)]
-  sub:        String,
+  sub:          String,
+  #[serde(default)]
+  workflow_ref: Option<String>,
+  #[serde(default, rename = "ref")]
+  ref_name:     Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,12 +65,16 @@ struct CacheState {
 }
 
 pub struct OidcVerifier {
-  http:                 reqwest::Client,
-  issuer:               String,
-  jwks_url:             Option<String>,
-  audiences:            Vec<String>,
-  allowed_repositories: Vec<String>,
-  cache:                Mutex<CacheState>,
+  http:                     reqwest::Client,
+  issuer:                   String,
+  jwks_url:                 Option<String>,
+  audiences:                Vec<String>,
+  allowed_repositories:     Vec<String>,
+  allowed_subjects:         Vec<String>,
+  allowed_subject_prefixes: Vec<String>,
+  allowed_workflow_refs:    Vec<String>,
+  allowed_refs:             Vec<String>,
+  cache:                    Mutex<CacheState>,
 }
 
 impl OidcVerifier {
@@ -83,6 +93,10 @@ impl OidcVerifier {
       jwks_url: cfg.jwks_url.clone(),
       audiences: cfg.audiences.clone(),
       allowed_repositories: cfg.allowed_repositories.clone(),
+      allowed_subjects: cfg.allowed_subjects.clone(),
+      allowed_subject_prefixes: cfg.allowed_subject_prefixes.clone(),
+      allowed_workflow_refs: cfg.allowed_workflow_refs.clone(),
+      allowed_refs: cfg.allowed_refs.clone(),
       cache: Mutex::new(CacheState::default()),
     })
   }
@@ -123,10 +137,34 @@ impl OidcVerifier {
     {
       bail!("repository {} is not allowed", claims.repository);
     }
+    if !claim_allowed(
+      &claims.sub,
+      &self.allowed_subjects,
+      &self.allowed_subject_prefixes,
+    ) {
+      bail!("subject {} is not allowed", claims.sub);
+    }
+    if !optional_claim_allowed(
+      claims.workflow_ref.as_deref(),
+      &self.allowed_workflow_refs,
+    ) {
+      bail!(
+        "workflow_ref {} is not allowed",
+        claims.workflow_ref.as_deref().unwrap_or("<missing>")
+      );
+    }
+    if !optional_claim_allowed(claims.ref_name.as_deref(), &self.allowed_refs) {
+      bail!(
+        "ref {} is not allowed",
+        claims.ref_name.as_deref().unwrap_or("<missing>")
+      );
+    }
 
     Ok(VerifiedIdentity {
-      repository: claims.repository,
-      subject:    claims.sub,
+      repository:   claims.repository,
+      subject:      claims.sub,
+      workflow_ref: claims.workflow_ref,
+      ref_name:     claims.ref_name,
     })
   }
 
@@ -200,4 +238,57 @@ impl OidcVerifier {
 
 fn is_stale(fetched_at: Option<Instant>) -> bool {
   fetched_at.is_none_or(|t| t.elapsed() >= JWKS_TTL)
+}
+
+fn claim_allowed(value: &str, exact: &[String], prefixes: &[String]) -> bool {
+  (exact.is_empty() && prefixes.is_empty())
+    || exact.iter().any(|allowed| allowed == value)
+    || prefixes
+      .iter()
+      .any(|prefix| value.starts_with(prefix.as_str()))
+}
+
+fn optional_claim_allowed(value: Option<&str>, exact: &[String]) -> bool {
+  exact.is_empty()
+    || value.is_some_and(|value| exact.iter().any(|v| v == value))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{claim_allowed, optional_claim_allowed};
+
+  #[test]
+  fn empty_claim_policy_allows_any_value() {
+    assert!(claim_allowed(
+      "repo:owner/repo:ref:refs/heads/main",
+      &[],
+      &[]
+    ));
+    assert!(optional_claim_allowed(None, &[]));
+  }
+
+  #[test]
+  fn exact_and_prefix_claim_policies_are_enforced() {
+    assert!(claim_allowed(
+      "repo:owner/repo:ref:refs/heads/main",
+      &["repo:owner/repo:ref:refs/heads/main".into()],
+      &[],
+    ));
+    assert!(claim_allowed(
+      "repo:owner/repo:ref:refs/heads/main",
+      &[],
+      &["repo:owner/repo:ref:refs/heads/".into()],
+    ));
+    assert!(!claim_allowed("repo:owner/repo:pull_request", &[], &[
+      "repo:owner/repo:ref:refs/heads/".into()
+    ],));
+    assert!(optional_claim_allowed(
+      Some("owner/repo/.github/workflows/circus-builder.yml@refs/heads/main"),
+      &[
+        "owner/repo/.github/workflows/circus-builder.yml@refs/heads/main"
+          .into()
+      ],
+    ));
+    assert!(!optional_claim_allowed(None, &["required".into()]));
+  }
 }

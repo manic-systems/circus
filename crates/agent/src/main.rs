@@ -5,7 +5,11 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use circus_agent::{config::AgentConfig, sandbox, session};
+use circus_agent::{
+  config::{Agent, AgentConfig, EphemeralConfig},
+  sandbox,
+  session,
+};
 use circus_logs::init_tracing;
 use clap::Parser;
 use color_eyre::eyre::{Result, eyre};
@@ -23,6 +27,42 @@ struct Cli {
   /// CI runners such as GitHub Actions.
   #[arg(long)]
   ephemeral: bool,
+
+  /// Agent name. Overrides `[agent].name`; required for config-free launches.
+  #[arg(long)]
+  name: Option<String>,
+
+  /// Runner RPC endpoint. Overrides `[agent].runner_url`.
+  #[arg(long)]
+  runner_url: Option<String>,
+
+  /// Nix system this agent can build. Repeat for multiple systems.
+  #[arg(long = "system")]
+  systems: Vec<String>,
+
+  /// Nix system feature this agent supports. Repeat for multiple features.
+  #[arg(long = "supported-feature")]
+  supported_features: Vec<String>,
+
+  /// Nix system feature required by every build assigned to this agent.
+  #[arg(long = "mandatory-feature")]
+  mandatory_features: Vec<String>,
+
+  /// Maximum concurrent builds accepted by this agent.
+  #[arg(long)]
+  max_jobs: Option<u32>,
+
+  /// Per-build Nix cores setting. 0 keeps Nix's default.
+  #[arg(long)]
+  cores: Option<u32>,
+
+  /// Scheduler speed factor advertised by this agent.
+  #[arg(long)]
+  speed_factor: Option<f32>,
+
+  /// Agent work directory.
+  #[arg(long)]
+  work_dir: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -38,13 +78,12 @@ fn main() -> Result<()> {
     .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
 
   let cli = Cli::parse();
-  let mut cfg = AgentConfig::load(cli.config.as_deref())?;
+  let mut cfg = load_config(&cli)?;
   init_tracing(&cfg.tracing);
 
   // `--ephemeral` enables it without an `[agent.ephemeral]` table.
   if cli.ephemeral && cfg.agent.ephemeral.is_none() {
-    cfg.agent.ephemeral =
-      Some(circus_agent::config::EphemeralConfig::default());
+    cfg.agent.ephemeral = Some(EphemeralConfig::default());
   }
   let ephemeral = cfg.agent.ephemeral.is_some();
   tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
@@ -75,6 +114,94 @@ fn main() -> Result<()> {
   rt.block_on(
     local.run_until(async move { run_supervisor(cfg.agent, machine_id).await }),
   )
+}
+
+fn load_config(cli: &Cli) -> Result<AgentConfig> {
+  let mut cfg = match AgentConfig::load_if_available(cli.config.as_deref())? {
+    Some(cfg) => cfg,
+    None => inline_config(cli)?,
+  };
+  apply_cli_overrides(&mut cfg.agent, cli);
+  if cfg.agent.auth_token.is_empty() {
+    return Err(eyre!(
+      "no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token"
+    ));
+  }
+  Ok(cfg)
+}
+
+fn inline_config(cli: &Cli) -> Result<AgentConfig> {
+  let name = cli
+    .name
+    .clone()
+    .ok_or_else(|| eyre!("--name is required without a config file"))?;
+  let runner_url = cli
+    .runner_url
+    .clone()
+    .ok_or_else(|| eyre!("--runner-url is required without a config file"))?;
+  if cli.systems.is_empty() {
+    return Err(eyre!(
+      "at least one --system is required without a config file"
+    ));
+  }
+  let auth_token = std::env::var("CIRCUS_AGENT_TOKEN").map_err(|_| {
+    eyre!("CIRCUS_AGENT_TOKEN is required without a config file")
+  })?;
+  Ok(AgentConfig {
+    agent:   Agent {
+      name,
+      runner_url,
+      auth_token,
+      systems: cli.systems.clone(),
+      supported_features: cli.supported_features.clone(),
+      mandatory_features: cli.mandatory_features.clone(),
+      max_jobs: cli.max_jobs.unwrap_or(1),
+      cores: cli.cores.unwrap_or(0),
+      speed_factor: cli.speed_factor.unwrap_or(1.0),
+      reconnect_delay_secs: 5,
+      heartbeat_interval_secs: 10,
+      work_dir: cli
+        .work_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("/tmp/circus-agent")),
+      machine_id_file: None,
+      tls: None,
+      rootless: false,
+      rootless_data_dir: None,
+      ephemeral: None,
+    },
+    tracing: Default::default(),
+  })
+}
+
+fn apply_cli_overrides(agent: &mut Agent, cli: &Cli) {
+  if let Some(name) = &cli.name {
+    agent.name = name.clone();
+  }
+  if let Some(runner_url) = &cli.runner_url {
+    agent.runner_url = runner_url.clone();
+  }
+  if !cli.systems.is_empty() {
+    agent.systems = cli.systems.clone();
+  }
+  if !cli.supported_features.is_empty() {
+    agent.supported_features = cli.supported_features.clone();
+  }
+  if !cli.mandatory_features.is_empty() {
+    agent.mandatory_features = cli.mandatory_features.clone();
+  }
+  if let Some(max_jobs) = cli.max_jobs {
+    agent.max_jobs = max_jobs;
+  }
+  if let Some(cores) = cli.cores {
+    agent.cores = cores;
+  }
+  if let Some(speed_factor) = cli.speed_factor {
+    agent.speed_factor = speed_factor;
+  }
+  if let Some(work_dir) = &cli.work_dir {
+    agent.work_dir = work_dir.clone();
+  }
 }
 
 async fn run_supervisor(

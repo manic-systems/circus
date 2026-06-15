@@ -101,7 +101,7 @@ pub(crate) fn contended_surplus(
 
 #[must_use]
 pub(crate) fn requires_trusted_ref(agent: &AgentSnapshot) -> bool {
-  agent.ephemeral || agent.auth_kind == circus_common::models::AuthKind::Oidc
+  agent.auth_kind == circus_common::models::AuthKind::Oidc
 }
 
 #[must_use]
