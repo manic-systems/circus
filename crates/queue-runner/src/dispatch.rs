@@ -517,9 +517,9 @@ pub async fn run_on_agent(
   };
 
   match rx.await {
-    Ok(DispatchResult::Succeeded) => {
+    Ok(DispatchResult::Succeeded { error_message }) => {
       let outputs = read_drv_outputs(drv_path).await;
-      Some(result(true, 0, String::new(), outputs))
+      Some(result(true, 0, error_message.unwrap_or_default(), outputs))
     },
     Ok(DispatchResult::Failed(error_message)) => {
       Some(result(false, 1, error_message, Vec::new()))

@@ -61,7 +61,9 @@ pub struct PresignedUpload {
 
 #[derive(Debug)]
 pub enum DispatchResult {
-  Succeeded,
+  Succeeded {
+    error_message: Option<String>,
+  },
   Failed(String),
   TimedOut,
   Aborted,

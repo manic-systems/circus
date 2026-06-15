@@ -28,10 +28,21 @@ pub struct ResultSinkImpl {
 
 #[derive(Debug, Clone)]
 pub enum BuildOutcomeKind {
-  Success,
+  Success { error_message: Option<String> },
   Failure { error_message: Option<String> },
   TimedOut,
   Aborted,
+}
+
+fn result_error_message(
+  result: circus_proto::build_result::Reader<'_>,
+) -> Option<String> {
+  result
+    .get_error_message()
+    .ok()
+    .and_then(|s| s.to_str().ok())
+    .filter(|s| !s.is_empty())
+    .map(std::borrow::ToOwned::to_owned)
 }
 
 #[allow(refining_impl_trait_internal, refining_impl_trait_reachable)]
@@ -49,22 +60,21 @@ impl result_sink::Server for ResultSinkImpl {
       let r = pr.get_result()?;
       let outcome = r.get_outcome().unwrap_or(BuildOutcome::BuildFailure);
       let kind = match outcome {
-        BuildOutcome::Success => BuildOutcomeKind::Success,
+        BuildOutcome::Success => {
+          BuildOutcomeKind::Success {
+            error_message: result_error_message(r),
+          }
+        },
         BuildOutcome::TimedOut => BuildOutcomeKind::TimedOut,
         BuildOutcome::Aborted => BuildOutcomeKind::Aborted,
         _ => {
           BuildOutcomeKind::Failure {
-            error_message: r
-              .get_error_message()
-              .ok()
-              .and_then(|s| s.to_str().ok())
-              .filter(|s| !s.is_empty())
-              .map(std::borrow::ToOwned::to_owned),
+            error_message: result_error_message(r),
           }
         },
       };
 
-      let succeeded = matches!(kind, BuildOutcomeKind::Success);
+      let succeeded = matches!(kind, BuildOutcomeKind::Success { .. });
       let Some(tx) = done.lock().await.take() else {
         return Err(capnp::Error::failed(
           "build result already reported".into(),

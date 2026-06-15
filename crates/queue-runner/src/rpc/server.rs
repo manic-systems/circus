@@ -1079,7 +1079,9 @@ async fn dispatch_one(
   }
 
   let out = match done_rx.await {
-    Ok(BuildOutcomeKind::Success) => DispatchResult::Succeeded,
+    Ok(BuildOutcomeKind::Success { error_message }) => {
+      DispatchResult::Succeeded { error_message }
+    },
     Ok(BuildOutcomeKind::TimedOut) => DispatchResult::TimedOut,
     Ok(BuildOutcomeKind::Aborted) => DispatchResult::Aborted,
     Ok(BuildOutcomeKind::Failure { error_message }) => {
