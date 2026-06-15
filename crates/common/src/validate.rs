@@ -82,7 +82,12 @@ fn extract_host_from_url(url: &str) -> Option<String> {
     .map_or(after_scheme, |(_, rest)| rest);
   // Take host:port, strip port and path
   let host_port = after_user.split('/').next()?;
-  let host = host_port.split(':').next()?;
+  let host = if let Some(rest) = host_port.strip_prefix('[') {
+    let (host, _rest) = rest.split_once(']')?;
+    host
+  } else {
+    host_port.split(':').next()?
+  };
   if host.is_empty() {
     return None;
   }
@@ -232,6 +237,79 @@ pub fn validate_url_scheme(
     );
   }
   Ok(())
+}
+
+/// Validate an untrusted value before passing it to Nix as a flake reference.
+///
+/// # Errors
+///
+/// Returns error for local filesystem refs. Remote refs are allowed here; URL
+/// scheme and host policy belongs to the API/config boundary that accepts the
+/// repository URL.
+pub fn validate_untrusted_flake_ref(value: &str) -> Result<(), String> {
+  let trimmed = value.trim();
+  if trimmed.is_empty() {
+    return Err("flake ref cannot be empty".to_string());
+  }
+  if trimmed.len() > 2048 {
+    return Err("flake ref must be at most 2048 characters".to_string());
+  }
+  if trimmed.contains('\0') {
+    return Err("flake ref must not contain null bytes".to_string());
+  }
+
+  let lower = trimmed.to_ascii_lowercase();
+  if lower.starts_with("path:")
+    || lower.starts_with("file:")
+    || lower.starts_with("git+file:")
+    || trimmed == "."
+    || trimmed.starts_with('/')
+    || trimmed.starts_with("./")
+    || trimmed.starts_with("../")
+    || trimmed.starts_with("~/")
+  {
+    return Err("local filesystem flake refs are not allowed".to_string());
+  }
+  Ok(())
+}
+
+/// Validate a jobset input before it is persisted or passed to Nix.
+///
+/// # Errors
+///
+/// Returns error if the input is malformed or would let untrusted data point
+/// Nix at the local filesystem.
+pub fn validate_jobset_input(
+  name: &str,
+  input_type: &str,
+  value: &str,
+  revision: Option<&str>,
+) -> Result<(), String> {
+  validate_name(name, "input name")?;
+  if value.is_empty() {
+    return Err("input value cannot be empty".to_string());
+  }
+  if value.len() > 2048 {
+    return Err("input value must be at most 2048 characters".to_string());
+  }
+  if value.contains('\0') {
+    return Err("input value must not contain null bytes".to_string());
+  }
+  if let Some(rev) = revision {
+    validate_commit_hash(rev)?;
+  }
+
+  match input_type {
+    "git" => validate_untrusted_flake_ref(value),
+    "string" | "boolean" | "build" => Ok(()),
+    "path" => {
+      Err(
+        "path jobset inputs are not allowed from untrusted configuration"
+          .to_string(),
+      )
+    },
+    other => Err(format!("unsupported jobset input type '{other}'")),
+  }
 }
 
 /// Log warnings at startup for any insecure schemes in the allowed list.
@@ -894,6 +972,49 @@ mod tests {
       ..Default::default()
     };
     assert!(b.validate().is_err());
+  }
+
+  #[test]
+  fn untrusted_flake_ref_rejects_local_filesystem_refs() {
+    for value in [
+      "path:/var/lib/circus",
+      "file:///var/lib/circus",
+      "git+file:///var/lib/circus/repo",
+      "/var/lib/circus",
+      ".",
+      "./repo",
+      "../repo",
+      "~/repo",
+    ] {
+      assert!(validate_untrusted_flake_ref(value).is_err(), "{value}");
+    }
+
+    assert!(validate_untrusted_flake_ref("github:owner/repo").is_ok());
+    assert!(
+      validate_untrusted_flake_ref("git+https://example.com/repo").is_ok()
+    );
+    assert!(validate_untrusted_flake_ref("https://example.com/repo").is_ok());
+  }
+
+  #[test]
+  fn jobset_input_validation_blocks_local_path_inputs() {
+    assert!(
+      validate_jobset_input("nixpkgs", "git", "path:/var/lib/circus", None)
+        .is_err()
+    );
+    assert!(
+      validate_jobset_input("src", "path", "/var/lib/circus", None).is_err()
+    );
+    assert!(
+      validate_jobset_input(
+        "nixpkgs",
+        "git",
+        "github:NixOS/nixpkgs",
+        Some("abcdef"),
+      )
+      .is_ok()
+    );
+    assert!(validate_jobset_input("flag", "boolean", "true", None).is_ok());
   }
 
   #[test]

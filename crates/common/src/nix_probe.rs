@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CiError, error::Result};
+use crate::{CiError, error::Result, validate};
 
 /// Result of probing a flake repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +93,8 @@ pub async fn probe_flake(
   revision: Option<&str>,
 ) -> Result<FlakeProbeResult> {
   let base_ref = to_flake_ref(repo_url);
+  validate::validate_untrusted_flake_ref(&base_ref)
+    .map_err(CiError::Validation)?;
   let flake_ref = if let Some(rev) = revision {
     format!("{base_ref}?rev={rev}")
   } else {
@@ -135,15 +137,10 @@ pub async fn probe_flake(
         ),
       });
     }
-    if stderr.contains("denied")
-      || stderr.contains("not accessible")
-      || stderr.contains("authentication")
-    {
-      return Err(CiError::NixEval(
-        "Repository not accessible. Check URL and permissions.".to_string(),
-      ));
-    }
-    return Err(CiError::NixEval(format!("nix flake show failed: {stderr}")));
+    tracing::warn!(stderr = %stderr, "nix flake probe failed");
+    return Err(CiError::NixEval(
+      "Repository not accessible or not a flake".to_string(),
+    ));
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout);

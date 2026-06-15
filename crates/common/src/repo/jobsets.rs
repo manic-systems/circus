@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::{
   error::{CiError, Result},
   models::{ActiveJobset, CreateJobset, Jobset, JobsetState, UpdateJobset},
+  validate::Validate,
 };
 
 /// Create a new jobset with defaults applied.
@@ -12,6 +13,7 @@ use crate::{
 ///
 /// Returns error if database insert fails or jobset already exists.
 pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
+  input.validate().map_err(CiError::Validation)?;
   let state = input.state.unwrap_or(JobsetState::Enabled);
   // Sync enabled with state if state was explicitly set, otherwise use
   // input.enabled
@@ -139,6 +141,7 @@ pub async fn update(
   id: Uuid,
   input: UpdateJobset,
 ) -> Result<Jobset> {
+  input.validate().map_err(CiError::Validation)?;
   let existing = get(pool, id).await?;
 
   let name = input.name.unwrap_or(existing.name);
@@ -214,6 +217,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
 ///
 /// Returns error if database operation fails.
 pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
+  input.validate().map_err(CiError::Validation)?;
   let state = input.state.unwrap_or(JobsetState::Enabled);
   // Sync enabled with state if state was explicitly set, otherwise use
   // input.enabled
