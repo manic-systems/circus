@@ -7,11 +7,11 @@ repository.workspace = true
 
 [dependencies]
 askama.workspace                         = true
-base64.workspace                         = true
 async-compression.workspace              = true
 async-stream.workspace                   = true
 axum.workspace                           = true
 axum-extra.workspace                     = true
+base64.workspace                         = true
 chrono.workspace                         = true
 circus-proto.workspace                   = true
 clap.workspace                           = true
