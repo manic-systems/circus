@@ -76,6 +76,10 @@ in {
           cors_permissive = false;
           # Allow file:// URLs in VM tests (no network, repos are local)
           allowed_url_schemes = ["https" "http" "git" "ssh" "file"];
+          # Functional tests read the API anonymously: a documented public
+          # read-only posture. The secure default (true) is exercised by the
+          # "require_api_key_for_reads" subtest in e2e.nix.
+          require_api_key_for_reads = false;
         };
 
         gc.enabled = false;

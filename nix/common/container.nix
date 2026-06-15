@@ -51,6 +51,10 @@ in {
           port = 3000;
           cors_permissive = false;
           allowed_url_schemes = ["https" "http" "git" "ssh" "file"];
+          # Functional tests read the API anonymously: a documented public
+          # read-only posture. Dashboard page_access keeps its secure defaults
+          # and is validated by auth-rbac.nix.
+          require_api_key_for_reads = false;
         };
 
         gc.enabled = false;
