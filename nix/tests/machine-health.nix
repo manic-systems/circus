@@ -58,7 +58,7 @@ testers.runNixOSTest {
             f"WHERE id = '{builder_id}'\""
         )
         result = machine.succeed(
-            f"curl -sf http://127.0.0.1:3000/api/v1/admin/builders/{builder_id}"
+            f"curl -sf http://127.0.0.1:3000/api/v1/admin/builders/{builder_id} {auth_header}"
         )
         b = json.loads(result)
         assert b["consecutive_failures"] == 1, \
@@ -140,7 +140,7 @@ testers.runNixOSTest {
             f"WHERE id = '{builder_id}'\""
         )
         result = machine.succeed(
-            f"curl -sf http://127.0.0.1:3000/api/v1/admin/builders/{builder_id}"
+            f"curl -sf http://127.0.0.1:3000/api/v1/admin/builders/{builder_id} {auth_header}"
         )
         b = json.loads(result)
         assert b["consecutive_failures"] == 0, \
