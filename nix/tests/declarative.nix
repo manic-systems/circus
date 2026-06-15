@@ -124,7 +124,7 @@ in
                   flakeMode = true;
                   branch = "master";
                   state = "enabled";
-                  checkInterval = 5;
+                  checkInterval = 10;
                 }
                 # Same repo, disabled: the evaluator must never touch it.
                 {
@@ -133,7 +133,7 @@ in
                   flakeMode = true;
                   branch = "master";
                   state = "disabled";
-                  checkInterval = 5;
+                  checkInterval = 10;
                 }
               ];
             }
@@ -521,9 +521,9 @@ in
       with subtest("Re-evaluation with unchanged source produces no second evaluation"):
           # The evaluator caches by (jobset_id, source_commit). A second poll
           # against the same commit must not create a duplicate evaluation row.
-          # We wait one poll cycle (checkInterval = 5s) then assert the count
+          # We wait one poll cycle (checkInterval = 10s) then assert the count
           # is still 1.
-          time.sleep(8)
+          time.sleep(15)
           eval_count = int(machine.succeed(
               f"curl -sf 'http://127.0.0.1:3000/api/v1/evaluations?jobset_id={enabled_jobset}' "
               "| jq '.items | map(select(.status==\"completed\")) | length'"
