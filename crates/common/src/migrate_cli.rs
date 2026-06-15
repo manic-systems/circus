@@ -45,10 +45,6 @@ pub enum Commands {
 /// # Errors
 ///
 /// Returns error if command execution fails.
-#[expect(
-  clippy::print_stdout,
-  reason = "CLI output is the primary user-facing interface"
-)]
 pub async fn run() -> color_eyre::Result<()> {
   let cli = Cli::parse();
   run_command(cli.command).await
