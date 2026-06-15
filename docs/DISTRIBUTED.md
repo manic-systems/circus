@@ -269,18 +269,33 @@ cache_public_key   = "circus-cache:..."
 [queue_runner.rpc.oidc]
 issuer               = "https://token.actions.githubusercontent.com"
 audiences            = [ "circus-agent" ]
-allowed_repositories = [ "example/circus" ]
+allowed_repositories = [ "example/circus-builders" ]
+allowed_subject_prefixes = [
+  "repo:example/circus-builders:ref:refs/heads/main",
+]
+allowed_workflow_refs = [
+  "example/circus-builders/.github/workflows/circus-builder.yml@refs/heads/main",
+]
 
-[queue_runner.gha]
-enabled       = true
-repository    = "example/circus"
-workflow      = "circus-builder.yml"
-ref_name      = "main"
-token_file    = "/run/credentials/circus-queue-runner/github-token"
-runner_url    = "circus+tls://runner.internal:8443"
+[[queue_runner.ephemeral_pools]]
+name = "gha-x86_64-linux"
+allowed_build_repositories = [ "example/project" ]
+systems = [ "x86_64-linux" ]
+supported_features = [ ]
+mandatory_features = [ ]
+max_jobs = 1
+cores = 0
+speed_factor = 1.0
+max_inflight = 4
+
+[queue_runner.ephemeral_pools.github_actions]
+workflow_repository = "example/circus-builders"
+workflow = "circus-builder.yml"
+ref_name = "main"
+token_file = "/run/credentials/circus-queue-runner/github-token"
+runner_url = "circus+tls://runner.internal:8443"
 oidc_audience = "circus-agent"
-systems       = [ "x86_64-linux" ]
-max_inflight  = 4
+agent_binary_url = "https://ci.example.org/artifacts/circus-agent-x86_64-linux"
 
 [cache_upload]
 enabled                    = true
@@ -385,42 +400,47 @@ reset and returned to `pending`.
 
 ## GitHub Actions Ephemeral Pool
 
-`[queue_runner.gha]` lets the queue-runner scale an ephemeral GitHub Actions
-pool when trusted builds are waiting for capacity. The runner does not hand
-GitHub arbitrary work. It only dispatches the configured workflow when a pending
-build is eligible for ephemeral execution, the build's trusted repository
-matches `queue_runner.gha.repository`, configured systems/features match, and
-there is room under `max_inflight`.
+`[[queue_runner.ephemeral_pools]]` lets the queue-runner scale one or more
+short-lived GitHub Actions agent classes when trusted builds are waiting for
+capacity. The runner does not hand GitHub arbitrary work. It dispatches a pool's
+workflow only when a pending build is eligible for external execution, the
+build's trusted project repository appears in `allowed_build_repositories`, the
+configured systems/features match, and there is room under `max_inflight`.
 
-Demand is counted from pending builds for `gha.systems`. A build contributes to
-GHA demand only when its required features are satisfied by
-`gha.supported_features` and `gha.mandatory_features`, and its trusted project
-repository matches `gha.repository`. Existing live capacity is counted only from
-connected agents that are all of the following: ephemeral, OIDC-authenticated,
-registered from the same repository, advertising one of the configured systems,
-and able to satisfy the pending build's features. In-flight launches are counted
-as provisional capacity until `inflight_ttl_secs` expires.
+Demand is counted per pool. A build contributes only when its system is in
+`systems`, its required features are satisfied by `supported_features` and
+`mandatory_features`, and its trusted project repository is in the pool
+allowlist. Existing live capacity is counted only from connected agents that are
+ephemeral, OIDC-authenticated from `github_actions.workflow_repository`, named
+with the pool's `name` prefix, advertising one of the configured systems, and
+able to satisfy the pending build's features. In-flight launches are counted as
+provisional capacity until `inflight_ttl_secs` expires.
 
-The workflow lives in the same repository as `queue_runner.gha.repository`.
+The workflow repository is intentionally separate from the source repositories
+the pool may build. This supports a central builder repository that hosts the
+workflow while Circus builds many project repositories.
+
 Circus ships `.github/workflows/circus-builder.yml`, which:
 
 1. receives workflow-dispatch inputs from the queue-runner,
-2. requests a GitHub OIDC ID token for `oidc_audience`,
-3. writes a temporary `circus-agent.toml`,
-4. runs `circus-agent --ephemeral`.
+2. installs Nix on the GitHub runner,
+3. downloads the pinned `agent_binary_url`,
+4. requests a GitHub OIDC ID token for `oidc_audience`,
+5. runs `circus-agent --ephemeral` with direct CLI flags.
 
-The queue-runner sends string and array values as TOML-ready JSON literals. A
-workflow that replaces the shipped builder workflow should preserve that
-contract: write `name`, `runner_url`, `systems`, `supported_features`,
-`mandatory_features`, numeric capacity fields, and `[agent.ephemeral]` into the
-temporary agent config without re-parsing them as shell lists.
+The workflow input contract is plain strings, not TOML fragments. Lists are
+comma-separated values for `systems`, `supported_features`, and
+`mandatory_features`. A replacement workflow should pass those values to
+`circus-agent` as `--system`, `--supported-feature`, and `--mandatory-feature`
+arguments.
 
 The GitHub token configured through `token` or `token_file` must be allowed to
-create workflow dispatch events for that repository. The workflow itself needs
-`id-token: write`, because the agent authenticates to the runner with the OIDC
-JWT in the existing `auth_token` field. `queue_runner.rpc.oidc.audiences` must
-include `queue_runner.gha.oidc_audience`, and
-`queue_runner.rpc.oidc.allowed_repositories` must include the GitHub repository.
+create workflow dispatch events in `github_actions.workflow_repository`. The
+workflow itself needs `id-token: write`, because the agent authenticates to the
+runner with the OIDC JWT in the existing `auth_token` field.
+`queue_runner.rpc.oidc.audiences` must include `github_actions.oidc_audience`,
+and `queue_runner.rpc.oidc.allowed_repositories` must include
+`github_actions.workflow_repository`.
 
 The autoscaler tracks launches in memory with `inflight_ttl_secs` and
 `scale_up_cooldown_secs` so a slow-to-register runner does not cause an
@@ -431,16 +451,21 @@ assigned.
 Operational notes:
 
 - `token` or `token_file` must contain a GitHub token with permission to call
-  the workflow-dispatch API for `gha.repository`.
+  the workflow-dispatch API for `github_actions.workflow_repository`.
 - `runner_url` must be reachable from the GitHub-hosted or self-hosted runner;
   use `circus+tls://...` for internet-facing endpoints.
-- `rpc.oidc.audiences` must include `gha.oidc_audience`, and
-  `rpc.oidc.allowed_repositories` must include `gha.repository`; an empty OIDC
-  repository allowlist rejects all OIDC agents.
-- Ephemeral and OIDC-authenticated agents are only assigned trusted-ref builds:
-  concrete jobset branches from source-change, manual, or interval evaluations,
-  not PR/MR evaluations. For OIDC agents, the project repository must parse as a
-  GitHub `owner/repo` slug and match the token repository.
+- `rpc.cache_substituter` and `rpc.cache_public_key` are required for ephemeral
+  pools so a fresh GitHub runner can substitute the assigned derivation closure.
+- `rpc.oidc.audiences` must include `github_actions.oidc_audience`, and
+  `rpc.oidc.allowed_repositories` must include
+  `github_actions.workflow_repository`; an empty OIDC repository allowlist
+  rejects all OIDC agents.
+- Restrict OIDC `sub` prefixes or `workflow_ref` values so only the intended
+  workflow/ref can register agents for the pool.
+- OIDC-authenticated agents are only assigned trusted-ref builds: concrete
+  jobset branches from source-change, manual, or interval evaluations, not PR/MR
+  evaluations. For OIDC agents, the project repository must parse as a GitHub
+  `owner/repo` slug and match the token repository.
 
 ## Security
 
@@ -451,8 +476,9 @@ Operational notes:
   malformed token digests.
 - OIDC authentication on `register` when `[queue_runner.rpc.oidc]` is set. The
   runner verifies the issuer, JWKS signature, expiry, accepted audience,
-  subject, and repository allowlist before accepting the session. The verified
-  repository is stored with the live session for scheduling decisions.
+  subject, workflow/ref constraints, and repository allowlist before accepting
+  the session. The verified repository is stored with the live session for
+  scheduling decisions.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
   `[queue_runner.rpc].tls`, and setting `client_ca` attaches a
   `WebPkiClientVerifier` for any client cert an agent presents. Agents may still
@@ -478,6 +504,7 @@ Operational notes:
   verifies file hash/size, recomputes the uncompressed NAR hash/size, and
   rejects mismatches without persisting anything. Pending upload expectations
   are discarded when the dispatch finishes.
-- Ephemeral and OIDC-authenticated agents only receive trusted-ref builds. PR/MR
-  evaluations and jobsets without a concrete branch stay on persistent agents,
-  local builds, or the SSH path.
+- OIDC-authenticated agents only receive trusted-ref builds. PR/MR evaluations
+  and jobsets without a concrete branch stay on persistent agents, local builds,
+  or the SSH path. Ephemeral lifecycle alone does not make an internal
+  token-authenticated agent external.
