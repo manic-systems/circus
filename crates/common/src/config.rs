@@ -1002,7 +1002,7 @@ impl Default for ServerConfig {
       email_validation_regex:        None,
       ldap:                          None,
       page_access:                   PageAccessConfig::default(),
-      config_editor_enabled:         true,
+      config_editor_enabled:         false,
       require_api_key_for_reads:     true,
       webhook_secret_encryption_key: None,
     }
