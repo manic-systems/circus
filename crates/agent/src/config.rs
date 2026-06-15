@@ -215,6 +215,11 @@ impl AgentConfig {
   /// Load config if an explicit config is set or the default file exists.
   /// Returns `Ok(None)` when no config file was requested and the default path
   /// is absent, allowing CLI-only ephemeral launches.
+  ///
+  /// # Errors
+  ///
+  /// Returns the underlying `config` error when an explicit config file is
+  /// missing, malformed, or deserializes to an invalid agent configuration.
   pub fn load_if_available(
     path: Option<&Path>,
   ) -> Result<Option<Self>, config::ConfigError> {
