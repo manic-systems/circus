@@ -3,7 +3,7 @@ use axum::{
   Router,
   body::Body,
   extract::{Path, Query, State},
-  http::{Extensions, StatusCode},
+  http::{Extensions, HeaderValue, StatusCode, header},
   response::{IntoResponse, Response},
   routing::{get, post, put},
 };
@@ -282,22 +282,20 @@ async fn download_build_product(
     let stream = tokio_util::io::ReaderStream::new(stdout);
     let body = Body::from_stream(stream);
 
-    let filename = product.path.rsplit('/').next().unwrap_or(&product.name);
+    let disposition = HeaderValue::from_str(&format!(
+      "attachment; filename=\"{product_id}.nar\""
+    ))
+    .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
 
-    Ok(
-      (
-        StatusCode::OK,
-        [
-          ("content-type", "application/x-nix-nar"),
-          (
-            "content-disposition",
-            &format!("attachment; filename=\"{filename}.nar\""),
-          ),
-        ],
-        body,
-      )
-        .into_response(),
-    )
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+      header::CONTENT_TYPE,
+      HeaderValue::from_static("application/x-nix-nar"),
+    );
+    response
+      .headers_mut()
+      .insert(header::CONTENT_DISPOSITION, disposition);
+    Ok(response)
   } else {
     // Serve file directly
     let file = tokio::fs::File::open(&product.path)
@@ -307,26 +305,19 @@ async fn download_build_product(
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
-    let content_type = product
-      .content_type
-      .as_deref()
-      .unwrap_or("application/octet-stream");
-    let filename = product.path.rsplit('/').next().unwrap_or(&product.name);
+    let disposition =
+      HeaderValue::from_str(&format!("attachment; filename=\"{product_id}\""))
+        .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
 
-    Ok(
-      (
-        StatusCode::OK,
-        [
-          ("content-type", content_type),
-          (
-            "content-disposition",
-            &format!("attachment; filename=\"{filename}\""),
-          ),
-        ],
-        body,
-      )
-        .into_response(),
-    )
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+      header::CONTENT_TYPE,
+      HeaderValue::from_static("application/octet-stream"),
+    );
+    response
+      .headers_mut()
+      .insert(header::CONTENT_DISPOSITION, disposition);
+    Ok(response)
   }
 }
 
