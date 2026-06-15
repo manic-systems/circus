@@ -6,7 +6,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use circus_agent::{
-  config::{Agent, AgentConfig, EphemeralConfig},
+  config::{Agent, AgentConfig, EphemeralConfig, TracingConfig},
   sandbox,
   session,
 };
@@ -170,25 +170,25 @@ fn inline_config(cli: &Cli) -> Result<AgentConfig> {
       rootless_data_dir: None,
       ephemeral: None,
     },
-    tracing: Default::default(),
+    tracing: TracingConfig::default(),
   })
 }
 
 fn apply_cli_overrides(agent: &mut Agent, cli: &Cli) {
   if let Some(name) = &cli.name {
-    agent.name = name.clone();
+    agent.name.clone_from(name);
   }
   if let Some(runner_url) = &cli.runner_url {
-    agent.runner_url = runner_url.clone();
+    agent.runner_url.clone_from(runner_url);
   }
   if !cli.systems.is_empty() {
-    agent.systems = cli.systems.clone();
+    agent.systems.clone_from(&cli.systems);
   }
   if !cli.supported_features.is_empty() {
-    agent.supported_features = cli.supported_features.clone();
+    agent.supported_features.clone_from(&cli.supported_features);
   }
   if !cli.mandatory_features.is_empty() {
-    agent.mandatory_features = cli.mandatory_features.clone();
+    agent.mandatory_features.clone_from(&cli.mandatory_features);
   }
   if let Some(max_jobs) = cli.max_jobs {
     agent.max_jobs = max_jobs;
@@ -200,7 +200,7 @@ fn apply_cli_overrides(agent: &mut Agent, cli: &Cli) {
     agent.speed_factor = speed_factor;
   }
   if let Some(work_dir) = &cli.work_dir {
-    agent.work_dir = work_dir.clone();
+    agent.work_dir.clone_from(work_dir);
   }
 }
 
