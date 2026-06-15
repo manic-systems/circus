@@ -454,12 +454,21 @@ pub(super) async fn admin_page(
     Ok(contents) => {
       circus_common::config::Config::from_toml_with_defaults(&contents)
         .ok()
-        .and_then(|config| toml::to_string_pretty(&config).ok())
+        .and_then(|config| {
+          let mut value = toml::Value::try_from(&config).ok()?;
+          circus_common::config::redact_secrets(&mut value);
+          toml::to_string_pretty(&value).ok()
+        })
         .unwrap_or(contents)
     },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-      toml::to_string_pretty(&circus_common::config::Config::default())
-        .unwrap_or_default()
+      match toml::Value::try_from(&circus_common::config::Config::default()) {
+        Ok(mut value) => {
+          circus_common::config::redact_secrets(&mut value);
+          toml::to_string_pretty(&value).unwrap_or_default()
+        },
+        Err(_) => String::new(),
+      }
     },
     Err(_) => String::new(),
   };
