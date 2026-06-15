@@ -11,6 +11,26 @@ testers.runNixOSTest {
       ../common/container.nix
     ];
     _module.args.self = self;
+
+    # These functional tests access dashboard pages without authentication;
+    # override the secure defaults so pages render instead of redirecting.
+    config.services.circus.settings.server.page_access = {
+      home = "public";
+      projects = "public";
+      project = "public";
+      jobset = "public";
+      jobset_jobs = "public";
+      evaluations = "public";
+      evaluation = "public";
+      builds = "public";
+      build = "public";
+      queue = "public";
+      channels = "public";
+      channel = "public";
+      news = "public";
+      starred = "public";
+      metrics = "public";
+    };
   };
 
   testScript = ''
