@@ -263,6 +263,8 @@ pub fn validate_untrusted_flake_ref(value: &str) -> Result<(), String> {
     || lower.starts_with("file:")
     || lower.starts_with("git+file:")
     || trimmed == "."
+    || trimmed == ".."
+    || trimmed == "~"
     || trimmed.starts_with('/')
     || trimmed.starts_with("./")
     || trimmed.starts_with("../")
@@ -982,6 +984,8 @@ mod tests {
       "git+file:///var/lib/circus/repo",
       "/var/lib/circus",
       ".",
+      "..",
+      "~",
       "./repo",
       "../repo",
       "~/repo",

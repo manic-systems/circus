@@ -22,15 +22,9 @@ pub async fn create(
   secret: Option<&str>,
   encryption_key: Option<&str>,
 ) -> Result<WebhookConfig> {
-  let secret = match secret {
-    Some(secret) => {
-      Some(crate::crypto::encrypt_webhook_secret(
-        secret,
-        encryption_key,
-      )?)
-    },
-    None => None,
-  };
+  let secret = secret
+    .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
+    .transpose()?;
   sqlx::query_as::<_, WebhookConfig>(
     "INSERT INTO webhook_configs (project_id, forge_type, secret_hash) VALUES \
      ($1, $2, $3) RETURNING *",
@@ -152,15 +146,9 @@ pub async fn upsert(
   enabled: bool,
   encryption_key: Option<&str>,
 ) -> Result<WebhookConfig> {
-  let secret = match secret {
-    Some(secret) => {
-      Some(crate::crypto::encrypt_webhook_secret(
-        secret,
-        encryption_key,
-      )?)
-    },
-    None => None,
-  };
+  let secret = secret
+    .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
+    .transpose()?;
   sqlx::query_as::<_, WebhookConfig>(
     "INSERT INTO webhook_configs (project_id, forge_type, secret_hash, \
      enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, forge_type) DO \
