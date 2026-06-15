@@ -1889,11 +1889,10 @@ pub fn redact_secrets(value: &mut toml::Value) {
   match value {
     toml::Value::Table(table) => {
       for (key, val) in table.iter_mut() {
-        if let toml::Value::String(s) = val {
-          if SECRET_KEYS.contains(&key.as_str())
-            || s.starts_with("postgresql://")
-            || s.starts_with("postgres://")
-          {
+        if SECRET_KEYS.contains(&key.as_str()) {
+          *val = toml::Value::String("***".into());
+        } else if let toml::Value::String(s) = val {
+          if s.starts_with("postgresql://") || s.starts_with("postgres://") {
             *s = "***".into();
           }
         } else {
