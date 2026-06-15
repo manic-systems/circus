@@ -9,27 +9,24 @@ on:
       oidc_audience:
         required: true
         type: string
-      circus_version:
-        required: false
+      agent_binary_url:
+        required: true
         type: string
-        default: "latest"
-        description: "Circus release tag to download (empty or 'latest' for newest)"
-      circus_system:
-        required: false
-        type: string
-        default: "linux-amd64"
-        description: "System string matching release assets (linux-amd64, linux-arm64)"
+        description: "Pinned circus-agent binary URL matching the queue-runner protocol"
       systems:
         required: true
         type: string
+        description: "Comma-separated Nix systems"
       supported_features:
         required: false
         type: string
         default: ""
+        description: "Comma-separated supported system features"
       mandatory_features:
         required: false
         type: string
         default: ""
+        description: "Comma-separated mandatory system features"
       max_jobs:
         required: true
         type: string
@@ -52,6 +49,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
       - name: Request OIDC token
         env:
           AUDIENCE: ${{ inputs.oidc_audience }}
@@ -63,10 +66,18 @@ jobs:
               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}"
           )"
           token="$(jq -r '.value' <<<"$response")"
-          echo "::add-mask::$token"
-          printf 'CIRCUS_AGENT_TOKEN=%s\n' "$token" >>"$GITHUB_ENV"
+           echo "::add-mask::$token"
+           printf 'CIRCUS_AGENT_TOKEN=%s\n' "$token" >>"$GITHUB_ENV"
 
-      - name: Write agent config
+      - name: Download circus-agent binary
+        env:
+          AGENT_BINARY_URL: ${{ inputs.agent_binary_url }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "$AGENT_BINARY_URL" -o /tmp/circus-agent
+          chmod +x /tmp/circus-agent
+
+      - name: Run circus agent
         env:
           AGENT_NAME: ${{ inputs.agent_name }}
           RUNNER_URL: ${{ inputs.runner_url }}
@@ -78,37 +89,30 @@ jobs:
           SPEED_FACTOR: ${{ inputs.speed_factor }}
         run: |
           set -euo pipefail
-          cat >"$RUNNER_TEMP/circus-agent.toml" <<EOF
-          [agent]
-          name = ${AGENT_NAME}
-          runner_url = ${RUNNER_URL}
-          systems = ${SYSTEMS}
-          supported_features = ${SUPPORTED_FEATURES}
-          mandatory_features = ${MANDATORY_FEATURES}
-          max_jobs = ${MAX_JOBS}
-          cores = ${CORES}
-          speed_factor = ${SPEED_FACTOR}
-          work_dir = "/tmp/circus-agent"
 
-          [agent.ephemeral]
-          max_builds = 1
-          max_idle_secs = 120
-          unique_name = true
-          EOF
+          args=(
+            --ephemeral
+            --name "$AGENT_NAME"
+            --runner-url "$RUNNER_URL"
+            --max-jobs "$MAX_JOBS"
+            --cores "$CORES"
+            --speed-factor "$SPEED_FACTOR"
+            --work-dir /tmp/circus-agent
+          )
 
-      - name: Download circus-agent binary
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CIRCUS_VERSION: ${{ inputs.circus_version }}
-          CIRCUS_SYSTEM: ${{ inputs.circus_system }}
-        run: |
-          set -euo pipefail
-          args=(release download --repo manic-systems/circus --pattern "circus-agent-${CIRCUS_SYSTEM}" --output /tmp/circus-agent)
-          if [[ -n "${CIRCUS_VERSION:-}" && "${CIRCUS_VERSION}" != "latest" ]]; then
-            args+=("${CIRCUS_VERSION}")
-          fi
-          gh "${args[@]}"
-          chmod +x /tmp/circus-agent
+          add_csv_args() {
+            local flag="$1"
+            local value="$2"
+            [[ -z "$value" ]] && return 0
+            IFS=',' read -ra items <<<"$value"
+            for item in "${items[@]}"; do
+              item="${item//[[:space:]]/}"
+              [[ -n "$item" ]] && args+=("$flag" "$item")
+            done
+          }
 
-      - name: Run circus agent
-        run: /tmp/circus-agent --config "$RUNNER_TEMP/circus-agent.toml" --ephemeral
+          add_csv_args --system "$SYSTEMS"
+          add_csv_args --supported-feature "$SUPPORTED_FEATURES"
+          add_csv_args --mandatory-feature "$MANDATORY_FEATURES"
+
+          exec /tmp/circus-agent "${args[@]}"

@@ -45,7 +45,7 @@ async fn main() -> color_eyre::Result<()> {
   let cache_upload_config = config.cache_upload;
   let cache_upload_for_rpc = cache_upload_config.clone();
   let qr_config = config.queue_runner;
-  let gha_config = qr_config.gha.clone();
+  let ephemeral_pools = qr_config.ephemeral_pools.clone();
   let nix_store_dir = config.nix.store_dir;
 
   let workers = cli.workers.unwrap_or(qr_config.workers);
@@ -163,23 +163,29 @@ async fn main() -> color_eyre::Result<()> {
   }
 
   let gha_shutdown = CancellationToken::new();
-  let gha_handle = if gha_config.enabled {
-    let shutdown = gha_shutdown.clone();
-    let pool = db.pool().clone();
-    let agents = Arc::clone(&agent_pool);
-    Some(tokio::spawn(async move {
-      match circus_queue_runner::gha::Autoscaler::new(
-        gha_config, pool, agents, shutdown,
-      )
-      .await
-      {
-        Ok(autoscaler) => autoscaler.run().await,
-        Err(e) => tracing::error!("GitHub Actions autoscaler disabled: {e}"),
-      }
-    }))
+  let gha_handles = if ephemeral_pools.is_empty() {
+    tracing::info!("no ephemeral pools configured");
+    Vec::new()
   } else {
-    tracing::info!("[queue_runner.gha] disabled");
-    None
+    ephemeral_pools
+      .into_iter()
+      .map(|pool_cfg| {
+        let shutdown = gha_shutdown.clone();
+        let pool = db.pool().clone();
+        let agents = Arc::clone(&agent_pool);
+        let pool_name = pool_cfg.name.clone();
+        tokio::spawn(async move {
+          match circus_queue_runner::gha::Autoscaler::new(
+            pool_cfg, pool, agents, shutdown,
+          )
+          .await
+          {
+            Ok(autoscaler) => autoscaler.run().await,
+            Err(e) => tracing::error!(%pool_name, "GitHub Actions autoscaler disabled: {e}"),
+          }
+        })
+      })
+      .collect()
   };
 
   tokio::select! {
@@ -203,7 +209,7 @@ async fn main() -> color_eyre::Result<()> {
       }
   }
 
-  if let Some(handle) = gha_handle {
+  for handle in gha_handles {
     handle.abort();
     let _ = handle.await;
   }
