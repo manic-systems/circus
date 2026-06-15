@@ -358,19 +358,32 @@ async fn get_config_file(
               path.display()
             )))
           })?;
-      toml::to_string_pretty(&parsed).map_err(|e| {
+      let mut value = toml::Value::try_from(&parsed).map_err(|e| {
+        ApiError(circus_common::CiError::Internal(format!(
+          "Failed to serialize configuration: {e}"
+        )))
+      })?;
+      circus_common::config::redact_secrets(&mut value);
+      toml::to_string_pretty(&value).map_err(|e| {
         ApiError(circus_common::CiError::Internal(format!(
           "Failed to render effective configuration: {e}"
         )))
       })?
     },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-      toml::to_string_pretty(&circus_common::config::Config::default())
-        .map_err(|e| {
-          ApiError(circus_common::CiError::Internal(format!(
-            "Failed to render default configuration: {e}"
-          )))
-        })?
+      let mut value =
+        toml::Value::try_from(&circus_common::config::Config::default())
+          .map_err(|e| {
+            ApiError(circus_common::CiError::Internal(format!(
+              "Failed to serialize default configuration: {e}"
+            )))
+          })?;
+      circus_common::config::redact_secrets(&mut value);
+      toml::to_string_pretty(&value).map_err(|e| {
+        ApiError(circus_common::CiError::Internal(format!(
+          "Failed to render default configuration: {e}"
+        )))
+      })?
     },
     Err(e) => return Err(ApiError(circus_common::CiError::Io(e))),
   };
