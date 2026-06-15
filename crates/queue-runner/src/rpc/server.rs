@@ -632,15 +632,28 @@ impl runner::Server for RunnerImpl {
       }
 
       // Only the build drv outputs may be uploaded, else an agent could sign
-      // a narinfo for an arbitrary input-addressed path. An empty set means a
-      // CA or unresolvable drv, so fall through to hash verification.
+      // a narinfo for an arbitrary input-addressed path.
       let drv_outputs: std::collections::HashSet<String> =
         match circus_common::repo::builds::get(&self.db_pool, build_id).await {
           Ok(build) => {
-            crate::dispatch::read_drv_outputs(&build.drv_path)
-              .await
-              .into_iter()
-              .collect()
+            match crate::dispatch::try_read_drv_outputs(&build.drv_path).await {
+              Ok(outputs) if !outputs.is_empty() => {
+                outputs.into_iter().collect()
+              },
+              Ok(_) => {
+                return Err(capnp::Error::failed(format!(
+                  "derivation {} has no queryable outputs for upload \
+                   authorization",
+                  build.drv_path
+                )));
+              },
+              Err(e) => {
+                return Err(capnp::Error::failed(format!(
+                  "cannot query derivation outputs for upload authorization: \
+                   {e}"
+                )));
+              },
+            }
           },
           Err(e) => {
             return Err(capnp::Error::failed(format!(
@@ -664,7 +677,7 @@ impl runner::Server for RunnerImpl {
           slot.set_error_message(msg.as_str());
           continue;
         }
-        if !drv_outputs.is_empty() && !drv_outputs.contains(&store_path) {
+        if !drv_outputs.contains(&store_path) {
           slot.set_error_message(
             "store path is not an output of this build's derivation",
           );

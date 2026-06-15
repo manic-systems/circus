@@ -581,21 +581,29 @@ pub async fn run_on_agent(
 }
 
 pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
-  let Ok(out) = tokio::process::Command::new("nix-store")
+  try_read_drv_outputs(drv_path).await.unwrap_or_default()
+}
+
+pub(crate) async fn try_read_drv_outputs(
+  drv_path: &str,
+) -> color_eyre::Result<Vec<String>> {
+  let out = tokio::process::Command::new("nix-store")
     .args(["--query", "--outputs", drv_path])
     .output()
-    .await
-  else {
-    return Vec::new();
-  };
+    .await?;
   if !out.status.success() {
-    return Vec::new();
+    return Err(color_eyre::eyre::eyre!(
+      "nix-store --query --outputs {drv_path} exited with {}",
+      out.status
+    ));
   }
-  String::from_utf8_lossy(&out.stdout)
-    .lines()
-    .map(|s| s.trim().to_owned())
-    .filter(|s| !s.is_empty())
-    .collect()
+  Ok(
+    String::from_utf8_lossy(&out.stdout)
+      .lines()
+      .map(|s| s.trim().to_owned())
+      .filter(|s| !s.is_empty())
+      .collect(),
+  )
 }
 
 #[cfg(test)]
