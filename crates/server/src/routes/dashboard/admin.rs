@@ -462,13 +462,10 @@ pub(super) async fn admin_page(
         .unwrap_or(contents)
     },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-      match toml::Value::try_from(&circus_common::config::Config::default()) {
-        Ok(mut value) => {
+      toml::Value::try_from(circus_common::config::Config::default()).map_or_else(|_| String::new(), |mut value| {
           circus_common::config::redact_secrets(&mut value);
           toml::to_string_pretty(&value).unwrap_or_default()
-        },
-        Err(_) => String::new(),
-      }
+        })
     },
     Err(_) => String::new(),
   };
