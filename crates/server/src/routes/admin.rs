@@ -372,7 +372,7 @@ async fn get_config_file(
     },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
       let mut value =
-        toml::Value::try_from(&circus_common::config::Config::default())
+        toml::Value::try_from(circus_common::config::Config::default())
           .map_err(|e| {
             ApiError(circus_common::CiError::Internal(format!(
               "Failed to serialize default configuration: {e}"
