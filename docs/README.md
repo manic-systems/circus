@@ -38,6 +38,96 @@ any time, please head to the [discussions tab] to ask your questions directly.
 The project is named "Circus" because it has "CI" in the name, and well, _CI is
 for clowns_. Hope this answers your other burning question.
 
+## Features
+
+Circus is intended to be a full Nix CI system rather than a thin build script
+runner or a structured Nix wrapper. The main feature areas are:
+
+### Nix-native evaluation and builds
+
+- Flake-oriented project and jobset evaluation, with support for traditional Nix
+  expressions where configured.
+- Build creation from evaluated derivations, including aggregate builds and
+  build dependencies.
+- `requiredSystemFeatures` extraction and capability-aware scheduling, so builds
+  that require features such as `kvm`, `nixos-test`, `benchmark`, or
+  `big-parallel` are routed to suitable builders.
+- Failed-path caching to skip derivations already known to fail during the cache
+  TTL.
+- Fixed-output derivation detection and reuse of already-valid store paths.
+- Interval, source-change, and manual evaluation triggers.
+
+### Distributed builders
+
+- Push-based `circus-agent` builders connected over Cap'n Proto RPC.
+- Persistent agents for long-running builder machines.
+- Ephemeral single-session agents for CI providers such as GitHub Actions.
+- Agent heartbeats with load, memory, disk, and PSI pressure data.
+- Scheduling by system, supported features, mandatory features, current load,
+  speed factor, and optional PSI thresholds.
+- Legacy SSH remote builders remain supported, with hardened SSH options and
+  optional pinned host-key enforcement.
+- Local queue-runner builds remain available when the runner host advertises the
+  required system and features.
+
+### GitHub Actions ephemeral autoscaling
+
+- Queue-runner-driven `workflow_dispatch` launches for short-lived GitHub
+  Actions builders.
+- OIDC registration for ephemeral agents using GitHub ID tokens.
+- Repository allowlists, audience checks, issuer/JWKS verification, and
+  trusted-ref scheduling gates.
+- Autoscaling based on pending trusted build demand, live ephemeral capacity,
+  in-flight launch TTLs, and scale-up cooldowns.
+- Unique ephemeral agent names derived from GitHub run metadata and a fresh
+  machine ID to avoid concurrent-run collisions.
+
+### Binary cache and artifact handling
+
+- Built-in Nix binary cache endpoints under `/nix-cache/`.
+- Output signing through configured Nix signing keys.
+- S3 cache upload support for local, SSH, and agent builds.
+- Presigned S3 upload flow for agents, including runner-side verification of the
+  uploaded compressed file and uncompressed NAR before narinfo is signed and
+  persisted.
+- Short-lived signed S3 GET redirects for cache clients when artifacts live in
+  object storage.
+- GC root management for retained outputs.
+
+### Web UI and API
+
+- REST API for projects, jobsets, evaluations, builds, users, search, admin
+  operations, configuration, and cache access.
+- Dashboard for browsing projects, jobsets, evaluations, builds, logs, channels,
+  machine health, and administration pages.
+- OpenAPI document exposed by running instances and generated Markdown API
+  reference in [API.md].
+- Prometheus-compatible metrics endpoint.
+- Page-access policy for public, authenticated, and admin-only dashboard views.
+
+### Configuration and operations
+
+- Declarative configuration for projects, jobsets, users, API keys, channels,
+  project members, and remote builders.
+- NixOS modules for Circus services and `circus-agent` deployments.
+- PostgreSQL-backed state with SQL migrations and a dedicated migration CLI.
+- Runtime configuration validation for database settings, URLs, auth tokens,
+  webhook targets, SSH builder settings, OIDC settings, and GHA autoscaling
+  requirements.
+- Admin CLI for common API-backed administrative workflows.
+- Structured tracing configuration for service logs.
+
+### Authentication, authorization, and notifications
+
+- API-key authentication and role-based access control.
+- Local user/password authentication.
+- Optional GitHub OAuth login.
+- Optional LDAP bind login.
+- Webhook ingestion for common forge events.
+- Build status notifications through GitHub, Gitea/Forgejo, GitLab, generic
+  webhooks, Slack, and email where configured.
+- Persistent notification retry queue with backoff and retention.
+
 ## Architecture
 
 Circus, after everything, follows Hydra's three-daemon model (with the addition
@@ -70,6 +160,7 @@ together.
 [USAGE.md]: ./USAGE.md
 [DISTRIBUTED.md]: ./DISTRIBUTED.md
 [COMPARISON.md]: ./COMPARISON.md
+[API.md]: ./API.md
 
 Circus documentation is split into different documents, detailing different
 aspects of its usage. Quickstart options, demo VM usage, configuration, database
@@ -81,15 +172,15 @@ instructions for _distributed_ build setups as an **experimental** feature of
 Circus can be found in [DISTRIBUTED.md].
 
 For developers (and more technically inclined users) a design overview is
-maintained at [DESIGN.md], which contains architechture, data flow, rationale
-and more. If you're interested in a comparison, [COMPARISON.md] holds a somewhat
+maintained at [DESIGN.md], which contains architecture, data flow, rationale and
+more. If you're interested in a comparison, [COMPARISON.md] holds a somewhat
 up-to-date document detailing the weaknesses and strengths of Circus compared to
 Hydra. Worth noting that Hydra has picked up steam again, and evolved since the
 time of writing for this document.
 
-- [API.md](./API.md): generated REST API endpoint reference. Running servers
-  also expose the same machine-readable OpenAPI document at
-  `/api/v1/openapi.json`.
+On a running instance, you may find the machine-readable OpenAPI spec document
+at `/api/v1/openapi.json`. The generated REST API endpoint reference is also
+rendered in markdown at [API.md].
 
 Please create an issue if you notice inaccuracies, or have some questions that
 you think is worth answering in the documentation for future reference.
