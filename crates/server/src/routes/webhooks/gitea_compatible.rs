@@ -78,6 +78,7 @@ pub(super) async fn handle_signed_push(
     &state.pool,
     project_id,
     provider.config_type,
+    state.config.server.webhook_secret_encryption_key.as_deref(),
   )
   .await
   .map_err(ApiError)?;
@@ -86,9 +87,10 @@ pub(super) async fn handle_signed_push(
     return Ok(webhook_not_configured(provider.display_name));
   };
 
-  if let Some(ref secret_hash) = webhook_config.secret_hash
-    && !provider.is_signature_valid(&headers, &body, secret_hash)
-  {
+  let Some(ref secret_hash) = webhook_config.secret_hash else {
+    return Ok(webhook_not_configured(provider.display_name));
+  };
+  if !provider.is_signature_valid(&headers, &body, secret_hash) {
     return Ok(invalid_signature_response());
   }
 

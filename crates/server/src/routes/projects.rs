@@ -203,9 +203,16 @@ struct ProbeRequest {
 }
 
 async fn probe_repository(
-  _extensions: Extensions,
+  extensions: Extensions,
+  State(state): State<AppState>,
   Json(body): Json<ProbeRequest>,
 ) -> Result<Json<nix_probe::FlakeProbeResult>, ApiError> {
+  permissions::require_api(&extensions, Permission::CreateProjects)?;
+  circus_common::validate::validate_url_scheme(
+    &body.repository_url,
+    &state.config.server.allowed_url_schemes,
+  )
+  .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let result =
     nix_probe::probe_flake(&body.repository_url, body.revision.as_deref())
       .await
@@ -291,7 +298,7 @@ async fn setup_project(
 #[derive(Debug, Deserialize)]
 struct CreateWebhookBody {
   forge_type: String,
-  secret:     Option<String>,
+  secret:     String,
 }
 
 async fn list_project_webhooks(
@@ -322,20 +329,23 @@ async fn create_project_webhook(
       valid_forges.join(", ")
     ))));
   }
+  if body.secret.trim().is_empty() {
+    return Err(ApiError(circus_common::CiError::Validation(
+      "Webhook secret is required".into(),
+    )));
+  }
 
   let input = CreateWebhookConfig {
     project_id,
     forge_type: body.forge_type,
-    secret: body.secret.clone(),
+    secret: Some(body.secret.clone()),
   };
 
-  // For webhook configs, we store the secret directly (used for token
-  // comparison) GitHub/Gitea use HMAC verification, GitLab uses direct token
-  // comparison
   let config = circus_common::repo::webhook_configs::create(
     &state.pool,
     input,
-    body.secret.as_deref(),
+    Some(body.secret.as_str()),
+    state.config.server.webhook_secret_encryption_key.as_deref(),
   )
   .await
   .map_err(ApiError)?;
