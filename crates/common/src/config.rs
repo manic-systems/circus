@@ -58,36 +58,45 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "ServerConfig mirrors independent TOML switches"
+)]
 #[serde(default)]
 pub struct ServerConfig {
-  pub host:                   String,
-  pub port:                   u16,
-  pub request_timeout:        u64,
-  pub max_body_size:          usize,
-  pub api_key:                Option<String>,
-  pub allowed_origins:        Vec<String>,
-  pub cors_permissive:        bool,
-  pub rate_limit_rps:         Option<u64>,
-  pub rate_limit_burst:       Option<u32>,
+  pub host:                          String,
+  pub port:                          u16,
+  pub request_timeout:               u64,
+  pub max_body_size:                 usize,
+  pub api_key:                       Option<String>,
+  pub allowed_origins:               Vec<String>,
+  pub cors_permissive:               bool,
+  pub rate_limit_rps:                Option<u64>,
+  pub rate_limit_burst:              Option<u32>,
   /// Allowed URL schemes for repository URLs. Insecure schemes emit a warning
   /// on startup
-  pub allowed_url_schemes:    Vec<String>,
+  pub allowed_url_schemes:           Vec<String>,
   /// Force Secure flag on session cookies (enable when behind HTTPS reverse
   /// proxy)
-  pub force_secure_cookies:   bool,
+  pub force_secure_cookies:          bool,
   /// Optional regex for email format validation.
   /// When unset (the default), only structural checks are applied: the address
   /// must be non-empty, at most 255 characters, and contain `@`. Set this to
   /// enforce a stricter pattern, e.g.:
   /// `'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'`
-  pub email_validation_regex: Option<String>,
+  pub email_validation_regex:        Option<String>,
   /// LDAP authentication configuration.
-  pub ldap:                   Option<LdapConfig>,
+  pub ldap:                          Option<LdapConfig>,
   /// Dashboard page-level access policy.
-  pub page_access:            PageAccessConfig,
+  pub page_access:                   PageAccessConfig,
   /// Allow admins to read and replace the config file through the
   /// dashboard/API.
-  pub config_editor_enabled:  bool,
+  pub config_editor_enabled:         bool,
+  /// Require a valid API key/session for read-only `/api/v1` requests.
+  #[serde(default = "default_true")]
+  pub require_api_key_for_reads:     bool,
+  /// Key used to encrypt webhook secrets before database storage.
+  pub webhook_secret_encryption_key: Option<String>,
 }
 
 #[derive(
@@ -128,20 +137,20 @@ impl Default for PageAccessConfig {
   fn default() -> Self {
     Self {
       home:        PageAccessLevel::Public,
-      projects:    PageAccessLevel::Public,
-      project:     PageAccessLevel::Public,
-      jobset:      PageAccessLevel::Public,
-      jobset_jobs: PageAccessLevel::Public,
-      evaluations: PageAccessLevel::Public,
-      evaluation:  PageAccessLevel::Public,
-      builds:      PageAccessLevel::Public,
-      build:       PageAccessLevel::Public,
-      queue:       PageAccessLevel::Public,
-      channels:    PageAccessLevel::Public,
-      channel:     PageAccessLevel::Public,
-      news:        PageAccessLevel::Public,
-      starred:     PageAccessLevel::Public,
-      metrics:     PageAccessLevel::Public,
+      projects:    PageAccessLevel::Authenticated,
+      project:     PageAccessLevel::Authenticated,
+      jobset:      PageAccessLevel::Authenticated,
+      jobset_jobs: PageAccessLevel::Authenticated,
+      evaluations: PageAccessLevel::Authenticated,
+      evaluation:  PageAccessLevel::Authenticated,
+      builds:      PageAccessLevel::Authenticated,
+      build:       PageAccessLevel::Authenticated,
+      queue:       PageAccessLevel::Admin,
+      channels:    PageAccessLevel::Authenticated,
+      channel:     PageAccessLevel::Authenticated,
+      news:        PageAccessLevel::Authenticated,
+      starred:     PageAccessLevel::Authenticated,
+      metrics:     PageAccessLevel::Admin,
     }
   }
 }
@@ -975,26 +984,27 @@ impl DatabaseConfig {
 impl Default for ServerConfig {
   fn default() -> Self {
     Self {
-      host:                   "127.0.0.1".to_string(),
-      port:                   3000,
-      request_timeout:        30,
-      max_body_size:          10 * 1024 * 1024, // 10MB
-      api_key:                None,
-      allowed_origins:        Vec::new(),
-      cors_permissive:        false,
-      rate_limit_rps:         None,
-      rate_limit_burst:       None,
-      allowed_url_schemes:    vec![
+      host:                          "127.0.0.1".to_string(),
+      port:                          3000,
+      request_timeout:               30,
+      max_body_size:                 10 * 1024 * 1024, // 10MB
+      api_key:                       None,
+      allowed_origins:               Vec::new(),
+      cors_permissive:               false,
+      rate_limit_rps:                None,
+      rate_limit_burst:              None,
+      allowed_url_schemes:           vec![
         "https".into(),
-        "http".into(),
         "git".into(),
         "ssh".into(),
       ],
-      force_secure_cookies:   false,
-      email_validation_regex: None,
-      ldap:                   None,
-      page_access:            PageAccessConfig::default(),
-      config_editor_enabled:  true,
+      force_secure_cookies:          false,
+      email_validation_regex:        None,
+      ldap:                          None,
+      page_access:                   PageAccessConfig::default(),
+      config_editor_enabled:         true,
+      require_api_key_for_reads:     true,
+      webhook_secret_encryption_key: None,
     }
   }
 }
