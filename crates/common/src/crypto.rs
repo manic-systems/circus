@@ -1,8 +1,7 @@
 //! Process-wide rustls crypto provider setup and small crypto helpers.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ring::{aead, rand};
-use sha2::{Digest, Sha256};
+use ring::{aead, hkdf, rand};
 
 use crate::error::{CiError, Result};
 
@@ -88,13 +87,32 @@ pub fn decrypt_webhook_secret(
     .map_err(|_| CiError::Config("Webhook secret is not valid UTF-8".into()))
 }
 
+struct Aes256KeyLen;
+
+impl hkdf::KeyType for Aes256KeyLen {
+  fn len(&self) -> usize {
+    32
+  }
+}
+
 fn webhook_aead_key(key: Option<&str>) -> Result<aead::LessSafeKey> {
   let key = key.filter(|key| !key.trim().is_empty()).ok_or_else(|| {
     CiError::Config("server.webhook_secret_encryption_key is required".into())
   })?;
-  let digest = Sha256::digest(key.as_bytes());
-  let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, digest.as_slice())
+
+  let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"circus-webhook-secret-v1");
+  let prk = salt.extract(key.as_bytes());
+  let okm = prk
+    .expand(&[b"aes-256-gcm-key"], Aes256KeyLen)
     .map_err(|_| {
+      CiError::Config("HKDF expand failed for webhook encryption key".into())
+    })?;
+  let mut key_bytes = [0u8; 32];
+  okm.fill(&mut key_bytes).map_err(|_| {
+    CiError::Config("HKDF fill failed for webhook encryption key".into())
+  })?;
+  let unbound =
+    aead::UnboundKey::new(&aead::AES_256_GCM, &key_bytes).map_err(|_| {
       CiError::Config("Invalid webhook secret encryption key".into())
     })?;
   Ok(aead::LessSafeKey::new(unbound))
