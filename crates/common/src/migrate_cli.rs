@@ -8,8 +8,8 @@ use tracing::info;
 const DEFAULT_MIGRATIONS_DIR: &str = "crates/migrations/migrations";
 
 #[derive(Debug, Parser)]
-#[command(name = "circus-migrate")]
-#[command(about = "Database migration utility for circus")]
+#[command(name = "circusctl migrate")]
+#[command(about = "Database migration commands for circusctl")]
 pub struct Cli {
   #[command(subcommand)]
   pub command: Commands,
@@ -51,8 +51,20 @@ pub enum Commands {
 )]
 pub async fn run() -> color_eyre::Result<()> {
   let cli = Cli::parse();
+  run_command(cli.command).await
+}
 
-  match cli.command {
+/// Execute a parsed migration command.
+///
+/// # Errors
+///
+/// Returns error if command execution fails.
+#[expect(
+  clippy::print_stdout,
+  reason = "CLI output is the primary user-facing interface"
+)]
+pub async fn run_command(command: Commands) -> color_eyre::Result<()> {
+  match command {
     Commands::Up { database_url } => {
       info!("Running database migrations");
       crate::run_migrations(&database_url).await?;
@@ -149,7 +161,8 @@ mod tests {
   #[test]
   fn cli_parses_up_with_url() {
     let cli =
-      Cli::try_parse_from(["circus-migrate", "up", "postgres://x/y"]).unwrap();
+      Cli::try_parse_from(["circusctl migrate", "up", "postgres://x/y"])
+        .unwrap();
     match cli.command {
       Commands::Up { database_url } => {
         assert_eq!(database_url, "postgres://x/y");
@@ -161,7 +174,7 @@ mod tests {
   #[test]
   fn cli_parses_validate_with_url() {
     let cli =
-      Cli::try_parse_from(["circus-migrate", "validate", "postgres://x/y"])
+      Cli::try_parse_from(["circusctl migrate", "validate", "postgres://x/y"])
         .unwrap();
     assert!(matches!(cli.command, Commands::Validate { .. }));
   }
@@ -169,7 +182,7 @@ mod tests {
   #[test]
   fn cli_parses_create_with_default_output_dir() {
     let cli =
-      Cli::try_parse_from(["circus-migrate", "create", "add_foo"]).unwrap();
+      Cli::try_parse_from(["circusctl migrate", "create", "add_foo"]).unwrap();
     match cli.command {
       Commands::Create { name, output_dir } => {
         assert_eq!(name, "add_foo");
@@ -182,7 +195,7 @@ mod tests {
   #[test]
   fn cli_parses_create_with_custom_output_dir() {
     let cli = Cli::try_parse_from([
-      "circus-migrate",
+      "circusctl migrate",
       "create",
       "add_foo",
       "--output-dir",
@@ -199,13 +212,13 @@ mod tests {
 
   #[test]
   fn cli_rejects_missing_subcommand() {
-    let err = Cli::try_parse_from(["circus-migrate"]).unwrap_err();
+    let err = Cli::try_parse_from(["circusctl migrate"]).unwrap_err();
     assert!(!err.to_string().is_empty());
   }
 
   #[test]
   fn cli_rejects_up_without_url() {
-    let err = Cli::try_parse_from(["circus-migrate", "up"]).unwrap_err();
+    let err = Cli::try_parse_from(["circusctl migrate", "up"]).unwrap_err();
     assert!(!err.to_string().is_empty());
   }
 

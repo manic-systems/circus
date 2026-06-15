@@ -11,8 +11,8 @@ version      = "0.11.0"
 
 [workspace.dependencies]
 # Workspace Cmponents
-circus-admin        = { path = "./crates/admin-cli", version = "0.11.0" }
 circus-agent        = { path = "./crates/agent", version = "0.11.0" }
+circus-cli          = { path = "./crates/cli", version = "0.11.0" }
 circus-common       = { path = "./crates/common", version = "0.11.0" }
 circus-config       = { path = "./crates/config", version = "0.11.0" }
 circus-evaluator    = { path = "./crates/evaluator", version = "0.11.0" }

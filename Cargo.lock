@@ -565,20 +565,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "circus-admin"
-version = "0.11.0"
-dependencies = [
- "clap",
- "color-eyre",
- "comfy-table",
- "reqwest 0.13.4",
- "rustls",
- "serde_json",
- "tokio",
- "urlencoding",
-]
-
-[[package]]
 name = "circus-agent"
 version = "0.11.0"
 dependencies = [
@@ -614,6 +600,21 @@ dependencies = [
  "url",
  "uuid",
  "whoami",
+]
+
+[[package]]
+name = "circus-cli"
+version = "0.11.0"
+dependencies = [
+ "circus-common",
+ "clap",
+ "color-eyre",
+ "comfy-table",
+ "reqwest 0.13.4",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "urlencoding",
 ]
 
 [[package]]
@@ -707,18 +708,6 @@ version = "0.11.0"
 dependencies = [
  "serde",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "circus-migrate-cli"
-version = "0.11.0"
-dependencies = [
- "circus-common",
- "circus-logs",
- "clap",
- "color-eyre",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -1047,9 +1036,9 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.15.23"
+version = "0.15.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f316c6237b2d38be61949ecd15268a4c6ca32570079394a2444d9ce2c72a72d8"
+checksum = "0b34d0237145f33580b89724f75d16950efd3e2c91b2d823917ecb69ec7f84f0"
 dependencies = [
  "async-trait",
  "convert_case 0.6.0",
@@ -4170,9 +4159,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.117"
+version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4949,18 +4938,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+checksum = "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
+checksum = "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf"
 dependencies = [
  "rustls-pki-types",
 ]
