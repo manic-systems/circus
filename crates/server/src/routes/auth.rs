@@ -1,4 +1,5 @@
 use axum::{Json, Router, extract::State, routing::get};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use circus_common::repo;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,8 +44,14 @@ async fn create_api_key(
 ) -> Result<Json<CreateApiKeyResponse>, ApiError> {
   let role = input.role.unwrap_or_else(|| "read-only".to_string());
 
-  // Generate a random API key
-  let key = format!("circus_{}", Uuid::new_v4().to_string().replace('-', ""));
+  let mut bytes = [0u8; 32];
+  ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
+    .map_err(|_| {
+      ApiError(circus_common::CiError::Internal(
+        "Failed to generate random API key".into(),
+      ))
+    })?;
+  let key = format!("circus_{}", URL_SAFE_NO_PAD.encode(bytes));
   let key_hash = hash_api_key(&key);
 
   let api_key =

@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 askama.workspace                         = true
+base64.workspace                         = true
 async-compression.workspace              = true
 async-stream.workspace                   = true
 axum.workspace                           = true
@@ -30,6 +31,7 @@ ldap3.workspace                          = true
 moka.workspace                           = true
 oauth2.workspace                         = true
 reqwest.workspace                        = true
+ring.workspace                           = true
 serde.workspace                          = true
 serde_json.workspace                     = true
 sha2.workspace                           = true
