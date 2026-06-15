@@ -576,6 +576,57 @@ agent-side settings most relevant to distributed and ephemeral builders:
 
 <!-- markdownlint-enable MD013 -->
 
+### Ephemeral GitHub Actions Agents
+
+Ephemeral agents are short-lived `circus-agent` processes intended for CI
+runners. They mint a fresh machine ID, register once, drain any assigned work,
+and exit instead of reconnecting. Enable the mode with `circus-agent
+--ephemeral` or by adding `[agent.ephemeral]` to the agent config.
+
+Queue-runner-driven GitHub Actions scaling needs both the RPC endpoint and the
+GHA autoscaler configured:
+
+```toml
+[queue_runner.rpc]
+bind = "0.0.0.0:8443"
+
+[queue_runner.rpc.oidc]
+issuer = "https://token.actions.githubusercontent.com"
+audiences = [ "circus-agent" ]
+allowed_repositories = [ "example/circus" ]
+
+[queue_runner.gha]
+enabled = true
+repository = "example/circus"
+workflow = "circus-builder.yml"
+ref_name = "main"
+token_file = "/run/credentials/circus-queue-runner/github-token"
+runner_url = "circus+tls://ci.example.org:8443"
+oidc_audience = "circus-agent"
+systems = [ "x86_64-linux" ]
+supported_features = [ "kvm", "nixos-test" ]
+max_inflight = 4
+```
+
+Install `.github/workflows/circus-builder.yml` in the repository named by
+`queue_runner.gha.repository`. The workflow must allow `workflow_dispatch` and
+grant `id-token: write`; the queue-runner passes TOML-ready values as workflow
+inputs, the workflow requests a GitHub OIDC token, writes a temporary
+`circus-agent.toml`, and starts `circus-agent --ephemeral`.
+
+Important constraints:
+
+- `queue_runner.rpc.oidc.audiences` must include `queue_runner.gha.oidc_audience`.
+- `queue_runner.rpc.oidc.allowed_repositories` must include
+  `queue_runner.gha.repository`; an empty allowlist rejects all OIDC agents.
+- The GitHub token in `gha.token` or `gha.token_file` needs permission to create
+  workflow dispatches for the configured repository.
+- The autoscaler only launches runners for trusted, non-PR builds whose project
+  repository matches `gha.repository` and whose systems/features fit the GHA
+  agent configuration.
+- `max_inflight`, `inflight_ttl_secs`, and `scale_up_cooldown_secs` control
+  launch pressure; they do not bypass normal scheduler trust checks.
+
 ### Rootless Agents
 
 `circus-agent` can run on machines where you have an unprivileged shell account

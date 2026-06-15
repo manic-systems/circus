@@ -219,8 +219,9 @@ with a target `system`:
 5. Try candidates in order, sending a `DispatchCommand` through the per-agent
    mpsc. On `Disconnected`, fall through to the next candidate.
 6. If no agent matches, fall back to SSH dispatch (legacy path) when a
-   `remote_builders` row matches by system; failing that, leave the build
-   pending and try again on the next tick.
+   `remote_builders` row matches by system, then to the queue-runner host when
+   `local_systems`/`local_features` allow it. If no venue can run the build,
+   leave it pending and try again on the next tick.
 
 PSI is local to the queue-runner: the agent reports raw numbers in each
 heartbeat, the runner caches the most recent snapshot per agent and the
@@ -331,8 +332,9 @@ key_file  = "/etc/circus/tls/build-01.key"  # omit cert_file + key_file for toke
 ```
 
 For CI builders, set `agent.ephemeral` or pass `--ephemeral`. Ephemeral agents
-generate a fresh machine ID, optionally append a unique suffix to their name,
-drain in-flight work, and exit instead of reconnecting:
+generate a fresh, unpersisted machine ID, optionally append a unique suffix to
+their name, run one connection session, drain in-flight work, and exit instead
+of reconnecting:
 
 ```toml
 [agent.ephemeral]
@@ -361,6 +363,26 @@ There is no flag day. The runner prefers connected agents over SSH on a
 per-dispatch basis; flipping a host between the two transports is purely a
 matter of which service is running.
 
+`--ephemeral` enables the table with defaults when the config file does not
+contain `[agent.ephemeral]`. When `unique_name = true`, the agent appends a
+suffix based on `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, and a short slice of the
+fresh machine ID; outside GitHub Actions it appends only the machine-ID slice.
+The final name is truncated to the protocol limit, so concurrent CI jobs can use
+the same configured base name without colliding in `builder_sessions`. The
+lifecycle limits are deliberately drain-oriented:
+
+- `max_builds` is checked after the agent is idle, so a build already assigned
+  is allowed to finish before the agent exits.
+- `max_lifetime_secs` starts draining when the wall-clock limit is reached; the
+  agent waits up to the drain grace for running builds before disconnecting.
+- `max_idle_secs` starts at connection time and is refreshed on assignment and
+  completion, so an unused CI runner exits without waiting forever.
+
+Disconnected ephemeral rows are marked `connected = false` like persistent
+agents, then pruned by the queue-runner after the ephemeral session TTL.
+In-flight builds that are lost with the CI VM are recovered by the normal orphan
+reset and returned to `pending`.
+
 ## GitHub Actions Ephemeral Pool
 
 `[queue_runner.gha]` lets the queue-runner scale an ephemeral GitHub Actions
@@ -370,6 +392,15 @@ build is eligible for ephemeral execution, the build's trusted repository
 matches `queue_runner.gha.repository`, configured systems/features match, and
 there is room under `max_inflight`.
 
+Demand is counted from pending builds for `gha.systems`. A build contributes to
+GHA demand only when its required features are satisfied by
+`gha.supported_features` and `gha.mandatory_features`, and its trusted project
+repository matches `gha.repository`. Existing live capacity is counted only from
+connected agents that are all of the following: ephemeral, OIDC-authenticated,
+registered from the same repository, advertising one of the configured systems,
+and able to satisfy the pending build's features. In-flight launches are counted
+as provisional capacity until `inflight_ttl_secs` expires.
+
 The workflow lives in the same repository as `queue_runner.gha.repository`.
 Circus ships `.github/workflows/circus-builder.yml`, which:
 
@@ -377,6 +408,12 @@ Circus ships `.github/workflows/circus-builder.yml`, which:
 2. requests a GitHub OIDC ID token for `oidc_audience`,
 3. writes a temporary `circus-agent.toml`,
 4. runs `circus-agent --ephemeral`.
+
+The queue-runner sends string and array values as TOML-ready JSON literals. A
+workflow that replaces the shipped builder workflow should preserve that
+contract: write `name`, `runner_url`, `systems`, `supported_features`,
+`mandatory_features`, numeric capacity fields, and `[agent.ephemeral]` into the
+temporary agent config without re-parsing them as shell lists.
 
 The GitHub token configured through `token` or `token_file` must be allowed to
 create workflow dispatch events for that repository. The workflow itself needs
@@ -390,6 +427,20 @@ The autoscaler tracks launches in memory with `inflight_ttl_secs` and
 unbounded workflow-dispatch loop. This is capacity control only; scheduling
 trust is still enforced by the normal agent scheduler before each build is
 assigned.
+
+Operational notes:
+
+- `token` or `token_file` must contain a GitHub token with permission to call
+  the workflow-dispatch API for `gha.repository`.
+- `runner_url` must be reachable from the GitHub-hosted or self-hosted runner;
+  use `circus+tls://...` for internet-facing endpoints.
+- `rpc.oidc.audiences` must include `gha.oidc_audience`, and
+  `rpc.oidc.allowed_repositories` must include `gha.repository`; an empty OIDC
+  repository allowlist rejects all OIDC agents.
+- Ephemeral and OIDC-authenticated agents are only assigned trusted-ref builds:
+  concrete jobset branches from source-change, manual, or interval evaluations,
+  not PR/MR evaluations. For OIDC agents, the project repository must parse as a
+  GitHub `owner/repo` slug and match the token repository.
 
 ## Security
 
