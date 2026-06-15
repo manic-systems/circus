@@ -8,6 +8,9 @@ use axum::{
 };
 use tower::ServiceExt;
 
+const ADMIN_TOKEN: &str = "circus_test_admin";
+const READ_TOKEN: &str = "circus_test_read";
+
 async fn get_pool() -> Option<sqlx::PgPool> {
   let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
     println!("Skipping API test: TEST_DATABASE_URL not set");
@@ -93,6 +96,38 @@ fn build_app_with_config(
   circus_server::routes::router(state, &server_config)
 }
 
+fn build_app_public_reads(pool: sqlx::PgPool) -> axum::Router {
+  let mut config = circus_common::config::Config::default();
+  config.server.require_api_key_for_reads = false;
+  build_app_with_config(pool, config)
+}
+
+async fn ensure_api_key(pool: &sqlx::PgPool, token: &str, role: &str) {
+  use sha2::Digest;
+
+  let mut hasher = sha2::Sha256::new();
+  hasher.update(token.as_bytes());
+  let key_hash = hex::encode(hasher.finalize());
+  let _ =
+    circus_common::repo::api_keys::upsert(pool, token, &key_hash, role).await;
+}
+
+async fn build_app_with_admin_key(pool: sqlx::PgPool) -> axum::Router {
+  ensure_api_key(&pool, ADMIN_TOKEN, "admin").await;
+  build_app(pool)
+}
+
+async fn create_test_project(pool: &sqlx::PgPool) -> uuid::Uuid {
+  circus_common::repo::projects::create(pool, circus_common::CreateProject {
+    name:           format!("security-test-{}", uuid::Uuid::new_v4()),
+    repository_url: "https://github.com/test/repo".to_string(),
+    description:    None,
+  })
+  .await
+  .unwrap()
+  .id
+}
+
 // API endpoint tests
 
 #[tokio::test]
@@ -129,7 +164,7 @@ async fn test_project_endpoints() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
 
   // Create project
   let create_body = serde_json::json!({
@@ -145,6 +180,7 @@ async fn test_project_endpoints() {
         .method("POST")
         .uri("/api/v1/projects")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
         .unwrap(),
     )
@@ -165,6 +201,7 @@ async fn test_project_endpoints() {
     .oneshot(
       Request::builder()
         .uri(format!("/api/v1/projects/{project_id}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::empty())
         .unwrap(),
     )
@@ -179,6 +216,7 @@ async fn test_project_endpoints() {
     .oneshot(
       Request::builder()
         .uri("/api/v1/projects")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::empty())
         .unwrap(),
     )
@@ -194,6 +232,7 @@ async fn test_project_endpoints() {
     .oneshot(
       Request::builder()
         .uri(format!("/api/v1/projects/{fake_id}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::empty())
         .unwrap(),
     )
@@ -209,6 +248,7 @@ async fn test_project_endpoints() {
       Request::builder()
         .method("DELETE")
         .uri(format!("/api/v1/projects/{project_id}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::empty())
         .unwrap(),
     )
@@ -224,7 +264,7 @@ async fn test_builds_endpoints() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   // Stats endpoint
   let response = app
@@ -263,13 +303,14 @@ async fn test_error_response_includes_error_code() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
   let fake_id = uuid::Uuid::new_v4();
 
   let response = app
     .oneshot(
       Request::builder()
         .uri(format!("/api/v1/projects/{fake_id}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::empty())
         .unwrap(),
     )
@@ -518,7 +559,7 @@ async fn test_search_rejects_long_query() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   // Query over 256 chars should return empty results
   let long_query = "a".repeat(300);
@@ -548,7 +589,7 @@ async fn test_search_rejects_empty_query() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   let response = app
     .clone()
@@ -576,7 +617,7 @@ async fn test_search_whitespace_only_query() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   let response = app
     .clone()
@@ -603,7 +644,7 @@ async fn test_builds_list_with_system_filter() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   // Filter by system - should return 200 even with no results
   let response = app
@@ -632,7 +673,7 @@ async fn test_builds_list_with_job_name_filter() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   let response = app
     .clone()
@@ -659,7 +700,7 @@ async fn test_builds_list_combined_filters() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_public_reads(pool);
 
   let response = app
     .clone()
@@ -716,7 +757,7 @@ async fn test_metrics_endpoint() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
 
   let response = app
     .oneshot(
@@ -802,13 +843,14 @@ async fn test_get_nonexistent_build_returns_error_code() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
   let fake_id = uuid::Uuid::new_v4();
 
   let response = app
     .oneshot(
       Request::builder()
         .uri(format!("/api/v1/builds/{fake_id}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::empty())
         .unwrap(),
     )
@@ -833,7 +875,7 @@ async fn test_create_project_validation_rejects_invalid_name() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
 
   // Name starting with dash
   let body = serde_json::json!({
@@ -848,6 +890,7 @@ async fn test_create_project_validation_rejects_invalid_name() {
         .method("POST")
         .uri("/api/v1/projects")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap(),
     )
@@ -868,7 +911,7 @@ async fn test_create_project_validation_rejects_bad_url() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
 
   let body = serde_json::json!({
       "name": "valid-name",
@@ -882,6 +925,7 @@ async fn test_create_project_validation_rejects_bad_url() {
         .method("POST")
         .uri("/api/v1/projects")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap(),
     )
@@ -902,7 +946,7 @@ async fn test_create_project_validation_accepts_valid() {
     return;
   };
 
-  let app = build_app(pool);
+  let app = build_app_with_admin_key(pool).await;
 
   let body = serde_json::json!({
       "name": format!("valid-project-{}", uuid::Uuid::new_v4()),
@@ -917,6 +961,7 @@ async fn test_create_project_validation_accepts_valid() {
         .method("POST")
         .uri("/api/v1/projects")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap(),
     )
@@ -1004,6 +1049,168 @@ async fn test_project_create_without_auth_rejected() {
     .unwrap();
 
   assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_api_reads_require_auth_by_default() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let app = build_app(pool);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/builds/recent")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_probe_requires_auth_and_rejects_bad_scheme() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let app = build_app_with_admin_key(pool).await;
+  let body = serde_json::json!({ "repository_url": "path:/etc/passwd" });
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/projects/probe")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/projects/probe")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_webhook_empty_secret_rejected() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  ensure_api_key(&pool, ADMIN_TOKEN, "admin").await;
+  let project_id = create_test_project(&pool).await;
+  let mut config = circus_common::config::Config::default();
+  config.server.webhook_secret_encryption_key = Some("test-key".into());
+  let app = build_app_with_config(pool, config);
+
+  let body = serde_json::json!({ "forge_type": "github", "secret": "" });
+  let response = app
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/projects/{project_id}/webhooks"))
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_webhook_without_secret_is_not_configured() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_id = create_test_project(&pool).await;
+  sqlx::query(
+    "INSERT INTO webhook_configs (project_id, forge_type, secret_hash) VALUES \
+     ($1, 'github', NULL)",
+  )
+  .bind(project_id)
+  .execute(&pool)
+  .await
+  .unwrap();
+
+  let app = build_app(pool);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/webhooks/{project_id}/github"))
+        .header("x-github-event", "push")
+        .body(Body::from(r#"{"ref":"refs/heads/main","after":"abc"}"#))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_admin_reads_require_admin() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  ensure_api_key(&pool, READ_TOKEN, "read-only").await;
+  let app = build_app(pool);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/admin/builders")
+        .header("authorization", format!("Bearer {READ_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_dashboard_build_log_requires_auth_by_default() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let app = build_app(pool);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/build/{}/log", uuid::Uuid::new_v4()))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::SEE_OTHER);
+  assert_eq!(response.headers().get("location").unwrap(), "/login");
 }
 
 #[tokio::test]
