@@ -725,6 +725,82 @@ testers.runNixOSTest {
         ).strip()
         assert code == "401", f"Expected 401 for invalid webhook signature, got {code}"
 
+    with subtest("Probe refuses local-filesystem refs and low-privilege keys"):
+        # A read-only key may not probe at all (probe fetches arbitrary repos).
+        code = machine.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' "
+            f"-X POST http://127.0.0.1:3000/api/v1/projects/probe "
+            f"{ro_header} "
+            "-H 'Content-Type: application/json' "
+            "-d '{\"repository_url\": \"path:/var/lib/circus\", \"revision\": null}'"
+        ).strip()
+        assert code == "403", f"Expected 403 for read-only probe, got {code}"
+
+        # Even an admin cannot aim the prober at the local filesystem, and the
+        # rejection must not leak a /nix/store path in its body.
+        resp = machine.succeed(
+            "curl -s -w '\\n%{http_code}' "
+            f"-X POST http://127.0.0.1:3000/api/v1/projects/probe "
+            f"{auth_header} "
+            "-H 'Content-Type: application/json' "
+            "-d '{\"repository_url\": \"file:///var/lib/circus\", \"revision\": null}'"
+        )
+        body, _, code = resp.rpartition("\n")
+        assert code.strip() == "400", f"Expected 400 for local-path probe, got {code.strip()}: {body}"
+        assert "/nix/store" not in body, f"Probe leaked a store path: {body}"
+
+    with subtest("Security: binary cache refuses a store path Circus did not build"):
+        # Register an arbitrary content-addressed path in the local store
+        # without a build. The unauthenticated cache must not serve it even
+        # though it is present and self-verifying.
+        leaked = machine.succeed(
+            "echo 'circus data-dir secret' > /tmp/not-a-build && nix-store --add /tmp/not-a-build"
+        ).strip()
+        m = re.match(r'/nix/store/([a-z0-9]{32})-', leaked)
+        assert m, f"Unexpected store path from nix-store --add: {leaked}"
+        leaked_hash = m.group(1)
+        code = machine.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' "
+            f"http://127.0.0.1:3000/nix-cache/{leaked_hash}.narinfo"
+        ).strip()
+        assert code == "404", f"Cache served non-Circus path {leaked}: expected 404, got {code}"
+
+    with subtest("Security: require_api_key_for_reads enforces auth on reads"):
+        # The functional posture above allows anonymous reads; flip to the
+        # secure default and confirm it is actually enforced, while the binary
+        # cache stays public by design.
+        machine.succeed("mkdir -p /run/systemd/system/circus-server.service.d")
+        machine.succeed(
+            "cat > /run/systemd/system/circus-server.service.d/reads.conf << 'EOF'\n"
+            "[Service]\n"
+            "Environment=CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS=true\n"
+            "EOF\n"
+        )
+        machine.succeed("systemctl daemon-reload")
+        machine.succeed("systemctl restart circus-server")
+        machine.wait_for_unit("circus-server.service", timeout=30)
+        machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
+
+        anon = machine.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/v1/builds"
+        ).strip()
+        assert anon == "401", f"Expected 401 for anonymous read under secure default, got {anon}"
+        authed = machine.succeed(
+            f"curl -s -o /dev/null -w '%{{http_code}}' {auth_header} http://127.0.0.1:3000/api/v1/builds"
+        ).strip()
+        assert authed == "200", f"Expected 200 for authenticated read, got {authed}"
+        cache = machine.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/nix-cache/nix-cache-info"
+        ).strip()
+        assert cache == "200", f"Expected nix-cache to stay public, got {cache}"
+
+        # Restore the public-read posture for the cleanup steps below.
+        machine.succeed("rm /run/systemd/system/circus-server.service.d/reads.conf")
+        machine.succeed("systemctl daemon-reload")
+        machine.succeed("systemctl restart circus-server")
+        machine.wait_for_unit("circus-server.service", timeout=30)
+        machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
+
     # Cleanup: Delete project
     with subtest("Delete E2E project"):
         code = machine.succeed(
