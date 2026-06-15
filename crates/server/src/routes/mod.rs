@@ -138,7 +138,7 @@ async fn serve_style_css() -> Response {
   {
     Response::builder()
       .header(header::CONTENT_TYPE, "text/css")
-      .header(header::CACHE_CONTROL, "public, max-age=3600")
+      .header(header::CACHE_CONTROL, "no-cache")
       .body(Body::from(STYLE_CSS))
       .expect("response builder should not fail")
   }

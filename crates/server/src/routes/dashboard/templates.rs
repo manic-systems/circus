@@ -336,7 +336,7 @@ mod tests {
         name:
           "very-long-project-name-that-needs-predictable-truncation".into(),
         jobset_count:     2,
-        last_eval_status: "Completed".into(),
+        last_eval_status: "Succeeded".into(),
         last_eval_class:  "completed".into(),
         last_eval_time:   "2026-06-15 09:20".into(),
         failing_jobs:     3,
@@ -373,13 +373,13 @@ mod tests {
     )
     .render()
     .expect("render dashboard");
-    assert!(html.contains("Build farm"));
+    assert!(html.contains("Dashboard"));
     assert!(html.contains("Failures"));
     assert!(html.contains("/builds?status=failed"));
-    assert!(html.contains("badge-failed"));
+    assert!(html.contains("status-failed"));
     assert!(html.contains("data-table dense-table"));
+    assert!(html.contains("metric-strip"));
     assert!(!html.contains("stat-card"));
-    assert!(!html.contains("Dashboard"));
   }
 
   #[test]

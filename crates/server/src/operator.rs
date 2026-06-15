@@ -321,7 +321,7 @@ async fn operator_projects(
     }
     let (last_eval_status, last_eval_class, last_eval_time) =
       last_eval.as_ref().map_or_else(
-        || ("-".into(), "pending".into(), "-".into()),
+        || ("Unknown".into(), "unknown".into(), "-".into()),
         |e| {
           let (text, class) = eval_badge(&e.status);
           (
@@ -470,7 +470,7 @@ fn format_duration(
   }
 }
 
-fn is_failed_status(status: BuildStatus) -> bool {
+const fn is_failed_status(status: BuildStatus) -> bool {
   matches!(
     status,
     BuildStatus::Failed
@@ -487,36 +487,27 @@ fn is_failed_status(status: BuildStatus) -> bool {
 fn status_badge(s: BuildStatus) -> (String, String) {
   match s {
     BuildStatus::Succeeded => ("Succeeded".into(), "succeeded".into()),
-    BuildStatus::Failed => ("Failed".into(), "failed".into()),
+    BuildStatus::Failed
+    | BuildStatus::DependencyFailed
+    | BuildStatus::FailedWithOutput
+    | BuildStatus::Timeout
+    | BuildStatus::CachedFailure
+    | BuildStatus::LogLimitExceeded
+    | BuildStatus::NarSizeLimitExceeded
+    | BuildStatus::NonDeterministic => ("Failed".into(), "failed".into()),
     BuildStatus::Running => ("Running".into(), "running".into()),
-    BuildStatus::Pending => ("Pending".into(), "pending".into()),
-    BuildStatus::Cancelled => ("Cancelled".into(), "cancelled".into()),
-    BuildStatus::DependencyFailed => {
-      ("Dependency Failed".into(), "failed".into())
+    BuildStatus::Pending => ("Queued".into(), "pending".into()),
+    BuildStatus::Cancelled | BuildStatus::Aborted => {
+      ("Canceled".into(), "cancelled".into())
     },
-    BuildStatus::Aborted => ("Aborted".into(), "aborted".into()),
-    BuildStatus::FailedWithOutput => {
-      ("Failed w/ Output".into(), "failed".into())
-    },
-    BuildStatus::Timeout => ("Timeout".into(), "failed".into()),
-    BuildStatus::CachedFailure => ("Cached Failure".into(), "failed".into()),
-    BuildStatus::UnsupportedSystem => {
-      ("Unsupported System".into(), "skipped".into())
-    },
-    BuildStatus::LogLimitExceeded => ("Log Limit".into(), "failed".into()),
-    BuildStatus::NarSizeLimitExceeded => {
-      ("NAR Size Limit".into(), "failed".into())
-    },
-    BuildStatus::NonDeterministic => {
-      ("Non-deterministic".into(), "failed".into())
-    },
+    BuildStatus::UnsupportedSystem => ("Skipped".into(), "skipped".into()),
   }
 }
 
 fn eval_badge(s: &circus_common::models::EvaluationStatus) -> (String, String) {
   match s {
     circus_common::models::EvaluationStatus::Completed => {
-      ("Completed".into(), "completed".into())
+      ("Succeeded".into(), "completed".into())
     },
     circus_common::models::EvaluationStatus::Failed => {
       ("Failed".into(), "failed".into())
@@ -525,7 +516,7 @@ fn eval_badge(s: &circus_common::models::EvaluationStatus) -> (String, String) {
       ("Running".into(), "running".into())
     },
     circus_common::models::EvaluationStatus::Pending => {
-      ("Pending".into(), "pending".into())
+      ("Queued".into(), "pending".into())
     },
   }
 }
