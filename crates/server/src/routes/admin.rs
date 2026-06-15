@@ -30,6 +30,7 @@ fn config_file_path() -> std::path::PathBuf {
 }
 
 async fn list_builders(
+  _auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<Json<Vec<RemoteBuilder>>, ApiError> {
   let builders = circus_common::repo::remote_builders::list(&state.pool)
@@ -42,6 +43,7 @@ async fn list_builders(
 /// the `builder_sessions` table that the queue-runner upserts on register
 /// and on heartbeat.
 async fn list_builder_sessions(
+  _auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<
   Json<Vec<circus_common::repo::builder_sessions::BuilderSession>>,
@@ -57,6 +59,7 @@ async fn list_builder_sessions(
 /// [`list_builder_sessions`]; this endpoint matches the dashboard's
 /// "live agents" panel.
 async fn list_connected_builder_sessions(
+  _auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<
   Json<Vec<circus_common::repo::builder_sessions::BuilderSession>>,
@@ -70,6 +73,7 @@ async fn list_connected_builder_sessions(
 }
 
 async fn get_builder_session(
+  _auth: RequireAdmin,
   State(state): State<AppState>,
   Path(machine_id): Path<Uuid>,
 ) -> Result<Json<circus_common::repo::builder_sessions::BuilderSession>, ApiError>
@@ -82,6 +86,7 @@ async fn get_builder_session(
 }
 
 async fn get_builder(
+  _auth: RequireAdmin,
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<RemoteBuilder>, ApiError> {

@@ -124,7 +124,7 @@ pub async fn require_api_key(
   }
 
   // No valid auth found
-  if is_read {
+  if is_read && !state.config.server.require_api_key_for_reads {
     Ok(next.run(request).await)
   } else {
     Err(StatusCode::UNAUTHORIZED)
