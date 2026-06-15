@@ -75,7 +75,7 @@ async fn test_router_no_duplicate_routes() {
 
 fn build_app_with_config(
   pool: sqlx::PgPool,
-  config: circus_config::Config,
+  config: &circus_config::Config,
 ) -> axum::Router {
   let state = circus_server::state::AppState {
     pool,
@@ -90,13 +90,13 @@ fn build_app_with_config(
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
   };
-  circus_server::routes::router(state, &config)
+  circus_server::routes::router(state, config)
 }
 
 fn build_app_public_reads(pool: sqlx::PgPool) -> axum::Router {
   let mut config = circus_config::Config::default();
   config.server.require_api_key_for_reads = false;
-  build_app_with_config(pool, config)
+  build_app_with_config(pool, &config)
 }
 
 async fn ensure_api_key(
@@ -168,7 +168,7 @@ async fn test_headless_mode_keeps_api_and_health_but_disables_ui() {
 
   let mut config = circus_config::Config::default();
   config.ui.enabled = false;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   let health = app
     .clone()
@@ -247,7 +247,7 @@ async fn test_ui_dashboard_can_be_disabled_independently() {
 
   let mut config = circus_config::Config::default();
   config.ui.dashboard = false;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   let root = app
     .clone()
@@ -276,7 +276,7 @@ async fn test_ui_assets_can_be_disabled_independently() {
 
   let mut config = circus_config::Config::default();
   config.ui.assets = false;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   let root = app
     .clone()
@@ -475,7 +475,7 @@ async fn test_cache_invalid_hash_returns_404() {
 
   let mut config = circus_config::Config::default();
   config.cache.enabled = true;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   // Too short
   let response = app
@@ -573,7 +573,7 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
 
   let mut config = circus_config::Config::default();
   config.cache.enabled = true;
-  let app = build_app_with_config(pool.clone(), config.clone());
+  let app = build_app_with_config(pool.clone(), &config);
 
   let response = app
     .clone()
@@ -607,7 +607,7 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
   .await
   .unwrap();
 
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
   let response = app
     .oneshot(
       Request::builder()
@@ -628,7 +628,7 @@ async fn test_cache_nar_invalid_hash_returns_404() {
 
   let mut config = circus_config::Config::default();
   config.cache.enabled = true;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   // Invalid hash in NAR endpoint
   let response = app
@@ -665,7 +665,7 @@ async fn test_cache_disabled_returns_404() {
 
   let mut config = circus_config::Config::default();
   config.cache.enabled = false;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   let response = app
     .clone()
@@ -863,7 +863,7 @@ async fn test_cache_info_returns_correct_headers() {
 
   let mut config = circus_config::Config::default();
   config.cache.enabled = true;
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   let response = app
     .oneshot(
