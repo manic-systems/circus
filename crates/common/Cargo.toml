@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 argon2.workspace            = true
+base64.workspace            = true
 chrono.workspace            = true
 circus-logs.workspace       = true
 circus-migrations.workspace = true
@@ -23,6 +24,7 @@ password-hash.workspace     = true
 percent-encoding.workspace  = true
 regex.workspace             = true
 reqwest.workspace           = true
+ring.workspace              = true
 rustls.workspace            = true
 serde.workspace             = true
 serde_json.workspace        = true

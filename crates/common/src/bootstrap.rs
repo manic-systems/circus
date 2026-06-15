@@ -80,7 +80,11 @@ fn resolve_webhook_secret(webhook: &DeclarativeWebhook) -> Option<String> {
 /// # Errors
 ///
 /// Returns error if database operations fail.
-pub async fn run(pool: &PgPool, config: &DeclarativeConfig) -> Result<()> {
+pub async fn run(
+  pool: &PgPool,
+  config: &DeclarativeConfig,
+  webhook_secret_encryption_key: Option<&str>,
+) -> Result<()> {
   if config.projects.is_empty()
     && config.api_keys.is_empty()
     && config.users.is_empty()
@@ -196,6 +200,7 @@ pub async fn run(pool: &PgPool, config: &DeclarativeConfig) -> Result<()> {
         project.id,
         &decl_project.webhooks,
         resolve_webhook_secret,
+        webhook_secret_encryption_key,
       )
       .await?;
       tracing::info!(

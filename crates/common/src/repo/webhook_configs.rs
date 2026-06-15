@@ -9,10 +9,9 @@ use crate::{
 
 /// Create a new webhook config.
 ///
-/// `secret` is the raw webhook secret. Despite the underlying column
-/// being called `secret_hash`, signature verification requires the
-/// original secret (HMAC key for GitHub/Gitea/Forgejo, bearer token for
-/// GitLab), so the value is stored as-is.
+/// `secret` is the raw webhook secret. Despite the underlying column being
+/// called `secret_hash`, signature verification requires the original secret,
+/// so new values are encrypted rather than hashed before storage.
 ///
 /// # Errors
 ///
@@ -21,7 +20,17 @@ pub async fn create(
   pool: &PgPool,
   input: CreateWebhookConfig,
   secret: Option<&str>,
+  encryption_key: Option<&str>,
 ) -> Result<WebhookConfig> {
+  let secret = match secret {
+    Some(secret) => {
+      Some(crate::crypto::encrypt_webhook_secret(
+        secret,
+        encryption_key,
+      )?)
+    },
+    None => None,
+  };
   sqlx::query_as::<_, WebhookConfig>(
     "INSERT INTO webhook_configs (project_id, forge_type, secret_hash) VALUES \
      ($1, $2, $3) RETURNING *",
@@ -87,8 +96,9 @@ pub async fn get_by_project_and_forge(
   pool: &PgPool,
   project_id: Uuid,
   forge_type: &str,
+  encryption_key: Option<&str>,
 ) -> Result<Option<WebhookConfig>> {
-  sqlx::query_as::<_, WebhookConfig>(
+  let mut config = sqlx::query_as::<_, WebhookConfig>(
     "SELECT * FROM webhook_configs WHERE project_id = $1 AND forge_type = $2 \
      AND enabled = true",
   )
@@ -96,7 +106,18 @@ pub async fn get_by_project_and_forge(
   .bind(forge_type)
   .fetch_optional(pool)
   .await
-  .map_err(CiError::Database)
+  .map_err(CiError::Database)?;
+
+  if let Some(config) = config.as_mut()
+    && let Some(secret) = config.secret_hash.as_deref()
+  {
+    config.secret_hash = Some(crate::crypto::decrypt_webhook_secret(
+      secret,
+      encryption_key,
+    )?);
+  }
+
+  Ok(config)
 }
 
 /// Delete a webhook config.
@@ -117,8 +138,8 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
 
 /// Upsert a webhook config (insert or update on conflict).
 ///
-/// `secret` is the raw webhook secret; see `create` for the rationale on
-/// plaintext storage.
+/// `secret` is the raw webhook secret; see `create` for the encryption
+/// rationale.
 ///
 /// # Errors
 ///
@@ -129,7 +150,17 @@ pub async fn upsert(
   forge_type: &str,
   secret: Option<&str>,
   enabled: bool,
+  encryption_key: Option<&str>,
 ) -> Result<WebhookConfig> {
+  let secret = match secret {
+    Some(secret) => {
+      Some(crate::crypto::encrypt_webhook_secret(
+        secret,
+        encryption_key,
+      )?)
+    },
+    None => None,
+  };
   sqlx::query_as::<_, WebhookConfig>(
     "INSERT INTO webhook_configs (project_id, forge_type, secret_hash, \
      enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, forge_type) DO \
@@ -156,6 +187,7 @@ pub async fn sync_for_project(
   project_id: Uuid,
   webhooks: &[DeclarativeWebhook],
   resolve_secret: impl Fn(&DeclarativeWebhook) -> Option<String>,
+  encryption_key: Option<&str>,
 ) -> Result<()> {
   // Get forge types from declarative config
   let types: Vec<&str> =
@@ -182,6 +214,7 @@ pub async fn sync_for_project(
       &webhook.forge_type,
       secret.as_deref(),
       webhook.enabled,
+      encryption_key,
     )
     .await?;
   }

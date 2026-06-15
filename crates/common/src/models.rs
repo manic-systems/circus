@@ -535,17 +535,15 @@ pub struct ApiKey {
 
 /// Webhook configuration for a project.
 ///
-/// `secret_hash` is a legacy column name. The value stored is the raw
-/// webhook secret in plaintext: GitHub/Gitea/Forgejo use it as the HMAC
-/// key, and GitLab compares it as a plain bearer token. None of those
-/// flows can work against a hashed value, so the column cannot store a
-/// hash. Treat its contents as sensitive at-rest.
+/// `secret_hash` is a legacy column name. New values are encrypted webhook
+/// secrets: GitHub/Gitea/Forgejo need the original HMAC key, and GitLab needs
+/// the original bearer token, so this cannot be a one-way hash.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct WebhookConfig {
   pub id:          Uuid,
   pub project_id:  Uuid,
   pub forge_type:  String,
-  /// Raw webhook secret (plaintext). See struct docs.
+  /// Encrypted webhook secret. See struct docs.
   pub secret_hash: Option<String>,
   pub enabled:     bool,
   pub created_at:  DateTime<Utc>,

@@ -618,6 +618,7 @@ name = "circus-common"
 version = "0.11.0"
 dependencies = [
  "argon2",
+ "base64",
  "chrono",
  "circus-logs",
  "circus-migrations",
@@ -634,6 +635,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "reqwest 0.13.4",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
