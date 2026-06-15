@@ -21,7 +21,12 @@ pub(crate) mod serde_util;
 pub mod users;
 pub mod webhooks;
 
-use std::{net::IpAddr, sync::Arc, time::Instant};
+use std::{
+  net::IpAddr,
+  path::{Path, PathBuf},
+  sync::Arc,
+  time::Instant,
+};
 
 use axum::{
   Router,
@@ -35,7 +40,7 @@ use axum::{
 use circus_common::config::ServerConfig;
 use dashmap::DashMap;
 use tower_http::{
-  cors::{AllowOrigin, CorsLayer},
+  cors::{AllowOrigin, Any, CorsLayer},
   limit::RequestBodyLimitLayer,
   set_header::SetResponseHeaderLayer,
   trace::TraceLayer,
@@ -48,6 +53,15 @@ use crate::{
 
 static STYLE_CSS: &str = include_str!("../../static/style.css");
 
+pub(crate) async fn canonical_log_file(
+  log_dir: &Path,
+  path: &Path,
+) -> Option<PathBuf> {
+  let base = tokio::fs::canonicalize(log_dir).await.ok()?;
+  let path = tokio::fs::canonicalize(path).await.ok()?;
+  path.starts_with(base).then_some(path)
+}
+
 /// Helper to generate secure cookie flags based on server configuration.
 ///
 /// # Returns
@@ -58,8 +72,7 @@ static STYLE_CSS: &str = include_str!("../../static/style.css");
 /// The Secure flag is set when:
 ///
 /// 1. `force_secure_cookies` is enabled in config (for HTTPS reverse proxies),
-/// 2. OR the server is not bound to localhost/127.0.0.1 AND not in permissive
-///    mode
+/// 2. OR the server is not bound to localhost/127.0.0.1.
 #[must_use]
 pub fn cookie_security_flags(
   config: &circus_common::config::ServerConfig,
@@ -68,9 +81,7 @@ pub fn cookie_security_flags(
     || config.host == "localhost"
     || config.host == "::1";
 
-  let secure_flag = if config.force_secure_cookies
-    || (!is_localhost && !config.cors_permissive)
-  {
+  let secure_flag = if config.force_secure_cookies || !is_localhost {
     "; Secure"
   } else {
     ""
@@ -163,7 +174,14 @@ async fn serve_style_css() -> Response {
 
 pub fn router(state: AppState, config: &ServerConfig) -> Router {
   let cors_layer = if config.cors_permissive {
-    CorsLayer::permissive()
+    tracing::warn!(
+      "server.cors_permissive is enabled; CORS credentials are disabled"
+    );
+    CorsLayer::new()
+      .allow_origin(Any)
+      .allow_methods(Any)
+      .allow_headers(Any)
+      .allow_credentials(false)
   } else if config.allowed_origins.is_empty() {
     CorsLayer::new()
   } else {
