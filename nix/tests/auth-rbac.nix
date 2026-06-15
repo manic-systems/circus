@@ -292,13 +292,25 @@ testers.runNixOSTest {
         assert code.strip() == "400", f"Expected 400 for null bytes, got {code.strip()}"
 
     # Dashboard page smoke tests
-    with subtest("All dashboard pages return 200"):
-        pages = ["/", "/projects", "/evaluations", "/builds", "/queue", "/channels", "/login"]
-        for page in pages:
+    with subtest("Public dashboard pages render anonymously"):
+        for page in ["/", "/login"]:
             code = machine.succeed(
                 f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:3000{page}"
             )
-            assert code.strip() == "200", f"Page {page} returned {code.strip()}, expected 200"
+            assert code.strip() == "200", f"Public page {page} returned {code.strip()}, expected 200"
+
+    with subtest("Access-gated dashboard pages require authentication"):
+        # page_access defaults are secure: these pages redirect (303) when
+        # anonymous and render (200) for an authenticated admin.
+        for page in ["/projects", "/evaluations", "/builds", "/channels", "/queue"]:
+            anon = machine.succeed(
+                f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:3000{page}"
+            ).strip()
+            assert anon == "303", f"Anonymous {page} returned {anon}, expected 303 redirect"
+            authed = machine.succeed(
+                f"curl -s -o /dev/null -w '%{{http_code}}' {auth_header} http://127.0.0.1:3000{page}"
+            ).strip()
+            assert authed == "200", f"Authenticated {page} returned {authed}, expected 200"
 
     with subtest("Admin dashboard requires admin auth"):
         anon_code = machine.succeed(

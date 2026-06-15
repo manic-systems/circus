@@ -79,12 +79,13 @@ testers.runNixOSTest {
         assert "test-project" in body, "Home page should list test-project in overview"
 
     with subtest("Projects page contains created projects"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/projects")
+        # The projects page is access-gated (Authenticated); authenticate it.
+        body = machine.succeed(f"curl -sf {auth_header} http://127.0.0.1:3000/projects")
         assert "test-project" in body, "Projects page should list test-project"
 
     with subtest("Projects page returns HTML content type"):
         ct = machine.succeed(
-            "curl -s -D - -o /dev/null http://127.0.0.1:3000/projects | grep -i content-type"
+            f"curl -s -D - -o /dev/null {auth_header} http://127.0.0.1:3000/projects | grep -i content-type"
         )
         assert "text/html" in ct.lower(), f"Expected text/html, got: {ct}"
 
