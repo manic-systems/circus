@@ -144,6 +144,26 @@ async fn query_harmonia_path_info(
   }))
 }
 
+/// Whether `store_path` is a path Circus itself produced: a recorded build
+/// output or build product. This is the provenance check the unauthenticated
+/// cache gates on. A path's mere presence in the local store does not make
+/// it ours to publish.
+async fn has_circus_build_product(
+  pool: &PgPool,
+  store_path: &str,
+) -> Result<bool, ApiError> {
+  sqlx::query_scalar::<_, bool>(
+    "SELECT EXISTS(SELECT 1 FROM build_products WHERE path = $1 UNION ALL \
+     SELECT 1 FROM builds WHERE build_output_path = $1)",
+  )
+  .bind(store_path)
+  .fetch_one(pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+}
+
+/// As [`has_circus_build_product`], but additionally requires that the build
+/// was signed by Circus.
 async fn has_circus_signed_build_product(
   pool: &PgPool,
   store_path: &str,
@@ -163,17 +183,19 @@ async fn is_servable_harmonia_path(
   pool: &PgPool,
   info: &ValidPathInfo,
 ) -> Result<bool, ApiError> {
+  // The unauthenticated cache may only rebroadcast paths Circus built, never
+  // arbitrary store paths. Content addressing makes a path self-verifying
+  // (integrity) but not confidential, so it is no license to serve; the
+  // boundary is provenance.
+  let store_path = info.info.store_dir.display(&info.path).to_string();
   if info.info.ca.is_some() {
-    return Ok(true);
+    // Self-verifying: serve when Circus built it, signed or not.
+    return has_circus_build_product(pool, &store_path).await;
   }
+  // Non-CA paths are useless to clients without our signature.
   if info.info.signatures.is_empty() {
     return Ok(false);
   }
-
-  // Do not rebroadcast arbitrary signed paths from the local Nix store. For
-  // non-CA paths, serving stays limited to paths Circus built and marked
-  // signed.
-  let store_path = info.info.store_dir.display(&info.path).to_string();
   has_circus_signed_build_product(pool, &store_path).await
 }
 
