@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::{
   error::{CiError, Result},
   models::{CreateProject, Project, UpdateProject},
+  validate::Validate,
 };
 
 /// Create a new project.
@@ -12,6 +13,7 @@ use crate::{
 ///
 /// Returns error if database insert fails or project name already exists.
 pub async fn create(pool: &PgPool, input: CreateProject) -> Result<Project> {
+  input.validate().map_err(CiError::Validation)?;
   sqlx::query_as::<_, Project>(
     "INSERT INTO projects (name, description, repository_url) VALUES ($1, $2, \
      $3) RETURNING *",
@@ -100,6 +102,7 @@ pub async fn update(
   id: Uuid,
   input: UpdateProject,
 ) -> Result<Project> {
+  input.validate().map_err(CiError::Validation)?;
   // Dynamic update - only set provided fields
   let existing = get(pool, id).await?;
 
@@ -133,6 +136,7 @@ pub async fn update(
 ///
 /// Returns error if database operation fails.
 pub async fn upsert(pool: &PgPool, input: CreateProject) -> Result<Project> {
+  input.validate().map_err(CiError::Validation)?;
   sqlx::query_as::<_, Project>(
     "INSERT INTO projects (name, description, repository_url) VALUES ($1, $2, \
      $3) ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, \
