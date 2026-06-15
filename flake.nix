@@ -37,6 +37,19 @@
           ];
         };
 
+      cargoDepsSrc = let
+        fs = lib.fileset;
+        s = ./.;
+      in
+        fs.toSource {
+          root = s;
+          fileset = fs.unions [
+            (s + /Cargo.lock)
+            (s + /Cargo.toml)
+            (fs.fileFilter (file: file.name == "Cargo.toml") (s + /crates))
+          ];
+        };
+
       commonArgs = {
         pname = "circus";
         inherit src;
@@ -47,15 +60,27 @@
 
       # agent doesn't need openssl
       agentArgs = commonArgs // {buildInputs = [];};
+      depsCommonArgs = commonArgs // {src = cargoDepsSrc;};
+      depsAgentArgs = agentArgs // {src = cargoDepsSrc;};
 
-      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-      agentArtifacts = craneLib.buildDepsOnly (agentArgs
+      cargoArtifactsFor = name: cargoExtraArgs:
+        craneLib.buildDepsOnly (depsCommonArgs
+          // {
+            pname = name;
+            inherit cargoExtraArgs;
+          });
+
+      agentArtifacts = craneLib.buildDepsOnly (depsAgentArgs
         // {
           pname = "circus-agent";
           cargoExtraArgs = "--package circus-agent";
         });
 
-      callCratePackage = path: pkgs.callPackage path {inherit craneLib commonArgs cargoArtifacts;};
+      callCratePackage = path: name: cargoExtraArgs:
+        pkgs.callPackage path {
+          inherit craneLib commonArgs;
+          cargoArtifacts = cargoArtifactsFor name cargoExtraArgs;
+        };
 
       muslCrossAttr = {
         x86_64-linux = "musl64";
@@ -84,14 +109,14 @@
         demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
         # circus Packages
-        circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
-        circus-agent = (callCratePackage ./nix/packages/circus-agent.nix).override {
+        circus-cli = callCratePackage ./nix/packages/circus-cli.nix "circus-cli" "--package circus-cli --bin circusctl";
+        circus-agent = (callCratePackage ./nix/packages/circus-agent.nix "circus-agent" "--package circus-agent").override {
           commonArgs = agentArgs;
           cargoArtifacts = agentArtifacts;
         };
-        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
-        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
-        circus-server = callCratePackage ./nix/packages/circus-server.nix;
+        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix "circus-evaluator" "--package circus-evaluator";
+        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix "circus-queue-runner" "--package circus-queue-runner";
+        circus-server = callCratePackage ./nix/packages/circus-server.nix "circus-server" "--package circus-server";
       }
       // lib.optionalAttrs (muslCrossAttr ? ${system}) {
         circus-agent-static = staticCraneLib.buildPackage (
