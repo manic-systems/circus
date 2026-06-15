@@ -277,6 +277,15 @@ fn optional_claim_allowed(value: Option<&str>, exact: &[String]) -> bool {
     || value.is_some_and(|value| exact.iter().any(|v| v == value))
 }
 
+fn same_origin(issuer: &str, uri: &str) -> bool {
+  let (Ok(a), Ok(b)) = (url::Url::parse(issuer), url::Url::parse(uri)) else {
+    return false;
+  };
+  a.scheme() == b.scheme()
+    && a.host_str() == b.host_str()
+    && a.port_or_known_default() == b.port_or_known_default()
+}
+
 #[cfg(test)]
 mod tests {
   use super::{claim_allowed, optional_claim_allowed};
@@ -315,13 +324,4 @@ mod tests {
     ));
     assert!(!optional_claim_allowed(None, &["required".into()]));
   }
-}
-
-fn same_origin(issuer: &str, uri: &str) -> bool {
-  let (Ok(a), Ok(b)) = (url::Url::parse(issuer), url::Url::parse(uri)) else {
-    return false;
-  };
-  a.scheme() == b.scheme()
-    && a.host_str() == b.host_str()
-    && a.port_or_known_default() == b.port_or_known_default()
 }

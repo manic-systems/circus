@@ -169,10 +169,10 @@ pub async fn prune_stale_ephemeral(
   ttl_secs: i64,
 ) -> Result<u64> {
   let res = sqlx::query(
-    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND ( (connected = \
+    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND ((connected = \
      FALSE AND (last_seen IS NULL OR last_seen < NOW() - make_interval(secs \
      => $1))) OR (connected = TRUE AND last_seen IS NOT NULL AND last_seen < \
-     NOW() - make_interval(secs => $1)) )",
+     NOW() - make_interval(secs => $1)))",
   )
   .bind(ttl_secs as f64)
   .execute(pool)

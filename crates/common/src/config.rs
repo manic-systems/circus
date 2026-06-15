@@ -1369,8 +1369,9 @@ impl Config {
       }
       if !gha.runner_url.starts_with("circus+tls://") {
         return Err(color_eyre::eyre::eyre!(
-          "queue_runner.gha.runner_url must use the circus+tls:// scheme so \
-           the dispatched agent sends its OIDC token over TLS"
+          "queue_runner.ephemeral_pools[{idx}].github_actions.runner_url must \
+           use the circus+tls:// scheme so the dispatched agent sends its \
+           OIDC token over TLS"
         ));
       }
       if gha.oidc_audience.trim().is_empty() {
