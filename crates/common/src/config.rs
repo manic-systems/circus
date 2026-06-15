@@ -1,6 +1,10 @@
 //! Configuration management for circus
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+  fs,
+  path::{Path, PathBuf},
+  time::Duration,
+};
 
 pub use circus_logs::TracingConfig;
 use config as config_crate;
@@ -50,6 +54,10 @@ impl Default for NixConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
   pub url:             String,
+  /// Path to a file containing the database URL. Read at startup; overrides
+  /// `url` when set. Preferred for production deployments where the URL
+  /// contains credentials.
+  pub url_file:        Option<PathBuf>,
   pub max_connections: u32,
   pub min_connections: u32,
   pub connect_timeout: u64,
@@ -64,39 +72,43 @@ pub struct DatabaseConfig {
 )]
 #[serde(default)]
 pub struct ServerConfig {
-  pub host:                          String,
-  pub port:                          u16,
-  pub request_timeout:               u64,
-  pub max_body_size:                 usize,
-  pub api_key:                       Option<String>,
-  pub allowed_origins:               Vec<String>,
-  pub cors_permissive:               bool,
-  pub rate_limit_rps:                Option<u64>,
-  pub rate_limit_burst:              Option<u32>,
+  pub host:                               String,
+  pub port:                               u16,
+  pub request_timeout:                    u64,
+  pub max_body_size:                      usize,
+  pub api_key:                            Option<String>,
+  /// Path to a file containing the API key.
+  pub api_key_file:                       Option<PathBuf>,
+  pub allowed_origins:                    Vec<String>,
+  pub cors_permissive:                    bool,
+  pub rate_limit_rps:                     Option<u64>,
+  pub rate_limit_burst:                   Option<u32>,
   /// Allowed URL schemes for repository URLs. Insecure schemes emit a warning
   /// on startup
-  pub allowed_url_schemes:           Vec<String>,
+  pub allowed_url_schemes:                Vec<String>,
   /// Force Secure flag on session cookies (enable when behind HTTPS reverse
   /// proxy)
-  pub force_secure_cookies:          bool,
+  pub force_secure_cookies:               bool,
   /// Optional regex for email format validation.
   /// When unset (the default), only structural checks are applied: the address
   /// must be non-empty, at most 255 characters, and contain `@`. Set this to
   /// enforce a stricter pattern, e.g.:
   /// `'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'`
-  pub email_validation_regex:        Option<String>,
+  pub email_validation_regex:             Option<String>,
   /// LDAP authentication configuration.
-  pub ldap:                          Option<LdapConfig>,
+  pub ldap:                               Option<LdapConfig>,
   /// Dashboard page-level access policy.
-  pub page_access:                   PageAccessConfig,
+  pub page_access:                        PageAccessConfig,
   /// Allow admins to read and replace the config file through the
   /// dashboard/API.
-  pub config_editor_enabled:         bool,
+  pub config_editor_enabled:              bool,
   /// Require a valid API key/session for read-only `/api/v1` requests.
   #[serde(default = "default_true")]
-  pub require_api_key_for_reads:     bool,
+  pub require_api_key_for_reads:          bool,
   /// Key used to encrypt webhook secrets before database storage.
-  pub webhook_secret_encryption_key: Option<String>,
+  pub webhook_secret_encryption_key:      Option<String>,
+  /// Path to a file containing the webhook secret encryption key.
+  pub webhook_secret_encryption_key_file: Option<PathBuf>,
 }
 
 #[derive(
@@ -497,9 +509,12 @@ pub struct OAuthConfig {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GitHubOAuthConfig {
-  pub client_id:     String,
-  pub client_secret: String,
-  pub redirect_uri:  String,
+  pub client_id:          String,
+  #[serde(default)]
+  pub client_secret:      String,
+  /// Path to a file containing the OAuth client secret.
+  pub client_secret_file: Option<PathBuf>,
+  pub redirect_uri:       String,
 }
 
 impl std::fmt::Debug for GitHubOAuthConfig {
@@ -507,6 +522,7 @@ impl std::fmt::Debug for GitHubOAuthConfig {
     f.debug_struct("GitHubOAuthConfig")
       .field("client_id", &self.client_id)
       .field("client_secret", &"[REDACTED]")
+      .field("client_secret_file", &self.client_secret_file)
       .field("redirect_uri", &self.redirect_uri)
       .finish()
   }
@@ -519,11 +535,19 @@ impl std::fmt::Debug for GitHubOAuthConfig {
 // would silently set `enable_retry_queue = false`, which is wrong.
 pub struct NotificationsConfig {
   pub webhook_url:         Option<String>,
+  /// Path to a file containing the generic webhook URL.
+  pub webhook_url_file:    Option<PathBuf>,
   pub github_token:        Option<String>,
+  /// Path to a file containing the GitHub token.
+  pub github_token_file:   Option<PathBuf>,
   pub gitea_url:           Option<String>,
   pub gitea_token:         Option<String>,
+  /// Path to a file containing the Gitea token.
+  pub gitea_token_file:    Option<PathBuf>,
   pub gitlab_url:          Option<String>,
   pub gitlab_token:        Option<String>,
+  /// Path to a file containing the GitLab token.
+  pub gitlab_token_file:   Option<PathBuf>,
   pub email:               Option<EmailConfig>,
   pub alerts:              Option<AlertConfig>,
   /// Slack incoming webhook notification.
@@ -549,20 +573,24 @@ impl std::fmt::Debug for NotificationsConfig {
         "webhook_url",
         &self.webhook_url.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("webhook_url_file", &self.webhook_url_file)
       .field(
         "github_token",
         &self.github_token.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("github_token_file", &self.github_token_file)
       .field("gitea_url", &self.gitea_url)
       .field(
         "gitea_token",
         &self.gitea_token.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("gitea_token_file", &self.gitea_token_file)
       .field("gitlab_url", &self.gitlab_url)
       .field(
         "gitlab_token",
         &self.gitlab_token.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("gitlab_token_file", &self.gitlab_token_file)
       .field("email", &self.email)
       .field("alerts", &self.alerts)
       .field("slack", &self.slack)
@@ -578,11 +606,15 @@ impl Default for NotificationsConfig {
   fn default() -> Self {
     Self {
       webhook_url:         None,
+      webhook_url_file:    None,
       github_token:        None,
+      github_token_file:   None,
       gitea_url:           None,
       gitea_token:         None,
+      gitea_token_file:    None,
       gitlab_url:          None,
       gitlab_token:        None,
+      gitlab_token_file:   None,
       email:               None,
       alerts:              None,
       slack:               None,
@@ -615,16 +647,20 @@ impl Default for AlertConfig {
 /// Slack incoming webhook notification configuration.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SlackNotificationConfig {
-  pub webhook_url:     String,
+  #[serde(default)]
+  pub webhook_url:      String,
+  /// Path to a file containing the Slack webhook URL.
+  pub webhook_url_file: Option<PathBuf>,
   /// Only send notifications for failed builds (default false).
   #[serde(default)]
-  pub on_failure_only: bool,
+  pub on_failure_only:  bool,
 }
 
 impl std::fmt::Debug for SlackNotificationConfig {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("SlackNotificationConfig")
       .field("webhook_url", &"[REDACTED]")
+      .field("webhook_url_file", &self.webhook_url_file)
       .field("on_failure_only", &self.on_failure_only)
       .finish()
   }
@@ -648,14 +684,16 @@ pub struct LdapConfig {
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct EmailConfig {
-  pub smtp_host:       String,
-  pub smtp_port:       u16,
-  pub smtp_user:       Option<String>,
-  pub smtp_password:   Option<String>,
-  pub from_address:    String,
-  pub to_addresses:    Vec<String>,
-  pub tls:             bool,
-  pub on_failure_only: bool,
+  pub smtp_host:          String,
+  pub smtp_port:          u16,
+  pub smtp_user:          Option<String>,
+  pub smtp_password:      Option<String>,
+  /// Path to a file containing the SMTP password.
+  pub smtp_password_file: Option<PathBuf>,
+  pub from_address:       String,
+  pub to_addresses:       Vec<String>,
+  pub tls:                bool,
+  pub on_failure_only:    bool,
 }
 
 impl std::fmt::Debug for EmailConfig {
@@ -668,6 +706,7 @@ impl std::fmt::Debug for EmailConfig {
         "smtp_password",
         &self.smtp_password.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("smtp_password_file", &self.smtp_password_file)
       .field("from_address", &self.from_address)
       .field("to_addresses", &self.to_addresses)
       .field("tls", &self.tls)
@@ -751,21 +790,25 @@ impl Default for CacheUploadConfig {
 #[derive(Default)]
 pub struct S3CacheConfig {
   /// AWS region (e.g., "us-east-1")
-  pub region:            Option<String>,
+  pub region:                 Option<String>,
   /// Path prefix within the bucket (e.g., "nix-cache/"). Combined with any
   /// path already present in `cache_upload.store_uri`.
-  pub prefix:            Option<String>,
+  pub prefix:                 Option<String>,
   /// AWS access key ID. Required for presigned agent uploads and server-side
   /// private S3 redirects; `nix copy` may still use ambient credentials.
-  pub access_key_id:     Option<String>,
+  pub access_key_id:          Option<String>,
   /// AWS secret access key. Required when `access_key_id` is set.
-  pub secret_access_key: Option<String>,
+  pub secret_access_key:      Option<String>,
+  /// Path to a file containing the AWS secret access key.
+  pub secret_access_key_file: Option<PathBuf>,
   /// Session token for temporary credentials (optional)
-  pub session_token:     Option<String>,
+  pub session_token:          Option<String>,
+  /// Path to a file containing the AWS session token.
+  pub session_token_file:     Option<PathBuf>,
   /// Endpoint URL for S3-compatible services (e.g., `MinIO`)
-  pub endpoint_url:      Option<String>,
+  pub endpoint_url:           Option<String>,
   /// Whether to use path-style addressing (for `MinIO` compatibility)
-  pub use_path_style:    bool,
+  pub use_path_style:         bool,
 }
 
 impl std::fmt::Debug for S3CacheConfig {
@@ -778,10 +821,12 @@ impl std::fmt::Debug for S3CacheConfig {
         "secret_access_key",
         &self.secret_access_key.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("secret_access_key_file", &self.secret_access_key_file)
       .field(
         "session_token",
         &self.session_token.as_ref().map(|_| "[REDACTED]"),
       )
+      .field("session_token_file", &self.session_token_file)
       .field("endpoint_url", &self.endpoint_url)
       .field("use_path_style", &self.use_path_style)
       .finish()
@@ -1007,6 +1052,7 @@ impl Default for DatabaseConfig {
     Self {
       url:             "postgresql://circus:password@localhost/circus"
         .to_string(),
+      url_file:        None,
       max_connections: 20,
       min_connections: 5,
       connect_timeout: 30,
@@ -1054,27 +1100,29 @@ impl DatabaseConfig {
 impl Default for ServerConfig {
   fn default() -> Self {
     Self {
-      host:                          "127.0.0.1".to_string(),
-      port:                          3000,
-      request_timeout:               30,
-      max_body_size:                 10 * 1024 * 1024, // 10MB
-      api_key:                       None,
-      allowed_origins:               Vec::new(),
-      cors_permissive:               false,
-      rate_limit_rps:                None,
-      rate_limit_burst:              None,
-      allowed_url_schemes:           vec![
+      host:                               "127.0.0.1".to_string(),
+      port:                               3000,
+      request_timeout:                    30,
+      max_body_size:                      10 * 1024 * 1024, // 10MB
+      api_key:                            None,
+      api_key_file:                       None,
+      allowed_origins:                    Vec::new(),
+      cors_permissive:                    false,
+      rate_limit_rps:                     None,
+      rate_limit_burst:                   None,
+      allowed_url_schemes:                vec![
         "https".into(),
         "git".into(),
         "ssh".into(),
       ],
-      force_secure_cookies:          false,
-      email_validation_regex:        None,
-      ldap:                          None,
-      page_access:                   PageAccessConfig::default(),
-      config_editor_enabled:         false,
-      require_api_key_for_reads:     true,
-      webhook_secret_encryption_key: None,
+      force_secure_cookies:               false,
+      email_validation_regex:             None,
+      ldap:                               None,
+      page_access:                        PageAccessConfig::default(),
+      config_editor_enabled:              false,
+      require_api_key_for_reads:          true,
+      webhook_secret_encryption_key:      None,
+      webhook_secret_encryption_key_file: None,
     }
   }
 }
@@ -1229,6 +1277,106 @@ impl Config {
     Ok(config)
   }
 
+  /// Resolve `*_file` secret fields by reading their file contents at startup.
+  ///
+  /// For `Option<String>` fields the inline value takes precedence; the file
+  /// is read only when the inline value is `None`. For required fields
+  /// (`database.url`) the file overrides unconditionally since the field
+  /// always has a compiled default.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if a configured file path cannot be read or is empty.
+  fn resolve_secret_files(&mut self) -> color_eyre::Result<()> {
+    fn read_secret(path: &Path) -> color_eyre::Result<String> {
+      let content = fs::read_to_string(path).map_err(|e| {
+        color_eyre::eyre::eyre!(
+          "failed to read secret from {}: {e}",
+          path.display()
+        )
+      })?;
+      let trimmed = content.trim().to_owned();
+      if trimmed.is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+          "secret file is empty: {}",
+          path.display()
+        ));
+      }
+      Ok(trimmed)
+    }
+
+    macro_rules! resolve_optional {
+      ($field:expr, $file_field:expr) => {
+        if $field.is_none() {
+          if let Some(ref path) = $file_field {
+            $field = Some(read_secret(path)?);
+          }
+        }
+      };
+    }
+
+    // database.url: file overrides (url always carries a compiled default)
+    if let Some(ref path) = self.database.url_file {
+      self.database.url = read_secret(path)?;
+    }
+
+    // server
+    resolve_optional!(self.server.api_key, self.server.api_key_file);
+    resolve_optional!(
+      self.server.webhook_secret_encryption_key,
+      self.server.webhook_secret_encryption_key_file
+    );
+
+    // notifications
+    resolve_optional!(
+      self.notifications.webhook_url,
+      self.notifications.webhook_url_file
+    );
+    resolve_optional!(
+      self.notifications.github_token,
+      self.notifications.github_token_file
+    );
+    resolve_optional!(
+      self.notifications.gitea_token,
+      self.notifications.gitea_token_file
+    );
+    resolve_optional!(
+      self.notifications.gitlab_token,
+      self.notifications.gitlab_token_file
+    );
+
+    // email (nested inside notifications)
+    if let Some(ref mut email) = self.notifications.email {
+      resolve_optional!(email.smtp_password, email.smtp_password_file);
+    }
+
+    // oauth
+    if let Some(ref mut github) = self.oauth.github {
+      if github.client_secret.is_empty() {
+        if let Some(ref path) = github.client_secret_file {
+          github.client_secret = read_secret(path)?;
+        }
+      }
+    }
+
+    // slack (nested inside notifications)
+    if let Some(ref mut slack) = self.notifications.slack {
+      if slack.webhook_url.is_empty() {
+        if let Some(ref path) = slack.webhook_url_file {
+          slack.webhook_url = read_secret(path)?;
+        }
+      }
+    }
+
+    // s3 (nested inside cache_upload)
+    if let Some(ref mut s3) = self.cache_upload.s3 {
+      resolve_optional!(s3.secret_access_key, s3.secret_access_key_file);
+      resolve_optional!(s3.session_token, s3.session_token_file);
+    }
+
+    Ok(())
+  }
+
   /// Load configuration from file and environment variables.
   ///
   /// # Errors
@@ -1267,6 +1415,9 @@ impl Config {
     // source then fails to overwrite during merge). Apply these manually
     // here so operator-set env vars actually take effect.
     apply_env_overrides_for_option_fields(&mut config);
+
+    // Resolve *_file fields into their corresponding values
+    config.resolve_secret_files()?;
 
     // Validate configuration
     config.validate()?;
@@ -1611,6 +1762,26 @@ impl Config {
       return Err(color_eyre::eyre::eyre!("Log directory cannot be empty"));
     }
 
+    // OAuth: when GitHub OAuth is configured, a client secret must be
+    // available (inline or via file).
+    if let Some(ref github) = self.oauth.github {
+      if github.client_secret.is_empty() && github.client_secret_file.is_none()
+      {
+        return Err(color_eyre::eyre::eyre!(
+          "oauth.github requires client_secret or client_secret_file"
+        ));
+      }
+    }
+
+    // Slack: when configured, a webhook URL must be available.
+    if let Some(ref slack) = self.notifications.slack {
+      if slack.webhook_url.is_empty() && slack.webhook_url_file.is_none() {
+        return Err(color_eyre::eyre::eyre!(
+          "notifications.slack requires webhook_url or webhook_url_file"
+        ));
+      }
+    }
+
     Ok(())
   }
 }
@@ -1645,12 +1816,36 @@ fn apply_env_overrides_for_option_fields(config: &mut Config) {
     })
   }
 
+  // Secret file overrides used by NixOS/systemd deployments with agenix,
+  // sops-nix, or similar secrets managers that provision files at runtime.
+  // XXX: Actually a very thin wrapper but doing this inline feels worse.
+  fn opt_path(var: &str) -> Option<PathBuf> {
+    opt_str(var).map(PathBuf::from)
+  }
+
+  if let Some(v) = opt_path("CIRCUS_DATABASE__URL_FILE") {
+    config.database.url_file = Some(v);
+  }
+  if let Some(v) = opt_path("CIRCUS_SERVER__API_KEY_FILE") {
+    config.server.api_key_file = Some(v);
+  }
+  if let Some(v) = opt_path("CIRCUS_SERVER__WEBHOOK_SECRET_ENCRYPTION_KEY_FILE")
+  {
+    config.server.webhook_secret_encryption_key_file = Some(v);
+  }
+
   // Notifications: Option<String> fields
   if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__WEBHOOK_URL") {
     config.notifications.webhook_url = Some(v);
   }
+  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__WEBHOOK_URL_FILE") {
+    config.notifications.webhook_url_file = Some(v);
+  }
   if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITHUB_TOKEN") {
     config.notifications.github_token = Some(v);
+  }
+  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__GITHUB_TOKEN_FILE") {
+    config.notifications.github_token_file = Some(v);
   }
   if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITEA_URL") {
     config.notifications.gitea_url = Some(v);
@@ -1658,11 +1853,17 @@ fn apply_env_overrides_for_option_fields(config: &mut Config) {
   if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITEA_TOKEN") {
     config.notifications.gitea_token = Some(v);
   }
+  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__GITEA_TOKEN_FILE") {
+    config.notifications.gitea_token_file = Some(v);
+  }
   if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITLAB_URL") {
     config.notifications.gitlab_url = Some(v);
   }
   if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITLAB_TOKEN") {
     config.notifications.gitlab_token = Some(v);
+  }
+  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__GITLAB_TOKEN_FILE") {
+    config.notifications.gitlab_token_file = Some(v);
   }
 
   // Signing: bool + Option<PathBuf>

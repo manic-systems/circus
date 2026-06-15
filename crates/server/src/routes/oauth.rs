@@ -346,9 +346,10 @@ mod tests {
   #[test]
   fn test_build_github_client() {
     let config = GitHubOAuthConfig {
-      client_id:     "test_client_id".to_string(),
-      client_secret: "test_client_secret".to_string(),
-      redirect_uri:  "http://localhost:3000/api/v1/auth/github/callback"
+      client_id:          "test_client_id".to_string(),
+      client_secret:      "test_client_secret".to_string(),
+      client_secret_file: None,
+      redirect_uri:       "http://localhost:3000/api/v1/auth/github/callback"
         .to_string(),
     };
 
@@ -359,9 +360,10 @@ mod tests {
   #[test]
   fn test_build_github_client_https() {
     let config = GitHubOAuthConfig {
-      client_id:     "test_client_id".to_string(),
-      client_secret: "test_client_secret".to_string(),
-      redirect_uri:  "https://example.com/api/v1/auth/github/callback"
+      client_id:          "test_client_id".to_string(),
+      client_secret:      "test_client_secret".to_string(),
+      client_secret_file: None,
+      redirect_uri:       "https://example.com/api/v1/auth/github/callback"
         .to_string(),
     };
 
@@ -372,9 +374,10 @@ mod tests {
   #[test]
   fn test_authorize_url_generation() {
     let config = GitHubOAuthConfig {
-      client_id:     "test_client_id".to_string(),
-      client_secret: "test_client_secret".to_string(),
-      redirect_uri:  "http://localhost:3000/api/v1/auth/github/callback"
+      client_id:          "test_client_id".to_string(),
+      client_secret:      "test_client_secret".to_string(),
+      client_secret_file: None,
+      redirect_uri:       "http://localhost:3000/api/v1/auth/github/callback"
         .to_string(),
     };
 
