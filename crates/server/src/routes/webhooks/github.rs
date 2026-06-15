@@ -75,6 +75,7 @@ pub(super) async fn handle_webhook(
     &state.pool,
     project_id,
     CONFIG_TYPE,
+    state.config.server.webhook_secret_encryption_key.as_deref(),
   )
   .await
   .map_err(ApiError)?;
@@ -83,11 +84,12 @@ pub(super) async fn handle_webhook(
     return Ok(webhook_not_configured(DISPLAY_NAME));
   };
 
-  if let Some(ref secret_hash) = webhook_config.secret_hash {
-    let signature = header_value(&headers, SIGNATURE_HEADER);
-    if !verify_signature(secret_hash, &body, signature) {
-      return Ok(invalid_signature_response());
-    }
+  let Some(ref secret_hash) = webhook_config.secret_hash else {
+    return Ok(webhook_not_configured(DISPLAY_NAME));
+  };
+  let signature = header_value(&headers, SIGNATURE_HEADER);
+  if !verify_signature(secret_hash, &body, signature) {
+    return Ok(invalid_signature_response());
   }
 
   let event_type = header_value(&headers, EVENT_HEADER);

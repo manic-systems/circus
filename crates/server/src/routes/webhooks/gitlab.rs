@@ -80,6 +80,7 @@ pub(super) async fn handle_webhook(
     &state.pool,
     project_id,
     CONFIG_TYPE,
+    state.config.server.webhook_secret_encryption_key.as_deref(),
   )
   .await
   .map_err(ApiError)?;
@@ -88,20 +89,21 @@ pub(super) async fn handle_webhook(
     return Ok(webhook_not_configured(DISPLAY_NAME));
   };
 
-  if let Some(ref secret) = webhook_config.secret_hash {
-    let token = header_value(&headers, TOKEN_HEADER);
-    let token_matches = token.len() == secret.len()
-      && token.as_bytes().ct_eq(secret.as_bytes()).into();
+  let Some(ref secret) = webhook_config.secret_hash else {
+    return Ok(webhook_not_configured(DISPLAY_NAME));
+  };
+  let token = header_value(&headers, TOKEN_HEADER);
+  let token_matches = token.len() == secret.len()
+    && token.as_bytes().ct_eq(secret.as_bytes()).into();
 
-    if !token_matches {
-      return Ok((
-        StatusCode::UNAUTHORIZED,
-        Json(WebhookResponse {
-          accepted: false,
-          message:  "Invalid webhook token".to_string(),
-        }),
-      ));
-    }
+  if !token_matches {
+    return Ok((
+      StatusCode::UNAUTHORIZED,
+      Json(WebhookResponse {
+        accepted: false,
+        message:  "Invalid webhook token".to_string(),
+      }),
+    ));
   }
 
   let event_type = header_value(&headers, EVENT_HEADER);
