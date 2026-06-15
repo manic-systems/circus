@@ -364,6 +364,12 @@ pub struct RpcConfig {
   #[serde(default)]
   pub tls: Option<RpcTlsConfig>,
 
+  /// Allow registration credentials over plain TCP. Off by default, so a
+  /// missing `tls` hard-errors when credentials are configured. Enable it on
+  /// a trusted network where plain TCP is intentional.
+  #[serde(default)]
+  pub allow_plaintext: bool,
+
   /// Heartbeat freshness window. Heartbeats older than this drop the
   /// agent from scheduling decisions.
   #[serde(default = "default_heartbeat_ttl_secs")]
@@ -1298,11 +1304,17 @@ impl Config {
       if rpc.tls.is_none()
         && (rpc.oidc.is_some() || !rpc.auth_tokens.is_empty())
       {
-        return Err(color_eyre::eyre::eyre!(
-          "queue_runner.rpc.tls is required when auth_tokens or oidc are \
-           configured; registration credentials must not be accepted over \
-           plaintext"
-        ));
+        if !rpc.allow_plaintext {
+          return Err(color_eyre::eyre::eyre!(
+            "queue_runner.rpc.tls is required when auth_tokens or oidc are \
+             set. Set queue_runner.rpc.allow_plaintext = true to accept \
+             credentials over plain TCP on a trusted network."
+          ));
+        }
+        tracing::warn!(
+          "queue_runner.rpc accepts credentials over plain TCP \
+           (allow_plaintext = true)"
+        );
       }
     }
     for (idx, pool) in self.queue_runner.ephemeral_pools.iter().enumerate() {
@@ -1370,8 +1382,8 @@ impl Config {
       if !gha.runner_url.starts_with("circus+tls://") {
         return Err(color_eyre::eyre::eyre!(
           "queue_runner.ephemeral_pools[{idx}].github_actions.runner_url must \
-           use the circus+tls:// scheme so the dispatched agent sends its \
-           OIDC token over TLS"
+           use circus+tls://. The dispatched agent sends its OIDC token over \
+           the internet and must not use plaintext."
         ));
       }
       if gha.oidc_audience.trim().is_empty() {
