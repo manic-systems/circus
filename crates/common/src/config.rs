@@ -7,7 +7,7 @@ use std::{
 };
 
 pub use circus_logs::TracingConfig;
-use color_eyre::eyre::{self, eyre};
+use color_eyre::eyre::{self, WrapErr, eyre};
 use config as config_crate;
 use serde::{Deserialize, Serialize};
 
@@ -1373,43 +1373,46 @@ impl Config {
 
   /// Load configuration from file and environment variables.
   ///
+  /// Merges three layers (later wins):
+  ///
+  /// 1. Compiled defaults (`Config::default()`)
+  /// 2. TOML config file (`CIRCUS_CONFIG_FILE` or `./circus.toml`)
+  /// 3. `CIRCUS_*` environment variables (`__` = nesting separator)
+  ///
   /// # Errors
   ///
   /// Returns error if configuration loading or validation fails.
   pub fn load() -> eyre::Result<Self> {
-    let mut settings = config_crate::Config::builder();
+    let mut table = toml::Value::try_from(Self::default())
+      .wrap_err("failed to serialize config defaults")?;
 
-    // Load from config file if it exists
-    if let Ok(config_path) = std::env::var("CIRCUS_CONFIG_FILE") {
-      if std::path::Path::new(&config_path).exists() {
-        settings =
-          settings.add_source(config_crate::File::with_name(&config_path));
+    let file_contents = if let Ok(path) = std::env::var("CIRCUS_CONFIG_FILE") {
+      if Path::new(&path).exists() {
+        Some(
+          fs::read_to_string(&path)
+            .wrap_err_with(|| format!("failed to read config file {path}"))?,
+        )
+      } else {
+        None
       }
-    } else if std::path::Path::new("circus.toml").exists() {
-      settings = settings
-        .add_source(config_crate::File::with_name("circus").required(false));
+    } else if Path::new("circus.toml").exists() {
+      Some(fs::read_to_string("circus.toml").wrap_err("failed to read circus.toml")?)
+    } else {
+      None
+    };
+
+    if let Some(contents) = file_contents {
+      let file_table: toml::Value =
+        toml::from_str(&contents).wrap_err("failed to parse config file")?;
+      deep_merge(&mut table, file_table);
     }
 
-    // Load from environment variables with CIRCUS_ prefix (highest priority)
-    settings = settings.add_source(
-      config_crate::Environment::with_prefix("circus")
-        .separator("__")
-        .try_parsing(true),
-    );
+    apply_env_vars(&mut table);
 
-    let mut config = settings.build()?.try_deserialize::<Self>()?;
+    let mut config: Self =
+      table.try_into().wrap_err("failed to deserialize config")?;
 
-    // The `config-rs` Environment source does not reliably override
-    // `Option<String>` fields nested under a struct that was already seeded
-    // with `Self::default()` (None serializes to a Nil value that the env
-    // source then fails to overwrite during merge). Apply these manually
-    // here so operator-set env vars actually take effect.
-    apply_env_overrides_for_option_fields(&mut config);
-
-    // Resolve *_file fields into their corresponding values
     config.resolve_secret_files()?;
-
-    // Validate configuration
     config.validate()?;
 
     Ok(config)
@@ -1764,110 +1767,79 @@ impl Config {
   }
 }
 
-/// Apply environment variables to nested config fields that `config-rs`'s
-/// `Environment` source does not reliably override.
-///
-/// `config-rs` has two distinct merge bugs we hit in production:
-/// 1. For `Option<T>` fields seeded from `Self::default()`, the typed `Nil` in
-///    the default tree is never overwritten by the env source's typed
-///    `String`/`Path` value.
-/// 2. For nested scalar fields (e.g. `signing.enabled`) where the on-disk
-///    config file has explicitly set a value, the env source fails to override
-///    the file source despite being added later. (Observed for `bool` under
-///    nested structs; top-level scalars work.)
-///
-/// Rather than continuing to fight `config-rs`, we explicitly apply env
-/// vars after deserialization for every field we want operator-overridable.
-/// Add new entries here when introducing config options that VM tests or
-/// operators need to set via systemd drop-ins.
-fn apply_env_overrides_for_option_fields(config: &mut Config) {
-  fn opt_str(var: &str) -> Option<String> {
-    std::env::var(var).ok().filter(|s| !s.is_empty())
-  }
-  fn opt_bool(var: &str) -> Option<bool> {
-    opt_str(var).and_then(|s| {
-      match s.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
+/// Recursively merge `overlay` into `base`. Tables merge key-by-key;
+/// scalars and arrays are replaced wholesale.
+fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
+  match (base, overlay) {
+    (toml::Value::Table(base_t), toml::Value::Table(over_t)) => {
+      for (key, value) in over_t {
+        match base_t.entry(key) {
+          toml::map::Entry::Occupied(mut e) => {
+            deep_merge(e.get_mut(), value);
+          },
+          toml::map::Entry::Vacant(e) => {
+            e.insert(value);
+          },
+        }
       }
-    })
+    },
+    (base, overlay) => *base = overlay,
   }
+}
 
-  // Secret file overrides used by NixOS/systemd deployments with agenix,
-  // sops-nix, or similar secrets managers that provision files at runtime.
-  // XXX: Actually a very thin wrapper but doing this inline feels worse.
-  fn opt_path(var: &str) -> Option<PathBuf> {
-    opt_str(var).map(PathBuf::from)
-  }
+/// Apply every `CIRCUS_*` env var to a TOML value tree.
+///
+/// Key mapping: strip the `CIRCUS_` prefix, split on `__` for nesting,
+/// lowercase each segment. Values are parsed as bool / integer / float
+/// before falling back to string so serde sees native types.
+fn apply_env_vars(table: &mut toml::Value) {
+  const PREFIX: &str = "CIRCUS_";
 
-  if let Some(v) = opt_path("CIRCUS_DATABASE__URL_FILE") {
-    config.database.url_file = Some(v);
+  for (key, value) in std::env::vars() {
+    let Some(rest) = key.strip_prefix(PREFIX) else {
+      continue;
+    };
+    if rest == "CONFIG_FILE" || value.is_empty() {
+      continue;
+    }
+
+    let segments: Vec<String> =
+      rest.split("__").map(str::to_ascii_lowercase).collect();
+    set_nested(table, &segments, parse_env_value(&value));
   }
-  if let Some(v) = opt_path("CIRCUS_SERVER__API_KEY_FILE") {
-    config.server.api_key_file = Some(v);
+}
+
+fn parse_env_value(s: &str) -> toml::Value {
+  match s.to_ascii_lowercase().as_str() {
+    "true" | "yes" | "on" => return toml::Value::Boolean(true),
+    "false" | "no" | "off" => return toml::Value::Boolean(false),
+    _ => {},
   }
-  if let Some(v) = opt_path("CIRCUS_SERVER__WEBHOOK_SECRET_ENCRYPTION_KEY_FILE")
+  if let Ok(i) = s.parse::<i64>() {
+    return toml::Value::Integer(i);
+  }
+  if s.contains('.')
+    && let Ok(f) = s.parse::<f64>()
   {
-    config.server.webhook_secret_encryption_key_file = Some(v);
+    return toml::Value::Float(f);
   }
+  toml::Value::String(s.to_string())
+}
 
-  // Notifications: Option<String> fields
-  if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__WEBHOOK_URL") {
-    config.notifications.webhook_url = Some(v);
-  }
-  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__WEBHOOK_URL_FILE") {
-    config.notifications.webhook_url_file = Some(v);
-  }
-  if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITHUB_TOKEN") {
-    config.notifications.github_token = Some(v);
-  }
-  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__GITHUB_TOKEN_FILE") {
-    config.notifications.github_token_file = Some(v);
-  }
-  if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITEA_URL") {
-    config.notifications.gitea_url = Some(v);
-  }
-  if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITEA_TOKEN") {
-    config.notifications.gitea_token = Some(v);
-  }
-  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__GITEA_TOKEN_FILE") {
-    config.notifications.gitea_token_file = Some(v);
-  }
-  if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITLAB_URL") {
-    config.notifications.gitlab_url = Some(v);
-  }
-  if let Some(v) = opt_str("CIRCUS_NOTIFICATIONS__GITLAB_TOKEN") {
-    config.notifications.gitlab_token = Some(v);
-  }
-  if let Some(v) = opt_path("CIRCUS_NOTIFICATIONS__GITLAB_TOKEN_FILE") {
-    config.notifications.gitlab_token_file = Some(v);
-  }
-
-  // Signing: bool + Option<PathBuf>
-  if let Some(v) = opt_bool("CIRCUS_SIGNING__ENABLED") {
-    config.signing.enabled = v;
-  }
-  if let Some(v) = opt_str("CIRCUS_SIGNING__KEY_FILE") {
-    config.signing.key_file = Some(std::path::PathBuf::from(v));
-  }
-
-  // GC: bool + scalar fields that VM tests toggle via systemd drop-ins.
-  if let Some(v) = opt_bool("CIRCUS_GC__ENABLED") {
-    config.gc.enabled = v;
-  }
-  if let Some(v) = opt_str("CIRCUS_GC__GC_ROOTS_DIR") {
-    config.gc.gc_roots_dir = std::path::PathBuf::from(v);
-  }
-  if let Ok(v) = std::env::var("CIRCUS_GC__MAX_AGE_DAYS")
-    && let Ok(parsed) = v.parse()
-  {
-    config.gc.max_age_days = parsed;
-  }
-  if let Ok(v) = std::env::var("CIRCUS_GC__CLEANUP_INTERVAL")
-    && let Ok(parsed) = v.parse()
-  {
-    config.gc.cleanup_interval = parsed;
+fn set_nested(
+  table: &mut toml::Value,
+  segments: &[String],
+  value: toml::Value,
+) {
+  let [first, rest @ ..] = segments else { return };
+  let toml::Value::Table(t) = table else { return };
+  if rest.is_empty() {
+    t.insert(first.clone(), value);
+  } else {
+    let child = t
+      .entry(first.clone())
+      .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    set_nested(child, rest, value);
   }
 }
 
@@ -2074,29 +2046,163 @@ mod tests {
     assert_eq!(config.api_keys[0].role, "read-only");
   }
 
+  fn table(m: toml::map::Map<String, toml::Value>) -> toml::Value {
+    toml::Value::Table(m)
+  }
+
   #[test]
-  fn test_environment_override() {
-    // SAFETY: setting environment variables is not thread-safe but tests run
-    // sequentially. This is a common testing pattern for configuration.
+  fn deep_merge_overrides_scalar() {
+    let mut base = table(toml::toml! { [server] port = 3000 });
+    deep_merge(&mut base, table(toml::toml! { [server] port = 8080 }));
+    assert_eq!(base["server"]["port"].as_integer(), Some(8080));
+  }
+
+  #[test]
+  fn deep_merge_preserves_unset_keys() {
+    let mut base =
+      table(toml::toml! { [server] port = 3000 host = "127.0.0.1" });
+    deep_merge(&mut base, table(toml::toml! { [server] port = 8080 }));
+    assert_eq!(base["server"]["port"].as_integer(), Some(8080));
+    assert_eq!(base["server"]["host"].as_str(), Some("127.0.0.1"));
+  }
+
+  #[test]
+  fn deep_merge_adds_new_keys() {
+    let mut base = table(toml::toml! { [server] port = 3000 });
+    deep_merge(&mut base, table(toml::toml! { [server] host = "0.0.0.0" }));
+    assert_eq!(base["server"]["port"].as_integer(), Some(3000));
+    assert_eq!(base["server"]["host"].as_str(), Some("0.0.0.0"));
+  }
+
+  #[test]
+  fn parse_env_value_bool() {
+    assert_eq!(parse_env_value("true"), toml::Value::Boolean(true));
+    assert_eq!(parse_env_value("false"), toml::Value::Boolean(false));
+    assert_eq!(parse_env_value("yes"), toml::Value::Boolean(true));
+    assert_eq!(parse_env_value("no"), toml::Value::Boolean(false));
+    assert_eq!(parse_env_value("TRUE"), toml::Value::Boolean(true));
+    assert_eq!(parse_env_value("OFF"), toml::Value::Boolean(false));
+  }
+
+  #[test]
+  fn parse_env_value_integer() {
+    assert_eq!(parse_env_value("3000"), toml::Value::Integer(3000));
+    assert_eq!(parse_env_value("0"), toml::Value::Integer(0));
+  }
+
+  #[test]
+  fn parse_env_value_float() {
+    assert_eq!(parse_env_value("1.5"), toml::Value::Float(1.5));
+  }
+
+  #[test]
+  fn parse_env_value_string() {
+    assert_eq!(
+      parse_env_value("hello"),
+      toml::Value::String("hello".into())
+    );
+    assert_eq!(
+      parse_env_value("postgresql://x"),
+      toml::Value::String("postgresql://x".into())
+    );
+  }
+
+  #[test]
+  fn set_nested_single_level() {
+    let mut table = toml::Value::Table(toml::map::Map::new());
+    set_nested(&mut table, &["port".into()], toml::Value::Integer(8080));
+    assert_eq!(table["port"].as_integer(), Some(8080));
+  }
+
+  #[test]
+  fn set_nested_two_levels() {
+    let mut table = toml::Value::Table(toml::map::Map::new());
+    set_nested(
+      &mut table,
+      &["server".into(), "port".into()],
+      toml::Value::Integer(8080),
+    );
+    assert_eq!(table["server"]["port"].as_integer(), Some(8080));
+  }
+
+  #[test]
+  fn set_nested_creates_intermediate_tables() {
+    let mut table = toml::Value::Table(toml::map::Map::new());
+    set_nested(
+      &mut table,
+      &["a".into(), "b".into(), "c".into()],
+      toml::Value::Boolean(true),
+    );
+    assert_eq!(table["a"]["b"]["c"].as_bool(), Some(true));
+  }
+
+  #[test]
+  fn apply_env_vars_nested_bool_override() {
     unsafe {
-      env::set_var(
-        "CIRCUS_DATABASE__URL",
-        "postgresql://test:test@localhost/test",
-      );
-      env::set_var("CIRCUS_SERVER__PORT", "8080");
+      env::set_var("CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS", "true");
     }
 
-    let db_url = std::env::var("CIRCUS_DATABASE__URL").unwrap();
-    let server_port = std::env::var("CIRCUS_SERVER__PORT").unwrap();
+    let mut val = table(toml::toml! {
+      [server]
+      require_api_key_for_reads = false
+      port = 3000
+    });
+    apply_env_vars(&mut val);
+    assert_eq!(
+      val["server"]["require_api_key_for_reads"].as_bool(),
+      Some(true),
+    );
 
-    assert_eq!(db_url, "postgresql://test:test@localhost/test");
-    assert_eq!(server_port, "8080");
+    unsafe { env::remove_var("CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS") };
+  }
 
-    // SAFETY: ditto, cleaning up test state.
-    unsafe {
-      env::remove_var("CIRCUS_DATABASE__URL");
-      env::remove_var("CIRCUS_SERVER__PORT");
-    }
+  #[test]
+  fn apply_env_vars_skips_config_file() {
+    let mut val = toml::Value::Table(toml::map::Map::new());
+    unsafe { env::set_var("CIRCUS_CONFIG_FILE", "/some/path") };
+    apply_env_vars(&mut val);
+    assert!(val.get("config_file").is_none());
+    unsafe { env::remove_var("CIRCUS_CONFIG_FILE") };
+  }
+
+  #[test]
+  fn apply_env_vars_skips_empty_values() {
+    let mut val = table(toml::toml! { [server] host = "127.0.0.1" });
+    unsafe { env::set_var("CIRCUS_SERVER__HOST", "") };
+    apply_env_vars(&mut val);
+    assert_eq!(val["server"]["host"].as_str(), Some("127.0.0.1"));
+    unsafe { env::remove_var("CIRCUS_SERVER__HOST") };
+  }
+
+  #[test]
+  fn full_config_load_from_toml_and_env() {
+    let toml_str = r#"
+      [database]
+      url = "postgresql://test:test@localhost/circus_test"
+
+      [server]
+      port = 3000
+      require_api_key_for_reads = false
+    "#;
+
+    let mut table = toml::Value::try_from(Config::default()).unwrap();
+    let file_table: toml::Value = toml::from_str(toml_str).unwrap();
+    deep_merge(&mut table, file_table);
+
+    // Simulate env override of the nested bool
+    set_nested(
+      &mut table,
+      &["server".into(), "require_api_key_for_reads".into()],
+      toml::Value::Boolean(true),
+    );
+
+    let config: Config = table.try_into().unwrap();
+    assert_eq!(
+      config.database.url,
+      "postgresql://test:test@localhost/circus_test"
+    );
+    assert_eq!(config.server.port, 3000);
+    assert!(config.server.require_api_key_for_reads);
   }
 
   #[test]
