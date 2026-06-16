@@ -1,4 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+  collections::HashSet,
+  future::pending,
+  path::{Path, PathBuf},
+  sync::Arc,
+  thread::Builder,
+  time::Duration,
+};
 
 use circus_common::{database::Database, gc_roots, repo};
 use circus_config::{
@@ -95,8 +102,8 @@ async fn main() -> color_eyre::Result<()> {
   // up simply reconnect via their supervisor loop.
   let agent_pool = AgentPool::new();
   let heartbeat_ttl = qr_config.rpc.as_ref().map_or_else(
-    || std::time::Duration::from_mins(1),
-    |c| std::time::Duration::from_secs(c.heartbeat_ttl_secs),
+    || Duration::from_mins(1),
+    |c| Duration::from_secs(c.heartbeat_ttl_secs),
   );
 
   let worker_pool = Arc::new(WorkerPool::new(
@@ -239,7 +246,7 @@ fn spawn_rpc_thread(
   pool: Arc<AgentPool>,
   db_pool: sqlx::PgPool,
 ) {
-  std::thread::Builder::new()
+  Builder::new()
     .name("circus-rpc".into())
     .spawn(move || {
       let rt = match tokio::runtime::Builder::new_current_thread()
@@ -283,7 +290,7 @@ fn spawn_rpc_thread(
     );
 }
 
-async fn cleanup_stale_logs(log_dir: &std::path::Path) {
+async fn cleanup_stale_logs(log_dir: &Path) {
   if let Ok(mut entries) = tokio::fs::read_dir(log_dir).await {
     while let Ok(Some(entry)) = entries.next_entry().await {
       if entry.file_name().to_string_lossy().ends_with(".active.log") {
@@ -296,10 +303,10 @@ async fn cleanup_stale_logs(log_dir: &std::path::Path) {
 
 async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
   if !gc_config.enabled {
-    return std::future::pending().await;
+    return pending().await;
   }
-  let interval = std::time::Duration::from_secs(gc_config.cleanup_interval);
-  let max_age = std::time::Duration::from_secs(gc_config.max_age_days * 86400);
+  let interval = Duration::from_secs(gc_config.cleanup_interval);
+  let max_age = Duration::from_secs(gc_config.max_age_days * 86400);
 
   #[expect(clippy::infinite_loop, reason = "intentional background GC loop")]
   loop {
@@ -309,7 +316,7 @@ async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
       Ok(ids) => ids,
       Err(e) => {
         tracing::warn!("Failed to fetch pinned build IDs for GC: {e}");
-        std::collections::HashSet::new()
+        HashSet::new()
       },
     };
 
@@ -319,20 +326,17 @@ async fn gc_loop(gc_config: GcConfig, pool: sqlx::PgPool) {
           let root_paths = products
             .iter()
             .filter_map(|product| product.gc_root_path.as_deref())
-            .map(std::path::PathBuf::from)
+            .map(PathBuf::from)
             .collect();
           let output_paths = products
             .iter()
-            .map(|product| std::path::PathBuf::from(&product.path))
+            .map(|product| PathBuf::from(&product.path))
             .collect();
           (root_paths, output_paths)
         },
         Err(e) => {
           tracing::warn!("Failed to fetch pinned build products for GC: {e}");
-          (
-            std::collections::HashSet::new(),
-            std::collections::HashSet::new(),
-          )
+          (HashSet::new(), HashSet::new())
         },
       };
 
@@ -376,10 +380,10 @@ async fn failed_paths_cleanup_loop(
   enabled: bool,
 ) {
   if !enabled {
-    return std::future::pending().await;
+    return pending().await;
   }
 
-  let interval = std::time::Duration::from_hours(1);
+  let interval = Duration::from_hours(1);
   #[expect(
     clippy::infinite_loop,
     reason = "intentional background cleanup loop"
@@ -436,7 +440,7 @@ async fn cancel_checker_loop(pool: sqlx::PgPool, active_builds: ActiveBuilds) {
 /// Write a service heartbeat on every poll tick so the server's /health
 /// endpoint can report queue-runner liveness.
 async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
-  let interval = std::time::Duration::from_secs(poll_interval_seconds.max(1));
+  let interval = Duration::from_secs(poll_interval_seconds.max(1));
   // Emit one immediately so /health doesn't return "never reported" during
   // the first poll interval after startup.
   if let Err(e) = circus_common::service_heartbeat::record(
@@ -480,7 +484,7 @@ async fn sighup_loop(hot_config: Arc<RwLock<HotConfig>>) {
       Ok(s) => s,
       Err(e) => {
         tracing::warn!("Failed to install SIGHUP handler: {e}");
-        return std::future::pending().await;
+        return pending().await;
       },
     };
     loop {
@@ -503,7 +507,7 @@ async fn sighup_loop(hot_config: Arc<RwLock<HotConfig>>) {
     }
   }
   #[cfg(not(unix))]
-  std::future::pending().await
+  pending().await
 }
 
 async fn notification_retry_loop(
@@ -514,20 +518,18 @@ async fn notification_retry_loop(
     let hot = hot_config.read().await;
     (
       hot.notifications_config.enable_retry_queue,
-      std::time::Duration::from_secs(
-        hot.notifications_config.retry_poll_interval,
-      ),
+      Duration::from_secs(hot.notifications_config.retry_poll_interval),
       hot.notifications_config.retention_days,
     )
   };
 
   if !enable_retry_queue {
-    return std::future::pending().await;
+    return pending().await;
   }
 
   let cleanup_pool = pool.clone();
   tokio::spawn(async move {
-    let cleanup_interval = std::time::Duration::from_hours(1);
+    let cleanup_interval = Duration::from_hours(1);
     loop {
       tokio::time::sleep(cleanup_interval).await;
       match repo::notification_tasks::cleanup_old_tasks(
@@ -640,7 +642,7 @@ async fn shutdown_signal() {
   };
 
   #[cfg(not(unix))]
-  let terminate = std::future::pending::<()>();
+  let terminate = pending::<()>();
 
   tokio::select! {
       () = ctrl_c => {},

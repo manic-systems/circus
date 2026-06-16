@@ -1,3 +1,6 @@
+#[cfg(not(unix))] use std::future::pending;
+use std::{net::SocketAddr, sync::Arc};
+
 use circus_common::Database;
 use circus_config::Config;
 use circus_server::{routes, state};
@@ -36,7 +39,7 @@ async fn shutdown_signal() {
   };
 
   #[cfg(not(unix))]
-  let terminate = std::future::pending::<()>();
+  let terminate = pending::<()>();
 
   tokio::select! {
       () = ctrl_c => {},
@@ -99,11 +102,9 @@ async fn main() -> color_eyre::Result<()> {
     .email_validation_regex
     .as_deref()
     .map(|pat| {
-      regex::Regex::new(pat)
-        .map(std::sync::Arc::new)
-        .map_err(|e| {
-          color_eyre::eyre::eyre!("Invalid email_validation_regex: {e}")
-        })
+      regex::Regex::new(pat).map(Arc::new).map_err(|e| {
+        color_eyre::eyre::eyre!("Invalid email_validation_regex: {e}")
+      })
     })
     .transpose()?;
 
@@ -114,10 +115,10 @@ async fn main() -> color_eyre::Result<()> {
     pool: db.pool().clone(),
     nix_store,
     config: config.clone(),
-    sessions: std::sync::Arc::new(dashmap::DashMap::new()),
+    sessions: Arc::new(dashmap::DashMap::new()),
     narinfo_cache: AppState::new_narinfo_cache(),
     http_client: reqwest::Client::new(),
-    csrf_secret: std::sync::Arc::new(csrf_secret),
+    csrf_secret: Arc::new(csrf_secret),
     email_regex,
   };
 
@@ -130,7 +131,7 @@ async fn main() -> color_eyre::Result<()> {
   tracing::info!("Starting CI Server on {}", bind_addr);
 
   let listener = TcpListener::bind(&bind_addr).await?;
-  let app = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
+  let app = app.into_make_service_with_connect_info::<SocketAddr>();
   axum::serve(listener, app)
     .with_graceful_shutdown(shutdown_signal())
     .await?;
