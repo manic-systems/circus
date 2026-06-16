@@ -177,6 +177,23 @@ pub fn validate_webhook_url(url: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// SSRF guard for outbound notification webhook URLs that must be encrypted in
+/// transit (generic webhooks, Slack). Stricter than [`validate_webhook_url`]:
+/// the scheme must be `https` so secrets and HMAC signatures are not sent in
+/// cleartext.
+///
+/// # Errors
+///
+/// Returns the reason string if the URL is rejected.
+pub fn validate_https_webhook_url(url: &str) -> Result<(), String> {
+  validate_webhook_url(url)?;
+  let scheme = url.split("://").next().unwrap_or("");
+  if !scheme.eq_ignore_ascii_case("https") {
+    return Err("URL must use https:// for notification delivery".to_string());
+  }
+  Ok(())
+}
+
 /// Validate that a URL uses one of the allowed schemes.
 /// Logs a warning when insecure schemes (`file`, `http`) are used.
 ///
