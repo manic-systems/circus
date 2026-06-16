@@ -5,8 +5,6 @@
   reason = "Fine in tests"
 )]
 
-mod notifications_tests;
-
 use circus_common::{
   Database,
   config::{Config, DatabaseConfig},

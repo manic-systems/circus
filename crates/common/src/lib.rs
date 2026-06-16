@@ -11,7 +11,6 @@ pub mod log_storage;
 pub mod migrate;
 pub mod migrate_cli;
 pub mod models;
-pub mod notifications;
 pub mod pg_notify;
 pub mod repo;
 
