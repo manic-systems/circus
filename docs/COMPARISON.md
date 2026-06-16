@@ -37,7 +37,7 @@ we're open to new features and additions based on demand.
 ### Strengths
 
 - Modern Rust codebase with better error handling
-- Simpler, more maintainable architecture (9 Rust crates, fewer daemons)
+- Simpler, more maintainable architecture (11 Rust crates, fewer daemons)
 - Better API-first design with proper REST structure
 - User management with argon2 password hashing and granular RBAC
 - Cleaner database schema (16 tables vs ~25 core tables in Hydra)
@@ -51,7 +51,6 @@ we're open to new features and additions based on demand.
 - Missing several notification integrations (BitBucket, InfluxDB, Coverity,
   SoTest, etc.)
 - No OpenTelemetry tracing
-- OpenTelemetry tracing not yet supported
 
 ## Feature-by-Feature
 
