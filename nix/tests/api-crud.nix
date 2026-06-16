@@ -419,7 +419,7 @@ testers.runNixOSTest {
     # Remote builder CRUD lifecycle
     with subtest("List remote builders"):
         result = machine.succeed(
-            "curl -sf http://127.0.0.1:3000/api/v1/admin/builders | jq 'length'"
+            f"curl -sf {auth_header} http://127.0.0.1:3000/api/v1/admin/builders | jq 'length'"
         )
         # We created one earlier in auth tests
         assert int(result.strip()) >= 0, f"Expected >= 0 builders, got {result.strip()}"
@@ -435,10 +435,10 @@ testers.runNixOSTest {
     with subtest("Get remote builder by ID"):
         # Get the first builder's ID
         builder_id = machine.succeed(
-            "curl -sf http://127.0.0.1:3000/api/v1/admin/builders | jq -r '.[0].id'"
+            f"curl -sf {auth_header} http://127.0.0.1:3000/api/v1/admin/builders | jq -r '.[0].id'"
         ).strip()
         result = machine.succeed(
-            f"curl -sf http://127.0.0.1:3000/api/v1/admin/builders/{builder_id} | jq -r .name"
+            f"curl -sf {auth_header} http://127.0.0.1:3000/api/v1/admin/builders/{builder_id} | jq -r .name"
         )
         assert result.strip() == "test-builder", f"Expected 'test-builder', got: {result.strip()}"
 
@@ -454,7 +454,7 @@ testers.runNixOSTest {
 
     with subtest("Updated builder is disabled"):
         result = machine.succeed(
-            f"curl -sf http://127.0.0.1:3000/api/v1/admin/builders/{builder_id} | jq -r .enabled"
+            f"curl -sf {auth_header} http://127.0.0.1:3000/api/v1/admin/builders/{builder_id} | jq -r .enabled"
         )
         assert result.strip() == "false", f"Expected false, got: {result.strip()}"
 
