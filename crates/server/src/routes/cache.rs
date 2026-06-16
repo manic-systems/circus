@@ -243,7 +243,9 @@ async fn is_servable_harmonia_path(
         .await?,
     );
   }
-  if store_path.ends_with(".drv")
+  if PathBuf::from(&store_path)
+    .extension()
+    .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
     && has_circus_derivation_path(pool, &store_path).await?
   {
     return Ok(true);
