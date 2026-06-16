@@ -1,23 +1,53 @@
 use std::fmt;
 
+/// Remote flake ref schemes allowed by default.
+///
+/// Operators can extend or restrict this via configuration. Local schemes
+/// (`path:`, `file:`, `git+file:`) are intentionally absent. Add them only
+/// if you fully trust every flake ref source.
+pub const DEFAULT_ALLOWED_SCHEMES: &[&str] = &[
+  "github:",
+  "gitlab:",
+  "sourcehut:",
+  "git+https://",
+  "git+ssh://",
+  "git+http://",
+  "https://",
+  "http://",
+  "ssh://",
+  "tarball+https://",
+  "tarball+http://",
+];
+
 /// A validated flake reference safe to pass to Nix commands.
 ///
 /// Constructed only through [`parse`](Self::parse) or
-/// [`from_url`](Self::from_url), both of which reject local filesystem refs
-/// (`path:`, `file:`, `.`, `..`, `~`, absolute paths, etc.).
+/// [`from_url`](Self::from_url), which verify the ref starts with an
+/// allowed scheme.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ref(String);
 
 impl Ref {
-  /// Parse and validate an untrusted flake reference string.
-  ///
-  /// Rejects local filesystem refs and returns the validated reference.
-  /// Remote refs (`github:`, `gitlab:`, `git+https://`, …) are accepted.
+  /// Parse and validate an untrusted flake reference against the
+  /// [`DEFAULT_ALLOWED_SCHEMES`].
   ///
   /// # Errors
   ///
   /// Returns a description of why the value was rejected.
   pub fn parse(value: &str) -> Result<Self, String> {
+    Self::parse_with(value, DEFAULT_ALLOWED_SCHEMES)
+  }
+
+  /// Parse and validate an untrusted flake reference against a custom
+  /// allowlist of scheme prefixes.
+  ///
+  /// # Errors
+  ///
+  /// Returns a description of why the value was rejected.
+  pub fn parse_with(
+    value: &str,
+    allowed_schemes: &[&str],
+  ) -> Result<Self, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
       return Err("flake ref cannot be empty".to_string());
@@ -29,32 +59,41 @@ impl Ref {
       return Err("flake ref must not contain null bytes".to_string());
     }
 
-    const LOCAL_EXACT: &[&str] = &[".", "..", "~"];
-    const LOCAL_PREFIXES: &[&str] =
-      &["path:", "file:", "git+file:", "/", "./", "../", "~/"];
-
     let lower = trimmed.to_ascii_lowercase();
-    if LOCAL_EXACT.contains(&trimmed)
-      || LOCAL_PREFIXES.iter().any(|p| lower.starts_with(p))
-    {
-      return Err("local filesystem flake refs are not allowed".to_string());
+    if !allowed_schemes.iter().any(|s| lower.starts_with(s)) {
+      return Err(format!(
+        "flake ref scheme not allowed; permitted: {}",
+        allowed_schemes.join(", ")
+      ));
     }
     Ok(Self(trimmed.to_string()))
   }
 
-  /// Convert a repository URL to a validated flake reference.
+  /// Convert a repository URL to a validated flake reference using
+  /// [`DEFAULT_ALLOWED_SCHEMES`].
   ///
   /// GitHub and GitLab URLs are converted to their native flake ref formats
   /// (`github:owner/repo`, `gitlab:owner/repo`). Other HTTPS URLs get a
   /// `git+` prefix so Nix clones via git. URLs that are already valid flake
-  /// refs are returned as-is. The result is validated against the same rules
-  /// as [`parse`](Self::parse).
+  /// refs are returned as-is.
   ///
   /// # Errors
   ///
-  /// Returns error if the resulting flake ref would be a local filesystem
-  /// reference.
+  /// Returns error if the resulting ref's scheme is not in the allowlist.
   pub fn from_url(url: &str) -> Result<Self, String> {
+    Self::from_url_with(url, DEFAULT_ALLOWED_SCHEMES)
+  }
+
+  /// Convert a repository URL to a validated flake reference using a custom
+  /// scheme allowlist.
+  ///
+  /// # Errors
+  ///
+  /// Returns error if the resulting ref's scheme is not in the allowlist.
+  pub fn from_url_with(
+    url: &str,
+    allowed_schemes: &[&str],
+  ) -> Result<Self, String> {
     let url_trimmed = url.trim().trim_end_matches('/');
 
     // Already a flake ref (github:, gitlab:, git+, sourcehut:, etc.)
@@ -62,7 +101,7 @@ impl Ref {
       && !url_trimmed.starts_with("http://")
       && !url_trimmed.starts_with("https://")
     {
-      return Self::parse(url_trimmed);
+      return Self::parse_with(url_trimmed, allowed_schemes);
     }
 
     // Extract host + path from HTTP(S) URLs
@@ -72,23 +111,20 @@ impl Ref {
       .unwrap_or(url_trimmed);
     let without_dotgit = without_scheme.trim_end_matches(".git");
 
-    // github.com/owner/repo -> github:owner/repo
     if let Some(path) = without_dotgit.strip_prefix("github.com/") {
-      return Self::parse(&format!("github:{path}"));
+      return Self::parse_with(&format!("github:{path}"), allowed_schemes);
     }
 
-    // gitlab.com/owner/repo -> gitlab:owner/repo
     if let Some(path) = without_dotgit.strip_prefix("gitlab.com/") {
-      return Self::parse(&format!("gitlab:{path}"));
+      return Self::parse_with(&format!("gitlab:{path}"), allowed_schemes);
     }
 
-    // Any other HTTPS/HTTP URL: prefix with git+ so nix clones it
     if url_trimmed.starts_with("https://") || url_trimmed.starts_with("http://")
     {
-      return Self::parse(&format!("git+{url_trimmed}"));
+      return Self::parse_with(&format!("git+{url_trimmed}"), allowed_schemes);
     }
 
-    Self::parse(url_trimmed)
+    Self::parse_with(url_trimmed, allowed_schemes)
   }
 
   /// Return the flake ref string with a `?rev=` query parameter appended.
@@ -139,10 +175,30 @@ mod tests {
   }
 
   #[test]
+  fn parse_rejects_percent_encoded_traversal() {
+    assert!(Ref::parse("%2e%2e/etc/passwd").is_err());
+    assert!(Ref::parse("..%2fetc%2fpasswd").is_err());
+  }
+
+  #[test]
   fn parse_accepts_remote_refs() {
     assert!(Ref::parse("github:owner/repo").is_ok());
     assert!(Ref::parse("git+https://example.com/repo").is_ok());
     assert!(Ref::parse("https://example.com/repo").is_ok());
+  }
+
+  #[test]
+  fn parse_with_custom_schemes() {
+    let restricted = &["github:", "gitlab:"];
+    assert!(Ref::parse_with("github:owner/repo", restricted).is_ok());
+    assert!(Ref::parse_with("git+https://example.com", restricted).is_err());
+  }
+
+  #[test]
+  fn parse_with_local_schemes_when_explicitly_allowed() {
+    let with_local = &["github:", "path:"];
+    assert!(Ref::parse_with("path:/local/repo", with_local).is_ok());
+    assert!(Ref::parse_with("file:///local/repo", with_local).is_err());
   }
 
   #[test]
@@ -233,6 +289,18 @@ mod tests {
     assert_eq!(
       Ref::from_url("https://sr.ht/~user/repo").unwrap().as_str(),
       "git+https://sr.ht/~user/repo"
+    );
+  }
+
+  #[test]
+  fn from_url_with_restricted_schemes() {
+    let restricted = &["github:", "gitlab:"];
+    assert!(
+      Ref::from_url_with("https://github.com/owner/repo", restricted).is_ok()
+    );
+    assert!(
+      Ref::from_url_with("https://codeberg.org/owner/repo", restricted)
+        .is_err()
     );
   }
 
