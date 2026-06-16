@@ -71,10 +71,18 @@ async fn main() -> color_eyre::Result<()> {
 
   let db = Database::new(config.database.clone()).await?;
 
-  // Bootstrap declarative projects, jobsets, and API keys from config
+  // Bootstrap declarative projects, jobsets, and API keys from config.
+  // Notification secrets are validated and encrypted here, before bootstrap
+  // stores the config blobs verbatim, so circus-common needs no dependency on
+  // circus-notification.
+  let mut declarative = config.declarative.clone();
+  circus_notification::encrypt_declarative_notifications(
+    &mut declarative,
+    config.server.webhook_secret_encryption_key.as_deref(),
+  )?;
   circus_common::bootstrap::run(
     db.pool(),
-    &config.declarative,
+    &declarative,
     config.server.webhook_secret_encryption_key.as_deref(),
   )
   .await?;

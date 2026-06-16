@@ -804,32 +804,24 @@ pub(super) async fn notifications_create(
     );
   }
 
-  // SSRF guard: outbound webhooks must point at public HTTP(S) hosts.
-  let url_field = match form.notification_type.as_str() {
-    "webhook" => Some("url"),
-    "slack" => Some("webhook_url"),
-    _ => None,
-  };
-  if let Some(field) = url_field {
-    let url_str =
-      parsed.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
-        (
-          StatusCode::BAD_REQUEST,
-          format!("Missing '{field}' in config"),
-        )
-          .into_response()
-      })?;
-    circus_common::validate::validate_webhook_url(url_str).map_err(|e| {
-      (StatusCode::BAD_REQUEST, format!("Invalid URL: {e}")).into_response()
-    })?;
-  }
+  // Validate (SSRF/HTTPS guard for webhook/slack URLs and type-specific shape)
+  // and encrypt secret fields before storage. The repo stores the blob
+  // verbatim.
+  let config = circus_notification::NotificationChannel::encrypt_into_stored(
+    &form.notification_type,
+    &parsed,
+    state.config.server.webhook_secret_encryption_key.as_deref(),
+  )
+  .map_err(|e| {
+    (StatusCode::BAD_REQUEST, format!("Invalid config: {e}")).into_response()
+  })?;
 
   circus_common::repo::notification_configs::create(
     &state.pool,
     CreateNotificationConfig {
       project_id,
       notification_type: form.notification_type,
-      config: parsed,
+      config,
     },
   )
   .await
