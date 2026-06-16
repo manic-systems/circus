@@ -179,8 +179,50 @@ async fn has_circus_signed_build_product(
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
 }
 
+async fn has_circus_derivation_path(
+  pool: &PgPool,
+  store_path: &str,
+) -> Result<bool, ApiError> {
+  sqlx::query_scalar::<_, bool>(
+    "SELECT EXISTS(SELECT 1 FROM builds WHERE drv_path = $1)",
+  )
+  .bind(store_path)
+  .fetch_one(pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+}
+
+async fn has_circus_derivation_direct_reference(
+  pool: &PgPool,
+  nix_store_db: &SqlitePool,
+  store_path: &str,
+) -> Result<bool, ApiError> {
+  let referrer_drvs = sqlx::query_scalar::<_, String>(
+    "SELECT referrer.path FROM Refs r JOIN ValidPaths requested ON \
+     r.reference = requested.id JOIN ValidPaths referrer ON r.referrer = \
+     referrer.id WHERE requested.path = ?1 AND referrer.path LIKE '%.drv'",
+  )
+  .bind(store_path)
+  .fetch_all(nix_store_db)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+
+  if referrer_drvs.is_empty() {
+    return Ok(false);
+  }
+
+  sqlx::query_scalar::<_, bool>(
+    "SELECT EXISTS(SELECT 1 FROM builds WHERE drv_path = ANY($1))",
+  )
+  .bind(referrer_drvs)
+  .fetch_one(pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+}
+
 async fn is_servable_harmonia_path(
   pool: &PgPool,
+  nix_store_db: &SqlitePool,
   info: &ValidPathInfo,
 ) -> Result<bool, ApiError> {
   // The unauthenticated cache may only rebroadcast paths Circus built, never
@@ -189,8 +231,22 @@ async fn is_servable_harmonia_path(
   // boundary is provenance.
   let store_path = info.info.store_dir.display(&info.path).to_string();
   if info.info.ca.is_some() {
-    // Self-verifying: serve when Circus built it, signed or not.
-    return has_circus_build_product(pool, &store_path).await;
+    // Self-verifying: serve when Circus built it or when it is a direct input
+    // of an evaluated derivation Circus may dispatch to an agent.
+    return Ok(
+      has_circus_build_product(pool, &store_path).await?
+        || has_circus_derivation_direct_reference(
+          pool,
+          nix_store_db,
+          &store_path,
+        )
+        .await?,
+    );
+  }
+  if store_path.ends_with(".drv")
+    && has_circus_derivation_path(pool, &store_path).await?
+  {
+    return Ok(true);
   }
   // Non-CA paths are useless to clients without our signature.
   if info.info.signatures.is_empty() {
@@ -258,7 +314,7 @@ async fn narinfo(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&state.pool, &info).await? {
+  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info).await? {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -403,7 +459,7 @@ async fn serve_nar_combined(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&state.pool, &info).await? {
+  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info).await? {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
