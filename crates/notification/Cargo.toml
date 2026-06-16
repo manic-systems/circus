@@ -1,0 +1,24 @@
+[package]
+name                 = "circus-notification"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+circus-common.workspace = true
+hex.workspace           = true
+hmac.workspace          = true
+lettre.workspace        = true
+reqwest.workspace       = true
+serde.workspace         = true
+serde_json.workspace    = true
+sha2.workspace          = true
+sqlx.workspace          = true
+tokio.workspace         = true
+tracing.workspace       = true
+urlencoding.workspace   = true
+uuid.workspace          = true
+
+[lints]
+workspace = true
