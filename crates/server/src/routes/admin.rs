@@ -350,20 +350,19 @@ async fn get_config_file(
   let path = config_file_path();
   let contents = match tokio::fs::read_to_string(&path).await {
     Ok(contents) => {
-      let parsed =
-        circus_common::config::Config::from_toml_with_defaults(&contents)
-          .map_err(|e| {
-            ApiError(circus_common::CiError::Validation(format!(
-              "Invalid TOML configuration in {}: {e}",
-              path.display()
-            )))
-          })?;
+      let parsed = circus_config::Config::from_toml_with_defaults(&contents)
+        .map_err(|e| {
+          ApiError(circus_common::CiError::Validation(format!(
+            "Invalid TOML configuration in {}: {e}",
+            path.display()
+          )))
+        })?;
       let mut value = toml::Value::try_from(&parsed).map_err(|e| {
         ApiError(circus_common::CiError::Internal(format!(
           "Failed to serialize configuration: {e}"
         )))
       })?;
-      circus_common::config::redact_secrets(&mut value);
+      circus_config::redact_secrets(&mut value);
       toml::to_string_pretty(&value).map_err(|e| {
         ApiError(circus_common::CiError::Internal(format!(
           "Failed to render effective configuration: {e}"
@@ -371,14 +370,13 @@ async fn get_config_file(
       })?
     },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-      let mut value =
-        toml::Value::try_from(circus_common::config::Config::default())
-          .map_err(|e| {
-            ApiError(circus_common::CiError::Internal(format!(
-              "Failed to serialize default configuration: {e}"
-            )))
-          })?;
-      circus_common::config::redact_secrets(&mut value);
+      let mut value = toml::Value::try_from(circus_config::Config::default())
+        .map_err(|e| {
+        ApiError(circus_common::CiError::Internal(format!(
+          "Failed to serialize default configuration: {e}"
+        )))
+      })?;
+      circus_config::redact_secrets(&mut value);
       toml::to_string_pretty(&value).map_err(|e| {
         ApiError(circus_common::CiError::Internal(format!(
           "Failed to render default configuration: {e}"
@@ -410,13 +408,12 @@ async fn update_config_file(
     )));
   }
 
-  let parsed =
-    circus_common::config::Config::from_toml_with_defaults(&input.contents)
-      .map_err(|e| {
-        ApiError(circus_common::CiError::Validation(format!(
-          "Invalid TOML configuration: {e}"
-        )))
-      })?;
+  let parsed = circus_config::Config::from_toml_with_defaults(&input.contents)
+    .map_err(|e| {
+      ApiError(circus_common::CiError::Validation(format!(
+        "Invalid TOML configuration: {e}"
+      )))
+    })?;
   let rendered = toml::to_string_pretty(&parsed).map_err(|e| {
     ApiError(circus_common::CiError::Internal(format!(
       "Failed to render configuration: {e}"

@@ -1,10 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use circus_common::{
-  config::{Config, GcConfig, HotConfig},
-  database::Database,
-  gc_roots,
-  repo,
+use circus_common::{database::Database, gc_roots, repo};
+use circus_config::{
+  CacheUploadConfig,
+  Config,
+  GcConfig,
+  HotConfig,
+  RpcConfig,
+  SigningConfig,
 };
 use circus_queue_runner::{
   caps::RunnerCaps,
@@ -230,9 +233,9 @@ async fn main() -> color_eyre::Result<()> {
 /// to one OS thread; the main multi-threaded runtime is untouched. Cross
 /// the boundary via `Arc<AgentPool>` (channels inside).
 fn spawn_rpc_thread(
-  cfg: circus_common::config::RpcConfig,
-  cache_cfg: circus_common::config::CacheUploadConfig,
-  signing_cfg: circus_common::config::SigningConfig,
+  cfg: RpcConfig,
+  cache_cfg: CacheUploadConfig,
+  signing_cfg: SigningConfig,
   pool: Arc<AgentPool>,
   db_pool: sqlx::PgPool,
 ) {

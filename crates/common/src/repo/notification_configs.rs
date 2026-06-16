@@ -1,8 +1,8 @@
+use circus_config::DeclarativeNotification;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::DeclarativeNotification,
   error::{CiError, Result},
   models::{CreateNotificationConfig, NotificationConfig},
 };

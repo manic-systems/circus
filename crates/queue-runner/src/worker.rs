@@ -2,15 +2,6 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use circus_common::{
   alerts::AlertManager,
-  config::{
-    AlertConfig,
-    CacheUploadConfig,
-    GcConfig,
-    HotConfig,
-    LogConfig,
-    NotificationsConfig,
-    SigningConfig,
-  },
   gc_roots::GcRoots,
   log_storage::LogStorage,
   models::{
@@ -23,6 +14,17 @@ use circus_common::{
     metric_units,
   },
   repo,
+};
+use circus_config::{
+  AlertConfig,
+  BuilderSchedulingStrategy,
+  CacheUploadConfig,
+  GcConfig,
+  HotConfig,
+  LogConfig,
+  NotificationsConfig,
+  S3CacheConfig,
+  SigningConfig,
 };
 use dashmap::DashMap;
 use sqlx::PgPool;
@@ -406,7 +408,7 @@ async fn sign_outputs(
 async fn push_to_cache(
   output_paths: &[String],
   store_uri: &str,
-  s3_config: Option<&circus_common::config::S3CacheConfig>,
+  s3_config: Option<&S3CacheConfig>,
   semaphore: Arc<Semaphore>,
   max_retries: u32,
 ) -> Vec<String> {
@@ -479,7 +481,7 @@ async fn push_to_cache(
 /// <s3://bucket?region=us-east-1&endpoint=https://minio.example.com>
 fn build_s3_store_uri(
   base_uri: &str,
-  config: Option<&circus_common::config::S3CacheConfig>,
+  config: Option<&S3CacheConfig>,
 ) -> String {
   let Some(cfg) = config else {
     return base_uri.to_string();
@@ -543,7 +545,7 @@ async fn try_remote_build(
   work_dir: &std::path::Path,
   timeout: Duration,
   live_log_path: Option<&std::path::Path>,
-  strategy: &circus_common::config::BuilderSchedulingStrategy,
+  strategy: &BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
   psi_cache: &crate::psi::PsiCache,
@@ -736,7 +738,7 @@ async fn run_on_runner(
   work_dir: &std::path::Path,
   timeout: Duration,
   live_log_path: &std::path::Path,
-  scheduling_strategy: &circus_common::config::BuilderSchedulingStrategy,
+  scheduling_strategy: &BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
   psi_cache: &Arc<crate::psi::PsiCache>,
@@ -810,7 +812,7 @@ async fn run_build(
   alert_manager: &Option<AlertManager>,
   upload_semaphore: Arc<Semaphore>,
   worker_semaphore: Arc<Semaphore>,
-  scheduling_strategy: circus_common::config::BuilderSchedulingStrategy,
+  scheduling_strategy: BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
   psi_cache: Arc<crate::psi::PsiCache>,
@@ -1362,7 +1364,7 @@ async fn run_build(
 
 #[cfg(test)]
 mod tests {
-  use circus_common::config::{CacheUploadConfig, S3CacheConfig};
+  use circus_config::{CacheUploadConfig, S3CacheConfig};
 
   use super::*;
 

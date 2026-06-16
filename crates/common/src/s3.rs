@@ -12,12 +12,11 @@
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Utc};
+use circus_config::S3CacheConfig;
 use hmac::{Hmac, KeyInit as _, Mac};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest as _, Sha256};
 use url::Url;
-
-use crate::config::S3CacheConfig;
 
 type HmacSha256 = Hmac<Sha256>;
 const AWS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC

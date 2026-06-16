@@ -1,8 +1,8 @@
+use circus_config::{BuilderSchedulingStrategy, DeclarativeRemoteBuilder};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::{BuilderSchedulingStrategy, DeclarativeRemoteBuilder},
   error::{CiError, Result},
   models::{CreateRemoteBuilder, RemoteBuilder},
 };

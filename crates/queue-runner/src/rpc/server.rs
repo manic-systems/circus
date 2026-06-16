@@ -119,9 +119,7 @@ impl ServerConfig {
   /// # Errors
   ///
   /// Returns the underlying error if TLS files are missing or invalid.
-  pub fn from_user(
-    cfg: &circus_common::config::RpcConfig,
-  ) -> color_eyre::Result<Self> {
+  pub fn from_user(cfg: &circus_config::RpcConfig) -> color_eyre::Result<Self> {
     let bind: SocketAddr = cfg
       .bind
       .parse()
@@ -182,7 +180,7 @@ impl ServerConfig {
   #[must_use]
   pub fn with_presigner_from(
     mut self,
-    cache_cfg: &circus_common::config::CacheUploadConfig,
+    cache_cfg: &circus_config::CacheUploadConfig,
   ) -> Self {
     if let Some(uri) = &cache_cfg.store_uri
       && let Some(s3_cfg) = &cache_cfg.s3

@@ -16,10 +16,10 @@ use std::{
 
 pub use channel::NotificationChannel;
 use circus_common::{
-  config::NotificationsConfig,
   models::{Build, Project},
   repo,
 };
+use circus_config::NotificationsConfig;
 pub use event::BuildEvent;
 use sqlx::PgPool;
 use tracing::{error, info, warn};
@@ -446,7 +446,7 @@ pub async fn process_notification_task(
 /// unknown type, ...) or if encryption fails (e.g. a secret is configured but
 /// no encryption key is available).
 pub fn encrypt_declarative_notifications(
-  config: &mut circus_common::config::DeclarativeConfig,
+  config: &mut circus_config::DeclarativeConfig,
   encryption_key: Option<&str>,
 ) -> circus_common::error::Result<()> {
   for project in &mut config.projects {

@@ -1,11 +1,7 @@
 use std::{collections::HashMap, path::Path, time::Duration};
 
-use circus_common::{
-  CiError,
-  config::EvaluatorConfig,
-  error::Result,
-  models::JobsetInput,
-};
+use circus_common::{CiError, error::Result, models::JobsetInput};
+use circus_config::EvaluatorConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default)]

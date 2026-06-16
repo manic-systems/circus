@@ -2,10 +2,9 @@
 
 use std::time::Duration;
 
+use circus_config::DatabaseConfig;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use tracing::{debug, info, warn};
-
-use crate::config::DatabaseConfig;
 
 pub struct Database {
   pool: PgPool,

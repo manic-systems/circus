@@ -8,7 +8,7 @@
 
 use std::{collections::HashMap, time::Duration};
 
-use circus_common::config::RpcOidcConfig;
+use circus_config::RpcOidcConfig;
 use color_eyre::eyre::{Context as _, bail, eyre};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;

@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 circus-common.workspace = true
+circus-config.workspace = true
 hex.workspace           = true
 hmac.workspace          = true
 lettre.workspace        = true

@@ -7,10 +7,15 @@ use axum::{
   http::Extensions,
   response::{IntoResponse, Redirect, Response},
 };
-use circus_common::{
-  config::{PageAccessLevel, ServerConfig},
-  models::{ApiKey, Build, BuildStatus, Evaluation, EvaluationStatus, User},
+use circus_common::models::{
+  ApiKey,
+  Build,
+  BuildStatus,
+  Evaluation,
+  EvaluationStatus,
+  User,
 };
+use circus_config::{PageAccessLevel, ServerConfig};
 use circus_proto::nix_log::{self, LogLine};
 use uuid::Uuid;
 

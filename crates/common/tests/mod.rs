@@ -5,10 +5,8 @@
   reason = "Fine in tests"
 )]
 
-use circus_common::{
-  Database,
-  config::{Config, DatabaseConfig},
-};
+use circus_common::Database;
+use circus_config::{Config, DatabaseConfig};
 
 #[tokio::test]
 async fn test_database_connection_full() -> color_eyre::Result<()> {

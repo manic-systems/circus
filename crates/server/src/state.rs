@@ -1,9 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use circus_common::{
-  config::Config,
-  models::{ApiKey, User},
-};
+use circus_common::models::{ApiKey, User};
+use circus_config::Config;
 use dashmap::DashMap;
 use harmonia_store_path::StoreDir;
 use hmac::KeyInit;

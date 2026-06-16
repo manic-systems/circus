@@ -1,8 +1,8 @@
+use circus_config::DeclarativeJobsetInput;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::DeclarativeJobsetInput,
   error::{CiError, Result},
   models::JobsetInput,
   nix,

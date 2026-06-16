@@ -4,10 +4,8 @@ use std::{
   time::{Duration, Instant},
 };
 
-use circus_common::{
-  config::{EphemeralPoolConfig, GithubActionsPoolConfig},
-  models::Build,
-};
+use circus_common::models::Build;
+use circus_config::{EphemeralPoolConfig, GithubActionsPoolConfig};
 use color_eyre::eyre::{Context as _, bail};
 use serde::Serialize;
 use sqlx::PgPool;

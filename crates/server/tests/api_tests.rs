@@ -32,7 +32,7 @@ async fn get_pool() -> Option<sqlx::PgPool> {
 }
 
 fn build_app(pool: sqlx::PgPool) -> axum::Router {
-  let config = circus_common::config::Config::default();
+  let config = circus_config::Config::default();
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
@@ -56,7 +56,7 @@ async fn test_router_no_duplicate_routes() {
     return;
   };
 
-  let config = circus_common::config::Config::default();
+  let config = circus_config::Config::default();
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool,
@@ -77,7 +77,7 @@ async fn test_router_no_duplicate_routes() {
 
 fn build_app_with_config(
   pool: sqlx::PgPool,
-  config: circus_common::config::Config,
+  config: circus_config::Config,
 ) -> axum::Router {
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
@@ -97,7 +97,7 @@ fn build_app_with_config(
 }
 
 fn build_app_public_reads(pool: sqlx::PgPool) -> axum::Router {
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.server.require_api_key_for_reads = false;
   build_app_with_config(pool, config)
 }
@@ -334,7 +334,7 @@ async fn test_cache_invalid_hash_returns_404() {
     return;
   };
 
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool, config);
 
@@ -432,7 +432,7 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
   .await
   .unwrap();
 
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool.clone(), config.clone());
 
@@ -487,7 +487,7 @@ async fn test_cache_nar_invalid_hash_returns_404() {
     return;
   };
 
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool, config);
 
@@ -524,7 +524,7 @@ async fn test_cache_disabled_returns_404() {
     return;
   };
 
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.cache.enabled = false;
   let app = build_app_with_config(pool, config);
 
@@ -722,7 +722,7 @@ async fn test_cache_info_returns_correct_headers() {
     return;
   };
 
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.cache.enabled = true;
   let app = build_app_with_config(pool, config);
 
@@ -1117,7 +1117,7 @@ async fn test_webhook_empty_secret_rejected() {
 
   ensure_api_key(&pool, ADMIN_TOKEN, "admin").await;
   let project_id = create_test_project(&pool).await;
-  let mut config = circus_common::config::Config::default();
+  let mut config = circus_config::Config::default();
   config.server.webhook_secret_encryption_key = Some("test-key".into());
   let app = build_app_with_config(pool, config);
 

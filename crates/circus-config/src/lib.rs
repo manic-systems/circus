@@ -1413,7 +1413,7 @@ impl Config {
       deep_merge(&mut table, file_table);
     }
 
-    apply_env_vars(&mut table);
+    apply_env_vars(&mut table, std::env::vars());
 
     let mut config: Self =
       table.try_into().wrap_err("failed to deserialize config")?;
@@ -1774,10 +1774,13 @@ fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
 /// Key mapping: strip the `CIRCUS_` prefix, split on `__` for nesting,
 /// lowercase each segment. Values are parsed as bool / integer / float
 /// before falling back to string so serde sees native types.
-fn apply_env_vars(table: &mut toml::Value) {
+fn apply_env_vars(
+  table: &mut toml::Value,
+  env_vars: impl IntoIterator<Item = (String, String)>,
+) {
   const PREFIX: &str = "CIRCUS_";
 
-  for (key, value) in std::env::vars() {
+  for (key, value) in env_vars {
     let Some(rest) = key.strip_prefix(PREFIX) else {
       continue;
     };
@@ -1792,6 +1795,16 @@ fn apply_env_vars(table: &mut toml::Value) {
 }
 
 fn parse_env_value(s: &str) -> toml::Value {
+  let trimmed = s.trim();
+  if trimmed.starts_with('[')
+    && trimmed.ends_with(']')
+    && let Ok(mut value) =
+      toml::from_str::<toml::Value>(&format!("value = {trimmed}"))
+    && let Some(parsed) = value.as_table_mut().and_then(|t| t.remove("value"))
+  {
+    return parsed;
+  }
+
   match s.to_ascii_lowercase().as_str() {
     "true" | "yes" | "on" => return toml::Value::Boolean(true),
     "false" | "no" | "off" => return toml::Value::Boolean(false),
@@ -1867,8 +1880,6 @@ pub fn redact_secrets(value: &mut toml::Value) {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
-  use std::env;
-
   use super::*;
 
   #[test]
@@ -2078,6 +2089,17 @@ mod tests {
   }
 
   #[test]
+  fn parse_env_value_array() {
+    assert_eq!(
+      parse_env_value(r#"["https", "file"]"#),
+      toml::Value::Array(vec![
+        toml::Value::String("https".into()),
+        toml::Value::String("file".into()),
+      ])
+    );
+  }
+
+  #[test]
   fn parse_env_value_string() {
     assert_eq!(
       parse_env_value("hello"),
@@ -2120,46 +2142,48 @@ mod tests {
 
   #[test]
   fn apply_env_vars_nested_bool_override() {
-    // SAFETY: single-threaded test; no other threads read this env var.
-    unsafe {
-      env::set_var("CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS", "true");
-    }
-
     let mut val = table(toml::toml! {
       [server]
       require_api_key_for_reads = false
       port = 3000
     });
-    apply_env_vars(&mut val);
+    apply_env_vars(&mut val, [(
+      "CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS".into(),
+      "true".into(),
+    )]);
     assert_eq!(
       val["server"]["require_api_key_for_reads"].as_bool(),
       Some(true),
     );
-
-    // SAFETY: single-threaded test; no other threads read this env var.
-    unsafe { env::remove_var("CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS") };
   }
 
   #[test]
   fn apply_env_vars_skips_config_file() {
     let mut val = toml::Value::Table(toml::map::Map::new());
-    // SAFETY: single-threaded test; no other threads read this env var.
-    unsafe { env::set_var("CIRCUS_CONFIG_FILE", "/some/path") };
-    apply_env_vars(&mut val);
+    apply_env_vars(&mut val, [(
+      "CIRCUS_CONFIG_FILE".into(),
+      "/some/path".into(),
+    )]);
     assert!(val.get("config_file").is_none());
-    // SAFETY: single-threaded test; no other threads read this env var.
-    unsafe { env::remove_var("CIRCUS_CONFIG_FILE") };
   }
 
   #[test]
   fn apply_env_vars_skips_empty_values() {
     let mut val = table(toml::toml! { [server] host = "127.0.0.1" });
-    // SAFETY: single-threaded test; no other threads read this env var.
-    unsafe { env::set_var("CIRCUS_SERVER__HOST", "") };
-    apply_env_vars(&mut val);
+    apply_env_vars(&mut val, [("CIRCUS_SERVER__HOST".into(), String::new())]);
     assert_eq!(val["server"]["host"].as_str(), Some("127.0.0.1"));
-    // SAFETY: single-threaded test; no other threads read this env var.
-    unsafe { env::remove_var("CIRCUS_SERVER__HOST") };
+  }
+
+  #[test]
+  fn apply_env_vars_vec_string_override() {
+    let mut val = toml::Value::try_from(Config::default()).unwrap();
+    apply_env_vars(&mut val, [(
+      "CIRCUS_SERVER__ALLOWED_URL_SCHEMES".into(),
+      r#"["https", "file"]"#.into(),
+    )]);
+
+    let config: Config = val.try_into().unwrap();
+    assert_eq!(config.server.allowed_url_schemes, ["https", "file"]);
   }
 
   #[test]
