@@ -12,6 +12,7 @@ use config as config_crate;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Config {
   pub database:      DatabaseConfig,
   pub server:        ServerConfig,
@@ -53,6 +54,7 @@ impl Default for NixConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DatabaseConfig {
   pub url:             String,
   /// Path to a file containing the database URL. Read at startup; overrides
@@ -185,6 +187,7 @@ pub struct EvaluatorConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct QueueRunnerConfig {
   pub workers:       usize,
   pub poll_interval: u64,
@@ -497,6 +500,7 @@ pub struct GcConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogConfig {
   pub log_dir:  PathBuf,
   pub compress: bool,
@@ -717,6 +721,7 @@ impl std::fmt::Debug for EmailConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CacheConfig {
   pub enabled:         bool,
   pub secret_key_file: Option<PathBuf>,
@@ -1373,10 +1378,6 @@ impl Config {
   /// Returns error if configuration loading or validation fails.
   pub fn load() -> eyre::Result<Self> {
     let mut settings = config_crate::Config::builder();
-
-    // Load default configuration
-    settings =
-      settings.add_source(config_crate::Config::try_from(&Self::default())?);
 
     // Load from config file if it exists
     if let Ok(config_path) = std::env::var("CIRCUS_CONFIG_FILE") {
