@@ -59,8 +59,7 @@ impl Ref {
       return Err("flake ref must not contain null bytes".to_string());
     }
 
-    let lower = trimmed.to_ascii_lowercase();
-    if !allowed_schemes.iter().any(|s| lower.starts_with(s)) {
+    if !allowed_schemes.iter().any(|s| trimmed.starts_with(s)) {
       return Err(format!(
         "flake ref scheme not allowed; permitted: {}",
         allowed_schemes.join(", ")
@@ -128,6 +127,10 @@ impl Ref {
   }
 
   /// Return the flake ref string with a `?rev=` query parameter appended.
+  ///
+  /// The caller must validate `rev` before calling (e.g. as a hex commit
+  /// hash). An unvalidated revision can inject extra query parameters such
+  /// as `host=` which changes the fetch target.
   #[must_use]
   pub fn with_revision(&self, rev: &str) -> String {
     format!("{}?rev={rev}", self.0)
@@ -185,6 +188,14 @@ mod tests {
     assert!(Ref::parse("github:owner/repo").is_ok());
     assert!(Ref::parse("git+https://example.com/repo").is_ok());
     assert!(Ref::parse("https://example.com/repo").is_ok());
+  }
+
+  #[test]
+  fn parse_rejects_wrong_case_schemes() {
+    assert!(Ref::parse("GitHub:owner/repo").is_err());
+    assert!(Ref::parse("GITHUB:owner/repo").is_err());
+    assert!(Ref::parse("Git+Https://example.com/repo").is_err());
+    assert!(Ref::parse("HTTPS://example.com/repo").is_err());
   }
 
   #[test]
