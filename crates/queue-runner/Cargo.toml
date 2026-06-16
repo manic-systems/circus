@@ -7,8 +7,9 @@ repository.workspace = true
 
 [dependencies]
 # Our crates
-circus-common.workspace = true
-circus-proto.workspace  = true
+circus-common.workspace       = true
+circus-notification.workspace = true
+circus-proto.workspace        = true
 
 async-compression.workspace  = true
 base64.workspace             = true

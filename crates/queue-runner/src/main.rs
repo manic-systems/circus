@@ -559,8 +559,14 @@ async fn notification_retry_loop(
       },
     };
 
+    let secret_key = hot_config.read().await.notification_secret_key.clone();
+
     for task in tasks {
-      match circus_common::notifications::process_notification_task(&task).await
+      match circus_notification::process_notification_task(
+        &task,
+        secret_key.as_deref(),
+      )
+      .await
       {
         Ok(()) => {
           if let Err(e) =
