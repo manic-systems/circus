@@ -117,3 +117,41 @@ fn webhook_aead_key(key: Option<&str>) -> Result<aead::LessSafeKey> {
     })?;
   Ok(aead::LessSafeKey::new(unbound))
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "fine in tests")]
+mod tests {
+  use super::{decrypt_webhook_secret, encrypt_webhook_secret};
+
+  #[test]
+  fn encrypt_webhook_secret_requires_key() {
+    let err = encrypt_webhook_secret("secret", None).unwrap_err();
+
+    assert_eq!(
+      err.to_string(),
+      "Configuration error: server.webhook_secret_encryption_key is required"
+    );
+  }
+
+  #[test]
+  fn encrypt_webhook_secret_rejects_blank_key() {
+    let err = encrypt_webhook_secret("secret", Some("  ")).unwrap_err();
+
+    assert_eq!(
+      err.to_string(),
+      "Configuration error: server.webhook_secret_encryption_key is required"
+    );
+  }
+
+  #[test]
+  fn webhook_secret_round_trips_with_key() {
+    let encrypted = encrypt_webhook_secret("secret", Some("test-key")).unwrap();
+
+    assert_ne!(encrypted, "secret");
+    assert!(encrypted.starts_with("v1:"));
+    assert_eq!(
+      decrypt_webhook_secret(&encrypted, Some("test-key")).unwrap(),
+      "secret"
+    );
+  }
+}
