@@ -88,18 +88,19 @@ async fn test_worker_pool_drain_stops_dispatch() {
 
   let hot_config =
     Arc::new(tokio::sync::RwLock::new(circus_common::config::HotConfig {
-      poll_interval:        std::time::Duration::from_secs(1),
-      build_timeout:        std::time::Duration::from_mins(1),
-      max_silent_time:      std::time::Duration::ZERO,
-      notifications_config: circus_common::config::NotificationsConfig::default(
-      ),
-      failed_paths_ttl:     0,
+      poll_interval:           std::time::Duration::from_secs(1),
+      build_timeout:           std::time::Duration::from_mins(1),
+      max_silent_time:         std::time::Duration::ZERO,
+      notifications_config:
+        circus_common::config::NotificationsConfig::default(),
+      notification_secret_key: None,
+      failed_paths_ttl:        0,
       scheduling_strategy:
         circus_common::config::BuilderSchedulingStrategy::default(),
-      psi_threshold:        None,
-      psi_check_timeout:    std::time::Duration::from_secs(5),
-      extra_nix_build_args: Vec::new(),
-      ssh_require_host_key: false,
+      psi_threshold:           None,
+      psi_check_timeout:       std::time::Duration::from_secs(5),
+      extra_nix_build_args:    Vec::new(),
+      ssh_require_host_key:    false,
     }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
@@ -216,18 +217,19 @@ async fn test_worker_pool_active_builds_cancel() {
 
   let hot_config =
     Arc::new(tokio::sync::RwLock::new(circus_common::config::HotConfig {
-      poll_interval:        std::time::Duration::from_secs(1),
-      build_timeout:        std::time::Duration::from_mins(1),
-      max_silent_time:      std::time::Duration::ZERO,
-      notifications_config: circus_common::config::NotificationsConfig::default(
-      ),
-      failed_paths_ttl:     0,
+      poll_interval:           std::time::Duration::from_secs(1),
+      build_timeout:           std::time::Duration::from_mins(1),
+      max_silent_time:         std::time::Duration::ZERO,
+      notifications_config:
+        circus_common::config::NotificationsConfig::default(),
+      notification_secret_key: None,
+      failed_paths_ttl:        0,
       scheduling_strategy:
         circus_common::config::BuilderSchedulingStrategy::default(),
-      psi_threshold:        None,
-      psi_check_timeout:    std::time::Duration::from_secs(5),
-      extra_nix_build_args: Vec::new(),
-      ssh_require_host_key: false,
+      psi_threshold:           None,
+      psi_check_timeout:       std::time::Duration::from_secs(5),
+      extra_nix_build_args:    Vec::new(),
+      ssh_require_host_key:    false,
     }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,

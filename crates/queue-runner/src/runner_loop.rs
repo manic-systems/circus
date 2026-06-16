@@ -126,6 +126,7 @@ pub async fn run(
     let (
       poll_interval,
       notifications_config,
+      notification_secret_key,
       scheduling_strategy,
       _psi_threshold,
       _psi_check_timeout,
@@ -134,6 +135,7 @@ pub async fn run(
       (
         hot.poll_interval,
         hot.notifications_config.clone(),
+        hot.notification_secret_key.clone(),
         hot.scheduling_strategy.clone(),
         hot.psi_threshold,
         hot.psi_check_timeout,
@@ -200,12 +202,13 @@ pub async fn run(
                   && let Some((project, commit_hash)) =
                     get_project_for_build(&pool, &updated_build).await
                 {
-                  circus_common::notifications::dispatch_build_finished(
+                  circus_notification::dispatch_build_finished(
                     Some(&pool),
                     &updated_build,
                     &project,
                     &commit_hash,
                     &notifications_config,
+                    notification_secret_key.as_deref(),
                   )
                   .await;
                 }

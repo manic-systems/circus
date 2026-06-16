@@ -182,6 +182,7 @@ impl WorkerPool {
           timeout,
           max_silent_time,
           notifications_config,
+          notification_secret_key,
           scheduling_strategy,
           psi_threshold,
           psi_check_timeout,
@@ -193,6 +194,7 @@ impl WorkerPool {
             hot.build_timeout,
             hot.max_silent_time,
             hot.notifications_config.clone(),
+            hot.notification_secret_key.clone(),
             hot.scheduling_strategy.clone(),
             hot.psi_threshold,
             hot.psi_check_timeout,
@@ -211,6 +213,7 @@ impl WorkerPool {
           &log_config,
           &gc_config,
           &notifications_config,
+          notification_secret_key,
           &signing_config,
           &cache_upload_config,
           &alert_manager,
@@ -319,15 +322,17 @@ async fn dispatch_build_finished_notification(
   pool: &PgPool,
   build: &Build,
   notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
 ) {
   if let Some((project, commit_hash)) = get_project_for_build(pool, build).await
   {
-    circus_common::notifications::dispatch_build_finished(
+    circus_notification::dispatch_build_finished(
       Some(pool),
       build,
       &project,
       &commit_hash,
       notifications_config,
+      notification_secret_key,
     )
     .await;
   }
@@ -781,7 +786,7 @@ async fn run_on_runner(
   .map(Some)
 }
 
-#[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
+#[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, notification_secret_key, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
 #[expect(
   clippy::too_many_arguments,
   reason = "build execution coordinates database state, config, \
@@ -799,6 +804,7 @@ async fn run_build(
   log_config: &LogConfig,
   gc_config: &GcConfig,
   notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<String>,
   signing_config: &SigningConfig,
   cache_upload_config: &CacheUploadConfig,
   alert_manager: &Option<AlertManager>,
@@ -867,12 +873,13 @@ async fn run_build(
   {
     match repo::builds::mark_started_notified(pool, build.id).await {
       Ok(true) => {
-        circus_common::notifications::dispatch_build_started(
+        circus_notification::dispatch_build_started(
           pool,
           &claimed_build,
           &project,
           &commit_hash,
           notifications_config,
+          notification_secret_key.as_deref(),
         )
         .await;
       },
@@ -1221,6 +1228,7 @@ async fn run_build(
             pool,
             &updated_build,
             notifications_config,
+            notification_secret_key.as_deref(),
           )
           .await;
           return Ok(());
@@ -1334,6 +1342,7 @@ async fn run_build(
       pool,
       &updated_build,
       notifications_config,
+      notification_secret_key.as_deref(),
     )
     .await;
 
