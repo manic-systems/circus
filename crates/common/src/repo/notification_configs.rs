@@ -9,9 +9,13 @@ use crate::{
 
 /// Create a new notification config.
 ///
+/// The `config` blob is stored verbatim. Validation and secret encryption are
+/// the caller's responsibility, keeping this crate free of any dependency on
+/// the notification crate.
+///
 /// # Errors
 ///
-/// Returns error if database insert fails or config already exists.
+/// Returns error if the database insert fails or the config already exists.
 pub async fn create(
   pool: &PgPool,
   input: CreateNotificationConfig,
