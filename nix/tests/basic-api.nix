@@ -10,7 +10,7 @@ testers.runNixOSTest {
       self.nixosModules.circus
       ../common/container.nix
     ];
-    _module.args.self = self;
+    config._module.args.self = self;
 
     # These functional tests access dashboard pages without authentication;
     # override the secure defaults so pages render instead of redirecting.
