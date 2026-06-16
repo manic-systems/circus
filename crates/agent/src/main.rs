@@ -12,7 +12,7 @@ use circus_agent::{
 };
 use circus_logs::init_tracing;
 use clap::Parser;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{Result, bail, eyre};
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -123,9 +123,7 @@ fn load_config(cli: &Cli) -> Result<AgentConfig> {
   };
   apply_cli_overrides(&mut cfg.agent, cli);
   if cfg.agent.auth_token.is_empty() {
-    return Err(eyre!(
-      "no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token"
-    ));
+    bail!("no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token");
   }
   Ok(cfg)
 }
@@ -140,9 +138,7 @@ fn inline_config(cli: &Cli) -> Result<AgentConfig> {
     .clone()
     .ok_or_else(|| eyre!("--runner-url is required without a config file"))?;
   if cli.systems.is_empty() {
-    return Err(eyre!(
-      "at least one --system is required without a config file"
-    ));
+    bail!("at least one --system is required without a config file");
   }
   let auth_token = std::env::var("CIRCUS_AGENT_TOKEN").map_err(|_| {
     eyre!("CIRCUS_AGENT_TOKEN is required without a config file")
