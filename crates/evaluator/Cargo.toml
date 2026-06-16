@@ -25,7 +25,8 @@ tracing-subscriber.workspace = true
 uuid.workspace               = true
 
 # Our crates
-circus-common.workspace = true
+circus-common.workspace       = true
+circus-notification.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

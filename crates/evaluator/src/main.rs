@@ -34,6 +34,7 @@ async fn main() -> color_eyre::Result<()> {
   let poll_interval = config.evaluator.poll_interval;
   let eval_config = config.evaluator;
   let notifications_config = config.notifications;
+  let notification_secret_key = config.server.webhook_secret_encryption_key;
 
   let wakeup = Arc::new(tokio::sync::Notify::new());
   let listener_handle = circus_common::pg_notify::spawn_listener(
@@ -43,7 +44,7 @@ async fn main() -> color_eyre::Result<()> {
   );
 
   tokio::select! {
-      result = circus_evaluator::eval_loop::run(pool, eval_config, notifications_config, wakeup) => {
+      result = circus_evaluator::eval_loop::run(pool, eval_config, notifications_config, notification_secret_key, wakeup) => {
           if let Err(e) = result {
               tracing::error!("Evaluator loop failed: {e}");
           }

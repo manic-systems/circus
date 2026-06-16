@@ -33,6 +33,7 @@ pub async fn run(
   pool: PgPool,
   config: EvaluatorConfig,
   notifications_config: circus_common::config::NotificationsConfig,
+  notification_secret_key: Option<String>,
   wakeup: Arc<Notify>,
 ) -> color_eyre::Result<()> {
   let poll_interval = Duration::from_secs(config.poll_interval);
@@ -46,6 +47,7 @@ pub async fn run(
       &pool,
       &config,
       &notifications_config,
+      notification_secret_key.as_deref(),
       nix_timeout,
       git_timeout,
     )
@@ -65,6 +67,7 @@ async fn run_cycle(
   pool: &PgPool,
   config: &EvaluatorConfig,
   notifications_config: &circus_common::config::NotificationsConfig,
+  notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> color_eyre::Result<()> {
@@ -127,6 +130,7 @@ async fn run_cycle(
           &jobset,
           config,
           notifications_config,
+          notification_secret_key,
           nix_timeout,
           git_timeout,
         )
@@ -187,6 +191,7 @@ async fn run_cycle(
           &jobset,
           config,
           notifications_config,
+          notification_secret_key,
           nix_timeout,
           git_timeout,
         )
@@ -245,6 +250,7 @@ async fn evaluate_pending_eval(
   jobset: &ActiveJobset,
   config: &EvaluatorConfig,
   notifications_config: &circus_common::config::NotificationsConfig,
+  notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> color_eyre::Result<()> {
@@ -312,6 +318,7 @@ async fn evaluate_pending_eval(
     &inputs,
     config,
     notifications_config,
+    notification_secret_key,
     nix_timeout,
   )
   .await?;
@@ -377,6 +384,7 @@ async fn run_nix_and_record_builds(
   inputs: &[JobsetInput],
   config: &EvaluatorConfig,
   notifications_config: &circus_common::config::NotificationsConfig,
+  notification_secret_key: Option<&str>,
   nix_timeout: Duration,
 ) -> color_eyre::Result<()> {
   match crate::nix::evaluate(
@@ -408,12 +416,13 @@ async fn run_nix_and_record_builds(
           {
             for build in builds {
               if !build.is_aggregate {
-                circus_common::notifications::dispatch_build_created(
+                circus_notification::dispatch_build_created(
                   pool,
                   &build,
                   &project,
                   &eval.commit_hash,
                   notifications_config,
+                  notification_secret_key,
                 )
                 .await;
               }
@@ -461,6 +470,7 @@ async fn evaluate_jobset(
   jobset: &circus_common::models::ActiveJobset,
   config: &EvaluatorConfig,
   notifications_config: &circus_common::config::NotificationsConfig,
+  notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> color_eyre::Result<()> {
@@ -658,6 +668,7 @@ async fn evaluate_jobset(
     &inputs,
     config,
     notifications_config,
+    notification_secret_key,
     nix_timeout,
   )
   .await?;
