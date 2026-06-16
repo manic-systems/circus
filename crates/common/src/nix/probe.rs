@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CiError, error::Result, validate};
+use super::flake;
+use crate::{CiError, error::Result};
 
 /// Result of probing a flake repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,48 +42,6 @@ pub struct FlakeMetadata {
 /// Maximum output size we'll parse from `nix flake show --json` (10 MB).
 const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024;
 
-/// Convert a repository URL to a nix flake reference.
-///
-/// GitHub and GitLab URLs are converted to their native flake ref formats
-/// (`github:owner/repo`, `gitlab:owner/repo`). Other HTTPS URLs get a
-/// `git+` prefix so nix clones via git rather than trying to unpack an
-/// archive. URLs that are already valid flake refs are returned as-is.
-fn to_flake_ref(url: &str) -> String {
-  let url_trimmed = url.trim().trim_end_matches('/');
-
-  // Already a flake ref (github:, gitlab:, git+, path:, sourcehut:, etc.)
-  if url_trimmed.contains(':')
-    && !url_trimmed.starts_with("http://")
-    && !url_trimmed.starts_with("https://")
-  {
-    return url_trimmed.to_string();
-  }
-
-  // Extract host + path from HTTP(S) URLs
-  let without_scheme = url_trimmed
-    .strip_prefix("https://")
-    .or_else(|| url_trimmed.strip_prefix("http://"))
-    .unwrap_or(url_trimmed);
-  let without_dotgit = without_scheme.trim_end_matches(".git");
-
-  // github.com/owner/repo -> github:owner/repo
-  if let Some(path) = without_dotgit.strip_prefix("github.com/") {
-    return format!("github:{path}");
-  }
-
-  // gitlab.com/owner/repo -> gitlab:owner/repo
-  if let Some(path) = without_dotgit.strip_prefix("gitlab.com/") {
-    return format!("gitlab:{path}");
-  }
-
-  // Any other HTTPS/HTTP URL: prefix with git+ so nix clones it
-  if url_trimmed.starts_with("https://") || url_trimmed.starts_with("http://") {
-    return format!("git+{url_trimmed}");
-  }
-
-  url_trimmed.to_string()
-}
-
 /// Probe a flake repository to discover its outputs and suggest jobsets.
 ///
 /// # Errors
@@ -92,14 +51,12 @@ pub async fn probe_flake(
   repo_url: &str,
   revision: Option<&str>,
 ) -> Result<FlakeProbeResult> {
-  let base_ref = to_flake_ref(repo_url);
-  validate::validate_untrusted_flake_ref(&base_ref)
-    .map_err(CiError::Validation)?;
-  let flake_ref = if let Some(rev) = revision {
-    format!("{base_ref}?rev={rev}")
-  } else {
-    base_ref
-  };
+  let parsed_ref =
+    flake::Ref::from_url(repo_url).map_err(CiError::Validation)?;
+  let full_ref = revision.map_or_else(
+    || parsed_ref.to_string(),
+    |rev| parsed_ref.with_revision(rev),
+  );
 
   let output = tokio::time::timeout(std::time::Duration::from_mins(1), async {
     tokio::process::Command::new("nix")
@@ -110,7 +67,7 @@ pub async fn probe_flake(
         "show",
         "--json",
         "--no-write-lock-file",
-        &flake_ref,
+        &full_ref,
       ])
       .output()
       .await
@@ -145,7 +102,6 @@ pub async fn probe_flake(
 
   let stdout = String::from_utf8_lossy(&output.stdout);
   if stdout.len() > MAX_OUTPUT_SIZE {
-    // For huge repos like nixpkgs, we still parse but only top-level
     tracing::warn!(
       "Flake show output exceeds {}MB, parsing top-level only",
       MAX_OUTPUT_SIZE / (1024 * 1024)
@@ -167,7 +123,6 @@ pub async fn probe_flake(
   let mut outputs = Vec::new();
   let mut suggested_jobsets = Vec::new();
 
-  // Known output types and their detection
   let output_types: &[(&str, &str, &str, u8)] = &[
     ("hydraJobs", "derivation", "CI Jobs (hydraJobs)", 10),
     ("checks", "derivation", "Checks", 7),
@@ -198,14 +153,13 @@ pub async fn probe_flake(
         systems:     systems.clone(),
       });
 
-      // Generate suggested jobset
       let nix_expression = match key {
         "hydraJobs" => "hydraJobs".to_string(),
         "checks" => "checks".to_string(),
         "packages" => "packages".to_string(),
         "devShells" => "devShells".to_string(),
         "legacyPackages" => "legacyPackages".to_string(),
-        _ => continue, // Don't suggest jobsets for non-buildable outputs
+        _ => continue,
       };
 
       suggested_jobsets.push(SuggestedJobset {
@@ -217,10 +171,8 @@ pub async fn probe_flake(
     }
   }
 
-  // Sort jobsets by priority (highest first)
   suggested_jobsets.sort_by_key(|j| std::cmp::Reverse(j.priority));
 
-  // Extract metadata from the flake
   let metadata = FlakeMetadata {
     description: top
       .get("description")
@@ -244,8 +196,6 @@ pub(crate) fn extract_systems(val: &serde_json::Value) -> Vec<String> {
   let mut systems = Vec::new();
   if let Some(obj) = val.as_object() {
     for key in obj.keys() {
-      // System names follow the pattern `arch-os` (e.g., x86_64-linux,
-      // aarch64-darwin)
       if key.contains('-') && (key.contains("linux") || key.contains("darwin"))
       {
         systems.push(key.clone());
@@ -352,69 +302,6 @@ mod tests {
     let parsed: FlakeProbeResult = serde_json::from_str(&json).unwrap();
     assert!(!parsed.is_flake);
     assert!(parsed.error.is_some());
-  }
-
-  #[test]
-  fn test_to_flake_ref_github_https() {
-    assert_eq!(
-      to_flake_ref("https://github.com/notashelf/rags"),
-      "github:notashelf/rags"
-    );
-    assert_eq!(
-      to_flake_ref("https://github.com/NixOS/nixpkgs"),
-      "github:NixOS/nixpkgs"
-    );
-    assert_eq!(
-      to_flake_ref("https://github.com/owner/repo.git"),
-      "github:owner/repo"
-    );
-    assert_eq!(
-      to_flake_ref("http://github.com/owner/repo"),
-      "github:owner/repo"
-    );
-    assert_eq!(
-      to_flake_ref("https://github.com/owner/repo/"),
-      "github:owner/repo"
-    );
-  }
-
-  #[test]
-  fn test_to_flake_ref_gitlab_https() {
-    assert_eq!(
-      to_flake_ref("https://gitlab.com/owner/repo"),
-      "gitlab:owner/repo"
-    );
-    assert_eq!(
-      to_flake_ref("https://gitlab.com/group/subgroup/repo.git"),
-      "gitlab:group/subgroup/repo"
-    );
-  }
-
-  #[test]
-  fn test_to_flake_ref_already_flake_ref() {
-    assert_eq!(to_flake_ref("github:owner/repo"), "github:owner/repo");
-    assert_eq!(to_flake_ref("gitlab:owner/repo"), "gitlab:owner/repo");
-    assert_eq!(
-      to_flake_ref("git+https://example.com/repo.git"),
-      "git+https://example.com/repo.git"
-    );
-    assert_eq!(
-      to_flake_ref("path:/some/local/path"),
-      "path:/some/local/path"
-    );
-    assert_eq!(to_flake_ref("sourcehut:~user/repo"), "sourcehut:~user/repo");
-  }
-
-  #[test]
-  fn test_to_flake_ref_other_https() {
-    assert_eq!(
-      to_flake_ref("https://codeberg.org/owner/repo"),
-      "git+https://codeberg.org/owner/repo"
-    );
-    assert_eq!(
-      to_flake_ref("https://sr.ht/~user/repo"),
-      "git+https://sr.ht/~user/repo"
-    );
   }
 
   #[test]

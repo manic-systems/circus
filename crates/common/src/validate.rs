@@ -4,26 +4,6 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-/// Validate that a path is a valid nix store path for the given store
-/// directory. Rejects path traversal, overly long paths, and paths outside the
-/// store.
-#[must_use]
-pub fn is_valid_store_path(path: &str, store_dir: &str) -> bool {
-  let store_dir = store_dir.trim_end_matches('/');
-  let prefix = format!("{store_dir}/");
-  path.starts_with(prefix.as_str()) && !path.contains("..") && path.len() < 512
-}
-
-/// Validate that a string is a valid nix store hash (32 lowercase alphanumeric
-/// chars).
-#[must_use]
-pub fn is_valid_nix_hash(hash: &str) -> bool {
-  hash.len() == 32
-    && hash
-      .chars()
-      .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-}
-
 static NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
   #[expect(
     clippy::expect_used,
@@ -45,17 +25,6 @@ static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
   {
     Regex::new(r"^[0-9a-fA-F]{1,64}$")
       .expect("invalid COMMIT_HASH_RE regex pattern")
-  }
-});
-
-static SYSTEM_RE: LazyLock<Regex> = LazyLock::new(|| {
-  #[expect(
-    clippy::expect_used,
-    reason = "static regex initializer - invalid regex would be a programming \
-              error"
-  )]
-  {
-    Regex::new(r"^\w+-\w+$").expect("invalid SYSTEM_RE regex pattern")
   }
 });
 
@@ -140,7 +109,7 @@ pub trait Validate {
   fn validate(&self) -> Result<(), String>;
 }
 
-fn validate_name(name: &str, field: &str) -> Result<(), String> {
+pub(crate) fn validate_name(name: &str, field: &str) -> Result<(), String> {
   if name.is_empty() || name.len() > 255 {
     return Err(format!("{field} must be between 1 and 255 characters"));
   }
@@ -239,81 +208,6 @@ pub fn validate_url_scheme(
   Ok(())
 }
 
-/// Validate an untrusted value before passing it to Nix as a flake reference.
-///
-/// # Errors
-///
-/// Returns error for local filesystem refs. Remote refs are allowed here; URL
-/// scheme and host policy belongs to the API/config boundary that accepts the
-/// repository URL.
-pub fn validate_untrusted_flake_ref(value: &str) -> Result<(), String> {
-  let trimmed = value.trim();
-  if trimmed.is_empty() {
-    return Err("flake ref cannot be empty".to_string());
-  }
-  if trimmed.len() > 2048 {
-    return Err("flake ref must be at most 2048 characters".to_string());
-  }
-  if trimmed.contains('\0') {
-    return Err("flake ref must not contain null bytes".to_string());
-  }
-
-  let lower = trimmed.to_ascii_lowercase();
-  if lower.starts_with("path:")
-    || lower.starts_with("file:")
-    || lower.starts_with("git+file:")
-    || trimmed == "."
-    || trimmed == ".."
-    || trimmed == "~"
-    || trimmed.starts_with('/')
-    || trimmed.starts_with("./")
-    || trimmed.starts_with("../")
-    || trimmed.starts_with("~/")
-  {
-    return Err("local filesystem flake refs are not allowed".to_string());
-  }
-  Ok(())
-}
-
-/// Validate a jobset input before it is persisted or passed to Nix.
-///
-/// # Errors
-///
-/// Returns error if the input is malformed or would let untrusted data point
-/// Nix at the local filesystem.
-pub fn validate_jobset_input(
-  name: &str,
-  input_type: &str,
-  value: &str,
-  revision: Option<&str>,
-) -> Result<(), String> {
-  validate_name(name, "input name")?;
-  if value.is_empty() {
-    return Err("input value cannot be empty".to_string());
-  }
-  if value.len() > 2048 {
-    return Err("input value must be at most 2048 characters".to_string());
-  }
-  if value.contains('\0') {
-    return Err("input value must not contain null bytes".to_string());
-  }
-  if let Some(rev) = revision {
-    validate_commit_hash(rev)?;
-  }
-
-  match input_type {
-    "git" => validate_untrusted_flake_ref(value),
-    "string" | "boolean" | "build" => Ok(()),
-    "path" => {
-      Err(
-        "path jobset inputs are not allowed from untrusted configuration"
-          .to_string(),
-      )
-    },
-    other => Err(format!("unsupported jobset input type '{other}'")),
-  }
-}
-
 /// Log warnings at startup for any insecure schemes in the allowed list.
 pub fn warn_insecure_schemes(allowed_schemes: &[String]) {
   for scheme in allowed_schemes {
@@ -334,35 +228,6 @@ fn validate_description(desc: &str) -> Result<(), String> {
   Ok(())
 }
 
-/// Validate nix expression format.
-///
-/// # Errors
-///
-/// Returns error if expression contains invalid characters or path traversal.
-pub fn validate_nix_expression(expr: &str) -> Result<(), String> {
-  if expr.is_empty() {
-    return Err("nix_expression cannot be empty".to_string());
-  }
-  if expr.len() > 1024 {
-    return Err("nix_expression must be at most 1024 characters".to_string());
-  }
-  if expr.contains('\0') {
-    return Err("nix_expression must not contain null bytes".to_string());
-  }
-  // Reject path traversal sequences
-  if expr.contains("..") {
-    return Err(
-      "nix_expression must not contain path traversal sequences (..)"
-        .to_string(),
-    );
-  }
-  // Reject absolute paths - nix expressions should be relative attribute paths
-  if expr.starts_with('/') {
-    return Err("nix_expression must not be an absolute path".to_string());
-  }
-  Ok(())
-}
-
 fn validate_check_interval(interval: i32) -> Result<(), String> {
   if !(10..=86400).contains(&interval) {
     return Err("check_interval must be between 10 and 86400".to_string());
@@ -370,32 +235,9 @@ fn validate_check_interval(interval: i32) -> Result<(), String> {
   Ok(())
 }
 
-fn validate_commit_hash(hash: &str) -> Result<(), String> {
+pub(crate) fn validate_commit_hash(hash: &str) -> Result<(), String> {
   if !COMMIT_HASH_RE.is_match(hash) {
     return Err("commit_hash must be 1-64 hex characters".to_string());
-  }
-  Ok(())
-}
-
-fn validate_drv_path(path: &str) -> Result<(), String> {
-  if !path.starts_with('/') {
-    return Err("drv_path must be an absolute path".to_string());
-  }
-  if !std::path::Path::new(path)
-    .extension()
-    .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
-  {
-    return Err("drv_path must end with .drv".to_string());
-  }
-  if path.contains("..") {
-    return Err("drv_path must not contain ..".to_string());
-  }
-  Ok(())
-}
-
-fn validate_system(system: &str) -> Result<(), String> {
-  if !SYSTEM_RE.is_match(system) {
-    return Err("system must match pattern like x86_64-linux".to_string());
   }
   Ok(())
 }
@@ -574,7 +416,7 @@ impl Validate for UpdateProject {
 impl Validate for CreateJobset {
   fn validate(&self) -> Result<(), String> {
     validate_name(&self.name, "name")?;
-    validate_nix_expression(&self.nix_expression)?;
+    crate::nix::validate::validate_nix_expression(&self.nix_expression)?;
     if let Some(interval) = self.check_interval {
       validate_check_interval(interval)?;
     }
@@ -588,7 +430,7 @@ impl Validate for UpdateJobset {
       validate_name(name, "name")?;
     }
     if let Some(ref expr) = self.nix_expression {
-      validate_nix_expression(expr)?;
+      crate::nix::validate::validate_nix_expression(expr)?;
     }
     if let Some(interval) = self.check_interval {
       validate_check_interval(interval)?;
@@ -606,9 +448,9 @@ impl Validate for CreateEvaluation {
 
 impl Validate for CreateBuild {
   fn validate(&self) -> Result<(), String> {
-    validate_drv_path(&self.drv_path)?;
+    crate::nix::validate::validate_drv_path(&self.drv_path)?;
     if let Some(ref system) = self.system {
-      validate_system(system)?;
+      crate::nix::validate::validate_system(system)?;
     }
     Ok(())
   }
@@ -638,7 +480,7 @@ impl Validate for CreateRemoteBuilder {
       return Err("systems must not be empty".to_string());
     }
     for system in &self.systems {
-      validate_system(system)?;
+      crate::nix::validate::validate_system(system)?;
     }
     if let Some(max_jobs) = self.max_jobs {
       validate_positive_i32(max_jobs, "max_jobs")?;
@@ -669,7 +511,7 @@ impl Validate for UpdateRemoteBuilder {
         return Err("systems must not be empty".to_string());
       }
       for system in systems {
-        validate_system(system)?;
+        crate::nix::validate::validate_system(system)?;
       }
     }
     if let Some(max_jobs) = self.max_jobs {
@@ -700,141 +542,6 @@ mod tests {
   use uuid::Uuid;
 
   use super::*;
-
-  #[test]
-  fn valid_store_path() {
-    assert!(is_valid_store_path(
-      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello-2.12",
-      "/nix/store",
-    ));
-  }
-
-  #[test]
-  fn valid_store_path_nested() {
-    assert!(is_valid_store_path(
-      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello-2.12/bin/hello",
-      "/nix/store",
-    ));
-  }
-
-  #[test]
-  fn store_path_rejects_path_traversal() {
-    assert!(!is_valid_store_path(
-      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello/../../../etc/passwd",
-      "/nix/store",
-    ));
-  }
-
-  #[test]
-  fn store_path_rejects_relative_path() {
-    assert!(!is_valid_store_path("nix/store/something", "/nix/store"));
-  }
-
-  #[test]
-  fn store_path_rejects_wrong_prefix() {
-    assert!(!is_valid_store_path(
-      "/tmp/nix/store/something",
-      "/nix/store"
-    ));
-    assert!(!is_valid_store_path("/etc/passwd", "/nix/store"));
-    assert!(!is_valid_store_path("/nix/var/something", "/nix/store"));
-  }
-
-  #[test]
-  fn store_path_rejects_empty() {
-    assert!(!is_valid_store_path("", "/nix/store"));
-  }
-
-  #[test]
-  fn store_path_rejects_just_prefix() {
-    // "/nix/store/" alone has no hash, but structurally starts_with and has no
-    // .., so it passes. This is fine - the DB lookup won't find anything for
-    // it.
-    assert!(is_valid_store_path("/nix/store/", "/nix/store"));
-  }
-
-  #[test]
-  fn store_path_rejects_overly_long() {
-    let long_path = format!("/nix/store/{}", "a".repeat(512));
-    assert!(!is_valid_store_path(&long_path, "/nix/store"));
-  }
-
-  #[test]
-  fn store_path_rejects_double_dot_embedded() {
-    assert!(!is_valid_store_path("/nix/store/abc..def", "/nix/store"));
-  }
-
-  #[test]
-  fn valid_store_path_custom_store_dir() {
-    assert!(is_valid_store_path(
-      "/opt/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello-2.12",
-      "/opt/nix/store",
-    ));
-    assert!(!is_valid_store_path(
-      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello-2.12",
-      "/opt/nix/store",
-    ));
-  }
-
-  #[test]
-  fn valid_nix_hash_lowercase_alpha() {
-    assert!(is_valid_nix_hash("abcdefghijklmnopqrstuvwxyzabcdef"));
-  }
-
-  #[test]
-  fn valid_nix_hash_digits() {
-    assert!(is_valid_nix_hash("01234567890123456789012345678901"));
-  }
-
-  #[test]
-  fn valid_nix_hash_mixed() {
-    assert!(is_valid_nix_hash("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_uppercase() {
-    assert!(!is_valid_nix_hash("ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_mixed_case() {
-    assert!(!is_valid_nix_hash("abcdefghijklmnopqrstuvwxyzAbcdeF"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_too_short() {
-    assert!(!is_valid_nix_hash("abcdef1234567890"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_too_long() {
-    assert!(!is_valid_nix_hash("abcdefghijklmnopqrstuvwxyzabcdefg"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_empty() {
-    assert!(!is_valid_nix_hash(""));
-  }
-
-  #[test]
-  fn nix_hash_rejects_special_chars() {
-    assert!(!is_valid_nix_hash("abcdefghijklmnopqrstuvwxyz!@#$%^"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_spaces() {
-    assert!(!is_valid_nix_hash("abcdefghijklmnop rstuvwxyzabcdef"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_path_traversal_attempt() {
-    assert!(!is_valid_nix_hash("../../../../../../etc/passwd__"));
-  }
-
-  #[test]
-  fn nix_hash_rejects_sql_injection_attempt() {
-    assert!(!is_valid_nix_hash("' OR 1=1; DROP TABLE builds;--"));
-  }
 
   #[test]
   fn test_create_project_valid() {
@@ -977,51 +684,6 @@ mod tests {
   }
 
   #[test]
-  fn untrusted_flake_ref_rejects_local_filesystem_refs() {
-    for value in [
-      "path:/var/lib/circus",
-      "file:///var/lib/circus",
-      "git+file:///var/lib/circus/repo",
-      "/var/lib/circus",
-      ".",
-      "..",
-      "~",
-      "./repo",
-      "../repo",
-      "~/repo",
-    ] {
-      assert!(validate_untrusted_flake_ref(value).is_err(), "{value}");
-    }
-
-    assert!(validate_untrusted_flake_ref("github:owner/repo").is_ok());
-    assert!(
-      validate_untrusted_flake_ref("git+https://example.com/repo").is_ok()
-    );
-    assert!(validate_untrusted_flake_ref("https://example.com/repo").is_ok());
-  }
-
-  #[test]
-  fn jobset_input_validation_blocks_local_path_inputs() {
-    assert!(
-      validate_jobset_input("nixpkgs", "git", "path:/var/lib/circus", None)
-        .is_err()
-    );
-    assert!(
-      validate_jobset_input("src", "path", "/var/lib/circus", None).is_err()
-    );
-    assert!(
-      validate_jobset_input(
-        "nixpkgs",
-        "git",
-        "github:NixOS/nixpkgs",
-        Some("abcdef"),
-      )
-      .is_ok()
-    );
-    assert!(validate_jobset_input("flag", "boolean", "true", None).is_ok());
-  }
-
-  #[test]
   fn test_create_remote_builder_valid() {
     let rb = CreateRemoteBuilder {
       name:               "builder1".to_string(),
@@ -1157,36 +819,6 @@ mod tests {
       jobset_id:  Uuid::new_v4(),
     };
     assert!(c.validate().is_ok());
-  }
-
-  #[test]
-  fn test_nix_expression_valid() {
-    assert!(validate_nix_expression("packages").is_ok());
-    assert!(validate_nix_expression("checks.x86_64-linux").is_ok());
-    assert!(validate_nix_expression("hydraJobs").is_ok());
-  }
-
-  #[test]
-  fn test_nix_expression_rejects_path_traversal() {
-    assert!(validate_nix_expression("../../../etc/passwd").is_err());
-    assert!(validate_nix_expression("packages/..").is_err());
-    assert!(validate_nix_expression("a..b").is_err());
-  }
-
-  #[test]
-  fn test_nix_expression_rejects_absolute_path() {
-    assert!(validate_nix_expression("/etc/passwd").is_err());
-    assert!(validate_nix_expression("/nix/store/something").is_err());
-  }
-
-  #[test]
-  fn test_nix_expression_rejects_empty() {
-    assert!(validate_nix_expression("").is_err());
-  }
-
-  #[test]
-  fn test_nix_expression_rejects_null_bytes() {
-    assert!(validate_nix_expression("packages\0evil").is_err());
   }
 
   #[test]

@@ -5,7 +5,7 @@ use crate::{
   config::DeclarativeJobsetInput,
   error::{CiError, Result},
   models::JobsetInput,
-  validate,
+  nix,
 };
 
 /// Create a new jobset input.
@@ -21,7 +21,7 @@ pub async fn create(
   value: &str,
   revision: Option<&str>,
 ) -> Result<JobsetInput> {
-  validate::validate_jobset_input(name, input_type, value, revision)
+  nix::validate::validate_jobset_input(name, input_type, value, revision)
     .map_err(CiError::Validation)?;
   sqlx::query_as::<_, JobsetInput>(
     "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, revision) \
@@ -93,7 +93,7 @@ pub async fn upsert(
   value: &str,
   revision: Option<&str>,
 ) -> Result<JobsetInput> {
-  validate::validate_jobset_input(name, input_type, value, revision)
+  nix::validate::validate_jobset_input(name, input_type, value, revision)
     .map_err(CiError::Validation)?;
   sqlx::query_as::<_, JobsetInput>(
     "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, revision) \

@@ -247,7 +247,7 @@ async fn download_build_product(
   }
 
   let store_dir = state.config.nix.store_dir.to_string_lossy();
-  if !circus_common::validate::is_valid_store_path(
+  if !circus_common::nix::StorePath::is_valid(
     &product.path,
     store_dir.trim_end_matches('/'),
   ) {

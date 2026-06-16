@@ -146,7 +146,7 @@ impl GcRoots {
     if !self.enabled {
       return Ok(None);
     }
-    if !crate::validate::is_valid_store_path(
+    if !crate::nix::StorePath::is_valid(
       output_path,
       &self.store_dir.to_string_lossy(),
     ) {
