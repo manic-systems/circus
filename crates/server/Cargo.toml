@@ -49,7 +49,8 @@ tracing-subscriber.workspace             = true
 uuid.workspace                           = true
 
 # Our crates
-circus-common.workspace = true
+circus-common.workspace       = true
+circus-notification.workspace = true
 
 regex.workspace = true
 
