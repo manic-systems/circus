@@ -66,6 +66,7 @@ testers.runNixOSTest {
             port = 3000;
             cors_permissive = false;
             allowed_url_schemes = ["https" "http" "file"];
+            require_api_key_for_reads = false;
           };
           gc.enabled = false;
           logs.log_dir = "/var/lib/circus/logs";
