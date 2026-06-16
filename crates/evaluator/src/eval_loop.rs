@@ -692,7 +692,7 @@ async fn evaluate_jobset(
 /// Failure returns an empty list, mirroring the SSH path which treats absence
 /// as "no constraint".
 async fn read_required_features(drv_path: &str) -> Vec<String> {
-  circus_common::drv::show_required_features(&[drv_path.to_owned()])
+  circus_common::nix::derivation::show_required_features(&[drv_path.to_owned()])
     .await
     .unwrap_or_default()
 }

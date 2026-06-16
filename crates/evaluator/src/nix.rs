@@ -217,7 +217,7 @@ pub async fn evaluate(
   inputs: &[JobsetInput],
 ) -> Result<EvalResult> {
   // Validate nix expression before constructing any commands
-  circus_common::validate::validate_nix_expression(nix_expression)
+  circus_common::nix::validate::validate_nix_expression(nix_expression)
     .map_err(|e| CiError::NixEval(format!("Invalid nix expression: {e}")))?;
 
   // Strip a flake-style attribute prefix the user may have typed (".#packages"
@@ -303,7 +303,7 @@ async fn evaluate_flake(
     }
     for input in inputs {
       if input.input_type == "git" {
-        circus_common::validate::validate_jobset_input(
+        circus_common::nix::validate::validate_jobset_input(
           &input.name,
           &input.input_type,
           &input.value,
@@ -506,7 +506,7 @@ async fn evaluate_legacy(
       cmd.args(["--option", "allow-import-from-derivation", "false"]);
     }
     for input in inputs {
-      circus_common::validate::validate_jobset_input(
+      circus_common::nix::validate::validate_jobset_input(
         &input.name,
         &input.input_type,
         &input.value,

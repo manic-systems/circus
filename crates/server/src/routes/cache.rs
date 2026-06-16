@@ -212,7 +212,7 @@ async fn narinfo(
   // Strip .narinfo suffix if present
   let hash = hash.strip_suffix(".narinfo").unwrap_or(&hash);
 
-  if !circus_common::validate::is_valid_nix_hash(hash) {
+  if !circus_common::nix::NixHash::is_valid(hash) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -389,7 +389,7 @@ async fn serve_nar_combined(
   };
 
   let output_hash = query.hash.as_deref().unwrap_or(stripped);
-  if !circus_common::validate::is_valid_nix_hash(output_hash) {
+  if !circus_common::nix::NixHash::is_valid(output_hash) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 

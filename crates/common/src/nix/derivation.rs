@@ -77,7 +77,6 @@ pub fn union_required_features(parsed: &serde_json::Value) -> Vec<String> {
 /// non-zero, or emits unparseable JSON.
 pub async fn show_required_features(drvs: &[String]) -> Result<Vec<String>> {
   let mut features = BTreeSet::new();
-  // Chunked to stay under `ARG_MAX` on huge closures.
   for chunk in drvs.chunks(1024) {
     let out = tokio::process::Command::new("nix")
       .args([

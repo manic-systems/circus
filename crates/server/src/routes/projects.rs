@@ -17,7 +17,7 @@ use circus_common::{
   Validate,
   WebhookConfig,
   models::CreateWebhookConfig,
-  nix_probe,
+  nix,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -228,7 +228,7 @@ async fn probe_repository(
   extensions: Extensions,
   State(state): State<AppState>,
   Json(body): Json<ProbeRequest>,
-) -> Result<Json<nix_probe::FlakeProbeResult>, ApiError> {
+) -> Result<Json<nix::FlakeProbeResult>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
   circus_common::validate::validate_url_scheme(
     &body.repository_url,
@@ -236,7 +236,7 @@ async fn probe_repository(
   )
   .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let result =
-    nix_probe::probe_flake(&body.repository_url, body.revision.as_deref())
+    nix::probe::probe_flake(&body.repository_url, body.revision.as_deref())
       .await
       .map_err(ApiError)?;
   Ok(Json(result))
