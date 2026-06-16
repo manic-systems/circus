@@ -373,7 +373,7 @@ fn render_narinfo_row(
 }
 
 fn uploaded_nar_presigner(
-  config: &circus_common::config::Config,
+  config: &circus_config::Config,
 ) -> Option<circus_common::s3::Presigner> {
   let uri = config.cache_upload.store_uri.as_deref()?;
   let s3 = config.cache_upload.s3.as_ref()?;

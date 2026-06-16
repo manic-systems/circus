@@ -14,10 +14,10 @@ use BuilderSchedulingStrategy::{
   SpeedFactorOnly,
 };
 use circus_common::{
-  config::BuilderSchedulingStrategy,
   models::{Build, Evaluation, EvaluationTriggerKind, Jobset},
   repo,
 };
+use circus_config::BuilderSchedulingStrategy;
 use sqlx::PgPool;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 

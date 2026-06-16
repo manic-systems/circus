@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use circus_common::{Config, Database};
+use circus_common::Database;
+use circus_config::Config;
 use clap::Parser;
 
 #[derive(Parser)]

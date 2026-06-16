@@ -16,11 +16,11 @@ use std::{
 };
 
 use circus_common::{
-  config::EmailConfig,
   crypto::{decrypt_secret, encrypt_secret},
   error::{CiError, Result as CiResult},
   validate::validate_https_webhook_url,
 };
+use circus_config::EmailConfig;
 use lettre::{
   AsyncSmtpTransport,
   AsyncTransport,

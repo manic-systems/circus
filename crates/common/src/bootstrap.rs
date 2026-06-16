@@ -6,12 +6,12 @@
 
 use std::collections::HashMap;
 
+use circus_config::{DeclarativeConfig, DeclarativeWebhook};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::{DeclarativeConfig, DeclarativeWebhook},
   error::Result,
   models::{CreateJobset, CreateProject, JobsetState, JobsetTriggerMode},
   repo,

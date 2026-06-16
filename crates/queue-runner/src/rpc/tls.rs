@@ -7,7 +7,7 @@
 
 use std::{io::BufReader, sync::Arc};
 
-use circus_common::config::RpcTlsConfig;
+use circus_config::RpcTlsConfig;
 use color_eyre::eyre::{Context as _, eyre};
 use rustls::{RootCertStore, ServerConfig, server::WebPkiClientVerifier};
 use tokio_rustls::TlsAcceptor;

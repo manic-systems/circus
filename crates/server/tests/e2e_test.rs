@@ -289,7 +289,7 @@ async fn test_e2e_project_eval_build_flow() {
   assert!(channels.iter().any(|c| c.id == channel.id));
 
   // 16. Test the HTTP API layer
-  let config = circus_common::config::Config::default();
+  let config = circus_config::Config::default();
   let server_config = config.server.clone();
   let state = circus_server::state::AppState {
     pool: pool.clone(),

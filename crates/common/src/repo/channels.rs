@@ -1,8 +1,8 @@
+use circus_config::DeclarativeChannel;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::DeclarativeChannel,
   error::{CiError, Result},
   models::{Channel, CreateChannel},
 };

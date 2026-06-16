@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 # Our crates
 circus-common.workspace       = true
+circus-config.workspace       = true
 circus-notification.workspace = true
 circus-proto.workspace        = true
 

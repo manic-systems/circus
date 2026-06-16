@@ -452,24 +452,23 @@ pub(super) async fn admin_page(
     .unwrap_or_else(|_| "circus.toml".to_string());
   let config_contents = match tokio::fs::read_to_string(&config_path).await {
     Ok(contents) => {
-      circus_common::config::Config::from_toml_with_defaults(&contents)
+      circus_config::Config::from_toml_with_defaults(&contents)
         .ok()
         .and_then(|config| {
           let mut value = toml::Value::try_from(&config).ok()?;
-          circus_common::config::redact_secrets(&mut value);
+          circus_config::redact_secrets(&mut value);
           toml::to_string_pretty(&value).ok()
         })
         .unwrap_or(contents)
     },
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-      toml::Value::try_from(circus_common::config::Config::default())
-        .map_or_else(
-          |_| String::new(),
-          |mut value| {
-            circus_common::config::redact_secrets(&mut value);
-            toml::to_string_pretty(&value).unwrap_or_default()
-          },
-        )
+      toml::Value::try_from(circus_config::Config::default()).map_or_else(
+        |_| String::new(),
+        |mut value| {
+          circus_config::redact_secrets(&mut value);
+          toml::to_string_pretty(&value).unwrap_or_default()
+        },
+      )
     },
     Err(_) => String::new(),
   };

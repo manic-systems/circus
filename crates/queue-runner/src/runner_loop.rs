@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use circus_common::{
-  config::HotConfig,
   models::{Build, BuildStatus, EvaluationTriggerKind, JobsetState},
   repo,
 };
+use circus_config::HotConfig;
 use sqlx::PgPool;
 use tokio::sync::{Notify, RwLock};
 

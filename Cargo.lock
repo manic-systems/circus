@@ -620,15 +620,14 @@ dependencies = [
  "argon2",
  "base64",
  "chrono",
+ "circus-config",
  "circus-logs",
  "circus-migrations",
  "clap",
  "color-eyre",
- "config",
  "git2",
  "hex",
  "hmac",
- "humantime-serde",
  "lettre",
  "libc",
  "password-hash 0.6.1",
@@ -644,7 +643,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "toml",
  "tracing",
  "url",
  "urlencoding",
@@ -653,11 +651,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "circus-config"
+version = "0.11.0"
+dependencies = [
+ "circus-logs",
+ "color-eyre",
+ "config",
+ "hex",
+ "humantime-serde",
+ "serde",
+ "serde_json",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "circus-evaluator"
 version = "0.11.0"
 dependencies = [
  "chrono",
  "circus-common",
+ "circus-config",
  "circus-notification",
  "clap",
  "color-eyre",
@@ -713,6 +727,7 @@ name = "circus-notification"
 version = "0.11.0"
 dependencies = [
  "circus-common",
+ "circus-config",
  "hex",
  "hmac",
  "lettre",
@@ -751,6 +766,7 @@ dependencies = [
  "capnp-rpc",
  "chrono",
  "circus-common",
+ "circus-config",
  "circus-notification",
  "circus-proto",
  "clap",
@@ -796,6 +812,7 @@ dependencies = [
  "base64",
  "chrono",
  "circus-common",
+ "circus-config",
  "circus-notification",
  "circus-proto",
  "clap",

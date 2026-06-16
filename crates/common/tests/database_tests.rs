@@ -1,7 +1,8 @@
 //! Database integration tests
 #![expect(clippy::print_stdout, reason = "Fine in tests")]
 
-use circus_common::{config::DatabaseConfig, *};
+use circus_common::*;
+use circus_config::DatabaseConfig;
 use sqlx::PgPool;
 
 #[tokio::test]

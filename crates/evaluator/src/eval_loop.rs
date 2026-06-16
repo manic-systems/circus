@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use circus_common::{
-  config::EvaluatorConfig,
   error::{CiError, check_disk_space},
   models::{
     ActiveJobset,
@@ -17,6 +16,7 @@ use circus_common::{
   },
   repo,
 };
+use circus_config::{DeclarativeJobset, EvaluatorConfig, NotificationsConfig};
 use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
 use sqlx::PgPool;
@@ -32,7 +32,7 @@ use uuid::Uuid;
 pub async fn run(
   pool: PgPool,
   config: EvaluatorConfig,
-  notifications_config: circus_common::config::NotificationsConfig,
+  notifications_config: NotificationsConfig,
   notification_secret_key: Option<String>,
   wakeup: Arc<Notify>,
 ) -> color_eyre::Result<()> {
@@ -66,7 +66,7 @@ pub async fn run(
 async fn run_cycle(
   pool: &PgPool,
   config: &EvaluatorConfig,
-  notifications_config: &circus_common::config::NotificationsConfig,
+  notifications_config: &NotificationsConfig,
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
@@ -249,7 +249,7 @@ async fn evaluate_pending_eval(
   eval: &Evaluation,
   jobset: &ActiveJobset,
   config: &EvaluatorConfig,
-  notifications_config: &circus_common::config::NotificationsConfig,
+  notifications_config: &NotificationsConfig,
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
@@ -383,7 +383,7 @@ async fn run_nix_and_record_builds(
   repo_path: &std::path::Path,
   inputs: &[JobsetInput],
   config: &EvaluatorConfig,
-  notifications_config: &circus_common::config::NotificationsConfig,
+  notifications_config: &NotificationsConfig,
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
 ) -> color_eyre::Result<()> {
@@ -469,7 +469,7 @@ async fn evaluate_jobset(
   pool: &PgPool,
   jobset: &circus_common::models::ActiveJobset,
   config: &EvaluatorConfig,
-  notifications_config: &circus_common::config::NotificationsConfig,
+  notifications_config: &NotificationsConfig,
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
@@ -853,7 +853,7 @@ async fn sync_repo_declarative_config(
   #[derive(serde::Deserialize)]
   struct RepoConfig {
     #[serde(default)]
-    jobsets: Vec<circus_common::config::DeclarativeJobset>,
+    jobsets: Vec<DeclarativeJobset>,
   }
 
   let config_path = repo_path.join(".circus.toml");

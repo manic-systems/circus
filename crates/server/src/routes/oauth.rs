@@ -7,7 +7,8 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
-use circus_common::{config::GitHubOAuthConfig, models::UserType, repo};
+use circus_common::{models::UserType, repo};
+use circus_config::GitHubOAuthConfig;
 use oauth2::{
   AuthUrl,
   AuthorizationCode,

@@ -37,7 +37,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
-use circus_common::config::ServerConfig;
+use circus_config::ServerConfig;
 use dashmap::DashMap;
 use tower_http::{
   cors::{AllowOrigin, Any, CorsLayer},
@@ -74,9 +74,7 @@ pub(crate) async fn canonical_log_file(
 /// 1. `force_secure_cookies` is enabled in config (for HTTPS reverse proxies),
 /// 2. OR the server is not bound to localhost/127.0.0.1.
 #[must_use]
-pub fn cookie_security_flags(
-  config: &circus_common::config::ServerConfig,
-) -> String {
+pub fn cookie_security_flags(config: &circus_config::ServerConfig) -> String {
   let is_localhost = config.host == "127.0.0.1"
     || config.host == "localhost"
     || config.host == "::1";

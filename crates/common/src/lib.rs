@@ -2,7 +2,6 @@
 
 pub mod alerts;
 pub mod audit;
-pub mod config;
 pub mod crypto;
 pub mod database;
 pub mod error;
@@ -23,7 +22,6 @@ pub mod validate;
 pub mod validation;
 
 pub use circus_logs::{TracingConfig, init_tracing};
-pub use config::*;
 pub use crypto::install_crypto_provider;
 pub use database::*;
 pub use error::*;

@@ -12,6 +12,15 @@
 
 use std::sync::Arc;
 
+use circus_config::{
+  BuilderSchedulingStrategy,
+  CacheUploadConfig,
+  GcConfig,
+  HotConfig,
+  LogConfig,
+  NotificationsConfig,
+  SigningConfig,
+};
 use circus_queue_runner::caps::RunnerCaps;
 
 #[test]
@@ -86,32 +95,29 @@ async fn test_worker_pool_drain_stops_dispatch() {
     .await
     .expect("failed to connect");
 
-  let hot_config =
-    Arc::new(tokio::sync::RwLock::new(circus_common::config::HotConfig {
-      poll_interval:           std::time::Duration::from_secs(1),
-      build_timeout:           std::time::Duration::from_mins(1),
-      max_silent_time:         std::time::Duration::ZERO,
-      notifications_config:
-        circus_common::config::NotificationsConfig::default(),
-      notification_secret_key: None,
-      failed_paths_ttl:        0,
-      scheduling_strategy:
-        circus_common::config::BuilderSchedulingStrategy::default(),
-      psi_threshold:           None,
-      psi_check_timeout:       std::time::Duration::from_secs(5),
-      extra_nix_build_args:    Vec::new(),
-      ssh_require_host_key:    false,
-    }));
+  let hot_config = Arc::new(tokio::sync::RwLock::new(HotConfig {
+    poll_interval:           std::time::Duration::from_secs(1),
+    build_timeout:           std::time::Duration::from_mins(1),
+    max_silent_time:         std::time::Duration::ZERO,
+    notifications_config:    NotificationsConfig::default(),
+    notification_secret_key: None,
+    failed_paths_ttl:        0,
+    scheduling_strategy:     BuilderSchedulingStrategy::default(),
+    psi_threshold:           None,
+    psi_check_timeout:       std::time::Duration::from_secs(5),
+    extra_nix_build_args:    Vec::new(),
+    ssh_require_host_key:    false,
+  }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
     2,
     std::env::temp_dir(),
     std::path::PathBuf::from("/nix/store"),
     hot_config,
-    circus_common::config::LogConfig::default(),
-    circus_common::config::GcConfig::default(),
-    circus_common::config::SigningConfig::default(),
-    circus_common::config::CacheUploadConfig::default(),
+    LogConfig::default(),
+    GcConfig::default(),
+    SigningConfig::default(),
+    CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
     Arc::new(RunnerCaps::new(
@@ -215,32 +221,29 @@ async fn test_worker_pool_active_builds_cancel() {
     .await
     .expect("failed to connect");
 
-  let hot_config =
-    Arc::new(tokio::sync::RwLock::new(circus_common::config::HotConfig {
-      poll_interval:           std::time::Duration::from_secs(1),
-      build_timeout:           std::time::Duration::from_mins(1),
-      max_silent_time:         std::time::Duration::ZERO,
-      notifications_config:
-        circus_common::config::NotificationsConfig::default(),
-      notification_secret_key: None,
-      failed_paths_ttl:        0,
-      scheduling_strategy:
-        circus_common::config::BuilderSchedulingStrategy::default(),
-      psi_threshold:           None,
-      psi_check_timeout:       std::time::Duration::from_secs(5),
-      extra_nix_build_args:    Vec::new(),
-      ssh_require_host_key:    false,
-    }));
+  let hot_config = Arc::new(tokio::sync::RwLock::new(HotConfig {
+    poll_interval:           std::time::Duration::from_secs(1),
+    build_timeout:           std::time::Duration::from_mins(1),
+    max_silent_time:         std::time::Duration::ZERO,
+    notifications_config:    NotificationsConfig::default(),
+    notification_secret_key: None,
+    failed_paths_ttl:        0,
+    scheduling_strategy:     BuilderSchedulingStrategy::default(),
+    psi_threshold:           None,
+    psi_check_timeout:       std::time::Duration::from_secs(5),
+    extra_nix_build_args:    Vec::new(),
+    ssh_require_host_key:    false,
+  }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
     2,
     std::env::temp_dir(),
     std::path::PathBuf::from("/nix/store"),
     hot_config,
-    circus_common::config::LogConfig::default(),
-    circus_common::config::GcConfig::default(),
-    circus_common::config::SigningConfig::default(),
-    circus_common::config::CacheUploadConfig::default(),
+    LogConfig::default(),
+    GcConfig::default(),
+    SigningConfig::default(),
+    CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
     Arc::new(RunnerCaps::new(

@@ -1,8 +1,8 @@
+use circus_config::DeclarativeWebhook;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::DeclarativeWebhook,
   error::{CiError, Result},
   models::{CreateWebhookConfig, WebhookConfig},
 };

@@ -1,10 +1,10 @@
 //! Project members repository - for per-project permissions
 
+use circus_config::DeclarativeProjectMember;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  config::DeclarativeProjectMember,
   error::{CiError, Result},
   models::{CreateProjectMember, ProjectMember, UpdateProjectMember},
   roles::VALID_PROJECT_ROLES,

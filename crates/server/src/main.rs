@@ -1,4 +1,5 @@
-use circus_common::{Config, Database};
+use circus_common::Database;
+use circus_config::Config;
 use circus_server::{routes, state};
 use clap::Parser;
 use state::{AppState, NixStore};
