@@ -180,6 +180,9 @@ pub async fn run(
 
     // Sync notifications
     if !decl_project.notifications.is_empty() {
+      // Notification config blobs are already validated and encrypted by the
+      // caller (see circus_notification::encrypt_declarative_notifications);
+      // store them verbatim here.
       repo::notification_configs::sync_for_project(
         pool,
         project.id,
