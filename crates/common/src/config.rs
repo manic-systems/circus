@@ -1216,16 +1216,19 @@ pub enum BuilderSchedulingStrategy {
 /// Fields that require restart (e.g. `workers`, database pool) are excluded.
 #[derive(Debug, Clone)]
 pub struct HotConfig {
-  pub poll_interval:        std::time::Duration,
-  pub build_timeout:        std::time::Duration,
-  pub max_silent_time:      std::time::Duration,
-  pub notifications_config: NotificationsConfig,
-  pub failed_paths_ttl:     u64,
-  pub scheduling_strategy:  BuilderSchedulingStrategy,
-  pub psi_threshold:        Option<f64>,
-  pub psi_check_timeout:    std::time::Duration,
-  pub extra_nix_build_args: Vec<String>,
-  pub ssh_require_host_key: bool,
+  pub poll_interval:           std::time::Duration,
+  pub build_timeout:           std::time::Duration,
+  pub max_silent_time:         std::time::Duration,
+  pub notifications_config:    NotificationsConfig,
+  /// Key used to encrypt/decrypt notification secrets in the database and in
+  /// retry-queue payloads. Mirrors `server.webhook_secret_encryption_key`.
+  pub notification_secret_key: Option<String>,
+  pub failed_paths_ttl:        u64,
+  pub scheduling_strategy:     BuilderSchedulingStrategy,
+  pub psi_threshold:           Option<f64>,
+  pub psi_check_timeout:       std::time::Duration,
+  pub extra_nix_build_args:    Vec<String>,
+  pub ssh_require_host_key:    bool,
 }
 
 impl HotConfig {
@@ -1233,24 +1236,28 @@ impl HotConfig {
   #[must_use]
   pub fn from_config(config: &Config) -> Self {
     Self {
-      poll_interval:        std::time::Duration::from_secs(
+      poll_interval:           std::time::Duration::from_secs(
         config.queue_runner.poll_interval,
       ),
-      build_timeout:        std::time::Duration::from_secs(
+      build_timeout:           std::time::Duration::from_secs(
         config.queue_runner.build_timeout,
       ),
-      max_silent_time:      std::time::Duration::from_secs(
+      max_silent_time:         std::time::Duration::from_secs(
         config.queue_runner.max_silent_time,
       ),
-      notifications_config: config.notifications.clone(),
-      failed_paths_ttl:     config.queue_runner.failed_paths_ttl,
-      scheduling_strategy:  config.queue_runner.scheduling_strategy.clone(),
-      psi_threshold:        config.queue_runner.psi_threshold,
-      psi_check_timeout:    std::time::Duration::from_secs(
+      notifications_config:    config.notifications.clone(),
+      notification_secret_key: config
+        .server
+        .webhook_secret_encryption_key
+        .clone(),
+      failed_paths_ttl:        config.queue_runner.failed_paths_ttl,
+      scheduling_strategy:     config.queue_runner.scheduling_strategy.clone(),
+      psi_threshold:           config.queue_runner.psi_threshold,
+      psi_check_timeout:       std::time::Duration::from_secs(
         config.queue_runner.psi_check_timeout,
       ),
-      extra_nix_build_args: config.queue_runner.extra_nix_build_args.clone(),
-      ssh_require_host_key: config.queue_runner.ssh_require_host_key,
+      extra_nix_build_args:    config.queue_runner.extra_nix_build_args.clone(),
+      ssh_require_host_key:    config.queue_runner.ssh_require_host_key,
     }
   }
 }
