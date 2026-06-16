@@ -2113,6 +2113,7 @@ mod tests {
 
   #[test]
   fn apply_env_vars_nested_bool_override() {
+    // SAFETY: single-threaded test; no other threads read this env var.
     unsafe {
       env::set_var("CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS", "true");
     }
@@ -2128,24 +2129,29 @@ mod tests {
       Some(true),
     );
 
+    // SAFETY: single-threaded test; no other threads read this env var.
     unsafe { env::remove_var("CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS") };
   }
 
   #[test]
   fn apply_env_vars_skips_config_file() {
     let mut val = toml::Value::Table(toml::map::Map::new());
+    // SAFETY: single-threaded test; no other threads read this env var.
     unsafe { env::set_var("CIRCUS_CONFIG_FILE", "/some/path") };
     apply_env_vars(&mut val);
     assert!(val.get("config_file").is_none());
+    // SAFETY: single-threaded test; no other threads read this env var.
     unsafe { env::remove_var("CIRCUS_CONFIG_FILE") };
   }
 
   #[test]
   fn apply_env_vars_skips_empty_values() {
     let mut val = table(toml::toml! { [server] host = "127.0.0.1" });
+    // SAFETY: single-threaded test; no other threads read this env var.
     unsafe { env::set_var("CIRCUS_SERVER__HOST", "") };
     apply_env_vars(&mut val);
     assert_eq!(val["server"]["host"].as_str(), Some("127.0.0.1"));
+    // SAFETY: single-threaded test; no other threads read this env var.
     unsafe { env::remove_var("CIRCUS_SERVER__HOST") };
   }
 
