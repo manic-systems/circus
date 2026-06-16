@@ -53,6 +53,9 @@ pub async fn probe_flake(
 ) -> Result<FlakeProbeResult> {
   let parsed_ref =
     flake::Ref::from_url(repo_url).map_err(CiError::Validation)?;
+  if let Some(rev) = revision {
+    crate::validate::validate_commit_hash(rev).map_err(CiError::Validation)?;
+  }
   let full_ref = revision.map_or_else(
     || parsed_ref.to_string(),
     |rev| parsed_ref.with_revision(rev),
