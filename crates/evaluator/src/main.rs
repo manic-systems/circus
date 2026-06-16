@@ -1,4 +1,5 @@
-use std::sync::Arc;
+#[cfg(not(unix))] use std::future::pending;
+use std::{sync::Arc, time::Duration};
 
 use circus_common::Database;
 use circus_config::Config;
@@ -68,7 +69,7 @@ async fn main() -> color_eyre::Result<()> {
 /// Write a service heartbeat on every poll tick so the server's /health
 /// endpoint can report evaluator liveness.
 async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
-  let interval = std::time::Duration::from_secs(poll_interval_seconds.max(1));
+  let interval = Duration::from_secs(poll_interval_seconds.max(1));
   let poll_u32 = u32::try_from(poll_interval_seconds.min(u64::from(u32::MAX)))
     .unwrap_or(u32::MAX);
 
@@ -116,7 +117,7 @@ async fn shutdown_signal() {
   };
 
   #[cfg(not(unix))]
-  let terminate = std::future::pending::<()>();
+  let terminate = pending::<()>();
 
   tokio::select! {
       () = ctrl_c => {},
