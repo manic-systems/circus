@@ -14,7 +14,12 @@ use axum::{
   http::{Extensions, StatusCode},
   response::{Html, IntoResponse, Redirect, Response},
 };
-use circus_common::models::{CreateNotificationConfig, SystemStatus, UserType};
+use circus_common::models::{
+  CreateNotificationConfig,
+  NotificationType,
+  SystemStatus,
+  UserType,
+};
 use uuid::Uuid;
 
 use super::{
@@ -393,7 +398,7 @@ pub(super) async fn admin_page(
       ApiKeyView {
         id:           k.id,
         name:         k.name,
-        role:         k.role,
+        role:         k.role.to_string(),
         created_at:   k.created_at.format("%Y-%m-%d %H:%M").to_string(),
         last_used_at: k.last_used_at.map_or_else(
           || "Never".to_string(),
@@ -410,7 +415,7 @@ pub(super) async fn admin_page(
       .map(|task| {
         NotificationTaskView {
           id:                task.id,
-          notification_type: task.notification_type,
+          notification_type: task.notification_type.to_string(),
           status:            format!("{:?}", task.status).to_lowercase(),
           attempts:          task.attempts,
           max_attempts:      task.max_attempts,
@@ -539,7 +544,7 @@ pub(super) async fn users_page(
         id:            u.id,
         username:      u.username,
         email:         u.email,
-        role:          u.role,
+        role:          u.role.to_string(),
         user_type:     user_type.to_string(),
         enabled:       u.enabled,
         last_login_at: u.last_login_at.map_or_else(
@@ -789,15 +794,13 @@ pub(super) async fn notifications_create(
       (StatusCode::BAD_REQUEST, "Config must be a JSON object").into_response(),
     );
   }
-  let allowed_types = [
-    "webhook",
-    "github_status",
-    "gitea_status",
-    "gitlab_status",
-    "email",
-    "slack",
-  ];
-  if !allowed_types.contains(&form.notification_type.as_str()) {
+  let notification_type = form
+    .notification_type
+    .parse::<NotificationType>()
+    .map_err(|_| {
+      (StatusCode::BAD_REQUEST, "Unknown notification type").into_response()
+    })?;
+  if !NotificationType::all().contains(&notification_type) {
     return Err(
       (StatusCode::BAD_REQUEST, "Unknown notification type").into_response(),
     );
@@ -807,7 +810,7 @@ pub(super) async fn notifications_create(
   // and encrypt secret fields before storage. The repo stores the blob
   // verbatim.
   let config = circus_notification::NotificationChannel::encrypt_into_stored(
-    &form.notification_type,
+    notification_type,
     &parsed,
     state.config.server.webhook_secret_encryption_key.as_deref(),
   )
@@ -819,7 +822,7 @@ pub(super) async fn notifications_create(
     &state.pool,
     CreateNotificationConfig {
       project_id,
-      notification_type: form.notification_type,
+      notification_type,
       config,
     },
   )

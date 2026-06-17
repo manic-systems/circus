@@ -102,7 +102,11 @@ fn build_app_public_reads(pool: sqlx::PgPool) -> axum::Router {
   build_app_with_config(pool, config)
 }
 
-async fn ensure_api_key(pool: &sqlx::PgPool, token: &str, role: &str) {
+async fn ensure_api_key(
+  pool: &sqlx::PgPool,
+  token: &str,
+  role: circus_common::roles::GlobalRole,
+) {
   use sha2::Digest;
 
   let mut hasher = sha2::Sha256::new();
@@ -113,7 +117,8 @@ async fn ensure_api_key(pool: &sqlx::PgPool, token: &str, role: &str) {
 }
 
 async fn build_app_with_admin_key(pool: sqlx::PgPool) -> axum::Router {
-  ensure_api_key(&pool, ADMIN_TOKEN, "admin").await;
+  ensure_api_key(&pool, ADMIN_TOKEN, circus_common::roles::GlobalRole::Admin)
+    .await;
   build_app(pool)
 }
 
@@ -989,7 +994,7 @@ async fn test_project_create_with_auth() {
     &pool,
     "test-auth",
     &key_hash,
-    "admin",
+    circus_common::roles::GlobalRole::Admin,
   )
   .await;
 
@@ -1115,7 +1120,8 @@ async fn test_webhook_empty_secret_rejected() {
     return;
   };
 
-  ensure_api_key(&pool, ADMIN_TOKEN, "admin").await;
+  ensure_api_key(&pool, ADMIN_TOKEN, circus_common::roles::GlobalRole::Admin)
+    .await;
   let project_id = create_test_project(&pool).await;
   let mut config = circus_config::Config::default();
   config.server.webhook_secret_encryption_key = Some("test-key".into());
@@ -1176,7 +1182,12 @@ async fn test_admin_reads_require_admin() {
     return;
   };
 
-  ensure_api_key(&pool, READ_TOKEN, "read-only").await;
+  ensure_api_key(
+    &pool,
+    READ_TOKEN,
+    circus_common::roles::GlobalRole::ReadOnly,
+  )
+  .await;
   let app = build_app(pool);
   let response = app
     .oneshot(
@@ -1229,7 +1240,7 @@ async fn test_setup_endpoint_creates_project_and_jobsets() {
     &pool,
     "test-setup",
     &key_hash,
-    "admin",
+    circus_common::roles::GlobalRole::Admin,
   )
   .await;
 

@@ -10,6 +10,7 @@ use axum::{
 use circus_common::{
   models::{CreateStarredJob, CreateUser, PaginationParams, UpdateUser, User},
   repo::{self},
+  roles::GlobalRole,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -24,7 +25,7 @@ pub struct CreateUserRequest {
   pub email:     String,
   pub full_name: Option<String>,
   pub password:  String,
-  pub role:      Option<String>,
+  pub role:      Option<GlobalRole>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,7 +52,7 @@ impl From<User> for UserResponse {
       email:            u.email,
       full_name:        u.full_name,
       user_type:        format!("{:?}", u.user_type).to_lowercase(),
-      role:             u.role,
+      role:             u.role.to_string(),
       enabled:          u.enabled,
       email_verified:   u.email_verified,
       public_dashboard: u.public_dashboard,
@@ -67,7 +68,7 @@ pub struct UpdateUserRequest {
   pub email:            Option<String>,
   pub full_name:        Option<String>,
   pub password:         Option<String>,
-  pub role:             Option<String>,
+  pub role:             Option<GlobalRole>,
   pub enabled:          Option<bool>,
   pub public_dashboard: Option<bool>,
 }
@@ -177,7 +178,7 @@ async fn update_user(
     email:            req.email,
     full_name:        req.full_name,
     password:         req.password,
-    role:             req.role.clone(),
+    role:             req.role,
     enabled:          req.enabled,
     public_dashboard: req.public_dashboard,
   };
@@ -253,7 +254,7 @@ async fn get_current_user(
     email:            String::new(),
     full_name:        None,
     user_type:        "api_key".to_string(),
-    role:             api_key.role.clone(),
+    role:             api_key.role.to_string(),
     enabled:          true,
     email_verified:   true,
     public_dashboard: false,

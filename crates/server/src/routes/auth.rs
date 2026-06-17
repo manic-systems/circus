@@ -1,6 +1,6 @@
 use axum::{Json, Router, extract::State, routing::get};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use circus_common::repo;
+use circus_common::{repo, roles::GlobalRole};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -10,7 +10,7 @@ use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
 #[derive(Debug, Deserialize)]
 pub struct CreateApiKeyRequest {
   pub name: String,
-  pub role: Option<String>,
+  pub role: Option<GlobalRole>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +42,7 @@ async fn create_api_key(
   State(state): State<AppState>,
   Json(input): Json<CreateApiKeyRequest>,
 ) -> Result<Json<CreateApiKeyResponse>, ApiError> {
-  let role = input.role.unwrap_or_else(|| "read-only".to_string());
+  let role = input.role.unwrap_or(GlobalRole::ReadOnly);
 
   let mut bytes = [0u8; 32];
   ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
@@ -55,7 +55,7 @@ async fn create_api_key(
   let key_hash = hash_api_key(&key);
 
   let api_key =
-    repo::api_keys::create(&state.pool, &input.name, &key_hash, &role)
+    repo::api_keys::create(&state.pool, &input.name, &key_hash, role)
       .await
       .map_err(ApiError)?;
 
@@ -73,7 +73,7 @@ async fn create_api_key(
     id: api_key.id,
     name: api_key.name,
     key, // Only returned once at creation time
-    role: api_key.role,
+    role: api_key.role.to_string(),
   }))
 }
 
@@ -89,7 +89,7 @@ async fn list_api_keys(
       ApiKeyInfo {
         id:           k.id,
         name:         k.name,
-        role:         k.role,
+        role:         k.role.to_string(),
         created_at:   k.created_at,
         last_used_at: k.last_used_at,
       }

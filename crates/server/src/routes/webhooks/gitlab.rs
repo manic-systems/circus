@@ -4,7 +4,7 @@ use axum::{
   extract::{Path, State},
   http::{HeaderMap, StatusCode},
 };
-use circus_common::repo;
+use circus_common::{models::ForgeType, repo};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{error::ApiError, state::AppState};
 
-const CONFIG_TYPE: &str = "gitlab";
+const CONFIG_TYPE: ForgeType = ForgeType::Gitlab;
 const DISPLAY_NAME: &str = "GitLab";
 const TOKEN_HEADER: &str = "x-gitlab-token";
 const EVENT_HEADER: &str = "x-gitlab-event";

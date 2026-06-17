@@ -1,6 +1,9 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use circus_common::models::{ApiKey, User};
+use circus_common::{
+  models::{ApiKey, User},
+  roles::GlobalRole,
+};
 use circus_config::Config;
 use dashmap::DashMap;
 use harmonia_store_path::StoreDir;
@@ -38,14 +41,19 @@ impl SessionData {
   #[must_use]
   pub fn is_admin(&self) -> bool {
     self.user.as_ref().map_or_else(
-      || self.api_key.as_ref().is_some_and(|key| key.role == "admin"),
-      |user| user.role == "admin",
+      || {
+        self
+          .api_key
+          .as_ref()
+          .is_some_and(|key| key.role == GlobalRole::Admin)
+      },
+      |user| user.role == GlobalRole::Admin,
     )
   }
 
   /// Check if the session has a specific role
   #[must_use]
-  pub fn has_role(&self, role: &str) -> bool {
+  pub fn has_role(&self, role: GlobalRole) -> bool {
     if self.is_admin() {
       return true;
     }

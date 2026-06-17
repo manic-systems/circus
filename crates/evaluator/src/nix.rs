@@ -298,10 +298,10 @@ async fn evaluate_flake(
       cmd.args(["--option", "allow-import-from-derivation", "false"]);
     }
     for input in inputs {
-      if input.input_type == "git" {
+      if input.input_type == circus_common::InputType::Git {
         circus_common::nix::validate::validate_jobset_input(
           &input.name,
-          &input.input_type,
+          input.input_type,
           &input.value,
           input.revision.as_deref(),
         )
@@ -504,16 +504,16 @@ async fn evaluate_legacy(
     for input in inputs {
       circus_common::nix::validate::validate_jobset_input(
         &input.name,
-        &input.input_type,
+        input.input_type,
         &input.value,
         input.revision.as_deref(),
       )
       .map_err(|e| CiError::NixEval(format!("Invalid jobset input: {e}")))?;
-      match input.input_type.as_str() {
-        "string" | "git" => {
+      match input.input_type {
+        circus_common::InputType::String | circus_common::InputType::Git => {
           cmd.args(["--argstr", &input.name, &input.value]);
         },
-        "boolean" => {
+        circus_common::InputType::Boolean => {
           if input.value == "true" || input.value == "false" {
             cmd.args(["--arg", &input.name, &input.value]);
           } else {
@@ -523,15 +523,8 @@ async fn evaluate_legacy(
             )));
           }
         },
-        "build" => {
+        circus_common::InputType::Build => {
           cmd.args(["--arg", &input.name, &input.value]);
-        },
-        _ => {
-          tracing::warn!(
-            input_name = %input.name,
-            input_type = %input.input_type,
-            "Unrecognized jobset input type in legacy mode, skipping"
-          );
         },
       }
     }

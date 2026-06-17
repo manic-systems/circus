@@ -18,6 +18,7 @@ use std::{
 use circus_common::{
   crypto::{decrypt_secret, encrypt_secret},
   error::{CiError, Result as CiResult},
+  models::NotificationType,
   validate::validate_https_webhook_url,
 };
 use circus_config::EmailConfig;
@@ -161,14 +162,14 @@ trait Notifier {
 impl NotificationChannel {
   /// The stored `notification_type` discriminant for this channel.
   #[must_use]
-  pub const fn notification_type(&self) -> &'static str {
+  pub const fn notification_type(&self) -> NotificationType {
     match self {
-      Self::Webhook(_) => "webhook",
-      Self::GithubStatus(_) => "github_status",
-      Self::GiteaStatus(_) => "gitea_status",
-      Self::GitlabStatus(_) => "gitlab_status",
-      Self::Slack(_) => "slack",
-      Self::Email(_) => "email",
+      Self::Webhook(_) => NotificationType::Webhook,
+      Self::GithubStatus(_) => NotificationType::GithubStatus,
+      Self::GiteaStatus(_) => NotificationType::GiteaStatus,
+      Self::GitlabStatus(_) => NotificationType::GitlabStatus,
+      Self::Slack(_) => NotificationType::Slack,
+      Self::Email(_) => NotificationType::Email,
     }
   }
 
@@ -219,7 +220,7 @@ impl NotificationChannel {
   /// Returns an error if the type is unknown, the config shape is invalid, a
   /// URL fails the SSRF/HTTPS guard, or decryption fails.
   pub fn from_stored(
-    notification_type: &str,
+    notification_type: NotificationType,
     config: &serde_json::Value,
     key: Option<&str>,
   ) -> CiResult<Self> {
@@ -229,7 +230,7 @@ impl NotificationChannel {
       ))
     };
     match notification_type {
-      "webhook" => {
+      NotificationType::Webhook => {
         let mut c: WebhookChannel =
           serde_json::from_value(config.clone()).map_err(invalid)?;
         validate_https_webhook_url(&c.url).map_err(CiError::Validation)?;
@@ -241,25 +242,25 @@ impl NotificationChannel {
           .collect::<CiResult<_>>()?;
         Ok(Self::Webhook(c))
       },
-      "github_status" => {
+      NotificationType::GithubStatus => {
         let mut c: GithubStatusChannel =
           serde_json::from_value(config.clone()).map_err(invalid)?;
         c.token = decrypt_secret(&c.token, key)?;
         Ok(Self::GithubStatus(c))
       },
-      "gitea_status" | "forgejo_status" => {
+      NotificationType::GiteaStatus | NotificationType::ForgejoStatus => {
         let mut c: GiteaStatusChannel =
           serde_json::from_value(config.clone()).map_err(invalid)?;
         c.token = decrypt_secret(&c.token, key)?;
         Ok(Self::GiteaStatus(c))
       },
-      "gitlab_status" => {
+      NotificationType::GitlabStatus => {
         let mut c: GitlabStatusChannel =
           serde_json::from_value(config.clone()).map_err(invalid)?;
         c.token = decrypt_secret(&c.token, key)?;
         Ok(Self::GitlabStatus(c))
       },
-      "slack" => {
+      NotificationType::Slack => {
         let mut c: SlackChannel =
           serde_json::from_value(config.clone()).map_err(invalid)?;
         c.webhook_url = decrypt_secret(&c.webhook_url, key)?;
@@ -267,7 +268,7 @@ impl NotificationChannel {
           .map_err(CiError::Validation)?;
         Ok(Self::Slack(c))
       },
-      "email" => {
+      NotificationType::Email => {
         let mut c: EmailConfig =
           serde_json::from_value(config.clone()).map_err(invalid)?;
         c.smtp_password = c
@@ -275,11 +276,6 @@ impl NotificationChannel {
           .map(|s| decrypt_secret(&s, key))
           .transpose()?;
         Ok(Self::Email(c))
-      },
-      other => {
-        Err(CiError::Validation(format!(
-          "unknown notification type '{other}'"
-        )))
       },
     }
   }
@@ -293,7 +289,7 @@ impl NotificationChannel {
   pub fn to_stored(
     &self,
     key: Option<&str>,
-  ) -> CiResult<(&'static str, serde_json::Value)> {
+  ) -> CiResult<(NotificationType, serde_json::Value)> {
     let value = match self {
       Self::Webhook(c) => {
         let mut c = c.clone();
@@ -350,7 +346,7 @@ impl NotificationChannel {
   ///
   /// Returns an error if the config is invalid or encryption fails.
   pub fn encrypt_into_stored(
-    notification_type: &str,
+    notification_type: NotificationType,
     config: &serde_json::Value,
     key: Option<&str>,
   ) -> CiResult<serde_json::Value> {
@@ -670,6 +666,10 @@ mod tests {
 
   const KEY: Option<&str> = Some("test-encryption-key");
 
+  fn nt(s: &str) -> NotificationType {
+    s.parse().unwrap()
+  }
+
   #[test]
   fn webhook_round_trips_secrets_through_storage() {
     let config = serde_json::json!({
@@ -682,7 +682,7 @@ mod tests {
     // Encrypt for storage: url stays plaintext, secret/header values become
     // ciphertext.
     let stored =
-      NotificationChannel::encrypt_into_stored("webhook", &config, KEY)
+      NotificationChannel::encrypt_into_stored(nt("webhook"), &config, KEY)
         .unwrap();
     assert_eq!(stored["url"], "https://hooks.example.com/ci");
     assert_ne!(stored["secret"], "super-secret");
@@ -696,7 +696,7 @@ mod tests {
 
     // Load back: secrets are decrypted to their original plaintext.
     let channel =
-      NotificationChannel::from_stored("webhook", &stored, KEY).unwrap();
+      NotificationChannel::from_stored(nt("webhook"), &stored, KEY).unwrap();
     let NotificationChannel::Webhook(webhook) = channel else {
       panic!("expected webhook channel");
     };
@@ -713,14 +713,18 @@ mod tests {
     // Re-syncing an already-encrypted config (declarative bootstrap re-run)
     // must not double-encrypt.
     let config = serde_json::json!({ "token": "ghp_abc" });
-    let once =
-      NotificationChannel::encrypt_into_stored("github_status", &config, KEY)
-        .unwrap();
+    let once = NotificationChannel::encrypt_into_stored(
+      nt("github_status"),
+      &config,
+      KEY,
+    )
+    .unwrap();
     let twice =
-      NotificationChannel::encrypt_into_stored("github_status", &once, KEY)
+      NotificationChannel::encrypt_into_stored(nt("github_status"), &once, KEY)
         .unwrap();
     let channel =
-      NotificationChannel::from_stored("github_status", &twice, KEY).unwrap();
+      NotificationChannel::from_stored(nt("github_status"), &twice, KEY)
+        .unwrap();
     let NotificationChannel::GithubStatus(gh) = channel else {
       panic!("expected github status channel");
     };
@@ -735,7 +739,8 @@ mod tests {
     });
 
     let stored =
-      NotificationChannel::encrypt_into_stored("slack", &config, KEY).unwrap();
+      NotificationChannel::encrypt_into_stored(nt("slack"), &config, KEY)
+        .unwrap();
     assert_ne!(
       stored["webhook_url"],
       "https://hooks.slack.com/services/T/B/secret"
@@ -743,7 +748,7 @@ mod tests {
     assert!(stored["webhook_url"].as_str().unwrap().starts_with("v1:"));
 
     let channel =
-      NotificationChannel::from_stored("slack", &stored, KEY).unwrap();
+      NotificationChannel::from_stored(nt("slack"), &stored, KEY).unwrap();
     let NotificationChannel::Slack(slack) = channel else {
       panic!("expected slack channel");
     };
@@ -757,30 +762,31 @@ mod tests {
   #[test]
   fn webhook_rejects_plaintext_http() {
     let config = serde_json::json!({ "url": "http://hooks.example.com/ci" });
-    let err =
-      NotificationChannel::from_stored("webhook", &config, KEY).unwrap_err();
+    let err = NotificationChannel::from_stored(nt("webhook"), &config, KEY)
+      .unwrap_err();
     assert!(err.to_string().contains("https"), "got: {err}");
   }
 
   #[test]
   fn webhook_rejects_internal_host() {
     let config = serde_json::json!({ "url": "https://169.254.169.254/latest" });
-    assert!(NotificationChannel::from_stored("webhook", &config, KEY).is_err());
+    assert!(
+      NotificationChannel::from_stored(nt("webhook"), &config, KEY).is_err()
+    );
   }
 
   #[test]
   fn slack_rejects_internal_host() {
     let config =
       serde_json::json!({ "webhook_url": "https://localhost/services/x" });
-    assert!(NotificationChannel::from_stored("slack", &config, KEY).is_err());
+    assert!(
+      NotificationChannel::from_stored(nt("slack"), &config, KEY).is_err()
+    );
   }
 
   #[test]
   fn unknown_type_is_rejected() {
-    let config = serde_json::json!({});
-    assert!(
-      NotificationChannel::from_stored("carrier_pigeon", &config, KEY).is_err()
-    );
+    assert!("carrier_pigeon".parse::<NotificationType>().is_err());
   }
 
   #[test]

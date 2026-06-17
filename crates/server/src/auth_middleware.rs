@@ -7,6 +7,7 @@ use axum::{
 use circus_common::{
   models::{ApiKey, User},
   repo,
+  roles::GlobalRole,
 };
 use sha2::{Digest, Sha256};
 
@@ -160,14 +161,14 @@ impl FromRequestParts<AppState> for RequireAdmin {
   ) -> Result<Self, Self::Rejection> {
     // Check for user first (new auth)
     if let Some(user) = parts.extensions.get::<User>()
-      && user.role == "admin"
+      && user.role == GlobalRole::Admin
     {
       // Create a synthetic API key for compatibility
       return Ok(Self(ApiKey {
         id:           user.id,
         name:         user.username.clone(),
         key_hash:     String::new(),
-        role:         user.role.clone(),
+        role:         user.role,
         created_at:   user.created_at,
         last_used_at: user.last_login_at,
         user_id:      Some(user.id),
@@ -181,7 +182,7 @@ impl FromRequestParts<AppState> for RequireAdmin {
       .cloned()
       .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if key.role == "admin" {
+    if key.role == GlobalRole::Admin {
       Ok(Self(key))
     } else {
       Err(StatusCode::FORBIDDEN)

@@ -4,7 +4,7 @@ use axum::{
   extract::{Path, State},
   routing::get,
 };
-use circus_common::{Jobset, JobsetInput, UpdateJobset, Validate};
+use circus_common::{InputType, Jobset, JobsetInput, UpdateJobset, Validate};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -62,7 +62,7 @@ async fn list_jobset_inputs(
 #[derive(Debug, Deserialize)]
 struct CreateJobsetInputRequest {
   name:       String,
-  input_type: String,
+  input_type: InputType,
   value:      String,
   revision:   Option<String>,
 }
@@ -77,7 +77,7 @@ async fn create_jobset_input(
     &state.pool,
     jobset_id,
     &body.name,
-    &body.input_type,
+    body.input_type,
     &body.value,
     body.revision.as_deref(),
   )

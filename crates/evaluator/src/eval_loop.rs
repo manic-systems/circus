@@ -830,7 +830,7 @@ fn compute_inputs_hash(commit_hash: &str, inputs: &[JobsetInput]) -> String {
 
   for input in sorted_inputs {
     hasher.update(input.name.as_bytes());
-    hasher.update(input.input_type.as_bytes());
+    hasher.update(input.input_type.as_str().as_bytes());
     hasher.update(input.value.as_bytes());
     if let Some(ref rev) = input.revision {
       hasher.update(rev.as_bytes());

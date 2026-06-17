@@ -16,7 +16,7 @@ use std::{
 
 pub use channel::NotificationChannel;
 use circus_common::{
-  models::{Build, Project},
+  models::{Build, NotificationType, Project},
   repo,
 };
 use circus_config::NotificationsConfig;
@@ -129,7 +129,7 @@ async fn resolve_channels(
 ) -> Vec<NotificationChannel> {
   let event = BuildEvent::from_build(build, project, commit_hash);
   let mut channels: Vec<NotificationChannel> = Vec::new();
-  let mut configured_types: Vec<&'static str> = Vec::new();
+  let mut configured_types: Vec<NotificationType> = Vec::new();
 
   // Per-project channels (decrypted from the database).
   if let Some(pool) = pool {
@@ -137,7 +137,7 @@ async fn resolve_channels(
       Ok(rows) => {
         for row in rows {
           match NotificationChannel::from_stored(
-            &row.notification_type,
+            row.notification_type,
             &row.config,
             encryption_key,
           ) {
@@ -280,7 +280,7 @@ async fn dispatch(
     } else if let Err(e) = channel.deliver(&event).await {
       error!(
         build_id = %build.id,
-        notification_type = channel.notification_type(),
+        notification_type = %channel.notification_type(),
         "Notification delivery failed: {e}"
       );
     }
@@ -417,7 +417,7 @@ pub async fn process_notification_task(
     (payload.get("channel"), payload.get("event"))
   {
     let channel = NotificationChannel::from_stored(
-      &task.notification_type,
+      task.notification_type,
       channel_cfg,
       encryption_key,
     )
@@ -452,7 +452,7 @@ pub fn encrypt_declarative_notifications(
   for project in &mut config.projects {
     for notification in &mut project.notifications {
       notification.config = NotificationChannel::encrypt_into_stored(
-        &notification.notification_type,
+        notification.notification_type,
         &notification.config,
         encryption_key,
       )?;

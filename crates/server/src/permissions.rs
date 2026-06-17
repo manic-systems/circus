@@ -1,13 +1,14 @@
 //! Capability-based authorisation. Every gateable action in the server
 //! maps to one [`Permission`] variant, and every check - API handler,
 //! dashboard mutation, template gating - flows through this module. The
-//! role string a permission resolves to (the value stored in
-//! `User.role` and `ApiKey.role`) lives only in [`Permission::role_str`],
-//! so a typo in a role string is a compile error and the server-side
-//! enforcement and the UI's button-gating cannot drift apart.
+//! role a permission resolves to lives only in [`Permission::role`], so the
+//! server-side enforcement and the UI's button-gating cannot drift apart.
 
 use axum::http::{Extensions, StatusCode};
-use circus_common::models::{ApiKey, User};
+use circus_common::{
+  models::{ApiKey, User},
+  roles::GlobalRole,
+};
 
 use crate::error::ApiError;
 
@@ -22,32 +23,28 @@ pub enum Permission {
 }
 
 impl Permission {
-  /// Role string stored on `User.role` / `ApiKey.role` for this
-  /// capability. Anyone whose session role matches this string (or who
-  /// holds the `admin` role, which satisfies every check) may exercise
-  /// the capability.
   #[must_use]
-  pub const fn role_str(self) -> &'static str {
+  pub const fn role(self) -> GlobalRole {
     match self {
-      Self::Admin => "admin",
-      Self::BumpToFront => "bump-to-front",
-      Self::CancelBuild => "cancel-build",
-      Self::RestartJobs => "restart-jobs",
-      Self::CreateProjects => "create-projects",
-      Self::EvalJobset => "eval-jobset",
+      Self::Admin => GlobalRole::Admin,
+      Self::BumpToFront => GlobalRole::BumpToFront,
+      Self::CancelBuild => GlobalRole::CancelBuild,
+      Self::RestartJobs => GlobalRole::RestartJobs,
+      Self::CreateProjects => GlobalRole::CreateProjects,
+      Self::EvalJobset => GlobalRole::EvalJobset,
     }
   }
 }
 
-fn session_role(extensions: &Extensions) -> Option<&str> {
+fn session_role(extensions: &Extensions) -> Option<GlobalRole> {
   if let Some(user) = extensions.get::<User>() {
-    return Some(user.role.as_str());
+    return Some(user.role);
   }
-  extensions.get::<ApiKey>().map(|k| k.role.as_str())
+  extensions.get::<ApiKey>().map(|k| k.role)
 }
 
-fn role_grants(role: &str, permission: Permission) -> bool {
-  role == Permission::Admin.role_str() || role == permission.role_str()
+fn role_grants(role: GlobalRole, permission: Permission) -> bool {
+  role == GlobalRole::Admin || role == permission.role()
 }
 
 /// Whether the authenticated session may exercise `permission`. Admin

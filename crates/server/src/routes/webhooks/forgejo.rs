@@ -4,6 +4,7 @@ use axum::{
   extract::{Path, State},
   http::{HeaderMap, StatusCode},
 };
+use circus_common::models::ForgeType;
 use uuid::Uuid;
 
 use super::{WebhookResponse, gitea_compatible};
@@ -11,7 +12,7 @@ use crate::{error::ApiError, state::AppState};
 
 pub(super) const PROVIDER: gitea_compatible::SignedPushProvider =
   gitea_compatible::SignedPushProvider::new(
-    "forgejo",
+    ForgeType::Forgejo,
     "Forgejo",
     "x-forgejo-signature",
   );

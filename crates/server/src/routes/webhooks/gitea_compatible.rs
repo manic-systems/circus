@@ -3,7 +3,7 @@ use axum::{
   body::Bytes,
   http::{HeaderMap, StatusCode},
 };
-use circus_common::repo;
+use circus_common::{models::ForgeType, repo};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -24,14 +24,14 @@ use crate::{error::ApiError, state::AppState};
 
 #[derive(Clone, Copy)]
 pub(super) struct SignedPushProvider {
-  config_type:      &'static str,
+  config_type:      ForgeType,
   display_name:     &'static str,
   signature_header: &'static str,
 }
 
 impl SignedPushProvider {
   pub(super) const fn new(
-    config_type: &'static str,
+    config_type: ForgeType,
     display_name: &'static str,
     signature_header: &'static str,
   ) -> Self {
@@ -94,7 +94,7 @@ pub(super) async fn handle_signed_push(
     return Ok(invalid_signature_response());
   }
 
-  process_push(state, project_id, provider.config_type, body).await
+  process_push(state, project_id, provider.config_type.as_str(), body).await
 }
 
 async fn process_push(

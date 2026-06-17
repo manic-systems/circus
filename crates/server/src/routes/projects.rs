@@ -16,7 +16,7 @@ use circus_common::{
   UpdateProject,
   Validate,
   WebhookConfig,
-  models::CreateWebhookConfig,
+  models::{CreateWebhookConfig, ForgeType},
   nix,
 };
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ impl From<WebhookConfig> for WebhookConfigResponse {
     Self {
       id:         c.id,
       project_id: c.project_id,
-      forge_type: c.forge_type,
+      forge_type: c.forge_type.to_string(),
       enabled:    c.enabled,
       created_at: c.created_at,
     }
@@ -319,7 +319,7 @@ async fn setup_project(
 
 #[derive(Debug, Deserialize)]
 struct CreateWebhookBody {
-  forge_type: String,
+  forge_type: ForgeType,
   secret:     String,
 }
 
@@ -347,15 +347,6 @@ async fn create_project_webhook(
 ) -> Result<Json<WebhookConfigResponse>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
 
-  // Validate forge type
-  let valid_forges = ["github", "gitlab", "gitea", "forgejo"];
-  if !valid_forges.contains(&body.forge_type.as_str()) {
-    return Err(ApiError(circus_common::CiError::Validation(format!(
-      "Invalid forge_type '{}'. Must be one of: {}",
-      body.forge_type,
-      valid_forges.join(", ")
-    ))));
-  }
   if body.secret.trim().is_empty() {
     return Err(ApiError(circus_common::CiError::Validation(
       "Webhook secret is required".into(),

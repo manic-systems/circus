@@ -4,7 +4,7 @@ use axum::{
   extract::{Path, State},
   http::{HeaderMap, StatusCode},
 };
-use circus_common::repo;
+use circus_common::{models::ForgeType, repo};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -25,7 +25,7 @@ use super::{
 };
 use crate::{error::ApiError, state::AppState};
 
-const CONFIG_TYPE: &str = "github";
+const CONFIG_TYPE: ForgeType = ForgeType::Github;
 const DISPLAY_NAME: &str = "GitHub";
 const SIGNATURE_HEADER: &str = "x-hub-signature-256";
 const EVENT_HEADER: &str = "x-github-event";
@@ -122,7 +122,7 @@ async fn handle_push(
     })?;
   if let Some(repo) = payload.repository.as_ref() {
     trace_webhook_repo(
-      CONFIG_TYPE,
+      CONFIG_TYPE.as_str(),
       project_id,
       repo.clone_url.as_deref(),
       repo.html_url.as_deref(),
