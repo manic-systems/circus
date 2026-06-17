@@ -5,6 +5,10 @@ use circus_config::EvaluatorConfig;
 use serde::Deserialize;
 use tokio::process::Command;
 
+mod eval_command;
+
+use eval_command::{EvalCommand, NixEvalPolicy};
+
 #[derive(Debug, Clone, Default)]
 pub struct NixMeta {
   pub description: Option<String>,
@@ -251,90 +255,6 @@ fn rewrite_nixos_config_expr(expr: &str) -> Option<String> {
   }
 }
 
-struct EvalCommand {
-  cmd:         Command,
-  timeout:     Duration,
-  description: &'static str,
-}
-
-impl EvalCommand {
-  const fn new(
-    cmd: Command,
-    timeout: Duration,
-    description: &'static str,
-  ) -> Self {
-    Self {
-      cmd,
-      timeout,
-      description,
-    }
-  }
-
-  async fn run(mut self) -> Result<EvalResult> {
-    let timeout = self.timeout;
-    let description = self.description;
-
-    tokio::time::timeout(timeout, async move {
-      let output = self.cmd.output().await;
-
-      match output {
-        Ok(out) if out.status.success() || !out.stdout.is_empty() => {
-          let stdout = String::from_utf8_lossy(&out.stdout);
-          let result = parse_eval_output(&stdout);
-
-          if result.error_count > 0 {
-            tracing::warn!(
-              error_count = result.error_count,
-              "{description} nix-eval-jobs reported errors for some jobs"
-            );
-          }
-
-          if result.jobs.is_empty() && result.error_count == 0 {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.trim().is_empty() {
-              tracing::warn!(
-                stderr = %stderr,
-                "{description} nix-eval-jobs returned no jobs, stderr output present"
-              );
-            }
-          }
-
-          Ok(result)
-        },
-        Ok(out) => {
-          let stderr = String::from_utf8_lossy(&out.stderr);
-          tracing::warn!(stderr = %stderr, "{description} nix-eval-jobs failed");
-          Err(CiError::NixEval("Nix evaluation failed".to_string()))
-        },
-        Err(e) => {
-          Err(CiError::NixEval(format!(
-            "Failed to run nix-eval-jobs: {e}"
-          )))
-        },
-      }
-    })
-    .await
-    .map_err(|_| {
-      CiError::Timeout(format!("Nix evaluation timed out after {timeout:?}"))
-    })?
-  }
-}
-
-trait NixCommandOptions {
-  fn configure_for_eval(&mut self, config: &EvaluatorConfig);
-}
-
-impl NixCommandOptions for Command {
-  fn configure_for_eval(&mut self, config: &EvaluatorConfig) {
-    if config.restrict_eval {
-      self.args(["--option", "restrict-eval", "true"]);
-    }
-    if !config.allow_ifd {
-      self.args(["--option", "allow-import-from-derivation", "false"]);
-    }
-  }
-}
-
 #[tracing::instrument(skip(config, inputs))]
 async fn evaluate_flake(
   repo_path: &Path,
@@ -369,7 +289,7 @@ async fn evaluate_flake(
   cmd.arg("--show-input-drvs");
   cmd.kill_on_drop(true);
 
-  cmd.configure_for_eval(config);
+  NixEvalPolicy::from(config).apply_to(&mut cmd);
 
   for input in inputs {
     if input.input_type == InputType::Git {
@@ -408,7 +328,7 @@ async fn evaluate_all_nixos_configs(
       "--no-write-lock-file",
     ])
     .kill_on_drop(true);
-  cmd.configure_for_eval(config);
+  NixEvalPolicy::from(config).apply_to(&mut cmd);
   let output = cmd.output().await.map_err(|e| {
     CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
   })?;
@@ -521,7 +441,7 @@ async fn evaluate_legacy(
   cmd.arg("--show-input-drvs");
   cmd.kill_on_drop(true);
 
-  cmd.configure_for_eval(config);
+  NixEvalPolicy::from(config).apply_to(&mut cmd);
 
   for input in inputs {
     circus_nix::validate::validate_jobset_input(
