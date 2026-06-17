@@ -82,28 +82,6 @@ pub(crate) fn supports_required_features(
       .all(|feature| required_features.contains(feature))
 }
 
-/// Count of the builder's features that some other pending build needs
-/// (`demand`) but this build does not. Scoping to `demand` keeps the score 0
-/// when nothing is contended, leaving the load strategy in charge.
-#[must_use]
-pub(crate) fn contended_surplus(
-  supported_features: &[String],
-  required_features: &[String],
-  demand: &HashSet<String>,
-) -> usize {
-  supported_features
-    .iter()
-    .filter(|feature| {
-      demand.contains(*feature) && !required_features.contains(*feature)
-    })
-    .count()
-}
-
-#[must_use]
-pub(crate) fn requires_trusted_ref(agent: &AgentSnapshot) -> bool {
-  agent.auth_kind == circus_common::models::AuthKind::Oidc
-}
-
 #[must_use]
 pub(crate) fn is_trusted_ref_evaluation(
   evaluation: &Evaluation,
@@ -189,7 +167,7 @@ fn candidate_allowed_for_trusted_build(
   agent: &AgentSnapshot,
   trusted: Option<&TrustedBuildContext>,
 ) -> bool {
-  if !requires_trusted_ref(agent) {
+  if !agent.requires_trusted_ref() {
     return true;
   }
   let Some(trusted) = trusted else {
@@ -403,20 +381,15 @@ async fn select_and_reserve_agent(
     });
   }
 
-  candidates.retain(|(_, snap)| {
-    supports_required_features(
-      build.scheduling_features(),
-      &snap.supported_features,
-      &snap.mandatory_features,
-    )
-  });
+  candidates
+    .retain(|(_, snap)| snap.supports_features(build.scheduling_features()));
   if candidates.is_empty() {
     return None;
   }
 
   if candidates
     .iter()
-    .any(|(_, snap)| requires_trusted_ref(snap))
+    .any(|(_, snap)| snap.requires_trusted_ref())
   {
     let trusted = trusted_build_context(pool, build).await;
     candidates.retain(|(_, snap)| {
@@ -472,16 +445,8 @@ async fn select_and_reserve_agent(
     });
 
   eligible.sort_by(|a, b| {
-    let sa = contended_surplus(
-      &a.1.supported_features,
-      build.scheduling_features(),
-      &demand,
-    );
-    let sb = contended_surplus(
-      &b.1.supported_features,
-      build.scheduling_features(),
-      &demand,
-    );
+    let sa = a.1.contended_surplus(build.scheduling_features(), &demand);
+    let sb = b.1.contended_surplus(build.scheduling_features(), &demand);
     sa.cmp(&sb)
       .then_with(|| strategy_order(strategy, &a.1, &b.1))
       .then_with(|| a.1.machine_id.cmp(&b.1.machine_id))
@@ -622,7 +587,6 @@ mod tests {
   use super::{
     AgentSnapshot,
     candidate_allowed_for_trusted_build,
-    contended_surplus,
     github_repository_slug,
     is_trusted_ref_evaluation,
     supports_required_features,
@@ -707,19 +671,22 @@ mod tests {
     // Nothing queued demands a feature, so ordering must fall back entirely to
     // the load strategy (every builder scores 0).
     let empty = demand(&[]);
-    assert_eq!(
-      contended_surplus(&strs(&["kvm", "big-parallel"]), &strs(&[]), &empty),
-      0
-    );
-    assert_eq!(contended_surplus(&strs(&[]), &strs(&[]), &empty), 0);
+    let mut versatile = agent_snapshot(false, AuthKind::Token, None);
+    versatile.supported_features = strs(&["kvm", "big-parallel"]);
+    let plain = agent_snapshot(false, AuthKind::Token, None);
+    assert_eq!(versatile.contended_surplus(&strs(&[]), &empty), 0);
+    assert_eq!(plain.contended_surplus(&strs(&[]), &empty), 0);
   }
 
   #[test]
   fn fungible_build_is_penalised_on_a_contended_builder() {
     // A plain build, while a kvm build is queued
     let d = demand(&["kvm"]);
-    assert_eq!(contended_surplus(&strs(&["kvm"]), &strs(&[]), &d), 1);
-    assert_eq!(contended_surplus(&strs(&[]), &strs(&[]), &d), 0);
+    let mut kvm = agent_snapshot(false, AuthKind::Token, None);
+    kvm.supported_features = strs(&["kvm"]);
+    let plain = agent_snapshot(false, AuthKind::Token, None);
+    assert_eq!(kvm.contended_surplus(&strs(&[]), &d), 1);
+    assert_eq!(plain.contended_surplus(&strs(&[]), &d), 0);
   }
 
   #[test]
@@ -727,7 +694,9 @@ mod tests {
     // The kvm build itself belongs on the kvm builder, so kvm must not count
     // against it even though kvm is in demand.
     let d = demand(&["kvm"]);
-    assert_eq!(contended_surplus(&strs(&["kvm"]), &strs(&["kvm"]), &d), 0);
+    let mut kvm = agent_snapshot(false, AuthKind::Token, None);
+    kvm.supported_features = strs(&["kvm"]);
+    assert_eq!(kvm.contended_surplus(&strs(&["kvm"]), &d), 0);
   }
 
   #[test]
@@ -735,14 +704,10 @@ mod tests {
     // `benchmark` is advertised but nothing demands it, so it must not inflate
     // surplus, only the demanded `uid-range` does.
     let d = demand(&["uid-range"]);
-    assert_eq!(
-      contended_surplus(
-        &strs(&["benchmark", "big-parallel", "uid-range"]),
-        &strs(&[]),
-        &d,
-      ),
-      1
-    );
+    let mut agent = agent_snapshot(false, AuthKind::Token, None);
+    agent.supported_features =
+      strs(&["benchmark", "big-parallel", "uid-range"]);
+    assert_eq!(agent.contended_surplus(&strs(&[]), &d), 1);
   }
 
   #[test]

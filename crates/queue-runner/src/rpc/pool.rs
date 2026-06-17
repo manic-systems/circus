@@ -176,6 +176,27 @@ impl AgentMeta {
       }
     }
   }
+
+  #[must_use]
+  pub fn snapshot(&self, current_jobs: u32) -> AgentSnapshot {
+    let hb = *self.heartbeat.read();
+    AgentSnapshot {
+      machine_id: self.machine_id,
+      name: self.name.clone(),
+      systems: self.systems.clone(),
+      supported_features: self.supported_features.clone(),
+      mandatory_features: self.mandatory_features.clone(),
+      speed_factor: self.speed_factor,
+      cpu_count: self.cpu_count,
+      max_jobs: self.max_jobs,
+      current_jobs,
+      ephemeral: self.ephemeral,
+      auth_kind: self.auth_kind,
+      oidc_repository: self.oidc_repository.clone(),
+      oidc_subject: self.oidc_subject.clone(),
+      heartbeat: hb,
+    }
+  }
 }
 
 /// Releases one agent build slot when dropped.
@@ -218,6 +239,39 @@ pub struct AgentSnapshot {
   pub oidc_repository:    Option<String>,
   pub oidc_subject:       Option<String>,
   pub heartbeat:          HeartbeatSnapshot,
+}
+
+impl AgentSnapshot {
+  #[must_use]
+  pub fn supports_features(&self, required_features: &[String]) -> bool {
+    required_features
+      .iter()
+      .all(|feature| self.supported_features.contains(feature))
+      && self
+        .mandatory_features
+        .iter()
+        .all(|feature| required_features.contains(feature))
+  }
+
+  #[must_use]
+  pub fn contended_surplus(
+    &self,
+    required_features: &[String],
+    demand: &HashSet<String>,
+  ) -> usize {
+    self
+      .supported_features
+      .iter()
+      .filter(|feature| {
+        demand.contains(*feature) && !required_features.contains(*feature)
+      })
+      .count()
+  }
+
+  #[must_use]
+  pub fn requires_trusted_ref(&self) -> bool {
+    self.auth_kind == circus_common::models::AuthKind::Oidc
+  }
 }
 
 #[derive(Default)]
@@ -299,7 +353,7 @@ impl AgentPool {
       .into_iter()
       .map(|m| {
         let cur = m.current_jobs.load(Ordering::Relaxed);
-        let snap = snapshot(&m, cur);
+        let snap = m.snapshot(cur);
         (m, snap)
       })
       .collect()
@@ -311,7 +365,7 @@ impl AgentPool {
       .inner
       .read()
       .values()
-      .map(|m| snapshot(m, m.current_jobs.load(Ordering::Relaxed)))
+      .map(|m| m.snapshot(m.current_jobs.load(Ordering::Relaxed)))
       .collect()
   }
 
@@ -360,26 +414,6 @@ impl AgentPool {
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.inner.read().is_empty()
-  }
-}
-
-fn snapshot(m: &AgentMeta, current_jobs: u32) -> AgentSnapshot {
-  let hb = *m.heartbeat.read();
-  AgentSnapshot {
-    machine_id: m.machine_id,
-    name: m.name.clone(),
-    systems: m.systems.clone(),
-    supported_features: m.supported_features.clone(),
-    mandatory_features: m.mandatory_features.clone(),
-    speed_factor: m.speed_factor,
-    cpu_count: m.cpu_count,
-    max_jobs: m.max_jobs,
-    current_jobs,
-    ephemeral: m.ephemeral,
-    auth_kind: m.auth_kind,
-    oidc_repository: m.oidc_repository.clone(),
-    oidc_subject: m.oidc_subject.clone(),
-    heartbeat: hb,
   }
 }
 

@@ -379,17 +379,14 @@ pub async fn run(
                       &builder.mandatory_features,
                     )
                   });
-                  let has_agent =
-                    worker_pool.agent_pool().snapshot_all().iter().any(
-                      |agent| {
-                        agent.systems.iter().any(|s| s == system)
-                          && supports_required_features(
-                            build.scheduling_features(),
-                            &agent.supported_features,
-                            &agent.mandatory_features,
-                          )
-                      },
-                    );
+                  let has_agent = worker_pool
+                    .agent_pool()
+                    .snapshot_all()
+                    .iter()
+                    .any(|agent| {
+                      agent.systems.iter().any(|s| s == system)
+                        && agent.supports_features(build.scheduling_features())
+                    });
                   (has_builder, has_agent)
                 },
                 Err(e) => {
