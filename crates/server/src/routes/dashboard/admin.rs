@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use axum::{
   Form,
   extract::{Path, Query, State},
-  http::{Extensions, StatusCode},
+  http::StatusCode,
   response::{Html, IntoResponse, Redirect, Response},
 };
 use circus_common::models::{
@@ -22,17 +22,15 @@ use circus_common::models::{
 use uuid::Uuid;
 
 use super::{
-  csrf::{check_csrf, csrf_from},
   pages::PageParams,
   shared::{
     ApiKeyView,
+    DashboardContext,
     DashboardPage,
     Pagination,
     RenderExt,
     UserView,
-    auth_name,
     enforce_page_access,
-    is_admin,
   },
   templates::{
     AdminTemplate,
@@ -46,10 +44,7 @@ use super::{
     UsersTemplate,
   },
 };
-use crate::{
-  permissions::{self, Permission},
-  state::AppState,
-};
+use crate::{permissions::Permission, state::AppState};
 
 #[derive(Default, serde::Deserialize)]
 pub(super) struct AdminParams {
@@ -257,10 +252,10 @@ const fn apply_direction(ordering: Ordering, dir: SortDirection) -> Ordering {
 pub(super) async fn admin_page(
   State(state): State<AppState>,
   Query(params): Query<AdminParams>,
-  extensions: Extensions,
+  ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  if !is_admin(&extensions) {
-    let target = if auth_name(&extensions).is_empty() {
+  if !ctx.is_admin {
+    let target = if ctx.auth_name.is_empty() {
       "/login"
     } else {
       "/"
@@ -499,9 +494,9 @@ pub(super) async fn admin_page(
     config_contents,
     config_editable,
     config_read_only_reason,
-    is_admin: is_admin(&extensions),
-    auth_name: auth_name(&extensions),
-    csrf_token: csrf_from(&extensions),
+    is_admin: ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+    csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
 }
@@ -511,10 +506,10 @@ pub(super) async fn admin_page(
 pub(super) async fn users_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
-  extensions: Extensions,
+  ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
   // Only admins can view user list (contains PII like emails)
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return Err(Redirect::to("/").into_response());
   }
 
@@ -564,8 +559,8 @@ pub(super) async fn users_page(
     page: pagination.page,
     total_pages: pagination.total_pages,
     is_admin: true, // Already checked above
-    auth_name: auth_name(&extensions),
-    csrf_token: csrf_from(&extensions),
+    auth_name: ctx.auth_name.clone(),
+    csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
 }
@@ -574,17 +569,17 @@ pub(super) async fn users_page(
 /// for admins, the form to publish a new one.
 pub(super) async fn news_page(
   State(state): State<AppState>,
-  extensions: Extensions,
+  ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &extensions, DashboardPage::News)?;
+  enforce_page_access(&state.config.server, &ctx, DashboardPage::News)?;
   let items = circus_common::repo::news::list(&state.pool, 50, 0)
     .await
     .unwrap_or_default();
   let tmpl = NewsTemplate {
     items,
-    is_admin: is_admin(&extensions),
-    auth_name: auth_name(&extensions),
-    csrf_token: csrf_from(&extensions),
+    is_admin: ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+    csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
 }
@@ -598,13 +593,13 @@ pub(super) struct NewsCreateForm {
 
 pub(super) async fn news_create(
   State(state): State<AppState>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<NewsCreateForm>,
 ) -> Response {
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return StatusCode::FORBIDDEN.into_response();
   }
-  if let Err(e) = check_csrf(&extensions, &form.csrf_token) {
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
     return e;
   }
   if form.title.trim().is_empty() {
@@ -629,13 +624,13 @@ pub(super) async fn news_create(
 pub(super) async fn news_delete(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
 ) -> Response {
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return StatusCode::FORBIDDEN.into_response();
   }
-  if let Err(e) = check_csrf(&extensions, &form.csrf_token) {
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
     return e;
   }
   if let Err(e) = circus_common::repo::news::delete(&state.pool, id).await {
@@ -675,13 +670,13 @@ fn safe_redirect_target(target: Option<String>, fallback: String) -> String {
 pub(super) async fn jobset_delete(
   State(state): State<AppState>,
   Path(jobset_id): Path<Uuid>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
 ) -> Result<Redirect, Response> {
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
-  check_csrf(&extensions, &form.csrf_token)?;
+  ctx.check_csrf(&form.csrf_token)?;
   let jobset = circus_common::repo::jobsets::get(&state.pool, jobset_id)
     .await
     .map_err(|e| {
@@ -699,13 +694,13 @@ pub(super) async fn jobset_delete(
 pub(super) async fn evaluation_visibility(
   State(state): State<AppState>,
   Path(evaluation_id): Path<Uuid>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<EvaluationVisibilityForm>,
 ) -> Result<Redirect, Response> {
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
-  check_csrf(&extensions, &form.csrf_token)?;
+  ctx.check_csrf(&form.csrf_token)?;
   circus_common::repo::evaluations::set_hidden(
     &state.pool,
     evaluation_id,
@@ -729,10 +724,10 @@ pub(super) async fn evaluation_visibility(
 pub(super) async fn notifications_page(
   State(state): State<AppState>,
   Path(project_id): Path<Uuid>,
-  extensions: Extensions,
+  ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  if !is_admin(&extensions) {
-    let target = if auth_name(&extensions).is_empty() {
+  if !ctx.is_admin {
+    let target = if ctx.auth_name.is_empty() {
       "/login"
     } else {
       "/projects"
@@ -752,9 +747,9 @@ pub(super) async fn notifications_page(
   let tmpl = NotificationsTemplate {
     project,
     configs,
-    is_admin: is_admin(&extensions),
-    auth_name: auth_name(&extensions),
-    csrf_token: csrf_from(&extensions),
+    is_admin: ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+    csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
 }
@@ -762,13 +757,13 @@ pub(super) async fn notifications_page(
 pub(super) async fn notifications_create(
   State(state): State<AppState>,
   Path(project_id): Path<Uuid>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<NotificationCreateForm>,
 ) -> Result<Redirect, Response> {
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
-  check_csrf(&extensions, &form.csrf_token)?;
+  ctx.check_csrf(&form.csrf_token)?;
   let parsed: serde_json::Value = serde_json::from_str(form.config.trim())
     .map_err(|e| {
       (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response()
@@ -823,13 +818,13 @@ pub(super) async fn notifications_create(
 pub(super) async fn notifications_delete(
   State(state): State<AppState>,
   Path((project_id, config_id)): Path<(Uuid, Uuid)>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
 ) -> Result<Redirect, Response> {
-  if !is_admin(&extensions) {
+  if !ctx.is_admin {
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
-  check_csrf(&extensions, &form.csrf_token)?;
+  ctx.check_csrf(&form.csrf_token)?;
   circus_common::repo::notification_configs::delete_for_project(
     &state.pool,
     project_id,
@@ -850,12 +845,13 @@ pub(super) async fn notifications_delete(
 pub(super) async fn queue_bump(
   State(state): State<AppState>,
   Path(build_id): Path<Uuid>,
-  extensions: Extensions,
+  ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
 ) -> Result<Redirect, Response> {
-  permissions::require(&extensions, Permission::BumpToFront)
+  ctx
+    .require_permission(Permission::BumpToFront)
     .map_err(|s| (s, "Insufficient permissions").into_response())?;
-  check_csrf(&extensions, &form.csrf_token)?;
+  ctx.check_csrf(&form.csrf_token)?;
   let updated =
     circus_common::repo::builds::bump_priority(&state.pool, build_id, 10)
       .await

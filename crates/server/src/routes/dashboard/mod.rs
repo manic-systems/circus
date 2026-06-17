@@ -3,7 +3,6 @@
 //!
 //! - [`shared`]: view models, formatters, badges, per-request auth helpers
 //! - [`templates`]: every askama `#[derive(Template)]` struct
-//! - [`csrf`]: token extraction and constant-time verification
 //! - [`auth`]: login / logout
 //! - [`pages`]: read-only viewing pages (home, projects, jobsets, ...)
 //! - [`admin`]: admin-only pages and the forms that mutate server state (news,
@@ -20,7 +19,6 @@ use crate::state::AppState;
 
 mod admin;
 mod auth;
-mod csrf;
 mod pages;
 mod shared;
 mod templates;

@@ -102,6 +102,7 @@ pub fn require_api(
   reason = "one bool per Permission variant is the point of this snapshot; \
             templates read these fields directly"
 )]
+#[derive(Clone, Copy)]
 pub struct UiPermissions {
   pub admin:           bool,
   pub bump_to_front:   bool,

@@ -5,7 +5,8 @@
 
 use askama::Template;
 use axum::{
-  http::{Extensions, StatusCode},
+  extract::FromRequestParts,
+  http::{Extensions, StatusCode, request::Parts},
   response::{Html, IntoResponse, Redirect, Response},
 };
 use circus_common::models::{
@@ -20,7 +21,10 @@ use circus_config::{PageAccessLevel, ServerConfig};
 use circus_proto::nix_log::{self, LogLine};
 use uuid::Uuid;
 
-use crate::permissions::{self, Permission};
+use crate::{
+  permissions::{self, Permission, UiPermissions},
+  state::AppState,
+};
 
 pub(super) trait RenderExt: Template {
   #[expect(
@@ -175,6 +179,89 @@ pub(super) enum DashboardPage {
   Metrics,
 }
 
+pub(super) struct DashboardContext {
+  pub(super) is_admin:         bool,
+  pub(super) is_authenticated: bool,
+  pub(super) auth_name:        String,
+  pub(super) csrf_token:       String,
+  pub(super) permissions:      UiPermissions,
+  pub(super) viewer_user_id:   Option<Uuid>,
+}
+
+impl DashboardContext {
+  #[must_use]
+  pub(super) fn from_extensions(extensions: &Extensions) -> Self {
+    Self {
+      is_admin:         is_admin(extensions),
+      is_authenticated: is_authenticated(extensions),
+      auth_name:        auth_name(extensions),
+      csrf_token:       extensions
+        .get::<crate::state::CsrfToken>()
+        .map(|t| t.0.clone())
+        .unwrap_or_default(),
+      permissions:      UiPermissions::from_extensions(extensions),
+      viewer_user_id:   extensions
+        .get::<User>()
+        .map(|user| user.id)
+        .or_else(|| extensions.get::<ApiKey>().and_then(|key| key.user_id)),
+    }
+  }
+
+  #[expect(
+    clippy::result_large_err,
+    reason = "dashboard handlers return axum Response directly"
+  )]
+  pub(super) fn check_csrf(&self, submitted: &str) -> Result<(), Response> {
+    use subtle::ConstantTimeEq;
+    if self.csrf_token.is_empty()
+      || self
+        .csrf_token
+        .as_bytes()
+        .ct_eq(submitted.as_bytes())
+        .unwrap_u8()
+        != 1
+    {
+      return Err(
+        (StatusCode::FORBIDDEN, "Invalid or missing CSRF token")
+          .into_response(),
+      );
+    }
+    Ok(())
+  }
+
+  pub(super) const fn require_permission(
+    &self,
+    permission: Permission,
+  ) -> Result<(), StatusCode> {
+    let granted = match permission {
+      Permission::Admin => self.permissions.admin,
+      Permission::BumpToFront => self.permissions.bump_to_front,
+      Permission::CancelBuild => self.permissions.cancel_build,
+      Permission::RestartJobs => self.permissions.restart_jobs,
+      Permission::CreateProjects => self.permissions.create_projects,
+      Permission::EvalJobset => self.permissions.eval_jobset,
+    };
+    if granted {
+      Ok(())
+    } else if self.is_authenticated {
+      Err(StatusCode::FORBIDDEN)
+    } else {
+      Err(StatusCode::UNAUTHORIZED)
+    }
+  }
+}
+
+impl FromRequestParts<AppState> for DashboardContext {
+  type Rejection = std::convert::Infallible;
+
+  async fn from_request_parts(
+    parts: &mut Parts,
+    _state: &AppState,
+  ) -> Result<Self, Self::Rejection> {
+    Ok(Self::from_extensions(&parts.extensions))
+  }
+}
+
 impl DashboardPage {
   const fn access(self, config: &ServerConfig) -> PageAccessLevel {
     let pages = &config.page_access;
@@ -200,7 +287,7 @@ impl DashboardPage {
 
 pub(super) fn enforce_page_access(
   config: &ServerConfig,
-  extensions: &Extensions,
+  ctx: &DashboardContext,
   page: DashboardPage,
 ) -> Result<(), Response> {
   #![expect(
@@ -211,18 +298,14 @@ pub(super) fn enforce_page_access(
 
   let allowed = match page.access(config) {
     PageAccessLevel::Public => true,
-    PageAccessLevel::Authenticated => is_authenticated(extensions),
-    PageAccessLevel::Admin => is_admin(extensions),
+    PageAccessLevel::Authenticated => ctx.is_authenticated,
+    PageAccessLevel::Admin => ctx.is_admin,
   };
   if allowed {
     return Ok(());
   }
 
-  let target = if is_authenticated(extensions) {
-    "/"
-  } else {
-    "/login"
-  };
+  let target = if ctx.is_authenticated { "/" } else { "/login" };
   Err(Redirect::to(target).into_response())
 }
 
