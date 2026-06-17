@@ -12,7 +12,6 @@
 
 use std::{
   collections::HashMap,
-  ffi::CString,
   fmt::Write,
   path::{Path, PathBuf},
   sync::{
@@ -38,6 +37,7 @@ use circus_proto::{
 };
 use color_eyre::eyre::{Context as _, bail, eyre};
 use parking_lot::Mutex;
+use procfs::Current as _;
 use tokio::net::TcpStream;
 use tokio_util::{
   compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _},
@@ -357,55 +357,21 @@ async fn send_heartbeat(
 }
 
 fn read_loadavg() -> (f32, f32, f32) {
-  let Ok(s) = std::fs::read_to_string("/proc/loadavg") else {
-    return (0.0, 0.0, 0.0);
-  };
-  let mut it = s.split_whitespace();
-  let a = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-  let b = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-  let c = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-  (a, b, c)
+  procfs::LoadAverage::current()
+    .map_or((0.0, 0.0, 0.0), |load| (load.one, load.five, load.fifteen))
 }
 
 fn read_meminfo() -> (u64, u64) {
-  let Ok(s) = std::fs::read_to_string("/proc/meminfo") else {
-    return (0, 0);
-  };
-  let mut total = 0_u64;
-  let mut available = 0_u64;
-  for line in s.lines() {
-    if let Some(value) = line.strip_prefix("MemTotal:") {
-      total = parse_meminfo_kib(value);
-    } else if let Some(value) = line.strip_prefix("MemAvailable:") {
-      available = parse_meminfo_kib(value);
-    }
-  }
-  (total, total.saturating_sub(available))
-}
-
-fn parse_meminfo_kib(value: &str) -> u64 {
-  value
-    .split_whitespace()
-    .next()
-    .and_then(|v| v.parse::<u64>().ok())
-    .unwrap_or(0)
-    .saturating_mul(1024)
+  procfs::Meminfo::current().map_or((0, 0), |mem| {
+    let available = mem.mem_available.unwrap_or(mem.mem_total);
+    (mem.mem_total, mem.mem_total.saturating_sub(available))
+  })
 }
 
 fn fs_available_bytes(path: &Path) -> u64 {
-  let Some(path) = path.to_str().and_then(|p| CString::new(p).ok()) else {
-    return 0;
-  };
-  let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-  // SAFETY: `path` is a valid NUL-terminated C string and `stat` points to
-  // writable memory for libc to initialise.
-  let rc = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
-  if rc != 0 {
-    return 0;
-  }
-  // SAFETY: `statvfs` returned success, so the output struct is initialised.
-  let stat = unsafe { stat.assume_init() };
-  stat.f_bavail.saturating_mul(stat.f_frsize)
+  nix::sys::statvfs::statvfs(path).map_or(0, |stat| {
+    stat.blocks_available().saturating_mul(stat.fragment_size())
+  })
 }
 
 /// Process-global counter for concurrent builds. Bumped on `assign`,
