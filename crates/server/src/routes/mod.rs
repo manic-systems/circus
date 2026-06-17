@@ -23,10 +23,10 @@ pub mod users;
 pub mod webhooks;
 
 use std::{
-  net::IpAddr,
+  net::{IpAddr, SocketAddr},
   path::{Path, PathBuf},
-  sync::Arc,
-  time::Instant,
+  sync::{Arc, Mutex, PoisonError},
+  time::{Duration, Instant},
 };
 
 use axum::{
@@ -75,16 +75,15 @@ struct RateLimitState {
   buckets:      DashMap<IpAddr, Bucket>,
   rps:          f64,
   burst:        f64,
-  last_cleanup: std::sync::Mutex<Instant>,
+  last_cleanup: Mutex<Instant>,
 }
 
 /// How long an idle bucket persists before the periodic sweep drops it.
-const RATE_LIMIT_BUCKET_TTL: std::time::Duration =
-  std::time::Duration::from_mins(5);
+const RATE_LIMIT_BUCKET_TTL: Duration = Duration::from_mins(5);
 
 async fn rate_limit_middleware(
-  ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-  request: Request<axum::body::Body>,
+  ConnectInfo(addr): ConnectInfo<SocketAddr>,
+  request: Request<Body>,
   next: Next,
 ) -> Response {
   let state = request.extensions().get::<Arc<RateLimitState>>().cloned();
@@ -99,8 +98,8 @@ async fn rate_limit_middleware(
       let mut last = rl
         .last_cleanup
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-      if now.duration_since(*last) > std::time::Duration::from_mins(1) {
+        .unwrap_or_else(PoisonError::into_inner);
+      if now.duration_since(*last) > Duration::from_mins(1) {
         *last = now;
         rl.buckets.retain(|_, b| {
           now.duration_since(b.last_refilled) < RATE_LIMIT_BUCKET_TTL
@@ -250,7 +249,7 @@ pub fn router(state: AppState, config: &Config) -> Router {
       buckets:      DashMap::new(),
       rps:          rps as f64,
       burst:        f64::from(burst),
-      last_cleanup: std::sync::Mutex::new(Instant::now()),
+      last_cleanup: Mutex::new(Instant::now()),
     });
     app = app
       .layer(axum::Extension(rl_state))

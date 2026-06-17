@@ -1259,7 +1259,7 @@ async fn test_webhook_empty_secret_rejected() {
   let project_id = create_test_project(&pool).await;
   let mut config = circus_config::Config::default();
   config.server.webhook_secret_encryption_key = Some("test-key".into());
-  let app = build_app_with_config(pool, config);
+  let app = build_app_with_config(pool, &config);
 
   let body = serde_json::json!({ "forge_type": "github", "secret": "" });
   let response = app
