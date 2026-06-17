@@ -123,6 +123,9 @@ async fn create_test_project(pool: &sqlx::PgPool) -> uuid::Uuid {
   circus_common::repo::projects::create(pool, circus_common::CreateProject {
     name:           format!("security-test-{}", uuid::Uuid::new_v4()),
     repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     description:    None,
   })
   .await
@@ -566,6 +569,8 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
       references:  &[],
       sig:         None,
       ca:          None,
+      build_id:    None,
+      project_id:  None,
     },
   )
   .await
@@ -602,6 +607,8 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
       references:  &[],
       sig:         Some("circus:test-signature"),
       ca:          None,
+      build_id:    None,
+      project_id:  None,
     },
   )
   .await
@@ -618,6 +625,94 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
     .await
     .unwrap();
   assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_project_cache_serves_only_owned_persisted_narinfo() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_a_name = format!("cache-a-{}", uuid::Uuid::new_v4().simple());
+  let project_a = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:           project_a_name.clone(),
+      repository_url: "https://github.com/test/cache-a".to_string(),
+      cache_enabled:  true,
+      cache_url:      Some(format!(
+        "https://ci.example.org/projects/{project_a_name}/nix-cache/"
+      )),
+      cache_upstreams: Default::default(),
+      description:    None,
+    },
+  )
+  .await
+  .unwrap();
+  let project_b_name = format!("cache-b-{}", uuid::Uuid::new_v4().simple());
+  circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:           project_b_name.clone(),
+      repository_url: "https://github.com/test/cache-b".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
+      description:    None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let store_path = format!("/nix/store/{hash}-project-cache-test");
+  circus_common::repo::narinfo_cache::upsert(
+    &pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path:  &store_path,
+      nar_hash:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      nar_size:    1,
+      file_hash:   None,
+      file_size:   None,
+      compression: "none",
+      url:         &format!("nar/{hash}.nar"),
+      deriver:     None,
+      references:  &[],
+      sig:         Some("circus:test-signature"),
+      ca:          None,
+      build_id:    None,
+      project_id:  Some(project_a.id),
+    },
+  )
+  .await
+  .unwrap();
+
+  let config = circus_config::Config::default();
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri(format!("/projects/{project_a_name}/nix-cache/{hash}.narinfo"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/projects/{project_b_name}/nix-cache/{hash}.narinfo"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

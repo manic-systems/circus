@@ -313,6 +313,18 @@ pub fn document() -> Value {
         "get": { "summary": "NAR download",
           "responses": { "200": { "description": "NAR stream" }, "404": { "description": "NAR not found" } } }
       },
+      "/projects/{project}/nix-cache/nix-cache-info": {
+        "get": { "summary": "Project Nix binary cache metadata",
+          "responses": { "200": { "description": "nix-cache-info text" }, "404": { "description": "Project cache disabled or missing" } } }
+      },
+      "/projects/{project}/nix-cache/{hash}": {
+        "get": { "summary": "Project NAR info lookup",
+          "responses": { "200": { "description": "narinfo text" }, "404": { "description": "NAR not found" } } }
+      },
+      "/projects/{project}/nix-cache/nar/{hash}": {
+        "get": { "summary": "Project NAR download",
+          "responses": { "200": { "description": "NAR stream" }, "404": { "description": "NAR not found" } } }
+      },
       "/projects": {
         "get":  { "summary": "List projects",
           "responses": { "200": { "description": "Array of projects",

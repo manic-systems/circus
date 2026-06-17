@@ -166,6 +166,7 @@ fn is_absolute_public_path(path: &str) -> bool {
     || path.starts_with("/channel/")
     || path.starts_with("/job/")
     || path.starts_with("/nix-cache/")
+    || (path.starts_with("/projects/") && path.contains("/nix-cache/"))
 }
 
 fn normalize_path(path: &str) -> String {

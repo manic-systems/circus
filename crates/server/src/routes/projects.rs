@@ -260,6 +260,9 @@ async fn setup_project(
     name:           body.name,
     repository_url: body.repository_url,
     description:    body.description,
+    cache_enabled:  true,
+    cache_url:      None,
+    cache_upstreams: Default::default(),
   };
   create_project
     .validate()

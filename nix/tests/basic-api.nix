@@ -31,6 +31,16 @@ testers.runNixOSTest {
       starred = "public";
       metrics = "public";
     };
+    config.services.circus.settings.cache = {
+      enabled = true;
+      cache_url = "http://127.0.0.1:3000/nix-cache/";
+      upstreams = [
+        {
+          url = "https://global-cache.example.org/";
+          public_key = "global-cache:abc";
+        }
+      ];
+    };
   };
 
   testScript = ''
@@ -123,6 +133,34 @@ testers.runNixOSTest {
         signed_narinfo = machine.succeed(f"curl -sf http://127.0.0.1:3000/nix-cache/{signed_hash}.narinfo")
         assert "StorePath: /nix/store/" + signed_hash + "-signed-cache-test" in signed_narinfo, signed_narinfo
         assert "Sig: circus-test-cache:sig" in signed_narinfo, signed_narinfo
+
+    with subtest("Project cache serves only project-owned persisted narinfo"):
+        project_a_id = "00000000-0000-0000-0000-0000000000a1"
+        project_b_id = "00000000-0000-0000-0000-0000000000b2"
+        project_hash = "dddddddddddddddddddddddddddddddd"
+        machine.succeed(
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
+            "INSERT INTO projects (id, name, repository_url, cache_url, cache_upstreams) VALUES "
+            "('" + project_a_id + "', 'cache-project-a', 'https://github.com/test/cache-a', 'http://127.0.0.1:3000/projects/cache-project-a/nix-cache/', '[{\\\"url\\\":\\\"https://cache.nixos.org/\\\",\\\"public_key\\\":\\\"cache.nixos.org-1:abc\\\"}]'::jsonb), "
+            "('" + project_b_id + "', 'cache-project-b', 'https://github.com/test/cache-b', 'http://127.0.0.1:3000/projects/cache-project-b/nix-cache/', '[]'::jsonb)"
+            "\""
+        )
+        project_json = machine.succeed(
+            f"curl -sf http://127.0.0.1:3000/api/v1/projects/{project_a_id}"
+        )
+        project_data = json.loads(project_json)
+        assert project_data["cache_url"] == "http://127.0.0.1:3000/projects/cache-project-a/nix-cache/", project_data
+        assert project_data["cache_upstreams"][0]["url"] == "https://cache.nixos.org/", project_data
+        assert project_data["cache_upstreams"][0]["public_key"] == "cache.nixos.org-1:abc", project_data
+        machine.succeed(
+            "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -c \""
+            "INSERT INTO narinfo_cache (store_path, nar_hash, nar_size, compression, url, \\\"references\\\", sig, project_id) VALUES "
+            "('/nix/store/" + project_hash + "-project-cache-test', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 'none', 'nar/" + project_hash + ".nar', '{}', 'circus-test-cache:sig', '" + project_a_id + "')"
+            "\""
+        )
+        project_narinfo = machine.succeed(f"curl -sf http://127.0.0.1:3000/projects/cache-project-a/nix-cache/{project_hash}.narinfo")
+        assert "StorePath: /nix/store/" + project_hash + "-project-cache-test" in project_narinfo, project_narinfo
+        machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:3000/projects/cache-project-b/nix-cache/{project_hash}.narinfo | grep -q 404")
 
     #  NAR endpoints: invalid hash rejection
     with subtest("NAR zst rejects invalid hash"):

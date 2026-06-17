@@ -16,6 +16,7 @@ use harmonia_store_path_info::{UnkeyedValidPathInfo, ValidPathInfo};
 use harmonia_utils_hash::{Hash, HashFormat as _, fmt::Any as AnyHashFmt};
 use serde::Deserialize;
 use sqlx::{FromRow, PgPool, SqlitePool};
+use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
 
@@ -41,6 +42,56 @@ struct ValidPathRow {
 #[derive(Deserialize)]
 struct NarQuery {
   hash: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum CacheScope {
+  Global,
+  Project(Uuid),
+}
+
+impl CacheScope {
+  fn project_id(self) -> Option<Uuid> {
+    match self {
+      Self::Global => None,
+      Self::Project(id) => Some(id),
+    }
+  }
+
+  fn cache_key(self, hash: &str) -> String {
+    match self {
+      Self::Global => format!("global:{hash}"),
+      Self::Project(id) => format!("project:{id}:{hash}"),
+    }
+  }
+}
+
+struct CacheSettings {
+  scope:   CacheScope,
+  enabled: bool,
+}
+
+impl CacheSettings {
+  fn global(config: &circus_config::Config) -> Self {
+    Self {
+      scope:   CacheScope::Global,
+      enabled: config.cache.enabled,
+    }
+  }
+}
+
+async fn project_cache_settings(
+  state: &AppState,
+  project_name: &str,
+) -> Result<CacheSettings, ApiError> {
+  let project =
+    circus_common::repo::projects::get_by_name(&state.pool, project_name)
+      .await
+      .map_err(ApiError)?;
+  Ok(CacheSettings {
+    scope:   CacheScope::Project(project.id),
+    enabled: project.cache_enabled,
+  })
 }
 
 fn cache_data_error(error: impl std::fmt::Display) -> ApiError {
@@ -151,12 +202,18 @@ async fn query_harmonia_path_info(
 async fn has_circus_build_product(
   pool: &PgPool,
   store_path: &str,
+  project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
   sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM build_products WHERE path = $1 UNION ALL \
-     SELECT 1 FROM builds WHERE build_output_path = $1)",
+    "SELECT EXISTS(SELECT 1 FROM build_products bp JOIN builds b ON b.id = \
+     bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j \
+     ON j.id = e.jobset_id WHERE bp.path = $1 AND ($2::uuid IS NULL OR \
+     j.project_id = $2) UNION ALL SELECT 1 FROM builds b JOIN evaluations e \
+     ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE \
+     b.build_output_path = $1 AND ($2::uuid IS NULL OR j.project_id = $2))",
   )
   .bind(store_path)
+  .bind(project_id)
   .fetch_one(pool)
   .await
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
@@ -167,13 +224,19 @@ async fn has_circus_build_product(
 async fn has_circus_signed_build_product(
   pool: &PgPool,
   store_path: &str,
+  project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
   sqlx::query_scalar::<_, bool>(
     "SELECT EXISTS(SELECT 1 FROM build_products bp JOIN builds b ON b.id = \
-     bp.build_id WHERE bp.path = $1 AND b.signed = true UNION ALL SELECT 1 \
-     FROM builds WHERE build_output_path = $1 AND signed = true)",
+     bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j \
+     ON j.id = e.jobset_id WHERE bp.path = $1 AND b.signed = true AND \
+     ($2::uuid IS NULL OR j.project_id = $2) UNION ALL SELECT 1 FROM builds b \
+     JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
+     e.jobset_id WHERE b.build_output_path = $1 AND b.signed = true AND \
+     ($2::uuid IS NULL OR j.project_id = $2))",
   )
   .bind(store_path)
+  .bind(project_id)
   .fetch_one(pool)
   .await
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
@@ -182,11 +245,15 @@ async fn has_circus_signed_build_product(
 async fn has_circus_derivation_path(
   pool: &PgPool,
   store_path: &str,
+  project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
   sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM builds WHERE drv_path = $1)",
+    "SELECT EXISTS(SELECT 1 FROM builds b JOIN evaluations e ON e.id = \
+     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.drv_path = \
+     $1 AND ($2::uuid IS NULL OR j.project_id = $2))",
   )
   .bind(store_path)
+  .bind(project_id)
   .fetch_one(pool)
   .await
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
@@ -196,6 +263,7 @@ async fn has_circus_derivation_direct_reference(
   pool: &PgPool,
   nix_store_db: &SqlitePool,
   store_path: &str,
+  project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
   let referrer_drvs = sqlx::query_scalar::<_, String>(
     "SELECT referrer.path FROM Refs r JOIN ValidPaths requested ON \
@@ -212,9 +280,12 @@ async fn has_circus_derivation_direct_reference(
   }
 
   sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM builds WHERE drv_path = ANY($1))",
+    "SELECT EXISTS(SELECT 1 FROM builds b JOIN evaluations e ON e.id = \
+     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.drv_path = \
+     ANY($1) AND ($2::uuid IS NULL OR j.project_id = $2))",
   )
   .bind(referrer_drvs)
+  .bind(project_id)
   .fetch_one(pool)
   .await
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
@@ -224,6 +295,7 @@ async fn is_servable_harmonia_path(
   pool: &PgPool,
   nix_store_db: &SqlitePool,
   info: &ValidPathInfo,
+  scope: CacheScope,
 ) -> Result<bool, ApiError> {
   // The unauthenticated cache may only rebroadcast paths Circus built, never
   // arbitrary store paths. Content addressing makes a path self-verifying
@@ -234,11 +306,12 @@ async fn is_servable_harmonia_path(
     // Self-verifying: serve when Circus built it or when it is a direct input
     // of an evaluated derivation Circus may dispatch to an agent.
     return Ok(
-      has_circus_build_product(pool, &store_path).await?
+      has_circus_build_product(pool, &store_path, scope.project_id()).await?
         || has_circus_derivation_direct_reference(
           pool,
           nix_store_db,
           &store_path,
+          scope.project_id(),
         )
         .await?,
     );
@@ -246,7 +319,7 @@ async fn is_servable_harmonia_path(
   if PathBuf::from(&store_path)
     .extension()
     .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
-    && has_circus_derivation_path(pool, &store_path).await?
+    && has_circus_derivation_path(pool, &store_path, scope.project_id()).await?
   {
     return Ok(true);
   }
@@ -254,7 +327,7 @@ async fn is_servable_harmonia_path(
   if info.info.signatures.is_empty() {
     return Ok(false);
   }
-  has_circus_signed_build_product(pool, &store_path).await
+  has_circus_signed_build_product(pool, &store_path, scope.project_id()).await
 }
 
 /// Serve `NARInfo` for a store path hash.
@@ -263,7 +336,24 @@ async fn narinfo(
   State(state): State<AppState>,
   Path(hash): Path<String>,
 ) -> Result<Response, ApiError> {
-  if !state.config.cache.enabled {
+  let settings = CacheSettings::global(&state.config);
+  narinfo_for_settings(state, settings, hash).await
+}
+
+async fn project_narinfo(
+  State(state): State<AppState>,
+  Path((project, hash)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+  let settings = project_cache_settings(&state, &project).await?;
+  narinfo_for_settings(state, settings, hash).await
+}
+
+async fn narinfo_for_settings(
+  state: AppState,
+  settings: CacheSettings,
+  hash: String,
+) -> Result<Response, ApiError> {
+  if !settings.enabled {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -274,7 +364,8 @@ async fn narinfo(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  if let Some(cached) = state.narinfo_cache.get(hash) {
+  let cache_key = settings.scope.cache_key(hash);
+  if let Some(cached) = state.narinfo_cache.get(&cache_key) {
     return Ok(
       (
         StatusCode::OK,
@@ -289,13 +380,22 @@ async fn narinfo(
   // table sees every successful upload across the cluster, so a path
   // built on one builder is available from any cache fetcher without
   // running nix path-info locally.
-  if let Ok(row) =
+  let row = if let Some(project_id) = settings.scope.project_id() {
+    circus_common::repo::narinfo_cache::get_by_hash_part_for_project(
+      &state.pool,
+      hash,
+      project_id,
+    )
+    .await
+  } else {
     circus_common::repo::narinfo_cache::get_by_hash_part(&state.pool, hash)
       .await
+  };
+  if let Ok(row) = row
     && narinfo_has_signature(&row)
   {
     let body = render_narinfo_row(&row);
-    state.narinfo_cache.insert(hash.to_owned(), body.clone());
+    state.narinfo_cache.insert(cache_key, body.clone());
     return Ok(
       (
         StatusCode::OK,
@@ -316,7 +416,9 @@ async fn narinfo(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info).await? {
+  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info, settings.scope)
+    .await?
+  {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -328,7 +430,7 @@ async fn narinfo(
 
   state
     .narinfo_cache
-    .insert(hash.to_string(), narinfo_text.clone());
+    .insert(settings.scope.cache_key(hash), narinfo_text.clone());
 
   Ok(
     (
@@ -392,14 +494,24 @@ fn is_valid_nar_object_name(name: &str) -> bool {
 async fn redirect_uploaded_nar(
   state: &AppState,
   object_name: &str,
+  scope: CacheScope,
 ) -> Result<Option<Response>, ApiError> {
   if !is_valid_nar_object_name(object_name) {
     return Ok(None);
   }
 
   let url = format!("nar/{object_name}");
-  match circus_common::repo::narinfo_cache::get_by_url(&state.pool, &url).await
-  {
+  let row = if let Some(project_id) = scope.project_id() {
+    circus_common::repo::narinfo_cache::get_by_url_for_project(
+      &state.pool,
+      &url,
+      project_id,
+    )
+    .await
+  } else {
+    circus_common::repo::narinfo_cache::get_by_url(&state.pool, &url).await
+  };
+  match row {
     Ok(row) => {
       if !narinfo_has_signature(&row) {
         return Ok(Some(StatusCode::NOT_FOUND.into_response()));
@@ -434,11 +546,30 @@ async fn serve_nar_combined(
   Path(hash): Path<String>,
   Query(query): Query<NarQuery>,
 ) -> Result<Response, ApiError> {
-  if !state.config.cache.enabled {
+  let settings = CacheSettings::global(&state.config);
+  serve_nar_for_settings(state, settings, hash, query).await
+}
+
+async fn project_serve_nar_combined(
+  State(state): State<AppState>,
+  Path((project, hash)): Path<(String, String)>,
+  Query(query): Query<NarQuery>,
+) -> Result<Response, ApiError> {
+  let settings = project_cache_settings(&state, &project).await?;
+  serve_nar_for_settings(state, settings, hash, query).await
+}
+
+async fn serve_nar_for_settings(
+  state: AppState,
+  settings: CacheSettings,
+  hash: String,
+  query: NarQuery,
+) -> Result<Response, ApiError> {
+  if !settings.enabled {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  if let Some(response) = redirect_uploaded_nar(&state, &hash).await? {
+  if let Some(response) = redirect_uploaded_nar(&state, &hash, settings.scope).await? {
     return Ok(response);
   }
 
@@ -461,7 +592,9 @@ async fn serve_nar_combined(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info).await? {
+  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info, settings.scope)
+    .await?
+  {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -490,7 +623,23 @@ async fn serve_nar_combined(
 /// Nix binary cache info endpoint.
 /// GET /nix-cache/nix-cache-info
 async fn cache_info(State(state): State<AppState>) -> Response {
-  if !state.config.cache.enabled {
+  let settings = CacheSettings::global(&state.config);
+  cache_info_for_settings(&state, &settings)
+}
+
+async fn project_cache_info(
+  State(state): State<AppState>,
+  Path(project): Path<String>,
+) -> Result<Response, ApiError> {
+  let settings = project_cache_settings(&state, &project).await?;
+  Ok(cache_info_for_settings(&state, &settings))
+}
+
+fn cache_info_for_settings(
+  state: &AppState,
+  settings: &CacheSettings,
+) -> Response {
+  if !settings.enabled {
     return StatusCode::NOT_FOUND.into_response();
   }
 
@@ -505,4 +654,13 @@ pub fn router() -> Router<AppState> {
     .route("/nix-cache/nix-cache-info", get(cache_info))
     .route("/nix-cache/{hash}", get(narinfo))
     .route("/nix-cache/nar/{hash}", get(serve_nar_combined))
+    .route(
+      "/projects/{project}/nix-cache/nix-cache-info",
+      get(project_cache_info),
+    )
+    .route("/projects/{project}/nix-cache/{hash}", get(project_narinfo))
+    .route(
+      "/projects/{project}/nix-cache/nar/{hash}",
+      get(project_serve_nar_combined),
+    )
 }

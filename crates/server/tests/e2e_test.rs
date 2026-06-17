@@ -49,6 +49,9 @@ async fn test_e2e_project_eval_build_flow() {
     name:           project_name.clone(),
     description:    Some("E2E test project".to_string()),
     repository_url: "https://github.com/test/e2e".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
   })
   .await
   .expect("create project");

@@ -67,8 +67,23 @@ async fn binary_cache_url(
 ) -> Result<Response, ApiError> {
   // Verify the channel exists; otherwise this endpoint would happily echo
   // the cache URL for any name and pollute clients' channel state.
-  let _ =
+  let channel =
     circus_common::repo::channels::get_by_name(&state.pool, &name).await?;
+
+  if let Ok(project) =
+    circus_common::repo::projects::get(&state.pool, channel.project_id).await
+    && project.cache_enabled
+    && let Some(url) = project.cache_url
+  {
+    return Ok(
+      (
+        StatusCode::OK,
+        [("content-type", "text/plain; charset=utf-8")],
+        url,
+      )
+        .into_response(),
+    );
+  }
 
   let Some(url) = state.config.cache.cache_url.as_deref() else {
     return Ok(StatusCode::NOT_FOUND.into_response());
