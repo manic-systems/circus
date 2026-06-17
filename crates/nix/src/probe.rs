@@ -1,5 +1,7 @@
 //! Flake probe: auto-discover what a Nix flake repository provides.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result, flake, validate};
@@ -40,6 +42,7 @@ pub struct FlakeMetadata {
 
 /// Maximum output size we'll parse from `nix flake show --json` (10 MB).
 const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024;
+const FLAKE_PROBE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Probe a flake repository to discover its outputs and suggest jobsets.
 ///
@@ -59,7 +62,7 @@ pub async fn probe_flake(
     |rev| parsed_ref.with_revision(rev),
   );
 
-  let output = tokio::time::timeout(std::time::Duration::from_mins(1), async {
+  let output = tokio::time::timeout(FLAKE_PROBE_TIMEOUT, async {
     tokio::process::Command::new("nix")
       .args([
         "--extra-experimental-features",
@@ -74,7 +77,11 @@ pub async fn probe_flake(
       .await
   })
   .await
-  .map_err(|_| Error::Timeout("Flake probe timed out after 60s".to_string()))?
+  .map_err(|_| {
+    Error::Timeout(format!(
+      "Flake probe timed out after {FLAKE_PROBE_TIMEOUT:?}"
+    ))
+  })?
   .map_err(|e| Error::Eval(format!("Failed to run nix flake show: {e}")))?;
 
   if !output.status.success() {
