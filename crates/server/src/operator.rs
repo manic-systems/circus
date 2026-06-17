@@ -50,6 +50,84 @@ pub struct OperatorBuild {
   pub has_log:       bool,
 }
 
+impl OperatorBuild {
+  fn from_build(b: &Build, context: Option<&BuildContext>) -> Self {
+    let (text, class) = b.status.badge();
+    let (project_id, project_name, jobset_id, jobset_name) = context
+      .map_or_else(
+        || (None, String::new(), None, String::new()),
+        |(project_id, project_name, jobset_id, jobset_name)| {
+          (
+            Some(*project_id),
+            project_name.clone(),
+            Some(*jobset_id),
+            jobset_name.clone(),
+          )
+        },
+      );
+
+    Self {
+      id: b.id,
+      job_name: b.job_name.clone(),
+      project_id,
+      project_name,
+      jobset_id,
+      jobset_name,
+      status: format!("{:?}", b.status),
+      status_text: text.to_string(),
+      status_class: class.to_string(),
+      system: b.system.clone().unwrap_or_else(|| "-".to_string()),
+      created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+      started_at: b
+        .started_at
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default(),
+      completed_at: b
+        .completed_at
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default(),
+      duration: Self::format_duration(
+        b.started_at.as_ref(),
+        b.completed_at.as_ref(),
+      ),
+      started_epoch: if b.completed_at.is_none() {
+        b.started_at.map(|t| t.timestamp())
+      } else {
+        None
+      },
+      priority: b.priority,
+      is_aggregate: b.is_aggregate,
+      signed: b.signed,
+      drv_path: b.drv_path.clone(),
+      output_path: b.build_output_path.clone().unwrap_or_default(),
+      error_message: b.error_message.clone().unwrap_or_default(),
+      has_log: b.log_path.as_deref().is_some_and(|p| !p.is_empty()),
+    }
+  }
+
+  fn format_duration(
+    started: Option<&chrono::DateTime<chrono::Utc>>,
+    completed: Option<&chrono::DateTime<chrono::Utc>>,
+  ) -> String {
+    match (started, completed) {
+      (Some(s), Some(c)) => {
+        let secs = (*c - *s).num_seconds();
+        if secs < 0 {
+          return String::new();
+        }
+        let mins = secs / 60;
+        let rem = secs % 60;
+        if mins > 0 {
+          format!("{mins}m {rem}s")
+        } else {
+          format!("{rem}s")
+        }
+      },
+      _ => String::new(),
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OperatorProject {
   pub id:               Uuid,
@@ -64,10 +142,142 @@ pub struct OperatorProject {
   pub updated_at:       String,
 }
 
+impl OperatorProject {
+  async fn list(state: &AppState, include_hidden: bool) -> Vec<Self> {
+    let all_projects = circus_common::repo::projects::list(&state.pool, 100, 0)
+      .await
+      .unwrap_or_default();
+    let mut project_summaries = Vec::new();
+    for p in &all_projects {
+      let jobset_count =
+        circus_common::repo::jobsets::count_for_project(&state.pool, p.id)
+          .await
+          .unwrap_or(0);
+      let jobsets = circus_common::repo::jobsets::list_for_project(
+        &state.pool,
+        p.id,
+        100,
+        0,
+      )
+      .await
+      .unwrap_or_default();
+      let mut last_eval: Option<Evaluation> = None;
+      for js in &jobsets {
+        let js_evals =
+          circus_common::repo::evaluations::list_filtered_with_visibility(
+            &state.pool,
+            Some(js.id),
+            None,
+            1,
+            0,
+            include_hidden,
+          )
+          .await
+          .unwrap_or_default();
+        if let Some(e) = js_evals.into_iter().next()
+          && last_eval
+            .as_ref()
+            .is_none_or(|le| e.evaluation_time > le.evaluation_time)
+        {
+          last_eval = Some(e);
+        }
+      }
+      let (last_eval_status, last_eval_class, last_eval_time) =
+        last_eval.as_ref().map_or_else(
+          || ("Unknown".into(), "unknown".into(), "-".into()),
+          |e| {
+            let (text, class) = e.status.badge();
+            (
+              text.to_string(),
+              class.to_string(),
+              e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+            )
+          },
+        );
+      let project_builds =
+        circus_common::repo::builds::list_for_project(&state.pool, p.id)
+          .await
+          .unwrap_or_default();
+      let failing_jobs = project_builds
+        .iter()
+        .filter(|b| is_failed_status(b.status))
+        .count() as i64;
+      let queued_jobs = project_builds
+        .iter()
+        .filter(|b| b.status == BuildStatus::Pending)
+        .count() as i64;
+      let mut systems = project_builds
+        .iter()
+        .filter_map(|b| b.system.clone())
+        .collect::<Vec<_>>();
+      systems.sort();
+      systems.dedup();
+      project_summaries.push(Self {
+        id: p.id,
+        name: p.name.clone(),
+        jobset_count,
+        last_eval_status,
+        last_eval_class,
+        last_eval_time,
+        failing_jobs,
+        queued_jobs,
+        systems: if systems.is_empty() {
+          "-".into()
+        } else {
+          systems.join(", ")
+        },
+        updated_at: p.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+      });
+    }
+    project_summaries
+  }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OperatorQueueSystem {
   pub system: String,
   pub count:  i64,
+}
+
+impl OperatorQueueSystem {
+  fn from_pending(pending: &[Build]) -> Vec<Self> {
+    let mut queue_counts: HashMap<String, i64> = HashMap::new();
+    for build in pending {
+      let system = build
+        .system
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+      *queue_counts.entry(system).or_default() += 1;
+    }
+    let canonical_systems = [
+      "x86_64-linux",
+      "aarch64-linux",
+      "aarch64-darwin",
+      "x86_64-darwin",
+    ];
+    canonical_systems
+      .iter()
+      .filter_map(|system| {
+        queue_counts.get(*system).map(|count| {
+          Self {
+            system: (*system).to_string(),
+            count:  *count,
+          }
+        })
+      })
+      .chain(
+        queue_counts
+          .iter()
+          .filter(|(system, _)| !canonical_systems.contains(&system.as_str()))
+          .map(|(system, count)| {
+            Self {
+              system: system.clone(),
+              count:  *count,
+            }
+          }),
+      )
+      .collect()
+  }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +288,48 @@ pub struct OperatorWorker {
   pub status_class: String,
   pub current_jobs: i32,
   pub max_jobs:     i32,
+}
+
+impl OperatorWorker {
+  async fn list(state: &AppState) -> (Vec<Self>, i64, i64) {
+    let worker_sessions =
+      circus_common::repo::builder_sessions::list(&state.pool)
+        .await
+        .unwrap_or_default();
+    let worker_total = worker_sessions.len() as i64;
+    let worker_online =
+      worker_sessions.iter().filter(|w| w.connected).count() as i64;
+    let workers = worker_sessions
+      .iter()
+      .take(8)
+      .map(|w| {
+        let status_text = if !w.connected {
+          "offline"
+        } else if w.current_jobs > 0 {
+          "busy"
+        } else {
+          "idle"
+        };
+        Self {
+          name:         w.name.clone(),
+          system:       if w.systems.is_empty() {
+            "unknown".into()
+          } else {
+            w.systems.join(", ")
+          },
+          status_text:  status_text.into(),
+          status_class: if w.connected {
+            "running".into()
+          } else {
+            "skipped".into()
+          },
+          current_jobs: w.current_jobs,
+          max_jobs:     w.max_jobs,
+        }
+      })
+      .collect();
+    (workers, worker_online, worker_total)
+  }
 }
 
 pub async fn overview(
@@ -114,16 +366,21 @@ pub async fn overview(
     context_for_builds(state, recent_raw.iter().chain(failed_raw.iter())).await;
   let recent_builds = recent_raw
     .iter()
-    .map(|b| operator_build(b, context_by_eval.get(&b.evaluation_id)))
+    .map(|b| {
+      OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
+    })
     .collect();
   let failed_builds_list = failed_raw
     .iter()
-    .map(|b| operator_build(b, context_by_eval.get(&b.evaluation_id)))
+    .map(|b| {
+      OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
+    })
     .collect();
 
-  let projects = operator_projects(state, include_hidden).await;
-  let queue_by_system = queue_by_system(&pending_raw);
-  let (workers, worker_online, worker_total) = workers(state).await;
+  let projects = OperatorProject::list(state, include_hidden).await;
+  let queue_by_system = OperatorQueueSystem::from_pending(&pending_raw);
+  let (workers, worker_online, worker_total) =
+    OperatorWorker::list(state).await;
 
   OperatorOverview {
     total_builds: build_stats.total_builds.unwrap_or(0),
@@ -149,7 +406,9 @@ pub async fn recent_builds(state: &AppState) -> Vec<OperatorBuild> {
   let context_by_eval = context_for_builds(state, builds.iter()).await;
   builds
     .iter()
-    .map(|b| operator_build(b, context_by_eval.get(&b.evaluation_id)))
+    .map(|b| {
+      OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
+    })
     .collect()
 }
 
@@ -168,7 +427,9 @@ pub async fn failures(state: &AppState) -> Vec<OperatorBuild> {
   let context_by_eval = context_for_builds(state, builds.iter()).await;
   builds
     .iter()
-    .map(|b| operator_build(b, context_by_eval.get(&b.evaluation_id)))
+    .map(|b| {
+      OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
+    })
     .collect()
 }
 
@@ -176,7 +437,7 @@ pub async fn projects(
   state: &AppState,
   include_hidden: bool,
 ) -> Vec<OperatorProject> {
-  operator_projects(state, include_hidden).await
+  OperatorProject::list(state, include_hidden).await
 }
 
 pub async fn queue(state: &AppState) -> Vec<OperatorQueueSystem> {
@@ -187,11 +448,11 @@ pub async fn queue(state: &AppState) -> Vec<OperatorQueueSystem> {
   )
   .await
   .unwrap_or_default();
-  queue_by_system(&pending)
+  OperatorQueueSystem::from_pending(&pending)
 }
 
 pub async fn worker_summary(state: &AppState) -> Vec<OperatorWorker> {
-  let (workers, ..) = workers(state).await;
+  let (workers, ..) = OperatorWorker::list(state).await;
   workers
 }
 
@@ -232,244 +493,6 @@ async fn context_for_evaluation(
   Some((project.id, project.name, jobset.id, jobset.name))
 }
 
-fn operator_build(b: &Build, context: Option<&BuildContext>) -> OperatorBuild {
-  let (status_text, status_class) = status_badge(b.status);
-  let (project_id, project_name, jobset_id, jobset_name) = context.map_or_else(
-    || (None, String::new(), None, String::new()),
-    |(project_id, project_name, jobset_id, jobset_name)| {
-      (
-        Some(*project_id),
-        project_name.clone(),
-        Some(*jobset_id),
-        jobset_name.clone(),
-      )
-    },
-  );
-  OperatorBuild {
-    id: b.id,
-    job_name: b.job_name.clone(),
-    project_id,
-    project_name,
-    jobset_id,
-    jobset_name,
-    status: format!("{:?}", b.status),
-    status_text,
-    status_class,
-    system: b.system.clone().unwrap_or_else(|| "-".to_string()),
-    created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
-    started_at: b
-      .started_at
-      .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-      .unwrap_or_default(),
-    completed_at: b
-      .completed_at
-      .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-      .unwrap_or_default(),
-    duration: format_duration(b.started_at.as_ref(), b.completed_at.as_ref()),
-    started_epoch: if b.completed_at.is_none() {
-      b.started_at.map(|t| t.timestamp())
-    } else {
-      None
-    },
-    priority: b.priority,
-    is_aggregate: b.is_aggregate,
-    signed: b.signed,
-    drv_path: b.drv_path.clone(),
-    output_path: b.build_output_path.clone().unwrap_or_default(),
-    error_message: b.error_message.clone().unwrap_or_default(),
-    has_log: b.log_path.as_deref().is_some_and(|p| !p.is_empty()),
-  }
-}
-
-async fn operator_projects(
-  state: &AppState,
-  include_hidden: bool,
-) -> Vec<OperatorProject> {
-  let all_projects = circus_common::repo::projects::list(&state.pool, 100, 0)
-    .await
-    .unwrap_or_default();
-  let mut project_summaries = Vec::new();
-  for p in &all_projects {
-    let jobset_count =
-      circus_common::repo::jobsets::count_for_project(&state.pool, p.id)
-        .await
-        .unwrap_or(0);
-    let jobsets =
-      circus_common::repo::jobsets::list_for_project(&state.pool, p.id, 100, 0)
-        .await
-        .unwrap_or_default();
-    let mut last_eval: Option<Evaluation> = None;
-    for js in &jobsets {
-      let js_evals =
-        circus_common::repo::evaluations::list_filtered_with_visibility(
-          &state.pool,
-          Some(js.id),
-          None,
-          1,
-          0,
-          include_hidden,
-        )
-        .await
-        .unwrap_or_default();
-      if let Some(e) = js_evals.into_iter().next()
-        && last_eval
-          .as_ref()
-          .is_none_or(|le| e.evaluation_time > le.evaluation_time)
-      {
-        last_eval = Some(e);
-      }
-    }
-    let (last_eval_status, last_eval_class, last_eval_time) =
-      last_eval.as_ref().map_or_else(
-        || ("Unknown".into(), "unknown".into(), "-".into()),
-        |e| {
-          let (text, class) = eval_badge(&e.status);
-          (
-            text,
-            class,
-            e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
-          )
-        },
-      );
-    let project_builds =
-      circus_common::repo::builds::list_for_project(&state.pool, p.id)
-        .await
-        .unwrap_or_default();
-    let failing_jobs = project_builds
-      .iter()
-      .filter(|b| is_failed_status(b.status))
-      .count() as i64;
-    let queued_jobs = project_builds
-      .iter()
-      .filter(|b| b.status == BuildStatus::Pending)
-      .count() as i64;
-    let mut systems = project_builds
-      .iter()
-      .filter_map(|b| b.system.clone())
-      .collect::<Vec<_>>();
-    systems.sort();
-    systems.dedup();
-    project_summaries.push(OperatorProject {
-      id: p.id,
-      name: p.name.clone(),
-      jobset_count,
-      last_eval_status,
-      last_eval_class,
-      last_eval_time,
-      failing_jobs,
-      queued_jobs,
-      systems: if systems.is_empty() {
-        "-".into()
-      } else {
-        systems.join(", ")
-      },
-      updated_at: p.updated_at.format("%Y-%m-%d %H:%M").to_string(),
-    });
-  }
-  project_summaries
-}
-
-fn queue_by_system(pending: &[Build]) -> Vec<OperatorQueueSystem> {
-  let mut queue_counts: HashMap<String, i64> = HashMap::new();
-  for build in pending {
-    let system = build
-      .system
-      .clone()
-      .unwrap_or_else(|| "unknown".to_string());
-    *queue_counts.entry(system).or_default() += 1;
-  }
-  let canonical_systems = [
-    "x86_64-linux",
-    "aarch64-linux",
-    "aarch64-darwin",
-    "x86_64-darwin",
-  ];
-  canonical_systems
-    .iter()
-    .filter_map(|system| {
-      queue_counts.get(*system).map(|count| {
-        OperatorQueueSystem {
-          system: (*system).to_string(),
-          count:  *count,
-        }
-      })
-    })
-    .chain(
-      queue_counts
-        .iter()
-        .filter(|(system, _)| !canonical_systems.contains(&system.as_str()))
-        .map(|(system, count)| {
-          OperatorQueueSystem {
-            system: system.clone(),
-            count:  *count,
-          }
-        }),
-    )
-    .collect()
-}
-
-async fn workers(state: &AppState) -> (Vec<OperatorWorker>, i64, i64) {
-  let worker_sessions =
-    circus_common::repo::builder_sessions::list(&state.pool)
-      .await
-      .unwrap_or_default();
-  let worker_total = worker_sessions.len() as i64;
-  let worker_online =
-    worker_sessions.iter().filter(|w| w.connected).count() as i64;
-  let workers = worker_sessions
-    .iter()
-    .take(8)
-    .map(|w| {
-      let status_text = if !w.connected {
-        "offline"
-      } else if w.current_jobs > 0 {
-        "busy"
-      } else {
-        "idle"
-      };
-      OperatorWorker {
-        name:         w.name.clone(),
-        system:       if w.systems.is_empty() {
-          "unknown".into()
-        } else {
-          w.systems.join(", ")
-        },
-        status_text:  status_text.into(),
-        status_class: if w.connected {
-          "running".into()
-        } else {
-          "skipped".into()
-        },
-        current_jobs: w.current_jobs,
-        max_jobs:     w.max_jobs,
-      }
-    })
-    .collect();
-  (workers, worker_online, worker_total)
-}
-
-fn format_duration(
-  started: Option<&chrono::DateTime<chrono::Utc>>,
-  completed: Option<&chrono::DateTime<chrono::Utc>>,
-) -> String {
-  match (started, completed) {
-    (Some(s), Some(c)) => {
-      let secs = (*c - *s).num_seconds();
-      if secs < 0 {
-        return String::new();
-      }
-      let mins = secs / 60;
-      let rem = secs % 60;
-      if mins > 0 {
-        format!("{mins}m {rem}s")
-      } else {
-        format!("{rem}s")
-      }
-    },
-    _ => String::new(),
-  }
-}
-
 const fn is_failed_status(status: BuildStatus) -> bool {
   matches!(
     status,
@@ -482,41 +505,4 @@ const fn is_failed_status(status: BuildStatus) -> bool {
       | BuildStatus::NarSizeLimitExceeded
       | BuildStatus::NonDeterministic
   )
-}
-
-fn status_badge(s: BuildStatus) -> (String, String) {
-  match s {
-    BuildStatus::Succeeded => ("Succeeded".into(), "succeeded".into()),
-    BuildStatus::Failed
-    | BuildStatus::DependencyFailed
-    | BuildStatus::FailedWithOutput
-    | BuildStatus::Timeout
-    | BuildStatus::CachedFailure
-    | BuildStatus::LogLimitExceeded
-    | BuildStatus::NarSizeLimitExceeded
-    | BuildStatus::NonDeterministic => ("Failed".into(), "failed".into()),
-    BuildStatus::Running => ("Running".into(), "running".into()),
-    BuildStatus::Pending => ("Queued".into(), "pending".into()),
-    BuildStatus::Cancelled | BuildStatus::Aborted => {
-      ("Canceled".into(), "cancelled".into())
-    },
-    BuildStatus::UnsupportedSystem => ("Skipped".into(), "skipped".into()),
-  }
-}
-
-fn eval_badge(s: &circus_common::models::EvaluationStatus) -> (String, String) {
-  match s {
-    circus_common::models::EvaluationStatus::Completed => {
-      ("Succeeded".into(), "completed".into())
-    },
-    circus_common::models::EvaluationStatus::Failed => {
-      ("Failed".into(), "failed".into())
-    },
-    circus_common::models::EvaluationStatus::Running => {
-      ("Running".into(), "running".into())
-    },
-    circus_common::models::EvaluationStatus::Pending => {
-      ("Queued".into(), "pending".into())
-    },
-  }
 }

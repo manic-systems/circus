@@ -16,7 +16,7 @@ use axum::{
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
 };
-use circus_common::models::{Build, BuildStatus, Evaluation};
+use circus_common::models::{Build, BuildStatus};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -36,7 +36,6 @@ use super::{
     RenderExt,
     StarredJobView,
     WorkerSummaryView,
-    auth_name,
     build_view,
     build_view_with_context,
     decode_build_log,
