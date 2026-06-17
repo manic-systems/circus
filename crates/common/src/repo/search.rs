@@ -100,6 +100,119 @@ pub struct EvaluationSearchFilters {
   pub finished_before: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+impl BuildStatusFilter {
+  const fn as_str(self) -> &'static str {
+    match self {
+      Self::Pending => "pending",
+      Self::Running => "running",
+      Self::Succeeded => "succeeded",
+      Self::Failed => "failed",
+      Self::Cancelled => "cancelled",
+      Self::DependencyFailed => "dependency_failed",
+      Self::Aborted => "aborted",
+      Self::FailedWithOutput => "failed_with_output",
+      Self::Timeout => "timeout",
+      Self::CachedFailure => "cached_failure",
+      Self::UnsupportedSystem => "unsupported_system",
+      Self::LogLimitExceeded => "log_limit_exceeded",
+      Self::NarSizeLimitExceeded => "nar_size_limit_exceeded",
+      Self::NonDeterministic => "non_deterministic",
+    }
+  }
+}
+
+impl BuildSearchFilters {
+  fn apply_to(&self, builder: &mut QueryBuilder<Postgres>) {
+    if let Some(status) = self.status {
+      builder.push(" AND status = ");
+      builder.push_bind(status.as_str());
+    }
+    if let Some(project_id) = self.project_id {
+      builder.push(" AND project_id = ");
+      builder.push_bind(project_id);
+    }
+    if let Some(jobset_id) = self.jobset_id {
+      builder.push(" AND jobset_id = ");
+      builder.push_bind(jobset_id);
+    }
+    if let Some(evaluation_id) = self.evaluation_id {
+      builder.push(" AND evaluation_id = ");
+      builder.push_bind(evaluation_id);
+    }
+    if let Some(after) = self.created_after {
+      builder.push(" AND created_at >= ");
+      builder.push_bind(after);
+    }
+    if let Some(before) = self.created_before {
+      builder.push(" AND created_at <= ");
+      builder.push_bind(before);
+    }
+    if let Some(min) = self.min_priority {
+      builder.push(" AND priority >= ");
+      builder.push_bind(min);
+    }
+    if let Some(max) = self.max_priority {
+      builder.push(" AND priority <= ");
+      builder.push_bind(max);
+    }
+    if let Some(has) = self.has_substitutes {
+      builder.push(" AND has_substitutes = ");
+      builder.push_bind(has);
+    }
+  }
+}
+
+impl JobsetSearchFilters {
+  fn apply_to(&self, builder: &mut QueryBuilder<Postgres>) {
+    if let Some(project_id) = self.project_id {
+      builder.push(" AND project_id = ");
+      builder.push_bind(project_id);
+    }
+    if let Some(enabled) = self.enabled {
+      builder.push(" AND enabled = ");
+      builder.push_bind(enabled);
+    }
+    if let Some(flake_mode) = self.flake_mode {
+      builder.push(" AND flake_mode = ");
+      builder.push_bind(flake_mode);
+    }
+  }
+}
+
+impl EvaluationSearchFilters {
+  fn apply_to(&self, builder: &mut QueryBuilder<Postgres>) {
+    if let Some(project_id) = self.project_id {
+      builder.push(" AND project_id = ");
+      builder.push_bind(project_id);
+    }
+    if let Some(jobset_id) = self.jobset_id {
+      builder.push(" AND jobset_id = ");
+      builder.push_bind(jobset_id);
+    }
+    if let Some(has_builds) = self.has_builds {
+      if has_builds {
+        builder.push(
+          " AND EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
+           evaluations.id)",
+        );
+      } else {
+        builder.push(
+          " AND NOT EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
+           evaluations.id)",
+        );
+      }
+    }
+    if let Some(after) = self.finished_after {
+      builder.push(" AND finished_at >= ");
+      builder.push_bind(after);
+    }
+    if let Some(before) = self.finished_before {
+      builder.push(" AND finished_at <= ");
+      builder.push_bind(before);
+    }
+  }
+}
+
 /// Search parameters
 #[derive(Debug, Clone)]
 pub struct SearchParams {
@@ -301,18 +414,7 @@ async fn search_jobsets(
 
   // Apply filters
   if let Some(ref filters) = params.jobset_filters {
-    if let Some(project_id) = filters.project_id {
-      query_builder.push(" AND project_id = ");
-      query_builder.push_bind(project_id);
-    }
-    if let Some(enabled) = filters.enabled {
-      query_builder.push(" AND enabled = ");
-      query_builder.push_bind(enabled);
-    }
-    if let Some(flake_mode) = filters.flake_mode {
-      query_builder.push(" AND flake_mode = ");
-      query_builder.push_bind(flake_mode);
-    }
+    filters.apply_to(&mut query_builder);
   }
 
   // Count query mirrors the data query filters.
@@ -320,18 +422,7 @@ async fn search_jobsets(
     QueryBuilder::new("SELECT COUNT(*) FROM jobsets WHERE name ILIKE ");
   count_builder.push_bind(&pattern);
   if let Some(ref filters) = params.jobset_filters {
-    if let Some(project_id) = filters.project_id {
-      count_builder.push(" AND project_id = ");
-      count_builder.push_bind(project_id);
-    }
-    if let Some(enabled) = filters.enabled {
-      count_builder.push(" AND enabled = ");
-      count_builder.push_bind(enabled);
-    }
-    if let Some(flake_mode) = filters.flake_mode {
-      count_builder.push(" AND flake_mode = ");
-      count_builder.push_bind(flake_mode);
-    }
+    filters.apply_to(&mut count_builder);
   }
   let (total,): (i64,) = count_builder.build_query_as().fetch_one(pool).await?;
 
@@ -359,70 +450,14 @@ async fn search_evaluations(
 
   // Apply filters
   if let Some(ref filters) = params.evaluation_filters {
-    if let Some(project_id) = filters.project_id {
-      query_builder.push(" AND project_id = ");
-      query_builder.push_bind(project_id);
-    }
-    if let Some(jobset_id) = filters.jobset_id {
-      query_builder.push(" AND jobset_id = ");
-      query_builder.push_bind(jobset_id);
-    }
-    if let Some(has_builds) = filters.has_builds {
-      if has_builds {
-        query_builder.push(
-          " AND EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
-           evaluations.id)",
-        );
-      } else {
-        query_builder.push(
-          " AND NOT EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
-           evaluations.id)",
-        );
-      }
-    }
-    if let Some(after) = filters.finished_after {
-      query_builder.push(" AND finished_at >= ");
-      query_builder.push_bind(after);
-    }
-    if let Some(before) = filters.finished_before {
-      query_builder.push(" AND finished_at <= ");
-      query_builder.push_bind(before);
-    }
+    filters.apply_to(&mut query_builder);
   }
 
   // Count query mirrors the data query filters.
   let mut count_builder: QueryBuilder<Postgres> =
     QueryBuilder::new("SELECT COUNT(*) FROM evaluations WHERE 1=1");
   if let Some(ref filters) = params.evaluation_filters {
-    if let Some(project_id) = filters.project_id {
-      count_builder.push(" AND project_id = ");
-      count_builder.push_bind(project_id);
-    }
-    if let Some(jobset_id) = filters.jobset_id {
-      count_builder.push(" AND jobset_id = ");
-      count_builder.push_bind(jobset_id);
-    }
-    if let Some(has_builds) = filters.has_builds {
-      if has_builds {
-        count_builder.push(
-          " AND EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
-           evaluations.id)",
-        );
-      } else {
-        count_builder.push(
-          " AND NOT EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
-           evaluations.id)",
-        );
-      }
-    }
-    if let Some(after) = filters.finished_after {
-      count_builder.push(" AND finished_at >= ");
-      count_builder.push_bind(after);
-    }
-    if let Some(before) = filters.finished_before {
-      count_builder.push(" AND finished_at <= ");
-      count_builder.push_bind(before);
-    }
+    filters.apply_to(&mut count_builder);
   }
   let (total,): (i64,) = count_builder.build_query_as().fetch_one(pool).await?;
 
@@ -460,58 +495,7 @@ async fn search_builds(
 
   // Apply filters
   if let Some(ref filters) = params.build_filters {
-    if let Some(status) = filters.status {
-      let status_str = match status {
-        BuildStatusFilter::Pending => "pending",
-        BuildStatusFilter::Running => "running",
-        BuildStatusFilter::Succeeded => "succeeded",
-        BuildStatusFilter::Failed => "failed",
-        BuildStatusFilter::Cancelled => "cancelled",
-        BuildStatusFilter::DependencyFailed => "dependency_failed",
-        BuildStatusFilter::Aborted => "aborted",
-        BuildStatusFilter::FailedWithOutput => "failed_with_output",
-        BuildStatusFilter::Timeout => "timeout",
-        BuildStatusFilter::CachedFailure => "cached_failure",
-        BuildStatusFilter::UnsupportedSystem => "unsupported_system",
-        BuildStatusFilter::LogLimitExceeded => "log_limit_exceeded",
-        BuildStatusFilter::NarSizeLimitExceeded => "nar_size_limit_exceeded",
-        BuildStatusFilter::NonDeterministic => "non_deterministic",
-      };
-      query_builder.push(" AND status = ");
-      query_builder.push_bind(status_str);
-    }
-    if let Some(project_id) = filters.project_id {
-      query_builder.push(" AND project_id = ");
-      query_builder.push_bind(project_id);
-    }
-    if let Some(jobset_id) = filters.jobset_id {
-      query_builder.push(" AND jobset_id = ");
-      query_builder.push_bind(jobset_id);
-    }
-    if let Some(evaluation_id) = filters.evaluation_id {
-      query_builder.push(" AND evaluation_id = ");
-      query_builder.push_bind(evaluation_id);
-    }
-    if let Some(after) = filters.created_after {
-      query_builder.push(" AND created_at >= ");
-      query_builder.push_bind(after);
-    }
-    if let Some(before) = filters.created_before {
-      query_builder.push(" AND created_at <= ");
-      query_builder.push_bind(before);
-    }
-    if let Some(min) = filters.min_priority {
-      query_builder.push(" AND priority >= ");
-      query_builder.push_bind(min);
-    }
-    if let Some(max) = filters.max_priority {
-      query_builder.push(" AND priority <= ");
-      query_builder.push_bind(max);
-    }
-    if let Some(has) = filters.has_substitutes {
-      query_builder.push(" AND has_substitutes = ");
-      query_builder.push_bind(has);
-    }
+    filters.apply_to(&mut query_builder);
   }
 
   // Count query mirrors the data query filters.
@@ -522,58 +506,7 @@ async fn search_builds(
   count_builder.push_bind(&pattern);
   count_builder.push(")");
   if let Some(ref filters) = params.build_filters {
-    if let Some(status) = filters.status {
-      let status_str = match status {
-        BuildStatusFilter::Pending => "pending",
-        BuildStatusFilter::Running => "running",
-        BuildStatusFilter::Succeeded => "succeeded",
-        BuildStatusFilter::Failed => "failed",
-        BuildStatusFilter::Cancelled => "cancelled",
-        BuildStatusFilter::DependencyFailed => "dependency_failed",
-        BuildStatusFilter::Aborted => "aborted",
-        BuildStatusFilter::FailedWithOutput => "failed_with_output",
-        BuildStatusFilter::Timeout => "timeout",
-        BuildStatusFilter::CachedFailure => "cached_failure",
-        BuildStatusFilter::UnsupportedSystem => "unsupported_system",
-        BuildStatusFilter::LogLimitExceeded => "log_limit_exceeded",
-        BuildStatusFilter::NarSizeLimitExceeded => "nar_size_limit_exceeded",
-        BuildStatusFilter::NonDeterministic => "non_deterministic",
-      };
-      count_builder.push(" AND status = ");
-      count_builder.push_bind(status_str);
-    }
-    if let Some(project_id) = filters.project_id {
-      count_builder.push(" AND project_id = ");
-      count_builder.push_bind(project_id);
-    }
-    if let Some(jobset_id) = filters.jobset_id {
-      count_builder.push(" AND jobset_id = ");
-      count_builder.push_bind(jobset_id);
-    }
-    if let Some(evaluation_id) = filters.evaluation_id {
-      count_builder.push(" AND evaluation_id = ");
-      count_builder.push_bind(evaluation_id);
-    }
-    if let Some(after) = filters.created_after {
-      count_builder.push(" AND created_at >= ");
-      count_builder.push_bind(after);
-    }
-    if let Some(before) = filters.created_before {
-      count_builder.push(" AND created_at <= ");
-      count_builder.push_bind(before);
-    }
-    if let Some(min) = filters.min_priority {
-      count_builder.push(" AND priority >= ");
-      count_builder.push_bind(min);
-    }
-    if let Some(max) = filters.max_priority {
-      count_builder.push(" AND priority <= ");
-      count_builder.push_bind(max);
-    }
-    if let Some(has) = filters.has_substitutes {
-      count_builder.push(" AND has_substitutes = ");
-      count_builder.push_bind(has);
-    }
+    filters.apply_to(&mut count_builder);
   }
   let (total,): (i64,) = count_builder.build_query_as().fetch_one(pool).await?;
 
