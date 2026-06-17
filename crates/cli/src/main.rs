@@ -1,3 +1,8 @@
+#![expect(
+  clippy::print_stdout,
+  reason = "circusctl is a CLI and stdout is its user interface"
+)]
+
 mod app;
 
 #[tokio::main]
