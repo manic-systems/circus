@@ -131,6 +131,7 @@ fn parse_documented_paths() -> BTreeSet<String> {
             || key.starts_with("/channel/")
             || key.starts_with("/job/")
             || key.starts_with("/nix-cache/")
+            || (key.starts_with("/projects/") && key.contains("/nix-cache/"))
           {
             normalize_path(key)
           } else {

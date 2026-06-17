@@ -56,16 +56,15 @@ pub struct UpsertNarInfo<'a> {
 pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   sqlx::query(
     "INSERT INTO narinfo_cache (store_path, nar_hash, nar_size, file_hash, \
-     file_size, compression, url, deriver, \"references\", sig, ca, \
-     build_id, project_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, \
-     $8, $9, $10, $11, $12, $13, NOW()) \
-     ON CONFLICT (store_path) DO UPDATE SET nar_hash = EXCLUDED.nar_hash, \
-     nar_size = EXCLUDED.nar_size, file_hash = EXCLUDED.file_hash, file_size \
-     = EXCLUDED.file_size, compression = EXCLUDED.compression, url = \
-     EXCLUDED.url, deriver = EXCLUDED.deriver, \"references\" = \
-     EXCLUDED.\"references\", sig = EXCLUDED.sig, ca = EXCLUDED.ca, \
-     build_id = EXCLUDED.build_id, project_id = EXCLUDED.project_id, \
-     updated_at = NOW()",
+     file_size, compression, url, deriver, \"references\", sig, ca, build_id, \
+     project_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
+     $11, $12, $13, NOW()) ON CONFLICT (store_path) DO UPDATE SET nar_hash = \
+     EXCLUDED.nar_hash, nar_size = EXCLUDED.nar_size, file_hash = \
+     EXCLUDED.file_hash, file_size = EXCLUDED.file_size, compression = \
+     EXCLUDED.compression, url = EXCLUDED.url, deriver = EXCLUDED.deriver, \
+     \"references\" = EXCLUDED.\"references\", sig = EXCLUDED.sig, ca = \
+     EXCLUDED.ca, build_id = EXCLUDED.build_id, project_id = \
+     EXCLUDED.project_id, updated_at = NOW()",
   )
   .bind(info.store_path)
   .bind(info.nar_hash)
@@ -110,38 +109,19 @@ pub async fn get(pool: &PgPool, store_path: &str) -> Result<NarInfo> {
 pub async fn get_by_hash_part(
   pool: &PgPool,
   hash_part: &str,
+  project_id: Option<Uuid>,
 ) -> Result<NarInfo> {
   // Nix store paths are `/nix/store/<32-chars>-<name>`; we match on the
   // 32-char hash part right after the prefix.
   sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache WHERE store_path LIKE $1",
-  )
-  .bind(format!("/nix/store/{hash_part}-%"))
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("narinfo for hash {hash_part}")))
-}
-
-/// Lookup by store path hash part and project.
-///
-/// # Errors
-///
-/// Same as [`get`].
-pub async fn get_by_hash_part_for_project(
-  pool: &PgPool,
-  hash_part: &str,
-  project_id: Uuid,
-) -> Result<NarInfo> {
-  sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache WHERE store_path LIKE $1 AND project_id = $2",
+    "SELECT * FROM narinfo_cache WHERE store_path LIKE $1 AND ($2::uuid IS \
+     NULL OR project_id = $2)",
   )
   .bind(format!("/nix/store/{hash_part}-%"))
   .bind(project_id)
   .fetch_optional(pool)
   .await?
-  .ok_or_else(|| {
-    CiError::NotFound(format!("narinfo for hash {hash_part} in {project_id}"))
-  })
+  .ok_or_else(|| narinfo_not_found("hash", hash_part, project_id))
 }
 
 /// Lookup by the narinfo `URL` field, e.g. `nar/<hash>.nar.zst`.
@@ -152,38 +132,29 @@ pub async fn get_by_hash_part_for_project(
 /// # Errors
 ///
 /// Same as [`get`].
-pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
-  sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache WHERE url = $1 ORDER BY updated_at DESC \
-     LIMIT 1",
-  )
-  .bind(url)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("narinfo for URL {url}")))
-}
-
-/// Lookup by URL and project.
-///
-/// # Errors
-///
-/// Same as [`get`].
-pub async fn get_by_url_for_project(
+pub async fn get_by_url(
   pool: &PgPool,
   url: &str,
-  project_id: Uuid,
+  project_id: Option<Uuid>,
 ) -> Result<NarInfo> {
   sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache WHERE url = $1 AND project_id = $2 ORDER BY \
-     updated_at DESC LIMIT 1",
+    "SELECT * FROM narinfo_cache WHERE url = $1 AND ($2::uuid IS NULL OR \
+     project_id = $2) ORDER BY updated_at DESC LIMIT 1",
   )
   .bind(url)
   .bind(project_id)
   .fetch_optional(pool)
   .await?
-  .ok_or_else(|| {
-    CiError::NotFound(format!("narinfo for URL {url} in {project_id}"))
-  })
+  .ok_or_else(|| narinfo_not_found("URL", url, project_id))
+}
+
+fn narinfo_not_found(
+  kind: &str,
+  value: &str,
+  project_id: Option<Uuid>,
+) -> CiError {
+  let scope = project_id.map_or_else(String::new, |id| format!(" in {id}"));
+  CiError::NotFound(format!("narinfo for {kind} {value}{scope}"))
 }
 
 /// Total rows. Cheap for admin and metrics surfaces.

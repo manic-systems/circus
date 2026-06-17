@@ -51,7 +51,7 @@ enum CacheScope {
 }
 
 impl CacheScope {
-  fn project_id(self) -> Option<Uuid> {
+  const fn project_id(self) -> Option<Uuid> {
     match self {
       Self::Global => None,
       Self::Project(id) => Some(id),
@@ -72,7 +72,7 @@ struct CacheSettings {
 }
 
 impl CacheSettings {
-  fn global(config: &circus_config::Config) -> Self {
+  const fn global(config: &circus_config::Config) -> Self {
     Self {
       scope:   CacheScope::Global,
       enabled: config.cache.enabled,
@@ -380,17 +380,12 @@ async fn narinfo_for_settings(
   // table sees every successful upload across the cluster, so a path
   // built on one builder is available from any cache fetcher without
   // running nix path-info locally.
-  let row = if let Some(project_id) = settings.scope.project_id() {
-    circus_common::repo::narinfo_cache::get_by_hash_part_for_project(
-      &state.pool,
-      hash,
-      project_id,
-    )
-    .await
-  } else {
-    circus_common::repo::narinfo_cache::get_by_hash_part(&state.pool, hash)
-      .await
-  };
+  let row = circus_common::repo::narinfo_cache::get_by_hash_part(
+    &state.pool,
+    hash,
+    settings.scope.project_id(),
+  )
+  .await;
   if let Ok(row) = row
     && narinfo_has_signature(&row)
   {
@@ -416,8 +411,13 @@ async fn narinfo_for_settings(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info, settings.scope)
-    .await?
+  if !is_servable_harmonia_path(
+    &state.pool,
+    nix_store_db,
+    &info,
+    settings.scope,
+  )
+  .await?
   {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
@@ -501,16 +501,12 @@ async fn redirect_uploaded_nar(
   }
 
   let url = format!("nar/{object_name}");
-  let row = if let Some(project_id) = scope.project_id() {
-    circus_common::repo::narinfo_cache::get_by_url_for_project(
-      &state.pool,
-      &url,
-      project_id,
-    )
-    .await
-  } else {
-    circus_common::repo::narinfo_cache::get_by_url(&state.pool, &url).await
-  };
+  let row = circus_common::repo::narinfo_cache::get_by_url(
+    &state.pool,
+    &url,
+    scope.project_id(),
+  )
+  .await;
   match row {
     Ok(row) => {
       if !narinfo_has_signature(&row) {
@@ -569,7 +565,9 @@ async fn serve_nar_for_settings(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
-  if let Some(response) = redirect_uploaded_nar(&state, &hash, settings.scope).await? {
+  if let Some(response) =
+    redirect_uploaded_nar(&state, &hash, settings.scope).await?
+  {
     return Ok(response);
   }
 
@@ -592,8 +590,13 @@ async fn serve_nar_for_settings(
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(&state.pool, nix_store_db, &info, settings.scope)
-    .await?
+  if !is_servable_harmonia_path(
+    &state.pool,
+    nix_store_db,
+    &info,
+    settings.scope,
+  )
+  .await?
   {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }

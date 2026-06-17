@@ -18,8 +18,68 @@ use crate::{
     USER_SESSION_COOKIE,
     cookie_value,
   },
-  state::AppState,
+  state::{AppState, CsrfToken, SessionData},
 };
+
+struct UserSession {
+  session_id: String,
+  user:       User,
+}
+
+struct LegacyApiKeySession {
+  session_id: String,
+  api_key:    Option<ApiKey>,
+}
+
+#[derive(Default)]
+struct RequestAuth {
+  bearer_api_key: Option<ApiKey>,
+  user_session:   Option<UserSession>,
+  legacy_session: Option<LegacyApiKeySession>,
+}
+
+#[derive(Default)]
+struct RequestCredentials {
+  bearer_token:          Option<String>,
+  user_session_id:       Option<String>,
+  legacy_api_session_id: Option<String>,
+}
+
+impl RequestCredentials {
+  fn from_request(request: &Request) -> Self {
+    Self {
+      bearer_token:          request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|header| header.strip_prefix("Bearer "))
+        .map(str::to_owned),
+      user_session_id:       cookie_value(
+        request.headers(),
+        USER_SESSION_COOKIE,
+      ),
+      legacy_api_session_id: cookie_value(
+        request.headers(),
+        API_KEY_SESSION_COOKIE,
+      ),
+    }
+  }
+}
+
+impl RequestAuth {
+  async fn resolve(state: &AppState, credentials: RequestCredentials) -> Self {
+    Self {
+      bearer_api_key: resolve_bearer_api_key(state, credentials.bearer_token)
+        .await,
+      user_session:   resolve_user_session(state, credentials.user_session_id)
+        .await,
+      legacy_session: resolve_legacy_api_key_session(
+        state,
+        credentials.legacy_api_session_id,
+      ),
+    }
+  }
+}
 
 /// Extract and validate an API key from the Authorization header or session
 /// cookie. Keys use the format: `Bearer circus_xxxx`. Session cookies use
@@ -42,92 +102,43 @@ pub async fn require_api_key(
     || method == axum::http::Method::HEAD
     || method == axum::http::Method::OPTIONS;
 
-  // Try Bearer token first (API key auth)
-  let auth_header = request
-    .headers()
-    .get("authorization")
-    .and_then(|v| v.to_str().ok())
-    .map(String::from);
+  let credentials = RequestCredentials::from_request(&request);
+  let auth = RequestAuth::resolve(&state, credentials).await;
 
-  let token = auth_header
-    .as_deref()
-    .and_then(|h| h.strip_prefix("Bearer "));
-
-  if let Some(token) = token {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    let key_hash = hex::encode(hasher.finalize());
-
-    if let Ok(Some(api_key)) =
-      circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
-    {
-      // Update last used timestamp asynchronously
-      let pool = state.pool.clone();
-      let key_id = api_key.id;
-      tokio::spawn(async move {
-        if let Err(e) =
-          circus_common::repo::api_keys::touch_last_used(&pool, key_id).await
-        {
-          tracing::warn!(error = %e, "Failed to update API key last_used timestamp");
-        }
-      });
-
-      request.extensions_mut().insert(api_key.clone());
-      request.extensions_mut().insert(crate::state::SessionData {
-        api_key:    Some(api_key),
-        user:       None,
-        created_at: std::time::Instant::now(),
-      });
-      return Ok(next.run(request).await);
-    }
+  if let Some(api_key) = auth.bearer_api_key {
+    request.extensions_mut().insert(api_key.clone());
+    request.extensions_mut().insert(SessionData {
+      api_key:    Some(api_key),
+      user:       None,
+      created_at: std::time::Instant::now(),
+    });
+    return Ok(next.run(request).await);
   }
 
   // Fall back to session cookie. Mutating API requests authenticated by a
   // browser session must carry the dashboard CSRF token. Bearer-token API calls
   // are unaffected because they are not sent automatically by browsers.
-  {
-    // User sessions are durable DB-backed tokens. Legacy API-key dashboard
-    // sessions below remain explicitly process-local.
-    if let Some(session_id) =
-      cookie_value(request.headers(), USER_SESSION_COOKIE)
-    {
-      match repo::users::validate_session(&state.pool, &session_id).await {
-        Ok(Some(user)) => {
-          if !is_read && !valid_csrf_header(&state, &request, &session_id) {
-            return Err(StatusCode::FORBIDDEN);
-          }
-          request.extensions_mut().insert(user.clone());
-          request.extensions_mut().insert(crate::state::SessionData {
-            api_key:    None,
-            user:       Some(user),
-            created_at: std::time::Instant::now(),
-          });
-          return Ok(next.run(request).await);
-        },
-        Ok(None) => {},
-        Err(e) => tracing::warn!("failed to validate user session: {e}"),
-      }
+  if let Some(session) = auth.user_session {
+    if !is_read && !valid_csrf_header(&state, &request, &session.session_id) {
+      return Err(StatusCode::FORBIDDEN);
     }
+    request.extensions_mut().insert(session.user.clone());
+    request.extensions_mut().insert(SessionData {
+      api_key:    None,
+      user:       Some(session.user),
+      created_at: std::time::Instant::now(),
+    });
+    return Ok(next.run(request).await);
+  }
 
-    // Try legacy API key session (circus_session cookie)
-    if let Some(session_id) =
-      cookie_value(request.headers(), API_KEY_SESSION_COOKIE)
-      && let Some(session) = state.sessions.get(&session_id)
-    {
-      // Check session expiry (24 hours)
-      if session.created_at.elapsed() < API_KEY_SESSION_MAX_AGE {
-        if !is_read && !valid_csrf_header(&state, &request, &session_id) {
-          return Err(StatusCode::FORBIDDEN);
-        }
-        if let Some(ref api_key) = session.api_key {
-          request.extensions_mut().insert(api_key.clone());
-        }
-        return Ok(next.run(request).await);
-      }
-      // Expired, remove it
-      drop(session);
-      state.sessions.remove(&session_id);
+  if let Some(session) = auth.legacy_session {
+    if !is_read && !valid_csrf_header(&state, &request, &session.session_id) {
+      return Err(StatusCode::FORBIDDEN);
     }
+    if let Some(api_key) = session.api_key {
+      request.extensions_mut().insert(api_key);
+    }
+    return Ok(next.run(request).await);
   }
 
   // No valid auth found
@@ -204,78 +215,96 @@ pub async fn extract_session(
   mut request: Request,
   next: Next,
 ) -> Response {
-  // Try Bearer token first (API key auth)
-  let auth_header = request
-    .headers()
-    .get("authorization")
-    .and_then(|v| v.to_str().ok())
-    .map(String::from);
+  let credentials = RequestCredentials::from_request(&request);
+  let auth = RequestAuth::resolve(&state, credentials).await;
 
-  if let Some(ref auth_header) = auth_header
-    && let Some(token) = auth_header.strip_prefix("Bearer ")
-  {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    let key_hash = hex::encode(hasher.finalize());
-
-    if let Ok(Some(api_key)) =
-      circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
-    {
-      // Update last used timestamp asynchronously
-      let pool = state.pool.clone();
-      let key_id = api_key.id;
-      tokio::spawn(async move {
-        if let Err(e) =
-          circus_common::repo::api_keys::touch_last_used(&pool, key_id).await
-        {
-          tracing::warn!(error = %e, "Failed to update API key last_used timestamp");
-        }
-      });
-
-      request.extensions_mut().insert(api_key);
-    }
+  if let Some(api_key) = auth.bearer_api_key {
+    request.extensions_mut().insert(api_key);
   }
 
-  {
-    // User sessions are durable DB-backed tokens. Legacy API-key dashboard
-    // sessions below remain explicitly process-local.
-    if let Some(session_id) =
-      cookie_value(request.headers(), USER_SESSION_COOKIE)
-    {
-      match repo::users::validate_session(&state.pool, &session_id).await {
-        Ok(Some(user)) => {
-          request.extensions_mut().insert(user);
-          let token = state.csrf_token_for(&session_id);
-          request
-            .extensions_mut()
-            .insert(crate::state::CsrfToken(token));
-        },
-        Ok(None) => {},
-        Err(e) => tracing::warn!("failed to validate user session: {e}"),
-      }
-    }
+  if let Some(session) = auth.user_session {
+    request.extensions_mut().insert(session.user);
+    request
+      .extensions_mut()
+      .insert(CsrfToken(state.csrf_token_for(&session.session_id)));
+  }
 
-    // Try legacy API key session
-    if let Some(session_id) =
-      cookie_value(request.headers(), API_KEY_SESSION_COOKIE)
-      && let Some(session) = state.sessions.get(&session_id)
-    {
-      // Check session expiry
-      if session.created_at.elapsed() < API_KEY_SESSION_MAX_AGE {
-        if let Some(ref api_key) = session.api_key {
-          request.extensions_mut().insert(api_key.clone());
-        }
-        let token = state.csrf_token_for(&session_id);
-        request
-          .extensions_mut()
-          .insert(crate::state::CsrfToken(token));
-      } else {
-        drop(session);
-        state.sessions.remove(&session_id);
-      }
+  if let Some(session) = auth.legacy_session {
+    if let Some(api_key) = session.api_key {
+      request.extensions_mut().insert(api_key);
     }
+    request
+      .extensions_mut()
+      .insert(CsrfToken(state.csrf_token_for(&session.session_id)));
   }
 
   next.run(request).await
+}
+
+async fn resolve_bearer_api_key(
+  state: &AppState,
+  token: Option<String>,
+) -> Option<ApiKey> {
+  let token = token?;
+  let mut hasher = Sha256::new();
+  hasher.update(token.as_bytes());
+  let key_hash = hex::encode(hasher.finalize());
+
+  match circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
+  {
+    Ok(Some(api_key)) => {
+      touch_api_key_last_used(state, &api_key);
+      Some(api_key)
+    },
+    Ok(None) => None,
+    Err(e) => {
+      tracing::warn!("failed to validate API key: {e}");
+      None
+    },
+  }
+}
+
+async fn resolve_user_session(
+  state: &AppState,
+  session_id: Option<String>,
+) -> Option<UserSession> {
+  let session_id = session_id?;
+  match repo::users::validate_session(&state.pool, &session_id).await {
+    Ok(Some(user)) => Some(UserSession { session_id, user }),
+    Ok(None) => None,
+    Err(e) => {
+      tracing::warn!("failed to validate user session: {e}");
+      None
+    },
+  }
+}
+
+fn resolve_legacy_api_key_session(
+  state: &AppState,
+  session_id: Option<String>,
+) -> Option<LegacyApiKeySession> {
+  let session_id = session_id?;
+  let session = state.sessions.get(&session_id)?;
+  if session.created_at.elapsed() < API_KEY_SESSION_MAX_AGE {
+    return Some(LegacyApiKeySession {
+      session_id,
+      api_key: session.api_key.clone(),
+    });
+  }
+
+  drop(session);
+  state.sessions.remove(&session_id);
+  None
+}
+
+fn touch_api_key_last_used(state: &AppState, api_key: &ApiKey) {
+  let pool = state.pool.clone();
+  let key_id = api_key.id;
+  tokio::spawn(async move {
+    if let Err(e) =
+      circus_common::repo::api_keys::touch_last_used(&pool, key_id).await
+    {
+      tracing::warn!(error = %e, "Failed to update API key last_used timestamp");
+    }
+  });
 }
