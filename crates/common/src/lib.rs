@@ -22,6 +22,14 @@ pub mod validate;
 pub mod validation;
 
 pub use circus_logs::{TracingConfig, init_tracing};
+pub use circus_types::{
+  AuthKind,
+  ForgeType,
+  GlobalRole,
+  InputType,
+  NotificationType,
+  ProjectRole,
+};
 pub use crypto::install_crypto_provider;
 pub use database::*;
 pub use error::*;

@@ -1,55 +1,12 @@
 //! Data models for CI
 
-use std::fmt;
-
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+pub use circus_types::{AuthKind, ForgeType, InputType, NotificationType};
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthKind {
-  Token,
-  Oidc,
-}
-
-impl AuthKind {
-  #[must_use]
-  pub const fn as_str(self) -> &'static str {
-    match self {
-      Self::Token => "token",
-      Self::Oidc => "oidc",
-    }
-  }
-}
-
-impl fmt::Display for AuthKind {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str(self.as_str())
-  }
-}
-
-impl From<&str> for AuthKind {
-  fn from(s: &str) -> Self {
-    match s {
-      "oidc" => Self::Oidc,
-      _ => Self::Token,
-    }
-  }
-}
-
-impl Serialize for AuthKind {
-  fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(self.as_str())
-  }
-}
-
-impl<'de> Deserialize<'de> for AuthKind {
-  fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-    let s = <&str>::deserialize(d)?;
-    Ok(Self::from(s))
-  }
-}
+use crate::roles::{GlobalRole, ProjectRole};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Project {
@@ -527,7 +484,7 @@ pub struct ApiKey {
   pub id:           Uuid,
   pub name:         String,
   pub key_hash:     String,
-  pub role:         String,
+  pub role:         GlobalRole,
   pub user_id:      Option<Uuid>,
   pub created_at:   DateTime<Utc>,
   pub last_used_at: Option<DateTime<Utc>>,
@@ -542,7 +499,7 @@ pub struct ApiKey {
 pub struct WebhookConfig {
   pub id:          Uuid,
   pub project_id:  Uuid,
-  pub forge_type:  String,
+  pub forge_type:  ForgeType,
   /// Encrypted webhook secret. See struct docs.
   #[serde(skip_serializing)]
   pub secret_hash: Option<String>,
@@ -555,7 +512,7 @@ pub struct WebhookConfig {
 pub struct NotificationConfig {
   pub id:                Uuid,
   pub project_id:        Uuid,
-  pub notification_type: String,
+  pub notification_type: NotificationType,
   pub config:            serde_json::Value,
   pub enabled:           bool,
   pub created_at:        DateTime<Utc>,
@@ -567,7 +524,7 @@ pub struct JobsetInput {
   pub id:         Uuid,
   pub jobset_id:  Uuid,
   pub name:       String,
-  pub input_type: String,
+  pub input_type: InputType,
   pub value:      String,
   pub revision:   Option<String>,
   pub created_at: DateTime<Utc>,
@@ -632,7 +589,7 @@ pub struct User {
   #[serde(skip_serializing)]
   pub password_hash:    Option<String>,
   pub user_type:        UserType,
-  pub role:             String,
+  pub role:             GlobalRole,
   pub enabled:          bool,
   pub email_verified:   bool,
   pub public_dashboard: bool,
@@ -675,7 +632,7 @@ pub struct ProjectMember {
   pub id:         Uuid,
   pub project_id: Uuid,
   pub user_id:    Uuid,
-  pub role:       String,
+  pub role:       ProjectRole,
   pub created_at: DateTime<Utc>,
 }
 
@@ -694,7 +651,7 @@ pub struct UserSession {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NotificationTask {
   pub id:                Uuid,
-  pub notification_type: String,
+  pub notification_type: NotificationType,
   pub payload:           serde_json::Value,
   pub status:            NotificationTaskStatus,
   pub attempts:          i32,
@@ -855,14 +812,14 @@ pub struct CreateBuildStep {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWebhookConfig {
   pub project_id: Uuid,
-  pub forge_type: String,
+  pub forge_type: ForgeType,
   pub secret:     Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateNotificationConfig {
   pub project_id:        Uuid,
-  pub notification_type: String,
+  pub notification_type: NotificationType,
   pub config:            serde_json::Value,
 }
 
@@ -928,7 +885,7 @@ pub struct CreateUser {
   pub email:     String,
   pub full_name: Option<String>,
   pub password:  String,
-  pub role:      Option<String>,
+  pub role:      Option<GlobalRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -936,7 +893,7 @@ pub struct UpdateUser {
   pub email:            Option<String>,
   pub full_name:        Option<String>,
   pub password:         Option<String>,
-  pub role:             Option<String>,
+  pub role:             Option<GlobalRole>,
   pub enabled:          Option<bool>,
   pub public_dashboard: Option<bool>,
 }
@@ -957,12 +914,12 @@ pub struct CreateStarredJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateProjectMember {
   pub user_id: Uuid,
-  pub role:    String,
+  pub role:    ProjectRole,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateProjectMember {
-  pub role: Option<String>,
+  pub role: Option<ProjectRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -979,4 +936,25 @@ pub struct CreateNewsItem {
   pub title:      String,
   pub content:    String,
   pub created_by: Option<Uuid>,
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn domain_enums_reject_unknown_values() {
+    assert!(serde_json::from_str::<ForgeType>("\"svn\"").is_err());
+    assert!(
+      serde_json::from_str::<NotificationType>("\"carrier_pigeon\"").is_err()
+    );
+    assert!(serde_json::from_str::<InputType>("\"path\"").is_err());
+  }
+
+  #[test]
+  fn auth_kind_rejects_unknown_values() {
+    assert!(serde_json::from_str::<AuthKind>("\"token\"").is_ok());
+    assert!(serde_json::from_str::<AuthKind>("\"oidc\"").is_ok());
+    assert!(serde_json::from_str::<AuthKind>("\"password\"").is_err());
+  }
 }

@@ -623,6 +623,7 @@ dependencies = [
  "circus-config",
  "circus-logs",
  "circus-migrations",
+ "circus-types",
  "clap",
  "color-eyre",
  "git2",
@@ -656,6 +657,7 @@ name = "circus-config"
 version = "0.11.0"
 dependencies = [
  "circus-logs",
+ "circus-types",
  "color-eyre",
  "config",
  "hex",
@@ -851,6 +853,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "circus-types"
+version = "0.11.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "sqlx",
 ]
 
 [[package]]

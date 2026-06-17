@@ -12,6 +12,7 @@ chrono.workspace            = true
 circus-config.workspace     = true
 circus-logs.workspace       = true
 circus-migrations.workspace = true
+circus-types                = { workspace = true, features = [ "sqlx" ] }
 clap.workspace              = true
 color-eyre.workspace        = true
 git2.workspace              = true

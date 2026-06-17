@@ -22,6 +22,7 @@ circus-notification = { path = "./crates/notification", version = "0.11.0" }
 circus-proto        = { path = "./crates/proto", version = "0.11.0" }
 circus-queue-runner = { path = "./crates/queue-runner", version = "0.11.0" }
 circus-server       = { path = "./crates/server", version = "0.11.0" }
+circus-types        = { path = "./crates/types", version = "0.11.0" }
 
 # Other dependencies
 askama = "0.16.0"
