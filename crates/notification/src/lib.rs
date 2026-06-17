@@ -21,6 +21,7 @@ use circus_common::{
 };
 use circus_config::NotificationsConfig;
 pub use event::BuildEvent;
+use reqwest::Url;
 use sqlx::PgPool;
 use tracing::{error, info, warn};
 
@@ -461,57 +462,75 @@ pub fn encrypt_declarative_notifications(
   Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForgeUrl {
+  host: String,
+  path: String,
+}
+
+impl ForgeUrl {
+  pub(crate) fn parse(raw: &str) -> Option<Self> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+      return None;
+    }
+
+    if let Ok(url) = Url::parse(raw) {
+      let host = url.host_str()?.to_ascii_lowercase();
+      let path = normalize_repo_path(url.path())?;
+      return Some(Self { host, path });
+    }
+
+    let (prefix, path) = raw.split_once(':')?;
+    let host = prefix.strip_prefix("git@")?.to_ascii_lowercase();
+    let path = normalize_repo_path(path)?;
+    Some(Self { host, path })
+  }
+
+  fn matches_base(&self, base_url: &str) -> bool {
+    Url::parse(base_url)
+      .ok()
+      .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+      .is_some_and(|host| host == self.host)
+  }
+
+  fn owner_repo(&self) -> Option<(String, String)> {
+    let (owner, repo) = self.path.split_once('/')?;
+    Some((owner.to_string(), repo.to_string()))
+  }
+
+  fn project_path(&self) -> String {
+    self.path.clone()
+  }
+}
+
+fn normalize_repo_path(path: &str) -> Option<String> {
+  let path = path.trim_start_matches('/').trim_end_matches(".git");
+  (!path.is_empty()).then(|| path.to_string())
+}
+
 pub(crate) fn parse_github_repo(url: &str) -> Option<(String, String)> {
-  // Handle https://github.com/owner/repo.git or git@github.com:owner/repo.git
-  let url = url.trim_end_matches(".git");
-  if let Some(rest) = url.strip_prefix("https://github.com/") {
-    let parts: Vec<&str> = rest.splitn(2, '/').collect();
-    if parts.len() == 2 {
-      return Some((parts[0].to_string(), parts[1].to_string()));
-    }
-  }
-  if let Some(rest) = url.strip_prefix("git@github.com:") {
-    let parts: Vec<&str> = rest.splitn(2, '/').collect();
-    if parts.len() == 2 {
-      return Some((parts[0].to_string(), parts[1].to_string()));
-    }
-  }
-  None
+  let url = ForgeUrl::parse(url)?;
+  (url.host == "github.com").then_some(())?;
+  url.owner_repo()
 }
 
 pub(crate) fn parse_gitea_repo(
   repo_url: &str,
   base_url: &str,
 ) -> Option<(String, String)> {
-  let url = repo_url.trim_end_matches(".git");
-  let base = base_url.trim_end_matches('/');
-  if let Some(rest) = url.strip_prefix(&format!("{base}/")) {
-    let parts: Vec<&str> = rest.splitn(2, '/').collect();
-    if parts.len() == 2 {
-      return Some((parts[0].to_string(), parts[1].to_string()));
-    }
-  }
-  None
+  let url = ForgeUrl::parse(repo_url)?;
+  url.matches_base(base_url).then_some(())?;
+  url.owner_repo()
 }
 
 pub(crate) fn parse_gitlab_project(
   repo_url: &str,
   base_url: &str,
 ) -> Option<String> {
-  let url = repo_url.trim_end_matches(".git");
-  let base = base_url.trim_end_matches('/');
-  if let Some(rest) = url.strip_prefix(&format!("{base}/")) {
-    return Some(rest.to_string());
-  }
-  // Also try without scheme match (e.g., https vs git@)
-  if let (Some(at_pos), Some(colon_pos)) = (
-    url.find('@'),
-    url.find('@').and_then(|p| url[p..].find(':')),
-  ) {
-    let path = &url[at_pos + colon_pos + 1..];
-    return Some(path.to_string());
-  }
-  None
+  let url = ForgeUrl::parse(repo_url)?;
+  url.matches_base(base_url).then_some(())?;
+  Some(url.project_path())
 }
 
 #[cfg(test)]
@@ -576,5 +595,14 @@ mod tests {
       "https://gitlab.com",
     );
     assert_eq!(result, Some("group/repo".to_string()));
+  }
+
+  #[test]
+  fn test_parse_gitlab_project_ssh_nested_group() {
+    let result = parse_gitlab_project(
+      "git@gitlab.com:group/subgroup/repo.git",
+      "https://gitlab.com",
+    );
+    assert_eq!(result, Some("group/subgroup/repo".to_string()));
   }
 }
