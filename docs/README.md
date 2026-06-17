@@ -146,13 +146,20 @@ together.
 - **agent** (`circus-agent`): Persistent build host that receives work over RPC
 - **admin CLI** (`circus-admin`): API-backed command line interface for common
   administration tasks
-- **common** (`circus-common`): Shared types, database layer, configuration,
-  validation
+- **common** (`circus-common`): Shared models, database layer, repository
+  helpers, bootstrap, and validation
+- **config** (`circus-config`): TOML/env configuration schema and validation
+- **types** (`circus-types`): Shared domain enums used by config, API, and CLI
+- **nix** (`circus-nix`): Nix store, derivation, flake, and validation helpers
+- **notification** (`circus-notification`): Notification channel construction
+  and delivery
+- **s3** (`circus-s3`): S3 signing and cache upload helpers
+- **logs** (`circus-logs`): Tracing configuration and initialization
 - **proto** (`circus-proto`): Cap'n Proto schema and generated RPC bindings
 - **migrate-cli** (`circus-migrate`): Database migration CLI
 - **migrations** (`circus-migrations`): SQL migration files and runtime
-- **xtask** (`xtask`): Developer tooling (API docs generation and route drift
-  checks)
+- **xtask** (`circus-xtask`): Developer tooling (API docs generation and route
+  drift checks)
 
 ## Documentation
 
@@ -211,10 +218,10 @@ Then proceed with the typical Rust workflow:
 cargo build --workspace
 
 # Run all tests using cargo-nextest; it is provided by the dev shell
-cargo nextest run
+cargo nextest run --workspace
 
 # Type-check only
-cargo check
+cargo check --workspace
 ```
 
 Alternatively build and test a specific crate:

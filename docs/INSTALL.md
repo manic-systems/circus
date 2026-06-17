@@ -26,11 +26,11 @@ packages. You may also use `nix shell` to acquire the necessary components.
    and database. Give the `circus` user necessary privileges in the `circus`
    database.
 
-2. Run migrations using the migration CLI:
+2. Run migrations from the checkout:
 
    ```bash
    # Run migrations
-   $ circus-migrate -- up postgresql://circus@localhost/circus
+   $ cargo run -p circus-migrate-cli -- up postgresql://circus@localhost/circus
    ```
 
 3. Start the server:
@@ -38,10 +38,29 @@ packages. You may also use `nix shell` to acquire the necessary components.
    ```bash
    # Assuming PostgreSQL is running on localhost. If it's running elsewhere, update
    # the database URL accordingly.
-   $ CIRCUS_DATABASE__URL=postgresql://circus@localhost/circus circus-server
+   $ CIRCUS_DATABASE__URL=postgresql://circus@localhost/circus \
+       cargo run -p circus-server --
    ```
 
-4. Open `http://localhost:3000` in your browser.
+4. In separate shells, start the evaluator and queue runner when you want builds
+   to be discovered and executed:
+
+   ```bash
+   $ CIRCUS_DATABASE__URL=postgresql://circus@localhost/circus \
+       cargo run -p circus-evaluator --
+
+   $ CIRCUS_DATABASE__URL=postgresql://circus@localhost/circus \
+       cargo run -p circus-queue-runner --
+   ```
+
+5. Open `http://localhost:3000` in your browser.
+
+The source quickstart starts with an empty database. Create the first admin API
+key with the [authentication bootstrapping](#authentication-bootstrapping)
+steps, or seed it declaratively before first server startup.
+
+For installed binaries, the equivalent commands are `circus-migrate`,
+`circus-server`, `circus-evaluator`, and `circus-queue-runner`.
 
 ## Demo VM
 
@@ -144,18 +163,22 @@ The override hierarchy is as follows:
 3. File at `CIRCUS_CONFIG_FILE` env var
 4. `CIRCUS_*` env vars (`__` as nested separator, e.g. `CIRCUS_DATABASE__URL`)
 
-See `circus.toml` in the repository root for the full schema with comments.
+See `circus.toml` in the repository root for a compact example. The Rust config
+types in `crates/config/src/structs.rs` remain the schema source of truth.
 
 ### Configuration Reference
 
-A somewhat maintained list of configuration options. It may be outdated during
-development; `circus.toml` remains the practical reference.
+A maintained list of operator-facing configuration options. Secret-bearing
+fields generally have a matching `*_file` form; inline values are useful for
+development, while file-backed values avoid storing secrets in world-readable
+configuration or the Nix store.
 
 <!-- markdownlint-disable MD013 -->
 
 | Section              | Key                                                    | Default                                             | Description                                      |
 | -------------------- | ------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------ |
 | `database`           | `url`                                                  | `postgresql://circus:password@localhost/circus`     | PostgreSQL connection URL                        |
+| `database`           | `url_file`                                             | none                                                | File containing the PostgreSQL URL               |
 | `database`           | `max_connections`                                      | `20`                                                | Maximum connection pool size                     |
 | `database`           | `min_connections`                                      | `5`                                                 | Minimum idle connections                         |
 | `database`           | `connect_timeout`                                      | `30`                                                | Connection timeout (seconds)                     |
@@ -166,20 +189,24 @@ development; `circus.toml` remains the practical reference.
 | `server`             | `request_timeout`                                      | `30`                                                | Per-request timeout (seconds)                    |
 | `server`             | `max_body_size`                                        | `10485760`                                          | Maximum request body size (10 MB)                |
 | `server`             | `api_key`                                              | none                                                | Optional legacy API key (prefer DB keys)         |
+| `server`             | `api_key_file`                                         | none                                                | File containing the optional legacy API key      |
 | `server`             | `cors_permissive`                                      | `false`                                             | Allow all CORS origins                           |
 | `server`             | `allowed_origins`                                      | `[]`                                                | Allowed CORS origins list                        |
 | `server`             | `force_secure_cookies`                                 | `false`                                             | Force Secure flag on cookies (HTTPS proxy)       |
 | `server`             | `rate_limit_rps`                                       | none                                                | Requests per second limit per IP                 |
 | `server`             | `rate_limit_burst`                                     | none                                                | Burst size for rate limiting                     |
-| `server`             | `allowed_url_schemes`                                  | `[]`                                                | Allowed URL schemes for repository URLs          |
-| `server`             | `config_editor_enabled`                                | `true`                                              | Allow admin config editing through API/dashboard |
+| `server`             | `allowed_url_schemes`                                  | `[ "https", "git", "ssh" ]`                         | Allowed URL schemes for repository URLs          |
+| `server`             | `config_editor_enabled`                                | `false`                                             | Allow admin config editing through API/dashboard |
+| `server`             | `require_api_key_for_reads`                            | `true`                                              | Require auth for read-only `/api/v1` requests    |
+| `server`             | `webhook_secret_encryption_key`                        | none                                                | Encrypt webhook and notification secrets         |
+| `server`             | `webhook_secret_encryption_key_file`                   | none                                                | File containing the encryption key               |
 | `server`             | `ldap.enabled`                                         | `true`                                              | Enable configured LDAP login                     |
 | `server`             | `ldap.url`                                             | none                                                | LDAP server URL                                  |
 | `server`             | `ldap.bind_dn_template`                                | none                                                | LDAP bind DN template (`{username}` placeholder) |
 | `server`             | `ldap.base_dn`                                         | none                                                | LDAP base DN for user searches                   |
 | `server`             | `ldap.tls_ca_cert`                                     | none                                                | Custom CA cert for LDAP TLS                      |
 | `server`             | `email_validation_regex`                               | none                                                | Custom regex for email validation                |
-| `server.page_access` | per page                                               | public                                              | Dashboard page visibility policy                 |
+| `server.page_access` | per page                                               | mixed                                               | Dashboard page visibility policy                 |
 | `evaluator`          | `poll_interval`                                        | `60`                                                | Seconds between git poll cycles                  |
 | `evaluator`          | `git_timeout`                                          | `600`                                               | Git operation timeout (seconds)                  |
 | `evaluator`          | `nix_timeout`                                          | `1800`                                              | Nix evaluation timeout (seconds)                 |
@@ -249,7 +276,6 @@ development; `circus.toml` remains the practical reference.
 | `logs`               | `compress`                                             | `false`                                             | Compress stored logs                             |
 | `cache`              | `enabled`                                              | `true`                                              | Serve a Nix binary cache at `/nix-cache/`        |
 | `cache`              | `secret_key_file`                                      | none                                                | Deprecated; outputs are signed via `[signing]`   |
-| `cache`              | `compression`                                          | `zstd`                                              | NAR compression algorithm                        |
 | `cache`              | `cache_url`                                            | none                                                | Public cache URL for channel manifests           |
 | `signing`            | `enabled`                                              | `false`                                             | Sign build outputs                               |
 | `signing`            | `key_file`                                             | none                                                | Signing key file path                            |
@@ -259,7 +285,9 @@ development; `circus.toml` remains the practical reference.
 | `cache_upload`       | `s3.prefix`                                            | none                                                | Extra path prefix within bucket                  |
 | `cache_upload`       | `s3.access_key_id`                                     | none                                                | Access key for presigned S3 uploads/redirects    |
 | `cache_upload`       | `s3.secret_access_key`                                 | none                                                | Secret key for presigned S3 uploads/redirects    |
+| `cache_upload`       | `s3.secret_access_key_file`                            | none                                                | File containing S3 secret access key             |
 | `cache_upload`       | `s3.session_token`                                     | none                                                | Session token for temporary credentials          |
+| `cache_upload`       | `s3.session_token_file`                                | none                                                | File containing S3 session token                 |
 | `cache_upload`       | `s3.endpoint_url`                                      | none                                                | S3-compatible endpoint URL                       |
 | `cache_upload`       | `s3.use_path_style`                                    | `false`                                             | Use path-style addressing                        |
 | `cache_upload`       | `upload_concurrency`                                   | `4`                                                 | Concurrent uploads per build                     |
@@ -267,11 +295,15 @@ development; `circus.toml` remains the practical reference.
 | `cache_upload`       | `fail_build_on_upload_error`                           | `false`                                             | Mark build failed on upload error                |
 | `cache_upload`       | `compression`                                          | `zstd`                                              | Agent presigned-upload NAR compression           |
 | `notifications`      | `webhook_url`                                          | none                                                | HTTP endpoint for build status JSON              |
+| `notifications`      | `webhook_url_file`                                     | none                                                | File containing generic webhook URL              |
 | `notifications`      | `github_token`                                         | none                                                | GitHub token for commit status updates           |
+| `notifications`      | `github_token_file`                                    | none                                                | File containing GitHub token                     |
 | `notifications`      | `gitea_url`                                            | none                                                | Gitea/Forgejo instance URL                       |
 | `notifications`      | `gitea_token`                                          | none                                                | Gitea/Forgejo API token                          |
+| `notifications`      | `gitea_token_file`                                     | none                                                | File containing Gitea/Forgejo token              |
 | `notifications`      | `gitlab_url`                                           | none                                                | GitLab instance URL                              |
 | `notifications`      | `gitlab_token`                                         | none                                                | GitLab API token                                 |
+| `notifications`      | `gitlab_token_file`                                    | none                                                | File containing GitLab token                     |
 | `notifications`      | `enable_retry_queue`                                   | `true`                                              | Persistent retry queue with backoff              |
 | `notifications`      | `max_retry_attempts`                                   | `5`                                                 | Max notification retry attempts                  |
 | `notifications`      | `retention_days`                                       | `7`                                                 | Retention for completed notification tasks       |
@@ -280,10 +312,12 @@ development; `circus.toml` remains the practical reference.
 | `notifications`      | `email.smtp_port`                                      | none                                                | SMTP port                                        |
 | `notifications`      | `email.smtp_user`                                      | none                                                | SMTP username (optional)                         |
 | `notifications`      | `email.smtp_password`                                  | none                                                | SMTP password (optional)                         |
+| `notifications`      | `email.smtp_password_file`                             | none                                                | File containing SMTP password                    |
 | `notifications`      | `email.tls`                                            | `false`                                             | Enable TLS for SMTP connection                   |
 | `notifications`      | `email.from_address`                                   | none                                                | From address for notification emails             |
 | `notifications`      | `email.to_addresses`                                   | `[]`                                                | Recipient addresses                              |
 | `notifications`      | `slack.webhook_url`                                    | none                                                | Slack incoming webhook URL                       |
+| `notifications`      | `slack.webhook_url_file`                               | none                                                | File containing Slack webhook URL                |
 | `notifications`      | `slack.on_failure_only`                                | `false`                                             | Only send Slack alerts on failure                |
 | `notifications`      | `alerts.enabled`                                       | `false`                                             | Enable error-rate threshold alerts               |
 | `notifications`      | `alerts.error_threshold`                               | `0.5`                                               | Error rate threshold to trigger alert            |
@@ -294,6 +328,7 @@ development; `circus.toml` remains the practical reference.
 | `tracing`            | `show_timestamps`                                      | `true`                                              | Show timestamps in log messages                  |
 | `oauth`              | `github.client_id`                                     | none                                                | GitHub OAuth App client ID                       |
 | `oauth`              | `github.client_secret`                                 | none                                                | GitHub OAuth App client secret                   |
+| `oauth`              | `github.client_secret_file`                            | none                                                | File containing GitHub OAuth secret              |
 | `oauth`              | `github.redirect_uri`                                  | none                                                | OAuth redirect URI                               |
 | `declarative`        | `projects`                                             | `[]`                                                | Declarative project definitions                  |
 | `declarative`        | `api_keys`                                             | `[]`                                                | Declarative API key definitions                  |
@@ -307,7 +342,7 @@ development; `circus.toml` remains the practical reference.
 
 Set `[cache].enabled = true` on the server to expose `/nix-cache/`. For outputs
 present in the server's Nix store, Circus generates narinfo from `nix path-info`
-and streams NARs with the configured `[cache].compression`.
+and serves the corresponding NAR from the store.
 
 Only two kinds of local store paths are served: build outputs the queue-runner
 signed at build time (`[signing]` with a `key_file`; unsigned outputs are never
@@ -334,25 +369,26 @@ objects below `root/nix-cache/`.
 
 ## Dashboard Page Access
 
-Dashboard pages are public by default, but operators can require login or admin
-access per page through `[server.page_access]`. Valid values are `public`,
-`authenticated`, and `admin`.
+Dashboard pages have conservative defaults: the home page is public, most
+browsing pages require an authenticated user, and queue/metrics views require an
+admin. Operators can loosen or tighten individual pages through
+`[server.page_access]`. Valid values are `public`, `authenticated`, and `admin`.
 
 ```toml
 [server.page_access]
 home        = "public"
-projects    = "public"
-project     = "public"
-jobset      = "public"
-jobset_jobs = "public"
+projects    = "authenticated"
+project     = "authenticated"
+jobset      = "authenticated"
+jobset_jobs = "authenticated"
 evaluations = "authenticated"
 evaluation  = "authenticated"
 builds      = "authenticated"
 build       = "authenticated"
 queue       = "admin"
-channels    = "public"
-channel     = "public"
-news        = "public"
+channels    = "authenticated"
+channel     = "authenticated"
+news        = "authenticated"
 starred     = "authenticated"
 metrics     = "admin"
 ```
@@ -362,9 +398,11 @@ remain admin-only regardless of this policy. API endpoint authorization is
 separate from dashboard page visibility.
 
 > [!NOTE]
-> Set `server.config_editor_enabled = false` to make the admin config editor
-> read-only and reject `PUT /api/v1/admin/config`. The `GET` endpoint still
-> returns the default-backed effective config for inspection.
+> The admin config editor is disabled by default. Set
+> `server.config_editor_enabled = true` only when you explicitly want admins to
+> replace the configured TOML file body through the dashboard or
+> `PUT /api/v1/admin/config`. The `GET` endpoint still returns the
+> default-backed effective config for inspection.
 
 ## Authentication Providers
 
@@ -458,13 +496,15 @@ A complete production configuration with all three daemons and NGINX reverse
 proxy:
 
 ```nix
-{ inputs, config, pkgs,  ... }: let
-  circusPkgs = circus.packages.${pkgs.stdenv.hostPlatform.system}.packages
+{ inputs, pkgs, ... }: let
+  circusPkgs = inputs.circus.packages.${pkgs.stdenv.hostPlatform.system};
 in {
   networking.firewall.allowedTCPPorts = [ 80 443 ];
   services.circus = {
     enable = true;
     package = circusPkgs.circus-server;
+    evaluatorPackage = circusPkgs.circus-evaluator;
+    queueRunnerPackage = circusPkgs.circus-queue-runner;
     migratePackage = circusPkgs.circus-migrate-cli;
 
     server.enable = true;
@@ -541,6 +581,35 @@ database URL:
 
 Ensure the PostgreSQL server on the head node allows connections from builder
 machines via `pg_hba.conf` or equivalent NixOS PostgreSQL module settings.
+
+## Building Installable Packages
+
+The flake exposes one package per binary:
+
+```bash
+$ nix build .#circus-server
+$ nix build .#circus-evaluator
+$ nix build .#circus-queue-runner
+$ nix build .#circus-admin
+$ nix build .#circus-migrate-cli
+$ nix build .#circus-agent
+```
+
+For local source builds without Nix packaging, use Cargo package names:
+
+```bash
+$ cargo build -p circus-server
+$ cargo build -p circus-evaluator
+$ cargo build -p circus-queue-runner
+$ cargo build -p circus-admin
+$ cargo build -p circus-migrate-cli
+$ cargo build -p circus-agent
+```
+
+Run all service binaries with the same `CIRCUS_CONFIG_FILE` or equivalent
+`CIRCUS_*` environment overrides. The NixOS module runs migrations before
+starting `circus-server`; manual or non-NixOS deployments should run
+`circus-migrate up <database_url>` before starting upgraded services.
 
 ## Distributed Builders
 

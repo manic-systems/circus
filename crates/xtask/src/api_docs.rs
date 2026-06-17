@@ -73,14 +73,23 @@ fn generate() -> Result<String> {
   out.push_str("cargo run -p circus-xtask -- api-docs\n");
   out.push_str("```\n\n");
   out.push_str(
-    "All versioned JSON endpoints live under `/api/v1`. `GET`, `HEAD`,\n",
+    "All versioned JSON endpoints live under `/api/v1`. By default, `GET`,\n",
   );
   out.push_str(
-    "and `OPTIONS` requests are generally public unless a handler requires\n",
+    "`HEAD`, and `OPTIONS` requests require an API key or authenticated\n",
   );
-  out.push_str("a user or admin session. Mutating requests require\n");
   out.push_str(
-    "`Authorization: Bearer <api-key>` and may require a specific role.\n\n",
+    "session unless `server.require_api_key_for_reads = false` is configured.\n",
+  );
+  out.push_str("Mutating requests require\n");
+  out.push_str(
+    "`Authorization: Bearer <api-key>` or an authenticated browser session and\n",
+  );
+  out.push_str(
+    "may require a specific role. Public compatibility endpoints such as\n",
+  );
+  out.push_str(
+    "webhooks, health, metrics, and cache routes live outside that API key gate.\n\n",
   );
   out.push_str("## Endpoints\n\n");
   out.push_str("<!-- markdownlint-disable MD013 -->\n\n");

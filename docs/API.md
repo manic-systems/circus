@@ -9,10 +9,13 @@ Rebuild it after changing API routes or operation summaries with:
 cargo run -p circus-xtask -- api-docs
 ```
 
-All versioned JSON endpoints live under `/api/v1`. `GET`, `HEAD`,
-and `OPTIONS` requests are generally public unless a handler requires
-a user or admin session. Mutating requests require
-`Authorization: Bearer <api-key>` and may require a specific role.
+All versioned JSON endpoints live under `/api/v1`. By default, `GET`,
+`HEAD`, and `OPTIONS` requests require an API key or authenticated
+session unless `server.require_api_key_for_reads = false` is configured.
+Mutating requests require
+`Authorization: Bearer <api-key>` or an authenticated browser session and
+may require a specific role. Public compatibility endpoints such as
+webhooks, health, metrics, and cache routes live outside that API key gate.
 
 ## Endpoints
 

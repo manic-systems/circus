@@ -109,11 +109,14 @@ work to hosts without relying on per-build SSH setup.
 
 `circus-common` holds the shared pieces used by the daemons:
 
-- configuration loading
 - database access helpers
 - shared data models
-- validation and bootstrap logic
-- notification, logging, and maintenance helpers
+- bootstrap and repository logic
+- shared validation and maintenance helpers
+
+Configuration structs and loading live in `circus-config`; common depends on
+that crate rather than owning the schema itself. Domain enums shared by config,
+common, and CLI code live in `circus-types`.
 
 ### `circus-proto`
 
@@ -135,6 +138,17 @@ contains the SQL migration files and runtime support.
 `xtask` is a developer tooling crate. It currently provides a route drift check
 that parses route registrations from the source tree without compiling the full
 server crate.
+
+### Supporting crates
+
+Several crates are intentionally small boundaries rather than daemons:
+
+- `circus-config`: shared TOML/env configuration schema and validation.
+- `circus-logs`: tracing configuration and subscriber initialization.
+- `circus-nix`: Nix store, derivation, flake, and validation helpers.
+- `circus-notification`: notification channel construction and delivery.
+- `circus-s3`: S3 signing and cache upload helpers.
+- `circus-types`: shared enums used across config, API, and CLI code.
 
 ## Data Flow
 
@@ -289,8 +303,8 @@ full narinfo protocol: clients request `.narinfo` files by hash, and the server
 returns a relative NAR URL under `/nix-cache/nar/`.
 
 > [!TIP]
-> NAR compression is configurable (zstd, bzip2, brotli, xz, or none). The server
-> can optionally sign narinfo files with a Nix secret key.
+> The server can optionally sign narinfo files with a Nix secret key. External
+> cache uploads configure agent-side NAR compression under `[cache_upload]`.
 
 Build outputs can also be uploaded to an external cache store (typically S3)
 after a successful build. The agent supports direct presigned S3 upload, and the

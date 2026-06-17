@@ -192,8 +192,10 @@ queries and filters.
 
 ### Read-Only API Use
 
-Most read endpoints are safe to call from scripts. For authenticated endpoints,
-send an API key as a bearer token:
+Most read endpoints are safe to call from scripts, but default installations
+still require authentication for `/api/v1` reads. Operators can opt out with
+`server.require_api_key_for_reads = false`; otherwise send an API key as a
+bearer token:
 
 ```bash
 # Search the builds endpoint
@@ -526,6 +528,19 @@ Persistent agent sessions are visible through the admin API:
 GET /api/v1/admin/builders/sessions
 GET /api/v1/admin/builders/sessions/connected
 GET /api/v1/admin/builders/sessions/{machine_id}
+```
+
+The same data is available from `circus-admin`:
+
+```bash
+# List all recorded persistent and ephemeral agent sessions
+$ circus-admin builders sessions
+
+# Only list currently connected sessions
+$ circus-admin builders sessions --connected
+
+# Show one session by stable machine ID
+$ circus-admin builders session <machine-id>
 ```
 
 The queue-runner prefers connected agents over SSH builders when both match a

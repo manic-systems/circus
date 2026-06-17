@@ -37,7 +37,8 @@ we're open to new features and additions based on demand.
 ### Strengths
 
 - Modern Rust codebase with better error handling
-- Simpler, more maintainable architecture (11 Rust crates, fewer daemons)
+- Simpler, more maintainable architecture (small focused Rust crates, fewer
+  daemons)
 - Better API-first design with proper REST structure
 - User management with argon2 password hashing and granular RBAC
 - Cleaner database schema (16 tables vs ~25 core tables in Hydra)
@@ -62,20 +63,20 @@ several areas, such as log streaming, evaluation comparison, build actions or
 metrics visualization from the API. Below is a comparison table for the sake of
 historical documentation and progress tracking:
 
-| Feature                  | Hydra                      | Circus              | Status   | Notes                                  |
-| ------------------------ | -------------------------- | ------------------- | -------- | -------------------------------------- |
-| **REST API Structure**   | OpenAPI 3.0 spec           | REST                | Complete | Circus has cleaner `/api/v1` structure |
-| **Project Endpoints**    | Full CRUD                  | Full CRUD           | Complete |                                        |
-| **Jobset Endpoints**     | Full CRUD                  | Full CRUD           | Complete | Circus has jobset inputs               |
-| **Build Endpoints**      | Full                       | Full + actions      | Complete | Circus has cancel/restart/bump         |
-| **Build Constituents**   | `/build/{id}/constituents` | Implemented         | Complete | Circus has constituents endpoint       |
-| **Evaluation Endpoints** | Basic                      | Full + trigger      | Complete | Circus has trigger + compare           |
-| **Search API**           | Full search                | Advanced search     | Complete | Multi-entity, filters, sorting         |
-| **Channel API**          | Management                 | Full CRUD           | Complete |                                        |
-| **User API**             | User management            | Full CRUD + auth    | Complete |                                        |
-| **Binary Cache API**     | NAR/manifest               | Full cache protocol | Complete |                                        |
-| **Webhook API**          | Push trigger               | GitHub/Gitea/GitLab | Complete | Circus has HMAC verification           |
-| **Badge API**            | Status badges              | Implemented         | Complete | Both have shields.io badges            |
-| **Metrics API**          | Prometheus                 | Prometheus          | Complete | Both expose metrics                    |
-| **Log Streaming**        | Polling only               | SSE streaming       | Complete | Circus has Server-Sent Events          |
-| **Queue Runner API**     | Internal REST on :8080     | None                | Missing  | Hydra exposes status/build mgmt        |
+| Feature                  | Hydra                      | Circus                  | Status   | Notes                                                  |
+| ------------------------ | -------------------------- | ----------------------- | -------- | ------------------------------------------------------ |
+| **REST API Structure**   | OpenAPI 3.0 spec           | REST                    | Complete | Circus has cleaner `/api/v1` structure                 |
+| **Project Endpoints**    | Full CRUD                  | Full CRUD               | Complete |                                                        |
+| **Jobset Endpoints**     | Full CRUD                  | Full CRUD               | Complete | Circus has jobset inputs                               |
+| **Build Endpoints**      | Full                       | Full + actions          | Complete | Circus has cancel/restart/bump                         |
+| **Build Constituents**   | `/build/{id}/constituents` | Implemented             | Complete | Circus has constituents endpoint                       |
+| **Evaluation Endpoints** | Basic                      | Full + trigger          | Complete | Circus has trigger + compare                           |
+| **Search API**           | Full search                | Advanced search         | Complete | Multi-entity, filters, sorting                         |
+| **Channel API**          | Management                 | Full CRUD               | Complete |                                                        |
+| **User API**             | User management            | Full CRUD + auth        | Complete |                                                        |
+| **Binary Cache API**     | NAR/manifest               | Full cache protocol     | Complete |                                                        |
+| **Webhook API**          | Push trigger               | GitHub/Gitea/GitLab     | Complete | Circus has HMAC verification                           |
+| **Badge API**            | Status badges              | Implemented             | Complete | Both have shields.io badges                            |
+| **Metrics API**          | Prometheus                 | Prometheus              | Complete | Both expose metrics                                    |
+| **Log Streaming**        | Polling only               | SSE streaming           | Complete | Circus has Server-Sent Events                          |
+| **Queue Runner API**     | Internal REST on :8080     | Agent-session admin API | Partial  | Circus exposes builder sessions through the server API |

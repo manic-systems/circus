@@ -8,7 +8,7 @@ repository.workspace = true
 [dependencies]
 chrono.workspace           = true
 circus-config.workspace    = true
-hex.workspace             = true
+hex.workspace              = true
 hmac.workspace             = true
 percent-encoding.workspace = true
 sha2.workspace             = true

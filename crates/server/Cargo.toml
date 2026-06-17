@@ -10,7 +10,7 @@ askama.workspace                         = true
 async-compression.workspace              = true
 async-stream.workspace                   = true
 axum.workspace                           = true
-axum-extra                              = { workspace = true, features = [ "cookie" ] }
+axum-extra                               = { workspace = true, features = [ "cookie" ] }
 base64.workspace                         = true
 chrono.workspace                         = true
 circus-proto.workspace                   = true

@@ -250,7 +250,7 @@ that row instead of relying on OpenSSH `accept-new`.
 Single queue-runner, multiple agents:
 
 ```toml
-# fc.toml on the queue-runner host
+# circus.toml on the queue-runner host
 [queue_runner]
 poll_interval = 5
 work_dir      = "/var/lib/circus/queue-runner"

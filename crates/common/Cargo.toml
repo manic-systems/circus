@@ -9,10 +9,10 @@ repository.workspace = true
 argon2.workspace            = true
 base64.workspace            = true
 chrono.workspace            = true
-circus-nix.workspace        = true
 circus-config.workspace     = true
 circus-logs.workspace       = true
 circus-migrations.workspace = true
+circus-nix.workspace        = true
 circus-types                = { workspace = true, features = [ "sqlx" ] }
 clap.workspace              = true
 color-eyre.workspace        = true
