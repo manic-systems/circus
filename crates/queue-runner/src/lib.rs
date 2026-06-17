@@ -3,6 +3,7 @@ pub mod caps;
 pub mod dispatch;
 pub mod features;
 pub mod gha;
+pub mod helpers;
 pub mod psi;
 pub mod rpc;
 pub mod runner_loop;

@@ -1,14 +1,20 @@
 use std::{sync::Arc, time::Duration};
 
 use circus_common::{
-  models::{Build, BuildStatus, EvaluationTriggerKind, JobsetState},
+  error::Result as CiResult,
+  models::{BuildStatus, JobsetState},
   repo,
 };
 use circus_config::HotConfig;
 use sqlx::PgPool;
 use tokio::sync::{Notify, RwLock};
+use uuid::Uuid;
 
-use crate::{dispatch::supports_required_features, worker::WorkerPool};
+use crate::{
+  dispatch::supports_required_features,
+  helpers::{get_project_for_build, is_interval_rebuild},
+  worker::WorkerPool,
+};
 
 /// Reset builds left in `running` from a crashed runner. Builds older
 /// than 5 minutes in `running` are assumed orphaned.
@@ -67,33 +73,27 @@ async fn query_drv_output(drv_path: &str) -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
-/// Fetch project and commit hash for a build by traversing:
-///
-/// Build -> Evaluation -> Jobset -> Project.
-async fn get_project_for_build(
+async fn mark_build_done(
   pool: &PgPool,
-  build: &Build,
-) -> Option<(circus_common::models::Project, String)> {
-  let eval = repo::evaluations::get(pool, build.evaluation_id)
-    .await
-    .ok()?;
-  let jobset = repo::jobsets::get(pool, eval.jobset_id).await.ok()?;
-  let project = repo::projects::get(pool, jobset.project_id).await.ok()?;
-  Some((project, eval.commit_hash))
-}
-
-async fn is_interval_rebuild(pool: &PgPool, build: &Build) -> bool {
-  match repo::evaluations::get(pool, build.evaluation_id).await {
-    Ok(eval) => eval.trigger_kind == EvaluationTriggerKind::Interval,
-    Err(e) => {
-      tracing::warn!(
-        build_id = %build.id,
-        evaluation_id = %build.evaluation_id,
-        "Failed to load evaluation trigger kind: {e}"
-      );
-      false
-    },
+  build_id: Uuid,
+  status: BuildStatus,
+  log_path: Option<&str>,
+  output_path: Option<&str>,
+  error_msg: Option<&str>,
+) -> CiResult<()> {
+  if let Err(e) = repo::builds::start(pool, build_id).await {
+    tracing::warn!(build_id = %build_id, "Failed to start build before completion: {e}");
   }
+  repo::builds::complete(
+    pool,
+    build_id,
+    status,
+    log_path,
+    output_path,
+    error_msg,
+  )
+  .await
+  .map(|_| ())
 }
 
 /// Main queue runner loop. Polls for pending builds and dispatches them to
@@ -179,10 +179,7 @@ pub async fn run(
                     job = %build.job_name,
                     "Aggregate build: all constituents completed"
                 );
-                if let Err(e) = repo::builds::start(&pool, build.id).await {
-                  tracing::warn!(build_id = %build.id, "Failed to start aggregate build: {e}");
-                }
-                if let Err(e) = repo::builds::complete(
+                if let Err(e) = mark_build_done(
                   &pool,
                   build.id,
                   BuildStatus::Succeeded,
@@ -248,10 +245,7 @@ pub async fn run(
                     drv = %build.drv_path,
                     "Dedup: reusing result from existing build"
                 );
-                if let Err(e) = repo::builds::start(&pool, build.id).await {
-                  tracing::warn!(build_id = %build.id, "Failed to start dedup build: {e}");
-                }
-                if let Err(e) = repo::builds::complete(
+                if let Err(e) = mark_build_done(
                   &pool,
                   build.id,
                   BuildStatus::Succeeded,
@@ -298,10 +292,7 @@ pub async fn run(
                   output = %output_path,
                   "FOD output already valid in store, skipping build"
               );
-              if let Err(e) = repo::builds::start(&pool, build.id).await {
-                tracing::warn!(build_id = %build.id, "Failed to start FOD build: {e}");
-              }
-              if let Err(e) = repo::builds::complete(
+              if let Err(e) = mark_build_done(
                 &pool,
                 build.id,
                 BuildStatus::Succeeded,
@@ -333,10 +324,7 @@ pub async fn run(
                 build_id = %build.id, drv = %build.drv_path,
                 "Cached failure: skipping known-failing derivation"
             );
-            if let Err(e) = repo::builds::start(&pool, build.id).await {
-              tracing::warn!(build_id = %build.id, "Failed to start cached-failure build: {e}");
-            }
-            if let Err(e) = repo::builds::complete(
+            if let Err(e) = mark_build_done(
               &pool,
               build.id,
               BuildStatus::CachedFailure,
@@ -428,11 +416,7 @@ pub async fn run(
                   "Aborting build: no builder available for system/features"
                 );
 
-                if let Err(e) = repo::builds::start(&pool, build.id).await {
-                  tracing::warn!(build_id = %build.id, "Failed to start unsupported build: {e}");
-                }
-
-                if let Err(e) = repo::builds::complete(
+                if let Err(e) = mark_build_done(
                   &pool,
                   build.id,
                   BuildStatus::UnsupportedSystem,

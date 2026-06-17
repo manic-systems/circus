@@ -9,7 +9,6 @@ use circus_common::{
     BuildStatus,
     CreateBuildProduct,
     CreateBuildStep,
-    EvaluationTriggerKind,
     metric_names,
     metric_units,
   },
@@ -32,7 +31,10 @@ use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::dispatch::supports_required_features;
+use crate::{
+  dispatch::supports_required_features,
+  helpers::{get_project_for_build, is_interval_rebuild},
+};
 
 pub type ActiveBuilds = Arc<DashMap<Uuid, CancellationToken>>;
 
@@ -278,34 +280,6 @@ fn first_path_info_entry(
     arr.first()
   } else {
     parsed.as_object()?.values().next()
-  }
-}
-
-/// Look up the project that owns a build (build -> evaluation -> jobset ->
-/// project).
-async fn get_project_for_build(
-  pool: &PgPool,
-  build: &Build,
-) -> Option<(circus_common::models::Project, String)> {
-  let eval = repo::evaluations::get(pool, build.evaluation_id)
-    .await
-    .ok()?;
-  let jobset = repo::jobsets::get(pool, eval.jobset_id).await.ok()?;
-  let project = repo::projects::get(pool, jobset.project_id).await.ok()?;
-  Some((project, eval.commit_hash))
-}
-
-async fn is_interval_rebuild(pool: &PgPool, build: &Build) -> bool {
-  match repo::evaluations::get(pool, build.evaluation_id).await {
-    Ok(eval) => eval.trigger_kind == EvaluationTriggerKind::Interval,
-    Err(e) => {
-      tracing::warn!(
-        build_id = %build.id,
-        evaluation_id = %build.evaluation_id,
-        "Failed to load evaluation trigger kind: {e}"
-      );
-      false
-    },
   }
 }
 
