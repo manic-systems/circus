@@ -96,6 +96,21 @@ fn validate_repository_url(url: &str) -> Result<(), String> {
   Ok(())
 }
 
+fn validate_cache_url(url: &str, field: &str) -> Result<(), String> {
+  if url.trim().is_empty() {
+    return Err(format!("{field} cannot be empty"));
+  }
+  if url.len() > 2048 {
+    return Err(format!("{field} must be at most 2048 characters"));
+  }
+  let parsed =
+    url::Url::parse(url).map_err(|_| format!("{field} must be a URL"))?;
+  match parsed.scheme() {
+    "http" | "https" | "s3" | "ssh" | "ssh-ng" | "file" => Ok(()),
+    scheme => Err(format!("{field} has unsupported scheme {scheme}")),
+  }
+}
+
 /// SSRF guard for outbound webhook URLs (Slack, generic webhooks, ...).
 /// Rejects schemes other than http/https, internal hostnames, and cloud
 /// metadata endpoints.
@@ -348,6 +363,17 @@ impl Validate for CreateProject {
     if let Some(ref desc) = self.description {
       validate_description(desc)?;
     }
+    if let Some(url) = &self.cache_url {
+      validate_cache_url(url, "cache_url")?;
+    }
+    for upstream in &self.cache_upstreams.0 {
+      validate_cache_url(&upstream.url, "cache_upstreams.url")?;
+      if let Some(public_key) = &upstream.public_key
+        && public_key.trim().is_empty()
+      {
+        return Err("cache_upstreams.public_key cannot be empty".to_string());
+      }
+    }
     Ok(())
   }
 }
@@ -362,6 +388,19 @@ impl Validate for UpdateProject {
     }
     if let Some(ref desc) = self.description {
       validate_description(desc)?;
+    }
+    if let Some(url) = &self.cache_url {
+      validate_cache_url(url, "cache_url")?;
+    }
+    if let Some(upstreams) = &self.cache_upstreams {
+      for upstream in &upstreams.0 {
+        validate_cache_url(&upstream.url, "cache_upstreams.url")?;
+        if let Some(public_key) = &upstream.public_key
+          && public_key.trim().is_empty()
+        {
+          return Err("cache_upstreams.public_key cannot be empty".to_string());
+        }
+      }
     }
     Ok(())
   }
@@ -502,6 +541,9 @@ mod tests {
       name:           "my-project".to_string(),
       description:    Some("A test project".to_string()),
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     };
     assert!(p.validate().is_ok());
   }
@@ -512,6 +554,9 @@ mod tests {
       name:           String::new(),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     };
     assert!(p.validate().is_err());
 
@@ -519,6 +564,9 @@ mod tests {
       name:           "-starts-with-dash".to_string(),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     };
     assert!(p.validate().is_err());
 
@@ -526,6 +574,9 @@ mod tests {
       name:           "has spaces".to_string(),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     };
     assert!(p.validate().is_err());
   }
@@ -537,6 +588,9 @@ mod tests {
       name:           "valid-name".to_string(),
       description:    None,
       repository_url: "not-a-url".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     };
     assert!(p.validate().is_err());
   }
@@ -547,6 +601,9 @@ mod tests {
       name:           "valid-name".to_string(),
       description:    Some("a".repeat(4097)),
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     };
     assert!(p.validate().is_err());
   }

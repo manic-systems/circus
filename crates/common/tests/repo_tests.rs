@@ -33,6 +33,9 @@ async fn create_test_project(pool: &sqlx::PgPool, prefix: &str) -> Project {
     name:           format!("{prefix}-{}", uuid::Uuid::new_v4()),
     description:    Some("Test project".to_string()),
     repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
   })
   .await
   .expect("create project")
@@ -126,6 +129,9 @@ async fn test_project_crud() {
     name:           None,
     description:    Some("Updated description".to_string()),
     repository_url: None,
+    cache_enabled:  None,
+    cache_url:      None,
+    cache_upstreams: None,
   })
   .await
   .expect("update project");
@@ -159,6 +165,9 @@ async fn test_project_unique_constraint() {
     name:           name.clone(),
     description:    None,
     repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
   })
   .await
   .expect("create first project");
@@ -168,6 +177,9 @@ async fn test_project_unique_constraint() {
     name,
     description: None,
     repository_url: "https://github.com/test/repo2".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
   })
   .await;
 

@@ -9,6 +9,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
 
 use crate::error::{CiError, Result};
 
@@ -25,6 +26,8 @@ pub struct NarInfo {
   pub references:  Vec<String>,
   pub sig:         Option<String>,
   pub ca:          Option<String>,
+  pub build_id:    Option<Uuid>,
+  pub project_id:  Option<Uuid>,
   pub created_at:  DateTime<Utc>,
   pub updated_at:  DateTime<Utc>,
 }
@@ -41,6 +44,8 @@ pub struct UpsertNarInfo<'a> {
   pub references:  &'a [String],
   pub sig:         Option<&'a str>,
   pub ca:          Option<&'a str>,
+  pub build_id:    Option<Uuid>,
+  pub project_id:  Option<Uuid>,
 }
 
 /// Insert or replace the narinfo for one store path.
@@ -52,12 +57,14 @@ pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   sqlx::query(
     "INSERT INTO narinfo_cache (store_path, nar_hash, nar_size, file_hash, \
      file_size, compression, url, deriver, \"references\", sig, ca, \
-     updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()) \
+     build_id, project_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, \
+     $8, $9, $10, $11, $12, $13, NOW()) \
      ON CONFLICT (store_path) DO UPDATE SET nar_hash = EXCLUDED.nar_hash, \
      nar_size = EXCLUDED.nar_size, file_hash = EXCLUDED.file_hash, file_size \
      = EXCLUDED.file_size, compression = EXCLUDED.compression, url = \
      EXCLUDED.url, deriver = EXCLUDED.deriver, \"references\" = \
      EXCLUDED.\"references\", sig = EXCLUDED.sig, ca = EXCLUDED.ca, \
+     build_id = EXCLUDED.build_id, project_id = EXCLUDED.project_id, \
      updated_at = NOW()",
   )
   .bind(info.store_path)
@@ -71,6 +78,8 @@ pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   .bind(info.references)
   .bind(info.sig)
   .bind(info.ca)
+  .bind(info.build_id)
+  .bind(info.project_id)
   .execute(pool)
   .await?;
   Ok(())
@@ -113,6 +122,28 @@ pub async fn get_by_hash_part(
   .ok_or_else(|| CiError::NotFound(format!("narinfo for hash {hash_part}")))
 }
 
+/// Lookup by store path hash part and project.
+///
+/// # Errors
+///
+/// Same as [`get`].
+pub async fn get_by_hash_part_for_project(
+  pool: &PgPool,
+  hash_part: &str,
+  project_id: Uuid,
+) -> Result<NarInfo> {
+  sqlx::query_as::<_, NarInfo>(
+    "SELECT * FROM narinfo_cache WHERE store_path LIKE $1 AND project_id = $2",
+  )
+  .bind(format!("/nix/store/{hash_part}-%"))
+  .bind(project_id)
+  .fetch_optional(pool)
+  .await?
+  .ok_or_else(|| {
+    CiError::NotFound(format!("narinfo for hash {hash_part} in {project_id}"))
+  })
+}
+
 /// Lookup by the narinfo `URL` field, e.g. `nar/<hash>.nar.zst`.
 ///
 /// This is used by the server's `/nix-cache/nar/...` route to resolve NARs
@@ -130,6 +161,29 @@ pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
   .fetch_optional(pool)
   .await?
   .ok_or_else(|| CiError::NotFound(format!("narinfo for URL {url}")))
+}
+
+/// Lookup by URL and project.
+///
+/// # Errors
+///
+/// Same as [`get`].
+pub async fn get_by_url_for_project(
+  pool: &PgPool,
+  url: &str,
+  project_id: Uuid,
+) -> Result<NarInfo> {
+  sqlx::query_as::<_, NarInfo>(
+    "SELECT * FROM narinfo_cache WHERE url = $1 AND project_id = $2 ORDER BY \
+     updated_at DESC LIMIT 1",
+  )
+  .bind(url)
+  .bind(project_id)
+  .fetch_optional(pool)
+  .await?
+  .ok_or_else(|| {
+    CiError::NotFound(format!("narinfo for URL {url} in {project_id}"))
+  })
 }
 
 /// Total rows. Cheap for admin and metrics surfaces.
