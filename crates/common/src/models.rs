@@ -64,6 +64,18 @@ pub enum EvaluationStatus {
   Failed,
 }
 
+impl EvaluationStatus {
+  #[must_use]
+  pub const fn badge(&self) -> (&'static str, &'static str) {
+    match self {
+      Self::Completed => ("Completed", "completed"),
+      Self::Failed => ("Failed", "failed"),
+      Self::Running => ("Running", "running"),
+      Self::Pending => ("Pending", "pending"),
+    }
+  }
+}
+
 #[derive(
   Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default,
 )]
@@ -365,6 +377,26 @@ impl BuildStatus {
       11 => Self::NarSizeLimitExceeded,
       12 => Self::NonDeterministic,
       _ => Self::Failed,
+    }
+  }
+
+  #[must_use]
+  pub const fn badge(self) -> (&'static str, &'static str) {
+    match self {
+      Self::Succeeded => ("Succeeded", "succeeded"),
+      Self::Failed => ("Failed", "failed"),
+      Self::Running => ("Running", "running"),
+      Self::Pending => ("Pending", "pending"),
+      Self::Cancelled => ("Cancelled", "cancelled"),
+      Self::DependencyFailed => ("Dependency Failed", "failed"),
+      Self::Aborted => ("Aborted", "aborted"),
+      Self::FailedWithOutput => ("Failed w/ Output", "failed"),
+      Self::Timeout => ("Timeout", "failed"),
+      Self::CachedFailure => ("Cached Failure", "failed"),
+      Self::UnsupportedSystem => ("Unsupported System", "skipped"),
+      Self::LogLimitExceeded => ("Log Limit", "failed"),
+      Self::NarSizeLimitExceeded => ("NAR Size Limit", "failed"),
+      Self::NonDeterministic => ("Non-deterministic", "failed"),
     }
   }
 }

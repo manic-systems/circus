@@ -373,51 +373,57 @@ pub(super) fn format_duration(
   }
 }
 
-pub(super) fn build_view(b: &Build) -> BuildView {
-  let (text, class) = status_badge(b.status);
-  BuildView {
-    id:            b.id,
-    job_name:      b.job_name.clone(),
-    project_id:    None,
-    project_name:  String::new(),
-    jobset_id:     None,
-    jobset_name:   String::new(),
-    status_text:   text,
-    status_class:  class,
-    system:        b.system.clone().unwrap_or_else(|| "-".to_string()),
-    created_at:    b.created_at.format("%Y-%m-%d %H:%M").to_string(),
-    started_at:    b
-      .started_at
-      .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-      .unwrap_or_default(),
-    completed_at:  b
-      .completed_at
-      .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-      .unwrap_or_default(),
-    duration:      format_duration(
-      b.started_at.as_ref(),
-      b.completed_at.as_ref(),
-    ),
-    // Only expose epoch while running so the client-side ticker stops
-    // updating once the build completes.
-    started_epoch: if b.completed_at.is_none() {
-      b.started_at.map(|t| t.timestamp())
-    } else {
-      None
-    },
-    priority:      b.priority,
-    is_aggregate:  b.is_aggregate,
-    signed:        b.signed,
-    drv_path:      b.drv_path.clone(),
-    output_path:   b.build_output_path.clone().unwrap_or_default(),
-    error_message: b.error_message.clone().unwrap_or_default(),
-    error_lines:   b
-      .error_message
-      .as_deref()
-      .map(parse_build_error)
-      .unwrap_or_default(),
-    has_log:       b.log_path.as_deref().is_some_and(|p| !p.is_empty()),
+impl From<&Build> for BuildView {
+  fn from(b: &Build) -> Self {
+    let (text, class) = b.status.badge();
+    Self {
+      id:            b.id,
+      job_name:      b.job_name.clone(),
+      project_id:    None,
+      project_name:  String::new(),
+      jobset_id:     None,
+      jobset_name:   String::new(),
+      status_text:   text.to_string(),
+      status_class:  class.to_string(),
+      system:        b.system.clone().unwrap_or_else(|| "-".to_string()),
+      created_at:    b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+      started_at:    b
+        .started_at
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default(),
+      completed_at:  b
+        .completed_at
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default(),
+      duration:      format_duration(
+        b.started_at.as_ref(),
+        b.completed_at.as_ref(),
+      ),
+      // Only expose epoch while running so the client-side ticker stops
+      // updating once the build completes.
+      started_epoch: if b.completed_at.is_none() {
+        b.started_at.map(|t| t.timestamp())
+      } else {
+        None
+      },
+      priority:      b.priority,
+      is_aggregate:  b.is_aggregate,
+      signed:        b.signed,
+      drv_path:      b.drv_path.clone(),
+      output_path:   b.build_output_path.clone().unwrap_or_default(),
+      error_message: b.error_message.clone().unwrap_or_default(),
+      error_lines:   b
+        .error_message
+        .as_deref()
+        .map(parse_build_error)
+        .unwrap_or_default(),
+      has_log:       b.log_path.as_deref().is_some_and(|p| !p.is_empty()),
+    }
   }
+}
+
+pub(super) fn build_view(b: &Build) -> BuildView {
+  BuildView::from(b)
 }
 
 pub(super) fn build_view_with_context(
@@ -435,25 +441,31 @@ pub(super) fn build_view_with_context(
   v
 }
 
-pub(super) fn eval_view(e: &Evaluation) -> EvalView {
-  let (text, class) = eval_badge(&e.status);
-  let short = if e.commit_hash.len() > 12 {
-    e.commit_hash[..12].to_string()
-  } else {
-    e.commit_hash.clone()
-  };
-  EvalView {
-    id:            e.id,
-    commit_hash:   e.commit_hash.clone(),
-    commit_short:  short,
-    status_text:   text,
-    status_class:  class,
-    time:          e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
-    error_message: e.error_message.clone(),
-    hidden:        e.hidden,
-    jobset_name:   String::new(),
-    project_name:  String::new(),
+impl From<&Evaluation> for EvalView {
+  fn from(e: &Evaluation) -> Self {
+    let (text, class) = e.status.badge();
+    let short = if e.commit_hash.len() > 12 {
+      e.commit_hash[..12].to_string()
+    } else {
+      e.commit_hash.clone()
+    };
+    Self {
+      id:            e.id,
+      commit_hash:   e.commit_hash.clone(),
+      commit_short:  short,
+      status_text:   text.to_string(),
+      status_class:  class.to_string(),
+      time:          e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      error_message: e.error_message.clone(),
+      hidden:        e.hidden,
+      jobset_name:   String::new(),
+      project_name:  String::new(),
+    }
   }
+}
+
+pub(super) fn eval_view(e: &Evaluation) -> EvalView {
+  EvalView::from(e)
 }
 
 pub(super) fn eval_view_with_context(
@@ -468,41 +480,13 @@ pub(super) fn eval_view_with_context(
 }
 
 pub(super) fn status_badge(s: BuildStatus) -> (String, String) {
-  match s {
-    BuildStatus::Succeeded => ("Succeeded".into(), "succeeded".into()),
-    BuildStatus::Failed => ("Failed".into(), "failed".into()),
-    BuildStatus::Running => ("Running".into(), "running".into()),
-    BuildStatus::Pending => ("Pending".into(), "pending".into()),
-    BuildStatus::Cancelled => ("Cancelled".into(), "cancelled".into()),
-    BuildStatus::DependencyFailed => {
-      ("Dependency Failed".into(), "failed".into())
-    },
-    BuildStatus::Aborted => ("Aborted".into(), "aborted".into()),
-    BuildStatus::FailedWithOutput => {
-      ("Failed w/ Output".into(), "failed".into())
-    },
-    BuildStatus::Timeout => ("Timeout".into(), "failed".into()),
-    BuildStatus::CachedFailure => ("Cached Failure".into(), "failed".into()),
-    BuildStatus::UnsupportedSystem => {
-      ("Unsupported System".into(), "skipped".into())
-    },
-    BuildStatus::LogLimitExceeded => ("Log Limit".into(), "failed".into()),
-    BuildStatus::NarSizeLimitExceeded => {
-      ("NAR Size Limit".into(), "failed".into())
-    },
-    BuildStatus::NonDeterministic => {
-      ("Non-deterministic".into(), "failed".into())
-    },
-  }
+  let (text, class) = s.badge();
+  (text.to_string(), class.to_string())
 }
 
 pub(super) fn eval_badge(s: &EvaluationStatus) -> (String, String) {
-  match s {
-    EvaluationStatus::Completed => ("Completed".into(), "completed".into()),
-    EvaluationStatus::Failed => ("Failed".into(), "failed".into()),
-    EvaluationStatus::Running => ("Running".into(), "running".into()),
-    EvaluationStatus::Pending => ("Pending".into(), "pending".into()),
-  }
+  let (text, class) = s.badge();
+  (text.to_string(), class.to_string())
 }
 
 pub(super) fn is_admin(extensions: &Extensions) -> bool {
