@@ -1,0 +1,18 @@
+[package]
+name                 = "circus-nix"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+circus-types.workspace = true
+regex.workspace        = true
+serde.workspace        = true
+serde_json.workspace   = true
+thiserror.workspace    = true
+tokio.workspace        = true
+tracing.workspace      = true
+
+[lints]
+workspace = true

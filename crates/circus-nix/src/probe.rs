@@ -2,8 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::flake;
-use crate::{CiError, error::Result};
+use crate::{Error, Result, flake, validate};
 
 /// Result of probing a flake repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,10 +50,9 @@ pub async fn probe_flake(
   repo_url: &str,
   revision: Option<&str>,
 ) -> Result<FlakeProbeResult> {
-  let parsed_ref =
-    flake::Ref::from_url(repo_url).map_err(CiError::Validation)?;
+  let parsed_ref = flake::Ref::from_url(repo_url).map_err(Error::Validation)?;
   if let Some(rev) = revision {
-    crate::validate::validate_commit_hash(rev).map_err(CiError::Validation)?;
+    validate::validate_commit_hash(rev).map_err(Error::Validation)?;
   }
   let full_ref = revision.map_or_else(
     || parsed_ref.to_string(),
@@ -76,10 +74,8 @@ pub async fn probe_flake(
       .await
   })
   .await
-  .map_err(|_| CiError::Timeout("Flake probe timed out after 60s".to_string()))?
-  .map_err(|e| {
-    CiError::NixEval(format!("Failed to run nix flake show: {e}"))
-  })?;
+  .map_err(|_| Error::Timeout("Flake probe timed out after 60s".to_string()))?
+  .map_err(|e| Error::Eval(format!("Failed to run nix flake show: {e}")))?;
 
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -98,7 +94,7 @@ pub async fn probe_flake(
       });
     }
     tracing::warn!(stderr = %stderr, "nix flake probe failed");
-    return Err(CiError::NixEval(
+    return Err(Error::Eval(
       "Repository not accessible or not a flake".to_string(),
     ));
   }
@@ -114,11 +110,11 @@ pub async fn probe_flake(
   let raw: serde_json::Value =
     serde_json::from_str(&stdout[..stdout.len().min(MAX_OUTPUT_SIZE)])
       .map_err(|e| {
-        CiError::NixEval(format!("Failed to parse flake show output: {e}"))
+        Error::Eval(format!("Failed to parse flake show output: {e}"))
       })?;
 
   let Some(top) = raw.as_object() else {
-    return Err(CiError::NixEval(
+    return Err(Error::Eval(
       "Unexpected flake show output format".to_string(),
     ));
   };

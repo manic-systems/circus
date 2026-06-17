@@ -1,0 +1,18 @@
+[package]
+name                 = "circus-s3"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace           = true
+circus-config.workspace    = true
+hex.workspace             = true
+hmac.workspace             = true
+percent-encoding.workspace = true
+sha2.workspace             = true
+url.workspace              = true
+
+[lints]
+workspace = true

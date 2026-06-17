@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::{CiError, error::Result};
+use crate::{Error, Result};
 
 fn features_of_structured(sa: &serde_json::Value, out: &mut BTreeSet<String>) {
   if let Some(arr) = sa.get("requiredSystemFeatures").and_then(|v| v.as_array())
@@ -73,7 +73,7 @@ pub fn union_required_features(parsed: &serde_json::Value) -> Vec<String> {
 ///
 /// # Errors
 ///
-/// Returns [`NixEval`](`CiError::NixEval`) when nix cannot be spawned, exits
+/// Returns [`Error::Eval`] when nix cannot be spawned, exits
 /// non-zero, or emits unparseable JSON.
 pub async fn show_required_features(drvs: &[String]) -> Result<Vec<String>> {
   let mut features = BTreeSet::new();
@@ -89,18 +89,16 @@ pub async fn show_required_features(drvs: &[String]) -> Result<Vec<String>> {
       .output()
       .await
       .map_err(|e| {
-        CiError::NixEval(format!("failed to run nix derivation show: {e}"))
+        Error::Eval(format!("failed to run nix derivation show: {e}"))
       })?;
     if !out.status.success() {
-      return Err(CiError::NixEval(format!(
+      return Err(Error::Eval(format!(
         "nix derivation show failed: {}",
         String::from_utf8_lossy(&out.stderr).trim()
       )));
     }
     let parsed = serde_json::from_slice::<serde_json::Value>(&out.stdout)
-      .map_err(|e| {
-        CiError::NixEval(format!("nix derivation show output: {e}"))
-      })?;
+      .map_err(|e| Error::Eval(format!("nix derivation show output: {e}")))?;
     features.extend(union_required_features(&parsed));
   }
   Ok(features.into_iter().collect())

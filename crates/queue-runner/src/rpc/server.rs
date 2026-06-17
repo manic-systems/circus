@@ -1174,7 +1174,7 @@ fn validate_text_len(
 fn validate_store_path(path: &str) -> Result<(), capnp::Error> {
   validate_text_len("store_path", path, 1, limits::MAX_STORE_PATH_LEN)?;
   if path == "/nix/store/"
-    || !circus_common::nix::StorePath::is_valid(path, "/nix/store")
+    || !circus_nix::StorePath::is_valid(path, "/nix/store")
   {
     return Err(capnp::Error::failed(format!("invalid store path: {path}")));
   }

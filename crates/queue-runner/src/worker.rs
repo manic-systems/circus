@@ -471,8 +471,7 @@ fn build_s3_store_uri(
   let Some(cfg) = config else {
     return base_uri.to_string();
   };
-  let base_uri =
-    circus_common::s3::s3_store_uri_with_prefix(base_uri, Some(cfg));
+  let base_uri = circus_s3::s3_store_uri_with_prefix(base_uri, Some(cfg));
 
   let mut params: Vec<(&str, &str)> = Vec::new();
 
@@ -513,7 +512,7 @@ fn presigned_s3_upload_available(config: &CacheUploadConfig) -> bool {
   let Some(s3_config) = config.s3.as_ref() else {
     return false;
   };
-  circus_common::s3::Presigner::from_config(store_uri, s3_config).is_some()
+  circus_s3::Presigner::from_config(store_uri, s3_config).is_some()
 }
 
 /// Try to run the build on a remote builder if one is available for the build's

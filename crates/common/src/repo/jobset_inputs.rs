@@ -5,7 +5,6 @@ use uuid::Uuid;
 use crate::{
   error::{CiError, Result, SqlxResultExt},
   models::{InputType, JobsetInput},
-  nix,
 };
 
 /// Create a new jobset input.
@@ -21,8 +20,10 @@ pub async fn create(
   value: &str,
   revision: Option<&str>,
 ) -> Result<JobsetInput> {
-  nix::validate::validate_jobset_input(name, input_type, value, revision)
-    .map_err(CiError::Validation)?;
+  circus_nix::validate::validate_jobset_input(
+    name, input_type, value, revision,
+  )
+  .map_err(CiError::Validation)?;
   sqlx::query_as::<_, JobsetInput>(
     "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, revision) \
      VALUES ($1, $2, $3, $4, $5) RETURNING *",
@@ -87,8 +88,10 @@ pub async fn upsert(
   value: &str,
   revision: Option<&str>,
 ) -> Result<JobsetInput> {
-  nix::validate::validate_jobset_input(name, input_type, value, revision)
-    .map_err(CiError::Validation)?;
+  circus_nix::validate::validate_jobset_input(
+    name, input_type, value, revision,
+  )
+  .map_err(CiError::Validation)?;
   Ok(
     sqlx::query_as::<_, JobsetInput>(
       "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, \

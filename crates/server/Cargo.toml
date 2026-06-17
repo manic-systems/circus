@@ -53,7 +53,9 @@ uuid.workspace                           = true
 # Our crates
 circus-common.workspace       = true
 circus-config.workspace       = true
+circus-nix.workspace          = true
 circus-notification.workspace = true
+circus-s3.workspace           = true
 
 regex.workspace = true
 

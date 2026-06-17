@@ -408,7 +408,7 @@ impl Validate for UpdateProject {
 impl Validate for CreateJobset {
   fn validate(&self) -> Result<(), String> {
     validate_name(&self.name, "name")?;
-    crate::nix::validate::validate_nix_expression(&self.nix_expression)?;
+    circus_nix::validate::validate_nix_expression(&self.nix_expression)?;
     if let Some(interval) = self.check_interval {
       validate_check_interval(interval)?;
     }
@@ -422,7 +422,7 @@ impl Validate for UpdateJobset {
       validate_name(name, "name")?;
     }
     if let Some(ref expr) = self.nix_expression {
-      crate::nix::validate::validate_nix_expression(expr)?;
+      circus_nix::validate::validate_nix_expression(expr)?;
     }
     if let Some(interval) = self.check_interval {
       validate_check_interval(interval)?;
@@ -440,9 +440,9 @@ impl Validate for CreateEvaluation {
 
 impl Validate for CreateBuild {
   fn validate(&self) -> Result<(), String> {
-    crate::nix::validate::validate_drv_path(&self.drv_path)?;
+    circus_nix::validate::validate_drv_path(&self.drv_path)?;
     if let Some(ref system) = self.system {
-      crate::nix::validate::validate_system(system)?;
+      circus_nix::validate::validate_system(system)?;
     }
     Ok(())
   }
@@ -472,7 +472,7 @@ impl Validate for CreateRemoteBuilder {
       return Err("systems must not be empty".to_string());
     }
     for system in &self.systems {
-      crate::nix::validate::validate_system(system)?;
+      circus_nix::validate::validate_system(system)?;
     }
     if let Some(max_jobs) = self.max_jobs {
       validate_positive_i32(max_jobs, "max_jobs")?;
@@ -503,7 +503,7 @@ impl Validate for UpdateRemoteBuilder {
         return Err("systems must not be empty".to_string());
       }
       for system in systems {
-        crate::nix::validate::validate_system(system)?;
+        circus_nix::validate::validate_system(system)?;
       }
     }
     if let Some(max_jobs) = self.max_jobs {

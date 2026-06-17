@@ -15,9 +15,7 @@ pub mod psi;
 pub mod repo;
 
 pub mod bootstrap;
-pub mod nix;
 pub mod roles;
-pub mod s3;
 pub mod service_heartbeat;
 pub mod validate;
 pub mod validation;
@@ -36,6 +34,5 @@ pub use database::*;
 pub use error::*;
 pub use migrate::*;
 pub use models::*;
-pub use nix::{NixHash, StorePath};
 pub use validate::Validate;
 pub use validation::*;

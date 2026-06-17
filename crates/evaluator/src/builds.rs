@@ -8,7 +8,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 async fn read_required_features(drv_path: &str) -> Vec<String> {
-  circus_common::nix::derivation::show_required_features(&[drv_path.to_owned()])
+  circus_nix::derivation::show_required_features(&[drv_path.to_owned()])
     .await
     .unwrap_or_default()
 }

@@ -17,8 +17,8 @@ use circus_common::{
   Validate,
   WebhookConfig,
   models::{CreateWebhookConfig, ForgeType},
-  nix,
 };
+use circus_nix as nix;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -224,7 +224,8 @@ async fn probe_repository(
   .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let result =
     nix::probe::probe_flake(&body.repository_url, body.revision.as_deref())
-      .await?;
+      .await
+      .map_err(circus_common::CiError::from)?;
   Ok(Json(result))
 }
 

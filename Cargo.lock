@@ -626,18 +626,17 @@ dependencies = [
  "circus-config",
  "circus-logs",
  "circus-migrations",
+ "circus-nix",
  "circus-types",
  "clap",
  "color-eyre",
  "git2",
  "hex",
- "hmac",
  "lettre",
  "libc",
  "nix",
  "num_enum",
  "password-hash 0.6.1",
- "percent-encoding",
  "regex",
  "reqwest 0.13.4",
  "ring",
@@ -681,6 +680,7 @@ dependencies = [
  "chrono",
  "circus-common",
  "circus-config",
+ "circus-nix",
  "circus-notification",
  "clap",
  "color-eyre",
@@ -732,6 +732,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "circus-nix"
+version = "0.11.0"
+dependencies = [
+ "circus-types",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "circus-notification"
 version = "0.11.0"
 dependencies = [
@@ -776,8 +789,10 @@ dependencies = [
  "chrono",
  "circus-common",
  "circus-config",
+ "circus-nix",
  "circus-notification",
  "circus-proto",
+ "circus-s3",
  "clap",
  "color-eyre",
  "config",
@@ -810,6 +825,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "circus-s3"
+version = "0.11.0"
+dependencies = [
+ "chrono",
+ "circus-config",
+ "hex",
+ "hmac",
+ "percent-encoding",
+ "sha2 0.11.0",
+ "url",
+]
+
+[[package]]
 name = "circus-server"
 version = "0.11.0"
 dependencies = [
@@ -822,8 +850,10 @@ dependencies = [
  "chrono",
  "circus-common",
  "circus-config",
+ "circus-nix",
  "circus-notification",
  "circus-proto",
+ "circus-s3",
  "clap",
  "color-eyre",
  "config",

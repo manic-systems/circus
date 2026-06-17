@@ -2,11 +2,13 @@
 //! flake probing.
 
 pub mod derivation;
+pub mod error;
 pub mod flake;
 pub mod probe;
 pub mod store;
 pub mod validate;
 
+pub use error::{Error, Result};
 pub use probe::{
   FlakeMetadata,
   FlakeOutput,

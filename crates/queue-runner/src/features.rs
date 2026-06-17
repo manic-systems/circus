@@ -54,7 +54,7 @@ async fn will_build_set(drv_path: &str) -> color_eyre::Result<Vec<String>> {
 /// be built for `drv_path` given current store and substituter state.
 async fn compute(drv_path: &str) -> color_eyre::Result<Vec<String>> {
   let drvs = will_build_set(drv_path).await?;
-  Ok(circus_common::nix::derivation::show_required_features(&drvs).await?)
+  Ok(circus_nix::derivation::show_required_features(&drvs).await?)
 }
 
 /// Floor the computed set to the job-level features so a silent dry-run

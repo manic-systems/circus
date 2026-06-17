@@ -1,9 +1,9 @@
-use std::sync::LazyLock;
+use std::{path::Path, sync::LazyLock};
 
+use circus_types::InputType;
 use regex::Regex;
 
-use super::flake;
-use crate::models::InputType;
+use crate::flake;
 
 pub(crate) static SYSTEM_RE: LazyLock<Regex> = LazyLock::new(|| {
   #[expect(clippy::expect_used, reason = "static regex initializer, fine")]
@@ -11,6 +11,52 @@ pub(crate) static SYSTEM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\w+-\w+$").expect("SYSTEM_RE failed to compile")
   }
 });
+
+static NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+  #[expect(clippy::expect_used, reason = "static regex initializer")]
+  {
+    Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+      .expect("NAME_RE failed to compile")
+  }
+});
+
+static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
+  #[expect(clippy::expect_used, reason = "static regex initializer")]
+  {
+    Regex::new(r"^[0-9a-fA-F]{1,64}$")
+      .expect("COMMIT_HASH_RE failed to compile")
+  }
+});
+
+/// Validate a Circus/Nix identifier.
+///
+/// # Errors
+///
+/// Returns an error if the name is empty, too long, or contains unsupported
+/// characters.
+pub fn validate_name(name: &str, field: &str) -> Result<(), String> {
+  if name.is_empty() || name.len() > 255 {
+    return Err(format!("{field} must be between 1 and 255 characters"));
+  }
+  if !NAME_RE.is_match(name) {
+    return Err(format!(
+      "{field} must start with alphanumeric and contain only [a-zA-Z0-9_-]"
+    ));
+  }
+  Ok(())
+}
+
+/// Validate a Git commit hash used by Nix inputs.
+///
+/// # Errors
+///
+/// Returns an error if the hash is not 1-64 hexadecimal characters.
+pub fn validate_commit_hash(hash: &str) -> Result<(), String> {
+  if !COMMIT_HASH_RE.is_match(hash) {
+    return Err("commit_hash must be 1-64 hex characters".to_string());
+  }
+  Ok(())
+}
 
 /// Validate nix expression format.
 ///
@@ -51,7 +97,7 @@ pub fn validate_jobset_input(
   value: &str,
   revision: Option<&str>,
 ) -> Result<(), String> {
-  crate::validate::validate_name(name, "input name")?;
+  validate_name(name, "input name")?;
   if value.is_empty() {
     return Err("input value cannot be empty".to_string());
   }
@@ -62,7 +108,7 @@ pub fn validate_jobset_input(
     return Err("input value must not contain null bytes".to_string());
   }
   if let Some(rev) = revision {
-    crate::validate::validate_commit_hash(rev)?;
+    validate_commit_hash(rev)?;
   }
 
   match input_type {
@@ -71,11 +117,17 @@ pub fn validate_jobset_input(
   }
 }
 
-pub(crate) fn validate_drv_path(path: &str) -> Result<(), String> {
+/// Validate a derivation path before persisting or passing it to Nix.
+///
+/// # Errors
+///
+/// Returns an error if the path is not absolute, is not a `.drv`, or contains
+/// path traversal.
+pub fn validate_drv_path(path: &str) -> Result<(), String> {
   if !path.starts_with('/') {
     return Err("drv_path must be an absolute path".to_string());
   }
-  if !std::path::Path::new(path)
+  if !Path::new(path)
     .extension()
     .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
   {
@@ -87,7 +139,13 @@ pub(crate) fn validate_drv_path(path: &str) -> Result<(), String> {
   Ok(())
 }
 
-pub(crate) fn validate_system(system: &str) -> Result<(), String> {
+/// Validate a Nix system string.
+///
+/// # Errors
+///
+/// Returns an error if the system does not match the expected
+/// architecture-platform shape.
+pub fn validate_system(system: &str) -> Result<(), String> {
   if !SYSTEM_RE.is_match(system) {
     return Err("system must match pattern like x86_64-linux".to_string());
   }

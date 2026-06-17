@@ -73,6 +73,18 @@ impl From<ValidationError> for CiError {
   }
 }
 
+impl From<circus_nix::Error> for CiError {
+  fn from(error: circus_nix::Error) -> Self {
+    match error {
+      circus_nix::Error::Eval(msg) => Self::NixEval(msg),
+      circus_nix::Error::Io(error) => Self::Io(error),
+      circus_nix::Error::Build(msg) => Self::Build(msg),
+      circus_nix::Error::Validation(msg) => Self::Validation(msg),
+      circus_nix::Error::Timeout(msg) => Self::Timeout(msg),
+    }
+  }
+}
+
 pub trait SqlxResultExt<T> {
   /// # Errors
   ///
@@ -106,6 +118,30 @@ mod tests {
     assert!(matches!(
       result,
       Err(CiError::Database(sqlx::Error::RowNotFound))
+    ));
+  }
+
+  #[test]
+  fn circus_nix_errors_map_to_ci_errors() {
+    assert!(matches!(
+      CiError::from(circus_nix::Error::Eval("eval".to_string())),
+      CiError::NixEval(msg) if msg == "eval"
+    ));
+    assert!(matches!(
+      CiError::from(circus_nix::Error::Build("build".to_string())),
+      CiError::Build(msg) if msg == "build"
+    ));
+    assert!(matches!(
+      CiError::from(circus_nix::Error::Validation("bad".to_string())),
+      CiError::Validation(msg) if msg == "bad"
+    ));
+    assert!(matches!(
+      CiError::from(circus_nix::Error::Timeout("slow".to_string())),
+      CiError::Timeout(msg) if msg == "slow"
+    ));
+    assert!(matches!(
+      CiError::from(circus_nix::Error::Io(std::io::Error::other("io"))),
+      CiError::Io(_)
     ));
   }
 }

@@ -270,7 +270,7 @@ async fn narinfo(
   // Strip .narinfo suffix if present
   let hash = hash.strip_suffix(".narinfo").unwrap_or(&hash);
 
-  if !circus_common::nix::NixHash::is_valid(hash) {
+  if !circus_nix::NixHash::is_valid(hash) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
@@ -374,10 +374,10 @@ fn render_narinfo_row(
 
 fn uploaded_nar_presigner(
   config: &circus_config::Config,
-) -> Option<circus_common::s3::Presigner> {
+) -> Option<circus_s3::Presigner> {
   let uri = config.cache_upload.store_uri.as_deref()?;
   let s3 = config.cache_upload.s3.as_ref()?;
-  circus_common::s3::Presigner::from_config(uri, s3)
+  circus_s3::Presigner::from_config(uri, s3)
 }
 
 fn is_valid_nar_object_name(name: &str) -> bool {
@@ -447,7 +447,7 @@ async fn serve_nar_combined(
   };
 
   let output_hash = query.hash.as_deref().unwrap_or(stripped);
-  if !circus_common::nix::NixHash::is_valid(output_hash) {
+  if !circus_nix::NixHash::is_valid(output_hash) {
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
