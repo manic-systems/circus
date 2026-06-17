@@ -13,10 +13,6 @@ use regex::Regex;
 use sqlx::{ConnectOptions as _, PgPool, SqlitePool};
 use tokio::sync::OnceCell;
 
-/// Maximum lifetime for legacy in-memory API-key dashboard sessions.
-const SESSION_MAX_AGE: std::time::Duration =
-  std::time::Duration::from_hours(24);
-
 /// How often the background cleanup task runs (every 5 minutes).
 const SESSION_CLEANUP_INTERVAL: std::time::Duration =
   std::time::Duration::from_mins(5);
@@ -217,8 +213,10 @@ impl AppState {
       loop {
         tokio::time::sleep(SESSION_CLEANUP_INTERVAL).await;
         let before = sessions.len();
-        sessions
-          .retain(|_, session| session.created_at.elapsed() < SESSION_MAX_AGE);
+        sessions.retain(|_, session| {
+          session.created_at.elapsed()
+            < crate::session_cookie::API_KEY_SESSION_MAX_AGE
+        });
         let evicted = before.saturating_sub(sessions.len());
         if evicted > 0 {
           tracing::debug!(

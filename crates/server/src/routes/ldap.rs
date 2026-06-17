@@ -17,7 +17,11 @@ use axum::{
 use circus_common::{models::UserType, repo};
 use serde::Deserialize;
 
-use crate::{error::ApiError, routes::cookie_security_flags, state::AppState};
+use crate::{
+  error::ApiError,
+  session_cookie::user_session_cookie,
+  state::AppState,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct LdapLoginRequest {
@@ -25,22 +29,8 @@ pub struct LdapLoginRequest {
   pub password: String,
 }
 
-/// LDAP DN/filter metacharacters that must be escaped before substituting
-/// a username into a template. Without this an attacker could craft a
-/// username like `admin)(uid=*` and alter the resulting DN.
 fn escape_ldap_value(input: &str) -> String {
-  let mut out = String::with_capacity(input.len());
-  for ch in input.chars() {
-    match ch {
-      ',' | '\\' | '#' | '+' | '<' | '>' | ';' | '"' | '=' | '(' | ')'
-      | '*' | '\0' => {
-        out.push('\\');
-        out.push(ch);
-      },
-      _ => out.push(ch),
-    }
-  }
-  out
+  ldap3::dn_escape(input).into_owned()
 }
 
 async fn ldap_login(
@@ -133,12 +123,7 @@ async fn ldap_login(
   )
   .await;
 
-  let cookie = format!(
-    "circus_user_session={}; {}; Path=/; Max-Age={}",
-    session.0,
-    cookie_security_flags(&state.config.server),
-    7 * 24 * 60 * 60
-  );
+  let cookie = user_session_cookie(&session.0, &state.config.server);
 
   Ok(
     Response::builder()

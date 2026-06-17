@@ -7,6 +7,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
+use axum_extra::extract::cookie::CookieJar;
 use circus_common::{models::UserType, repo};
 use circus_config::GitHubOAuthConfig;
 use oauth2::{
@@ -31,6 +32,12 @@ use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
 use super::super::{error::ApiError, state::AppState};
+use crate::session_cookie::{
+  OAUTH_STATE_COOKIE,
+  clear_oauth_state_cookie,
+  oauth_state_cookie,
+  oauth_user_session_cookie,
+};
 
 /// Type alias for the fully-configured GitHub OAuth client (oauth2 v5.0
 /// type-state)
@@ -106,27 +113,10 @@ async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
     .add_scope(Scope::new("user:email".to_string()))
     .url();
 
-  // Store CSRF token in a cookie for verification
-  // Use SameSite=Lax for OAuth flow (must work across redirect)
-  let security_flags = {
-    let is_localhost = config.redirect_uri.starts_with("http://localhost")
-      || config.redirect_uri.starts_with("http://127.0.0.1");
-
-    let secure_flag = if state.config.server.force_secure_cookies
-      || (!is_localhost && config.redirect_uri.starts_with("https://"))
-    {
-      "; Secure"
-    } else {
-      ""
-    };
-
-    format!("HttpOnly; SameSite=Lax{secure_flag}")
-  };
-
-  let cookie = format!(
-    "circus_oauth_state={}; {}; Path=/; Max-Age=600",
+  let cookie = oauth_state_cookie(
     csrf_token.secret(),
-    security_flags
+    &state.config.server,
+    &config.redirect_uri,
   );
 
   #[expect(
@@ -146,7 +136,7 @@ async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn github_callback(
   State(state): State<AppState>,
-  headers: axum::http::HeaderMap,
+  jar: CookieJar,
   Query(params): Query<OAuthCallbackParams>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Some(config) = &state.config.oauth.github else {
@@ -158,15 +148,9 @@ async fn github_callback(
   // Verify CSRF token from cookie. Use constant-time comparison: the
   // received state and the cookie value are both attacker-controlled
   // inputs to the compare, and a timing leak would reveal a valid token.
-  let stored_state = headers
-    .get(header::COOKIE)
-    .and_then(|c| c.to_str().ok())
-    .and_then(|cookies| {
-      cookies.split(';').find_map(|c| {
-        let c = c.trim();
-        c.strip_prefix("circus_oauth_state=")
-      })
-    });
+  let stored_state = jar
+    .get(OAUTH_STATE_COOKIE)
+    .map(axum_extra::extract::cookie::Cookie::value);
 
   let state_ok = stored_state.is_some_and(|s| {
     s.len() == params.state.len()
@@ -287,30 +271,12 @@ async fn github_callback(
   // Create session
   let session = repo::users::create_session(&state.pool, user.id).await?;
 
-  // Clear OAuth state cookie and set session cookie
-  // Use SameSite=Lax for OAuth callback (must work across redirect)
-  let security_flags = {
-    let is_localhost = config.redirect_uri.starts_with("http://localhost")
-      || config.redirect_uri.starts_with("http://127.0.0.1");
-
-    let secure_flag = if state.config.server.force_secure_cookies
-      || (!is_localhost && config.redirect_uri.starts_with("https://"))
-    {
-      "; Secure"
-    } else {
-      ""
-    };
-
-    format!("HttpOnly; SameSite=Lax{secure_flag}")
-  };
-
   let clear_state =
-    format!("circus_oauth_state=; {security_flags}; Path=/; Max-Age=0");
-  let session_cookie = format!(
-    "circus_user_session={}; {}; Path=/; Max-Age={}",
-    session.0,
-    security_flags,
-    7 * 24 * 60 * 60 // 7 days
+    clear_oauth_state_cookie(&state.config.server, &config.redirect_uri);
+  let session_cookie = oauth_user_session_cookie(
+    &session.0,
+    &state.config.server,
+    &config.redirect_uri,
   );
 
   Ok(
@@ -534,39 +500,45 @@ mod tests {
 
   #[test]
   fn test_cookie_parsing() {
-    // Simulate parsing cookies to find OAuth state
-    let cookie_header =
-      "other_cookie=value; circus_oauth_state=abc123; another=xyz";
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+      axum::http::header::COOKIE,
+      "other_cookie=value; circus_oauth_state=abc123; another=xyz"
+        .parse()
+        .unwrap(),
+    );
 
-    let stored_state = cookie_header.split(';').find_map(|c| {
-      let c = c.trim();
-      c.strip_prefix("circus_oauth_state=")
-    });
+    let jar = CookieJar::from_headers(&headers);
+    let stored_state = jar
+      .get(OAUTH_STATE_COOKIE)
+      .map(axum_extra::extract::cookie::Cookie::value);
 
     assert_eq!(stored_state, Some("abc123"));
   }
 
   #[test]
   fn test_cookie_parsing_not_found() {
-    let cookie_header = "other_cookie=value; another=xyz";
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+      axum::http::header::COOKIE,
+      "other_cookie=value; another=xyz".parse().unwrap(),
+    );
 
-    let stored_state = cookie_header.split(';').find_map(|c| {
-      let c = c.trim();
-      c.strip_prefix("circus_oauth_state=")
-    });
-
-    assert!(stored_state.is_none());
+    let jar = CookieJar::from_headers(&headers);
+    assert!(jar.get(OAUTH_STATE_COOKIE).is_none());
   }
 
   #[test]
   fn test_session_cookie_format() {
     let session_token = "test-session-token";
-    let secure_flag = "; Secure";
-    let max_age = 7 * 24 * 60 * 60;
-
-    let cookie = format!(
-      "circus_user_session={session_token}; HttpOnly; SameSite=Lax; Path=/; \
-       Max-Age={max_age}{secure_flag}"
+    let config = circus_config::ServerConfig {
+      force_secure_cookies: true,
+      ..Default::default()
+    };
+    let cookie = oauth_user_session_cookie(
+      session_token,
+      &config,
+      "https://example.com/callback",
     );
 
     assert!(cookie.contains("circus_user_session=test-session-token"));

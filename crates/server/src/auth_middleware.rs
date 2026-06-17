@@ -11,7 +11,15 @@ use circus_common::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::state::AppState;
+use crate::{
+  session_cookie::{
+    API_KEY_SESSION_COOKIE,
+    API_KEY_SESSION_MAX_AGE,
+    USER_SESSION_COOKIE,
+    cookie_value,
+  },
+  state::AppState,
+};
 
 /// Extract and validate an API key from the Authorization header or session
 /// cookie. Keys use the format: `Bearer circus_xxxx`. Session cookies use
@@ -77,14 +85,11 @@ pub async fn require_api_key(
   // Fall back to session cookie. Mutating API requests authenticated by a
   // browser session must carry the dashboard CSRF token. Bearer-token API calls
   // are unaffected because they are not sent automatically by browsers.
-  if let Some(cookie_header) = request
-    .headers()
-    .get("cookie")
-    .and_then(|v| v.to_str().ok())
   {
     // User sessions are durable DB-backed tokens. Legacy API-key dashboard
     // sessions below remain explicitly process-local.
-    if let Some(session_id) = parse_cookie(cookie_header, "circus_user_session")
+    if let Some(session_id) =
+      cookie_value(request.headers(), USER_SESSION_COOKIE)
     {
       match repo::users::validate_session(&state.pool, &session_id).await {
         Ok(Some(user)) => {
@@ -105,11 +110,12 @@ pub async fn require_api_key(
     }
 
     // Try legacy API key session (circus_session cookie)
-    if let Some(session_id) = parse_cookie(cookie_header, "circus_session")
+    if let Some(session_id) =
+      cookie_value(request.headers(), API_KEY_SESSION_COOKIE)
       && let Some(session) = state.sessions.get(&session_id)
     {
       // Check session expiry (24 hours)
-      if session.created_at.elapsed() < std::time::Duration::from_hours(24) {
+      if session.created_at.elapsed() < API_KEY_SESSION_MAX_AGE {
         if !is_read && !valid_csrf_header(&state, &request, &session_id) {
           return Err(StatusCode::FORBIDDEN);
         }
@@ -231,18 +237,11 @@ pub async fn extract_session(
     }
   }
 
-  // Extract cookie header next
-  let cookie_header = request
-    .headers()
-    .get("cookie")
-    .and_then(|v| v.to_str().ok())
-    .map(std::string::ToString::to_string);
-
-  if let Some(cookie_header) = cookie_header {
+  {
     // User sessions are durable DB-backed tokens. Legacy API-key dashboard
     // sessions below remain explicitly process-local.
     if let Some(session_id) =
-      parse_cookie(&cookie_header, "circus_user_session")
+      cookie_value(request.headers(), USER_SESSION_COOKIE)
     {
       match repo::users::validate_session(&state.pool, &session_id).await {
         Ok(Some(user)) => {
@@ -258,11 +257,12 @@ pub async fn extract_session(
     }
 
     // Try legacy API key session
-    if let Some(session_id) = parse_cookie(&cookie_header, "circus_session")
+    if let Some(session_id) =
+      cookie_value(request.headers(), API_KEY_SESSION_COOKIE)
       && let Some(session) = state.sessions.get(&session_id)
     {
       // Check session expiry
-      if session.created_at.elapsed() < std::time::Duration::from_hours(24) {
+      if session.created_at.elapsed() < API_KEY_SESSION_MAX_AGE {
         if let Some(ref api_key) = session.api_key {
           request.extensions_mut().insert(api_key.clone());
         }
@@ -278,16 +278,4 @@ pub async fn extract_session(
   }
 
   next.run(request).await
-}
-
-fn parse_cookie(header: &str, name: &str) -> Option<String> {
-  header.split(';').find_map(|pair| {
-    let pair = pair.trim();
-    let (k, v) = pair.split_once('=')?;
-    if k.trim() == name {
-      Some(v.trim().to_string())
-    } else {
-      None
-    }
-  })
 }

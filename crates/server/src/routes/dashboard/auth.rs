@@ -16,10 +16,17 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::templates::LoginTemplate;
-use crate::state::AppState;
-
-const USER_SESSION_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
-const API_KEY_SESSION_MAX_AGE_SECS: i64 = 24 * 60 * 60;
+use crate::{
+  session_cookie::{
+    API_KEY_SESSION_COOKIE,
+    USER_SESSION_COOKIE,
+    api_key_session_cookie,
+    clear_cookie,
+    cookie_value,
+    user_session_cookie,
+  },
+  state::AppState,
+};
 
 pub(super) async fn login_page() -> Html<String> {
   let tmpl = LoginTemplate {
@@ -81,12 +88,7 @@ pub(super) async fn login_action(
         },
       };
 
-      let security_flags =
-        crate::routes::cookie_security_flags(&state.config.server);
-      let cookie = format!(
-        "circus_user_session={}; {security_flags}; Path=/; Max-Age={}",
-        session.0, USER_SESSION_MAX_AGE_SECS,
-      );
+      let cookie = user_session_cookie(&session.0, &state.config.server);
       return (
         [(axum::http::header::SET_COOKIE, cookie)],
         Redirect::to("/"),
@@ -164,12 +166,7 @@ pub(super) async fn login_action(
           created_at: std::time::Instant::now(),
         });
 
-      let security_flags =
-        crate::routes::cookie_security_flags(&state.config.server);
-      let cookie = format!(
-        "circus_session={session_id}; {security_flags}; Path=/; \
-         Max-Age={API_KEY_SESSION_MAX_AGE_SECS}"
-      );
+      let cookie = api_key_session_cookie(&session_id, &state.config.server);
       (
         [(axum::http::header::SET_COOKIE, cookie)],
         Redirect::to("/"),
@@ -221,49 +218,34 @@ pub(super) async fn logout_action(
   request: axum::extract::Request,
 ) -> Response {
   // Remove server-side session for both cookie types
-  if let Some(cookie_header) = request
-    .headers()
-    .get("cookie")
-    .and_then(|v| v.to_str().ok())
   {
     // Check for user session
-    if let Some(session_id) = cookie_header.split(';').find_map(|pair| {
-      let pair = pair.trim();
-      let (k, v) = pair.split_once('=')?;
-      if k.trim() == "circus_user_session" {
-        Some(v.trim().to_string())
-      } else {
-        None
-      }
-    }) && let Err(e) =
-      circus_common::repo::users::delete_session(&state.pool, &session_id).await
+    if let Some(session_id) =
+      cookie_value(request.headers(), USER_SESSION_COOKIE)
+      && let Err(e) =
+        circus_common::repo::users::delete_session(&state.pool, &session_id)
+          .await
     {
       tracing::warn!("failed to delete user session during logout: {e}");
     }
 
     // Check for legacy API key session
-    if let Some(session_id) = cookie_header.split(';').find_map(|pair| {
-      let pair = pair.trim();
-      let (k, v) = pair.split_once('=')?;
-      if k.trim() == "circus_session" {
-        Some(v.trim().to_string())
-      } else {
-        None
-      }
-    }) {
+    if let Some(session_id) =
+      cookie_value(request.headers(), API_KEY_SESSION_COOKIE)
+    {
       state.sessions.remove(&session_id);
     }
   }
 
   // Clear both cookies
   let cookies = [
-    "circus_user_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
-    "circus_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+    clear_cookie(USER_SESSION_COOKIE, &state.config.server),
+    clear_cookie(API_KEY_SESSION_COOKIE, &state.config.server),
   ];
   (
     [
-      (axum::http::header::SET_COOKIE, cookies[0].to_string()),
-      (axum::http::header::SET_COOKIE, cookies[1].to_string()),
+      (axum::http::header::SET_COOKIE, cookies[0].clone()),
+      (axum::http::header::SET_COOKIE, cookies[1].clone()),
     ],
     Redirect::to("/"),
   )

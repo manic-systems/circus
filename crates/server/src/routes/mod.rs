@@ -62,32 +62,6 @@ pub(crate) async fn canonical_log_file(
   path.starts_with(base).then_some(path)
 }
 
-/// Helper to generate secure cookie flags based on server configuration.
-///
-/// # Returns
-///
-/// Returns a string containing cookie security attributes: `HttpOnly`,
-/// `SameSite`, and optionally Secure.
-///
-/// The Secure flag is set when:
-///
-/// 1. `force_secure_cookies` is enabled in config (for HTTPS reverse proxies),
-/// 2. OR the server is not bound to localhost/127.0.0.1.
-#[must_use]
-pub fn cookie_security_flags(config: &circus_config::ServerConfig) -> String {
-  let is_localhost = config.host == "127.0.0.1"
-    || config.host == "localhost"
-    || config.host == "::1";
-
-  let secure_flag = if config.force_secure_cookies || !is_localhost {
-    "; Secure"
-  } else {
-    ""
-  };
-
-  format!("HttpOnly; SameSite=Strict{secure_flag}")
-}
-
 /// Per-IP token bucket. Tokens accrue at `rps` per second up to `burst`.
 /// Each request costs one token; if the bucket is empty the request is
 /// rejected with 429.
