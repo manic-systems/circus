@@ -17,57 +17,38 @@ use crate::{
   repo,
 };
 
-/// Expand path with environment variables and home directory.
-/// Supports ${VAR}, $VAR, and ~ for home directory.
-fn expand_path(path: &str) -> String {
-  let expanded = if path.starts_with('~') {
-    std::env::var_os("HOME").map_or_else(
-      || path.to_string(),
-      |home| path.replacen('~', &home.to_string_lossy(), 1),
-    )
-  } else {
-    path.to_string()
-  };
-
-  // Expand ${VAR} and $VAR patterns
-  let mut result = expanded;
-  while let Some(start) = result.find("${") {
-    if let Some(end) = result[start..].find('}') {
-      let var_name = &result[start + 2..start + end];
-      let replacement = std::env::var(var_name).unwrap_or_default();
-      result = format!(
-        "{}{}{}",
-        &result[..start],
-        replacement,
-        &result[start + end + 1..]
-      );
-    } else {
-      break;
-    }
+fn resolve_secret(
+  inline: Option<&str>,
+  file: Option<&str>,
+  on_file_error: impl Fn(&str, &std::io::Error),
+) -> Option<String> {
+  if let Some(inline) = inline {
+    return Some(inline.to_string());
   }
-  result
+
+  let file = file?;
+  let expanded = shellexpand::full(file)
+    .map_or_else(|_| file.to_string(), std::borrow::Cow::into_owned);
+  match std::fs::read_to_string(&expanded) {
+    Ok(value) => Some(value.trim().to_string()),
+    Err(error) => {
+      on_file_error(&expanded, &error);
+      None
+    },
+  }
 }
 
-/// Resolve secret for a webhook from inline value or file.
 fn resolve_webhook_secret(webhook: &DeclarativeWebhook) -> Option<String> {
-  webhook.secret.as_ref().map_or_else(
-    || {
-      webhook.secret_file.as_ref().and_then(|file| {
-        let expanded = expand_path(file);
-        match std::fs::read_to_string(&expanded) {
-          Ok(s) => Some(s.trim().to_string()),
-          Err(e) => {
-            tracing::warn!(
-              forge_type = %webhook.forge_type,
-              file = %expanded,
-              "Failed to read webhook secret file: {e}"
-            );
-            None
-          },
-        }
-      })
+  resolve_secret(
+    webhook.secret.as_deref(),
+    webhook.secret_file.as_deref(),
+    |file, error| {
+      tracing::warn!(
+        forge_type = %webhook.forge_type,
+        file,
+        "Failed to read webhook secret file: {error}"
+      );
     },
-    |secret| Some(secret.clone()),
   )
 }
 
@@ -232,25 +213,16 @@ pub async fn run(
 
   // Upsert API keys
   for decl_key in &config.api_keys {
-    // Resolve key from inline or file
-    let key = decl_key.key.as_ref().map_or_else(
-      || {
-        decl_key.key_file.as_ref().and_then(|file| {
-          let expanded = expand_path(file);
-          match std::fs::read_to_string(&expanded) {
-            Ok(k) => Some(k.trim().to_string()),
-            Err(e) => {
-              tracing::warn!(
-                name = %decl_key.name,
-                file = %expanded,
-                "Failed to read API key file: {e}"
-              );
-              None
-            },
-          }
-        })
+    let key = resolve_secret(
+      decl_key.key.as_deref(),
+      decl_key.key_file.as_deref(),
+      |file, error| {
+        tracing::warn!(
+          name = %decl_key.name,
+          file,
+          "Failed to read API key file: {error}"
+        );
       },
-      |k| Some(k.clone()),
     );
 
     let Some(key) = key else {
@@ -278,25 +250,16 @@ pub async fn run(
 
   // Upsert users
   for decl_user in &config.users {
-    // Resolve password from inline or file
-    let password = decl_user.password.as_ref().map_or_else(
-      || {
-        decl_user.password_file.as_ref().and_then(|file| {
-          let expanded = expand_path(file);
-          match std::fs::read_to_string(&expanded) {
-            Ok(p) => Some(p.trim().to_string()),
-            Err(e) => {
-              tracing::warn!(
-                username = %decl_user.username,
-                file = %expanded,
-                "Failed to read password file: {e}"
-              );
-              None
-            },
-          }
-        })
+    let password = resolve_secret(
+      decl_user.password.as_deref(),
+      decl_user.password_file.as_deref(),
+      |file, error| {
+        tracing::warn!(
+          username = %decl_user.username,
+          file,
+          "Failed to read password file: {error}"
+        );
       },
-      |p| Some(p.clone()),
     );
 
     // Check if user exists
