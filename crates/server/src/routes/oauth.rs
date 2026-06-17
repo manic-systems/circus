@@ -282,13 +282,10 @@ async fn github_callback(
     &user_info.id.to_string(),
     state.email_regex.as_deref(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   // Create session
-  let session = repo::users::create_session(&state.pool, user.id)
-    .await
-    .map_err(ApiError)?;
+  let session = repo::users::create_session(&state.pool, user.id).await?;
 
   // Clear OAuth state cookie and set session cookie
   // Use SameSite=Lax for OAuth callback (must work across redirect)

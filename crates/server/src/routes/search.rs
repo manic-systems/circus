@@ -357,9 +357,7 @@ async fn advanced_search_handler(
     project_sort,
   };
 
-  let results = advanced_search(&state.pool, &search_params)
-    .await
-    .map_err(ApiError)?;
+  let results = advanced_search(&state.pool, &search_params).await?;
 
   Ok(Json(SearchResponse {
     projects:          results.projects,
@@ -392,9 +390,7 @@ async fn quick_search_handler(
 
   let limit = params.limit.clamp(1, 100);
 
-  let (projects, builds) = quick_search(&state.pool, query, limit)
-    .await
-    .map_err(ApiError)?;
+  let (projects, builds) = quick_search(&state.pool, query, limit).await?;
 
   Ok(Json(QuickSearchResponse {
     projects,

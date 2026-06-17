@@ -33,9 +33,8 @@ async fn list_builders(
   _auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<Json<Vec<RemoteBuilder>>, ApiError> {
-  let builders = circus_common::repo::remote_builders::list(&state.pool)
-    .await
-    .map_err(ApiError)?;
+  let builders =
+    circus_common::repo::remote_builders::list(&state.pool).await?;
   Ok(Json(builders))
 }
 
@@ -49,9 +48,8 @@ async fn list_builder_sessions(
   Json<Vec<circus_common::repo::builder_sessions::BuilderSession>>,
   ApiError,
 > {
-  let sessions = circus_common::repo::builder_sessions::list(&state.pool)
-    .await
-    .map_err(ApiError)?;
+  let sessions =
+    circus_common::repo::builder_sessions::list(&state.pool).await?;
   Ok(Json(sessions))
 }
 
@@ -66,9 +64,7 @@ async fn list_connected_builder_sessions(
   ApiError,
 > {
   let sessions =
-    circus_common::repo::builder_sessions::list_connected(&state.pool)
-      .await
-      .map_err(ApiError)?;
+    circus_common::repo::builder_sessions::list_connected(&state.pool).await?;
   Ok(Json(sessions))
 }
 
@@ -79,9 +75,7 @@ async fn get_builder_session(
 ) -> Result<Json<circus_common::repo::builder_sessions::BuilderSession>, ApiError>
 {
   let session =
-    circus_common::repo::builder_sessions::get(&state.pool, machine_id)
-      .await
-      .map_err(ApiError)?;
+    circus_common::repo::builder_sessions::get(&state.pool, machine_id).await?;
   Ok(Json(session))
 }
 
@@ -90,9 +84,8 @@ async fn get_builder(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<RemoteBuilder>, ApiError> {
-  let builder = circus_common::repo::remote_builders::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let builder =
+    circus_common::repo::remote_builders::get(&state.pool, id).await?;
   Ok(Json(builder))
 }
 
@@ -105,9 +98,7 @@ async fn create_builder(
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let builder =
-    circus_common::repo::remote_builders::create(&state.pool, input)
-      .await
-      .map_err(ApiError)?;
+    circus_common::repo::remote_builders::create(&state.pool, input).await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -146,8 +137,7 @@ async fn update_builder(
 
   let builder =
     circus_common::repo::remote_builders::update(&state.pool, id, input)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -173,9 +163,7 @@ async fn delete_builder(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::remote_builders::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  circus_common::repo::remote_builders::delete(&state.pool, id).await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -209,12 +197,8 @@ async fn system_status(
     .await
     .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
 
-  let build_stats = circus_common::repo::builds::get_stats(pool)
-    .await
-    .map_err(ApiError)?;
-  let builders = circus_common::repo::remote_builders::count(pool)
-    .await
-    .map_err(ApiError)?;
+  let build_stats = circus_common::repo::builds::get_stats(pool).await?;
+  let builders = circus_common::repo::remote_builders::count(pool).await?;
 
   let channels: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM channels")
     .fetch_one(pool)
@@ -240,8 +224,7 @@ async fn list_notification_tasks(
 ) -> Result<Json<Vec<NotificationTask>>, ApiError> {
   let tasks =
     circus_common::repo::notification_tasks::list_recent(&state.pool, 100)
-      .await
-      .map_err(ApiError)?;
+      .await?;
   Ok(Json(tasks))
 }
 
@@ -252,8 +235,7 @@ async fn retry_notification_task(
 ) -> Result<Json<NotificationTask>, ApiError> {
   let task =
     circus_common::repo::notification_tasks::requeue_failed(&state.pool, id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -293,11 +275,9 @@ async fn list_pinned_build_products(
     limit,
     offset,
   )
-  .await
-  .map_err(ApiError)?;
-  let total = circus_common::repo::build_products::count_pinned(&state.pool)
-    .await
-    .map_err(ApiError)?;
+  .await?;
+  let total =
+    circus_common::repo::build_products::count_pinned(&state.pool).await?;
 
   Ok(Json(PaginatedResponse {
     items,
@@ -312,9 +292,8 @@ async fn unpin_build(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
-  let build = circus_common::repo::builds::set_keep(&state.pool, id, false)
-    .await
-    .map_err(ApiError)?;
+  let build =
+    circus_common::repo::builds::set_keep(&state.pool, id, false).await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -476,12 +455,8 @@ async fn list_audit_log(
   let limit = q.limit.unwrap_or(50).clamp(1, 500);
   let offset = q.offset.unwrap_or(0).max(0);
 
-  let items = circus_common::audit::list(&state.pool, limit, offset)
-    .await
-    .map_err(ApiError)?;
-  let total = circus_common::audit::count(&state.pool)
-    .await
-    .map_err(ApiError)?;
+  let items = circus_common::audit::list(&state.pool, limit, offset).await?;
+  let total = circus_common::audit::count(&state.pool).await?;
 
   Ok(Json(AuditLogPage {
     items,

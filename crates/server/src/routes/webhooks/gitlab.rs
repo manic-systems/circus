@@ -82,8 +82,7 @@ pub(super) async fn handle_webhook(
     CONFIG_TYPE,
     state.config.server.webhook_secret_encryption_key.as_deref(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   let Some(webhook_config) = webhook_config else {
     return Ok(webhook_not_configured(DISPLAY_NAME));

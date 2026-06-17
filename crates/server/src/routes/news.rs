@@ -22,9 +22,8 @@ async fn list_news(
 ) -> Result<Json<Vec<NewsItem>>, ApiError> {
   let limit = params.limit.unwrap_or(20).clamp(1, 100);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = circus_common::repo::news::list(&state.pool, limit, offset)
-    .await
-    .map_err(ApiError)?;
+  let items =
+    circus_common::repo::news::list(&state.pool, limit, offset).await?;
   Ok(Json(items))
 }
 
@@ -49,8 +48,7 @@ async fn create_news(
     content:    body.content,
     created_by: None,
   })
-  .await
-  .map_err(ApiError)?;
+  .await?;
   Ok(Json(item))
 }
 
@@ -59,9 +57,7 @@ async fn delete_news(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::news::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  circus_common::repo::news::delete(&state.pool, id).await?;
   Ok(Json(serde_json::json!({"deleted": true})))
 }
 

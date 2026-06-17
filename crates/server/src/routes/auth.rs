@@ -55,9 +55,7 @@ async fn create_api_key(
   let key_hash = hash_api_key(&key);
 
   let api_key =
-    repo::api_keys::create(&state.pool, &input.name, &key_hash, role)
-      .await
-      .map_err(ApiError)?;
+    repo::api_keys::create(&state.pool, &input.name, &key_hash, role).await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -81,7 +79,7 @@ async fn list_api_keys(
   _auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<Json<Vec<ApiKeyInfo>>, ApiError> {
-  let keys = repo::api_keys::list(&state.pool).await.map_err(ApiError)?;
+  let keys = repo::api_keys::list(&state.pool).await?;
 
   let infos: Vec<ApiKeyInfo> = keys
     .into_iter()
@@ -104,9 +102,7 @@ async fn delete_api_key(
   State(state): State<AppState>,
   axum::extract::Path(id): axum::extract::Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  repo::api_keys::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  repo::api_keys::delete(&state.pool, id).await?;
 
   crate::audit::record_for_key(
     &state.pool,

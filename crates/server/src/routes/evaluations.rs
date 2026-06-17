@@ -53,16 +53,14 @@ async fn list_evaluations(
     offset,
     include_hidden,
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
   let total = circus_common::repo::evaluations::count_filtered_with_visibility(
     &state.pool,
     params.jobset_id,
     params.status.as_deref(),
     include_hidden,
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
   Ok(Json(PaginatedResponse {
     items,
     total,
@@ -81,8 +79,7 @@ async fn get_evaluation(
     id,
     permissions::check(&extensions, Permission::Admin),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
   Ok(Json(evaluation))
 }
 
@@ -96,9 +93,7 @@ async fn trigger_evaluation(
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
 
-  let jobset = repo::jobsets::get(&state.pool, input.jobset_id)
-    .await
-    .map_err(ApiError)?;
+  let jobset = repo::jobsets::get(&state.pool, input.jobset_id).await?;
   if jobset.trigger_mode != JobsetTriggerMode::SourceChange {
     return Err(ApiError(circus_common::CiError::Validation(
       "manual evaluation triggers are disabled for interval-mode jobsets"
@@ -106,9 +101,7 @@ async fn trigger_evaluation(
     )));
   }
 
-  let evaluation = repo::evaluations::create_manual(&state.pool, input)
-    .await
-    .map_err(ApiError)?;
+  let evaluation = repo::evaluations::create_manual(&state.pool, input).await?;
   Ok(Json(evaluation))
 }
 
@@ -151,21 +144,16 @@ async fn compare_evaluations(
   Query(params): Query<CompareParams>,
 ) -> Result<Json<EvalComparison>, ApiError> {
   // Verify both evaluations exist
-  let _from_eval = circus_common::repo::evaluations::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
-  let _to_eval = circus_common::repo::evaluations::get(&state.pool, params.to)
-    .await
-    .map_err(ApiError)?;
+  let _from_eval =
+    circus_common::repo::evaluations::get(&state.pool, id).await?;
+  let _to_eval =
+    circus_common::repo::evaluations::get(&state.pool, params.to).await?;
 
   let from_builds =
-    circus_common::repo::builds::list_for_evaluation(&state.pool, id)
-      .await
-      .map_err(ApiError)?;
+    circus_common::repo::builds::list_for_evaluation(&state.pool, id).await?;
   let to_builds =
     circus_common::repo::builds::list_for_evaluation(&state.pool, params.to)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let from_map: HashMap<&str, &circus_common::Build> = from_builds
     .iter()

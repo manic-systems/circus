@@ -14,9 +14,7 @@ async fn get_jobset(
   State(state): State<AppState>,
   Path((_project_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Jobset>, ApiError> {
-  let jobset = circus_common::repo::jobsets::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let jobset = circus_common::repo::jobsets::get(&state.pool, id).await?;
   Ok(Json(jobset))
 }
 
@@ -29,9 +27,8 @@ async fn update_jobset(
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let jobset = circus_common::repo::jobsets::update(&state.pool, id, input)
-    .await
-    .map_err(ApiError)?;
+  let jobset =
+    circus_common::repo::jobsets::update(&state.pool, id, input).await?;
   Ok(Json(jobset))
 }
 
@@ -40,9 +37,7 @@ async fn delete_jobset(
   State(state): State<AppState>,
   Path((_project_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::jobsets::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  circus_common::repo::jobsets::delete(&state.pool, id).await?;
   Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
@@ -54,8 +49,7 @@ async fn list_jobset_inputs(
 ) -> Result<Json<Vec<JobsetInput>>, ApiError> {
   let inputs =
     circus_common::repo::jobset_inputs::list_for_jobset(&state.pool, jobset_id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
   Ok(Json(inputs))
 }
 
@@ -81,8 +75,7 @@ async fn create_jobset_input(
     &body.value,
     body.revision.as_deref(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
   Ok(Json(input))
 }
 
@@ -91,9 +84,7 @@ async fn delete_jobset_input(
   State(state): State<AppState>,
   Path((_project_id, _jobset_id, input_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::jobset_inputs::delete(&state.pool, input_id)
-    .await
-    .map_err(ApiError)?;
+  circus_common::repo::jobset_inputs::delete(&state.pool, input_id).await?;
   Ok(Json(serde_json::json!({ "deleted": true })))
 }
 

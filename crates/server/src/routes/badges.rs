@@ -30,8 +30,7 @@ async fn build_badge(
   // Find the project
   let project =
     circus_common::repo::projects::get_by_name(&state.pool, &project_name)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   // Find the jobset
   let jobsets = circus_common::repo::jobsets::list_for_project(
@@ -40,8 +39,7 @@ async fn build_badge(
     1000,
     0,
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   let jobset = jobsets.iter().find(|j| j.name == jobset_name);
   let Some(jobset) = jobset else {
@@ -51,8 +49,7 @@ async fn build_badge(
   // Get latest evaluation
   let eval =
     circus_common::repo::evaluations::get_latest(&state.pool, jobset.id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let Some(eval) = eval else {
     return Ok(svg_response(shield_svg(
@@ -65,8 +62,7 @@ async fn build_badge(
   // Find the build for this job
   let builds =
     circus_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let build = builds.iter().find(|b| b.job_name == job_name);
 
@@ -105,8 +101,7 @@ async fn latest_build(
 ) -> Result<Response, ApiError> {
   let project =
     circus_common::repo::projects::get_by_name(&state.pool, &project_name)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let jobsets = circus_common::repo::jobsets::list_for_project(
     &state.pool,
@@ -114,8 +109,7 @@ async fn latest_build(
     1000,
     0,
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   let jobset = jobsets.iter().find(|j| j.name == jobset_name);
   let Some(jobset) = jobset else {
@@ -124,8 +118,7 @@ async fn latest_build(
 
   let eval =
     circus_common::repo::evaluations::get_latest(&state.pool, jobset.id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let Some(eval) = eval else {
     return Ok((StatusCode::NOT_FOUND, "No evaluations found").into_response());
@@ -133,8 +126,7 @@ async fn latest_build(
 
   let builds =
     circus_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let build = builds.iter().find(|b| b.job_name == job_name);
   build.map_or_else(

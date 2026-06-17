@@ -20,9 +20,7 @@ use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
 async fn list_channels(
   State(state): State<AppState>,
 ) -> Result<Json<Vec<Channel>>, ApiError> {
-  let channels = circus_common::repo::channels::list_all(&state.pool)
-    .await
-    .map_err(ApiError)?;
+  let channels = circus_common::repo::channels::list_all(&state.pool).await?;
   Ok(Json(channels))
 }
 
@@ -32,8 +30,7 @@ async fn list_project_channels(
 ) -> Result<Json<Vec<Channel>>, ApiError> {
   let channels =
     circus_common::repo::channels::list_for_project(&state.pool, project_id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
   Ok(Json(channels))
 }
 
@@ -41,9 +38,7 @@ async fn get_channel(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Channel>, ApiError> {
-  let channel = circus_common::repo::channels::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let channel = circus_common::repo::channels::get(&state.pool, id).await?;
   Ok(Json(channel))
 }
 
@@ -56,9 +51,8 @@ async fn create_channel(
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let jobset_id = input.jobset_id;
-  let channel = circus_common::repo::channels::create(&state.pool, input)
-    .await
-    .map_err(ApiError)?;
+  let channel =
+    circus_common::repo::channels::create(&state.pool, input).await?;
 
   // Catch-up: if the jobset already has a completed evaluation, promote now
   if let Ok(Some(eval)) =
@@ -75,9 +69,8 @@ async fn create_channel(
   }
 
   // Re-fetch to include any promotion
-  let channel = circus_common::repo::channels::get(&state.pool, channel.id)
-    .await
-    .map_err(ApiError)?;
+  let channel =
+    circus_common::repo::channels::get(&state.pool, channel.id).await?;
   Ok(Json(channel))
 }
 
@@ -86,9 +79,7 @@ async fn delete_channel(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::channels::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  circus_common::repo::channels::delete(&state.pool, id).await?;
   Ok(Json(serde_json::json!({"deleted": true})))
 }
 
@@ -99,8 +90,7 @@ async fn promote_channel(
 ) -> Result<Json<Channel>, ApiError> {
   let channel =
     circus_common::repo::channels::promote(&state.pool, channel_id, eval_id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
   Ok(Json(channel))
 }
 
@@ -236,8 +226,7 @@ pub async fn build_nixexprs_tarball(
 
   let builds =
     circus_common::repo::builds::list_for_evaluation(pool, evaluation_id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   // Group by system. Skip builds with no system attribute or no outputs;
   // they can't be expressed as a per-system fake derivation.
@@ -467,9 +456,7 @@ async fn nixexprs_tarball(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-  let channel = circus_common::repo::channels::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let channel = circus_common::repo::channels::get(&state.pool, id).await?;
 
   let evaluation_id = channel.current_evaluation_id.ok_or_else(|| {
     ApiError(circus_common::CiError::NotFound(

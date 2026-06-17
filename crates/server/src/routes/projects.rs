@@ -56,12 +56,9 @@ async fn list_projects(
 ) -> Result<Json<PaginatedResponse<Project>>, ApiError> {
   let limit = pagination.limit();
   let offset = pagination.offset();
-  let items = circus_common::repo::projects::list(&state.pool, limit, offset)
-    .await
-    .map_err(ApiError)?;
-  let total = circus_common::repo::projects::count(&state.pool)
-    .await
-    .map_err(ApiError)?;
+  let items =
+    circus_common::repo::projects::list(&state.pool, limit, offset).await?;
+  let total = circus_common::repo::projects::count(&state.pool).await?;
   Ok(Json(PaginatedResponse {
     items,
     total,
@@ -84,9 +81,8 @@ async fn create_project(
     &state.config.server.allowed_url_schemes,
   )
   .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let project = circus_common::repo::projects::create(&state.pool, input)
-    .await
-    .map_err(ApiError)?;
+  let project =
+    circus_common::repo::projects::create(&state.pool, input).await?;
   Ok(Json(project))
 }
 
@@ -94,9 +90,7 @@ async fn get_project(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<Project>, ApiError> {
-  let project = circus_common::repo::projects::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let project = circus_common::repo::projects::get(&state.pool, id).await?;
   Ok(Json(project))
 }
 
@@ -116,9 +110,8 @@ async fn update_project(
     )
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   }
-  let project = circus_common::repo::projects::update(&state.pool, id, input)
-    .await
-    .map_err(ApiError)?;
+  let project =
+    circus_common::repo::projects::update(&state.pool, id, input).await?;
   Ok(Json(project))
 }
 
@@ -133,9 +126,7 @@ async fn delete_project(
     .ok()
     .map(|p| p.name);
 
-  circus_common::repo::projects::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  circus_common::repo::projects::delete(&state.pool, id).await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -163,11 +154,9 @@ async fn list_project_jobsets(
     limit,
     offset,
   )
-  .await
-  .map_err(ApiError)?;
-  let total = circus_common::repo::jobsets::count_for_project(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  .await?;
+  let total =
+    circus_common::repo::jobsets::count_for_project(&state.pool, id).await?;
   Ok(Json(PaginatedResponse {
     items,
     total,
@@ -212,9 +201,7 @@ async fn create_project_jobset(
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let jobset = circus_common::repo::jobsets::create(&state.pool, input)
-    .await
-    .map_err(ApiError)?;
+  let jobset = circus_common::repo::jobsets::create(&state.pool, input).await?;
   Ok(Json(jobset))
 }
 
@@ -237,8 +224,7 @@ async fn probe_repository(
   .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
   let result =
     nix::probe::probe_flake(&body.repository_url, body.revision.as_deref())
-      .await
-      .map_err(ApiError)?;
+      .await?;
   Ok(Json(result))
 }
 
@@ -284,9 +270,7 @@ async fn setup_project(
   .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
 
   let project =
-    circus_common::repo::projects::create(&state.pool, create_project)
-      .await
-      .map_err(ApiError)?;
+    circus_common::repo::projects::create(&state.pool, create_project).await?;
 
   let mut jobsets = Vec::new();
   for js_input in body.jobsets {
@@ -306,9 +290,8 @@ async fn setup_project(
     input
       .validate()
       .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-    let jobset = circus_common::repo::jobsets::create(&state.pool, input)
-      .await
-      .map_err(ApiError)?;
+    let jobset =
+      circus_common::repo::jobsets::create(&state.pool, input).await?;
     jobsets.push(jobset);
   }
 
@@ -329,8 +312,7 @@ async fn list_project_webhooks(
 ) -> Result<Json<Vec<WebhookConfigResponse>>, ApiError> {
   let configs =
     circus_common::repo::webhook_configs::list_for_project(&state.pool, id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
   Ok(Json(
     configs
       .into_iter()
@@ -365,8 +347,7 @@ async fn create_project_webhook(
     Some(body.secret.as_str()),
     state.config.server.webhook_secret_encryption_key.as_deref(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   Ok(Json(WebhookConfigResponse::from(config)))
 }
@@ -385,8 +366,7 @@ async fn delete_project_webhook(
   // Verify the webhook belongs to the project
   let config =
     circus_common::repo::webhook_configs::get(&state.pool, params.webhook_id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   if config.project_id != params.id {
     return Err(ApiError(circus_common::CiError::NotFound(
@@ -395,8 +375,7 @@ async fn delete_project_webhook(
   }
 
   circus_common::repo::webhook_configs::delete(&state.pool, params.webhook_id)
-    .await
-    .map_err(ApiError)?;
+    .await?;
 
   Ok(Json(serde_json::json!({ "deleted": true })))
 }

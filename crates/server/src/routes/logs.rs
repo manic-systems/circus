@@ -19,9 +19,7 @@ async fn get_build_log(
   Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
   // Verify build exists
-  let _build = circus_common::repo::builds::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let _build = circus_common::repo::builds::get(&state.pool, id).await?;
 
   let log_storage = circus_common::log_storage::LogStorage::new(
     state.config.logs.log_dir.clone(),
@@ -60,9 +58,7 @@ async fn stream_build_log(
   Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>,
   ApiError,
 > {
-  let build = circus_common::repo::builds::get(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  let build = circus_common::repo::builds::get(&state.pool, id).await?;
 
   let log_storage = circus_common::log_storage::LogStorage::new(
     state.config.logs.log_dir.clone(),

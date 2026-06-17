@@ -93,9 +93,8 @@ async fn trigger_push_evaluations(
   commit: &str,
   pushed_branch: &str,
 ) -> Result<usize, ApiError> {
-  let jobsets = repo::jobsets::list_all_for_project(&state.pool, project_id)
-    .await
-    .map_err(ApiError)?;
+  let jobsets =
+    repo::jobsets::list_all_for_project(&state.pool, project_id).await?;
 
   let mut triggered = 0;
   for jobset in &jobsets {
@@ -137,9 +136,8 @@ async fn trigger_change_request_evaluations(
   project_id: Uuid,
   input: &ChangeRequestEvaluation,
 ) -> Result<usize, ApiError> {
-  let jobsets = repo::jobsets::list_all_for_project(&state.pool, project_id)
-    .await
-    .map_err(ApiError)?;
+  let jobsets =
+    repo::jobsets::list_all_for_project(&state.pool, project_id).await?;
 
   let base = input.base_branch.as_deref().unwrap_or("");
 

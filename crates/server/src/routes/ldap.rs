@@ -118,12 +118,9 @@ async fn ldap_login(
     "ldap",
     state.email_regex.as_deref(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
-  let session = repo::users::create_session(&state.pool, user.id)
-    .await
-    .map_err(ApiError)?;
+  let session = repo::users::create_session(&state.pool, user.id).await?;
 
   crate::audit::record_with_actor(
     &state.pool,

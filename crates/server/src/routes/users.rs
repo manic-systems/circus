@@ -100,9 +100,8 @@ async fn list_users(
   State(state): State<AppState>,
   Query(params): Query<PaginationParams>,
 ) -> Result<Json<Vec<UserResponse>>, ApiError> {
-  let users = repo::users::list(&state.pool, params.limit(), params.offset())
-    .await
-    .map_err(ApiError)?;
+  let users =
+    repo::users::list(&state.pool, params.limit(), params.offset()).await?;
   Ok(Json(users.into_iter().map(UserResponse::from).collect()))
 }
 
@@ -121,8 +120,7 @@ async fn create_user(
 
   let user =
     repo::users::create(&state.pool, &data, state.email_regex.as_deref())
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -142,7 +140,7 @@ async fn get_user(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<UserResponse>, ApiError> {
-  let user = repo::users::get(&state.pool, id).await.map_err(ApiError)?;
+  let user = repo::users::get(&state.pool, id).await?;
   Ok(Json(UserResponse::from(user)))
 }
 
@@ -185,8 +183,7 @@ async fn update_user(
 
   let user =
     repo::users::update(&state.pool, id, &data, state.email_regex.as_deref())
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -209,9 +206,7 @@ async fn delete_user(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-  repo::users::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  repo::users::delete(&state.pool, id).await?;
 
   crate::audit::record_for_key(
     &state.pool,
@@ -283,8 +278,7 @@ async fn update_current_user(
       user.id,
       Some(full_name.as_str()),
     )
-    .await
-    .map_err(ApiError)?;
+    .await?;
   }
 
   if let Some(ref email) = req.email {
@@ -294,19 +288,14 @@ async fn update_current_user(
       email,
       state.email_regex.as_deref(),
     )
-    .await
-    .map_err(ApiError)?;
+    .await?;
   }
 
   if let Some(public) = req.public_dashboard {
-    repo::users::set_public_dashboard(&state.pool, user.id, public)
-      .await
-      .map_err(ApiError)?;
+    repo::users::set_public_dashboard(&state.pool, user.id, public).await?;
   }
 
-  let updated_user = repo::users::get(&state.pool, user.id)
-    .await
-    .map_err(ApiError)?;
+  let updated_user = repo::users::get(&state.pool, user.id).await?;
   Ok(Json(UserResponse::from(updated_user)))
 }
 
@@ -336,9 +325,7 @@ async fn change_password(
     )));
   }
 
-  repo::users::update_password(&state.pool, user.id, &req.new_password)
-    .await
-    .map_err(ApiError)?;
+  repo::users::update_password(&state.pool, user.id, &req.new_password).await?;
 
   crate::audit::record_action(
     &state.pool,
@@ -378,8 +365,7 @@ async fn list_starred_jobs(
     params.limit(),
     params.offset(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   Ok(Json(
     jobs
@@ -414,9 +400,7 @@ async fn create_starred_job(
     job_name:   req.job_name,
   };
 
-  let job = repo::starred_jobs::create(&state.pool, user.id, &data)
-    .await
-    .map_err(ApiError)?;
+  let job = repo::starred_jobs::create(&state.pool, user.id, &data).await?;
 
   Ok(Json(StarredJobResponse {
     id:         job.id,
@@ -445,9 +429,7 @@ async fn delete_starred_job(
     ))
   })?;
 
-  repo::starred_jobs::delete(&state.pool, id)
-    .await
-    .map_err(ApiError)?;
+  repo::starred_jobs::delete(&state.pool, id).await?;
   Ok(StatusCode::NO_CONTENT)
 }
 

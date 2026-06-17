@@ -80,8 +80,7 @@ pub(super) async fn handle_signed_push(
     provider.config_type,
     state.config.server.webhook_secret_encryption_key.as_deref(),
   )
-  .await
-  .map_err(ApiError)?;
+  .await?;
 
   let Some(webhook_config) = webhook_config else {
     return Ok(webhook_not_configured(provider.display_name));

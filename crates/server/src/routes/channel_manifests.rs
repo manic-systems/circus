@@ -43,15 +43,13 @@ async fn git_revision(
   State(state): State<AppState>,
   Path(name): Path<String>,
 ) -> Result<Response, ApiError> {
-  let channel = circus_common::repo::channels::get_by_name(&state.pool, &name)
-    .await
-    .map_err(ApiError)?;
+  let channel =
+    circus_common::repo::channels::get_by_name(&state.pool, &name).await?;
   let Some(eval_id) = channel.current_evaluation_id else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
-  let eval = circus_common::repo::evaluations::get(&state.pool, eval_id)
-    .await
-    .map_err(ApiError)?;
+  let eval =
+    circus_common::repo::evaluations::get(&state.pool, eval_id).await?;
 
   Ok(
     (
@@ -69,9 +67,8 @@ async fn binary_cache_url(
 ) -> Result<Response, ApiError> {
   // Verify the channel exists; otherwise this endpoint would happily echo
   // the cache URL for any name and pollute clients' channel state.
-  let _ = circus_common::repo::channels::get_by_name(&state.pool, &name)
-    .await
-    .map_err(ApiError)?;
+  let _ =
+    circus_common::repo::channels::get_by_name(&state.pool, &name).await?;
 
   let Some(url) = state.config.cache.cache_url.as_deref() else {
     return Ok(StatusCode::NOT_FOUND.into_response());
@@ -91,17 +88,15 @@ async fn store_paths(
   State(state): State<AppState>,
   Path(name): Path<String>,
 ) -> Result<Response, ApiError> {
-  let channel = circus_common::repo::channels::get_by_name(&state.pool, &name)
-    .await
-    .map_err(ApiError)?;
+  let channel =
+    circus_common::repo::channels::get_by_name(&state.pool, &name).await?;
   let Some(eval_id) = channel.current_evaluation_id else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
   let builds =
     circus_common::repo::builds::list_for_evaluation(&state.pool, eval_id)
-      .await
-      .map_err(ApiError)?;
+      .await?;
 
   let mut paths: Vec<String> = Vec::with_capacity(builds.len() * 2);
   for build in &builds {
@@ -155,9 +150,8 @@ async fn nixexprs(
   State(state): State<AppState>,
   Path(name): Path<String>,
 ) -> Result<Response, ApiError> {
-  let channel = circus_common::repo::channels::get_by_name(&state.pool, &name)
-    .await
-    .map_err(ApiError)?;
+  let channel =
+    circus_common::repo::channels::get_by_name(&state.pool, &name).await?;
   let Some(eval_id) = channel.current_evaluation_id else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
