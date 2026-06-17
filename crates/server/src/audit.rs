@@ -16,6 +16,21 @@ use circus_common::{
 use serde_json::Value;
 use sqlx::PgPool;
 
+pub struct AuditContext {
+  pub actor:       Actor,
+  pub remote_addr: Option<String>,
+}
+
+impl AuditContext {
+  #[must_use]
+  pub fn from_extensions(extensions: &Extensions) -> Self {
+    Self {
+      actor:       actor_from_extensions(extensions),
+      remote_addr: remote_addr_from_extensions(extensions),
+    }
+  }
+}
+
 /// Extract the acting principal from request extensions. Returns
 /// `Actor::anonymous()` when neither a User nor an `ApiKey` is present (for
 /// example, a failed login attempt before any session was established).
@@ -80,15 +95,14 @@ pub async fn record_action(
   target_id: Option<&str>,
   details: Value,
 ) {
-  let actor = actor_from_extensions(extensions);
-  let remote = remote_addr_from_extensions(extensions);
+  let context = AuditContext::from_extensions(extensions);
   let _ = audit::record(pool, AuditRecord {
-    actor: &actor,
+    actor: &context.actor,
     action,
     target_kind,
     target_id,
     details,
-    remote_addr: remote.as_deref(),
+    remote_addr: context.remote_addr.as_deref(),
   })
   .await;
 }
