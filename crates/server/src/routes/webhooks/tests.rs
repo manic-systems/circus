@@ -2,7 +2,14 @@
 
 use axum::http::{HeaderMap, HeaderValue};
 
-use super::*;
+use super::{
+  rate_limit::{
+    WEBHOOK_PROJECT_RATE_LIMIT,
+    WEBHOOK_RATE_LIMIT_WINDOW,
+    WebhookRateLimiter,
+  },
+  *,
+};
 
 fn signed_header_value(secret: &str, body: &[u8]) -> HeaderValue {
   use hmac::{Hmac, Mac};
@@ -89,22 +96,6 @@ fn forgejo_policy_rejects_valid_gitea_signature_header() {
   headers.insert("x-forgejo-signature", signed_header_value(secret, body));
 
   assert!(forgejo::PROVIDER.is_signature_valid(&headers, body, secret));
-}
-
-#[test]
-fn webhook_path_parses_receiver_paths() {
-  let project_id = uuid::Uuid::new_v4();
-
-  assert_eq!(
-    WebhookPath::parse(&format!("/api/v1/webhooks/{project_id}/github"))
-      .map(WebhookPath::project_id),
-    Some(project_id)
-  );
-  assert_eq!(WebhookPath::parse("/api/v1/projects/not-a-webhook"), None);
-  assert_eq!(
-    WebhookPath::parse("/api/v1/webhooks/not-a-uuid/github"),
-    None
-  );
 }
 
 #[test]
