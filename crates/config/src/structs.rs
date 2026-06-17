@@ -660,6 +660,14 @@ pub struct CacheConfig {
   pub secret_key_file: Option<PathBuf>,
   /// Public URL of this binary cache (for channel manifest endpoints)
   pub cache_url:       Option<String>,
+  #[serde(default)]
+  pub upstreams:       Vec<BinaryCacheUpstream>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryCacheUpstream {
+  pub url:        String,
+  pub public_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -796,6 +804,11 @@ pub struct DeclarativeProject {
   pub name:           String,
   pub repository_url: String,
   pub description:    Option<String>,
+  #[serde(default = "default_true")]
+  pub cache_enabled:  bool,
+  pub cache_url:      Option<String>,
+  #[serde(default)]
+  pub cache_upstreams: Vec<BinaryCacheUpstream>,
   #[serde(default)]
   pub jobsets:        Vec<DeclarativeJobset>,
   /// Notification configurations for this project
@@ -1085,6 +1098,7 @@ impl Default for CacheConfig {
       enabled:         true,
       secret_key_file: None,
       cache_url:       None,
+      upstreams:       Vec::new(),
     }
   }
 }

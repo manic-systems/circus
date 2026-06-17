@@ -122,6 +122,9 @@ mod tests {
         name:           "test".to_string(),
         repository_url: "https://example.com/repo".to_string(),
         description:    Some("desc".to_string()),
+        cache_enabled:  true,
+        cache_url:      None,
+        cache_upstreams: Vec::new(),
         jobsets:        vec![DeclarativeJobset {
           name:              "checks".to_string(),
           nix_expression:    "checks".to_string(),

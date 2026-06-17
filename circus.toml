@@ -38,3 +38,11 @@ build_timeout = 3600
 poll_interval = 5
 work_dir      = "/tmp/circus-queue-runner"
 workers       = 4
+
+[cache]
+enabled = true
+# cache_url = "https://ci.example.org/nix-cache/"
+
+# [[cache.upstreams]]
+# url = "https://cache.nixos.org/"
+# public_key = "cache.nixos.org-1:..."
