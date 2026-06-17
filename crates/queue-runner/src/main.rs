@@ -52,6 +52,7 @@ async fn main() -> color_eyre::Result<()> {
   let gc_config_for_loop = gc_config.clone();
   let signing_config = config.signing;
   let signing_config_for_rpc = signing_config.clone();
+  let cache_config = config.cache;
   let cache_upload_config = config.cache_upload;
   let cache_upload_for_rpc = cache_upload_config.clone();
   let qr_config = config.queue_runner;
@@ -115,6 +116,7 @@ async fn main() -> color_eyre::Result<()> {
     log_config,
     gc_config,
     signing_config,
+    cache_config,
     cache_upload_config,
     alert_config,
     Arc::clone(&agent_pool),

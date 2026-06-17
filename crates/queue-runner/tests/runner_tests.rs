@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use circus_config::{
   BuilderSchedulingStrategy,
+  CacheConfig,
   CacheUploadConfig,
   GcConfig,
   HotConfig,
@@ -117,6 +118,7 @@ async fn test_worker_pool_drain_stops_dispatch() {
     LogConfig::default(),
     GcConfig::default(),
     SigningConfig::default(),
+    CacheConfig::default(),
     CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
@@ -243,6 +245,7 @@ async fn test_worker_pool_active_builds_cancel() {
     LogConfig::default(),
     GcConfig::default(),
     SigningConfig::default(),
+    CacheConfig::default(),
     CacheUploadConfig::default(),
     None,
     circus_queue_runner::rpc::AgentPool::new(),
@@ -302,6 +305,9 @@ async fn test_fair_share_scheduling() {
       name:           format!("fair-hi-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     },
   )
   .await
@@ -313,6 +319,9 @@ async fn test_fair_share_scheduling() {
       name:           format!("fair-lo-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     },
   )
   .await
@@ -548,6 +557,9 @@ async fn test_atomic_build_claiming() {
       name:           format!("runner-test-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     },
   )
   .await
@@ -646,6 +658,9 @@ async fn test_orphan_build_reset() {
       name:           format!("orphan-test-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     },
   )
   .await
@@ -760,6 +775,9 @@ async fn test_get_cancelled_among() {
       name:           format!("cancel-among-{}", uuid::Uuid::new_v4()),
       description:    None,
       repository_url: "https://github.com/test/repo".to_string(),
+      cache_enabled:  true,
+      cache_url:      None,
+      cache_upstreams: Default::default(),
     },
   )
   .await

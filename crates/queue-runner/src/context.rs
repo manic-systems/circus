@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use circus_common::alerts::AlertManager;
 use circus_config::{
   BuilderSchedulingStrategy,
+  CacheConfig,
   CacheUploadConfig,
   GcConfig,
   LogConfig,
@@ -25,6 +26,7 @@ pub struct BuildContext {
   pub notifications_config:    NotificationsConfig,
   pub notification_secret_key: Option<String>,
   pub signing_config:          Arc<SigningConfig>,
+  pub cache_config:            Arc<CacheConfig>,
   pub cache_upload_config:     Arc<CacheUploadConfig>,
   pub alert_manager:           Arc<Option<AlertManager>>,
   pub upload_semaphore:        Arc<Semaphore>,

@@ -14,6 +14,7 @@ use circus_common::{
     BuildStatus,
     CreateBuildProduct,
     CreateBuildStep,
+    Project,
     metric_names,
     metric_units,
   },
@@ -22,6 +23,7 @@ use circus_common::{
 use circus_config::{
   AlertConfig,
   BuilderSchedulingStrategy,
+  CacheConfig,
   CacheUploadConfig,
   GcConfig,
   HotConfig,
@@ -67,6 +69,7 @@ pub struct WorkerPool {
   log_config:          Arc<LogConfig>,
   gc_config:           Arc<GcConfig>,
   signing_config:      Arc<SigningConfig>,
+  cache_config:        Arc<CacheConfig>,
   cache_upload_config: Arc<CacheUploadConfig>,
   alert_manager:       Arc<Option<AlertManager>>,
   psi_cache:           Arc<PsiCache>,
@@ -92,6 +95,7 @@ impl WorkerPool {
     log_config: LogConfig,
     gc_config: GcConfig,
     signing_config: SigningConfig,
+    cache_config: CacheConfig,
     cache_upload_config: CacheUploadConfig,
     alert_config: Option<AlertConfig>,
     agent_pool: Arc<AgentPool>,
@@ -111,6 +115,7 @@ impl WorkerPool {
       log_config: Arc::new(log_config),
       gc_config: Arc::new(gc_config),
       signing_config: Arc::new(signing_config),
+      cache_config: Arc::new(cache_config),
       cache_upload_config: Arc::new(cache_upload_config),
       alert_manager: Arc::new(alert_manager),
       psi_cache: PsiCache::new(),
@@ -176,6 +181,7 @@ impl WorkerPool {
     let log_config = Arc::clone(&self.log_config);
     let gc_config = Arc::clone(&self.gc_config);
     let signing_config = Arc::clone(&self.signing_config);
+    let cache_config = Arc::clone(&self.cache_config);
     let cache_upload_config = Arc::clone(&self.cache_upload_config);
     let alert_manager = Arc::clone(&self.alert_manager);
     let psi_cache = Arc::clone(&self.psi_cache);
@@ -230,6 +236,7 @@ impl WorkerPool {
           notifications_config,
           notification_secret_key,
           signing_config,
+          cache_config,
           cache_upload_config,
           alert_manager,
           upload_semaphore,
@@ -297,10 +304,68 @@ fn first_path_info_entry(
 fn nix_args_for_build(
   base_args: &[String],
   interval_rebuild: bool,
+  cache_args: Vec<String>,
 ) -> Vec<String> {
-  let mut args = base_args.to_vec();
+  let mut args = cache_args;
+  args.extend_from_slice(base_args);
   if interval_rebuild && !args.iter().any(|arg| arg == "--rebuild") {
     args.push("--rebuild".to_string());
+  }
+  args
+}
+
+fn cache_args_for_build(
+  config: &CacheConfig,
+  project: Option<&Project>,
+) -> Vec<String> {
+  let (cache_url, upstreams): (Option<&str>, Vec<(&str, Option<&str>)>) =
+    if let Some(project) = project
+      && project.cache_enabled
+    {
+      (
+        project.cache_url.as_deref(),
+        project
+          .cache_upstreams
+          .0
+          .0
+          .iter()
+          .map(|upstream| (upstream.url.as_str(), upstream.public_key.as_deref()))
+          .collect(),
+      )
+    } else if config.enabled {
+      (
+        config.cache_url.as_deref(),
+        config
+          .upstreams
+          .iter()
+          .map(|upstream| (upstream.url.as_str(), upstream.public_key.as_deref()))
+          .collect(),
+      )
+    } else {
+      (None, Vec::new())
+    };
+
+  let mut substituters = Vec::new();
+  if let Some(cache_url) = cache_url {
+    substituters.push(cache_url);
+  }
+  substituters.extend(upstreams.iter().map(|(url, _)| *url));
+
+  let public_keys = upstreams
+    .iter()
+    .filter_map(|(_, key)| *key)
+    .collect::<Vec<_>>();
+
+  let mut args = Vec::new();
+  if !substituters.is_empty() {
+    args.push("--option".to_string());
+    args.push("extra-substituters".to_string());
+    args.push(substituters.join(" "));
+  }
+  if !public_keys.is_empty() {
+    args.push("--option".to_string());
+    args.push("extra-trusted-public-keys".to_string());
+    args.push(public_keys.join(" "));
   }
   args
 }
@@ -792,6 +857,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     notifications_config,
     notification_secret_key,
     signing_config,
+    cache_config,
     cache_upload_config,
     alert_manager,
     upload_semaphore,
@@ -812,6 +878,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   let gc_config = gc_config.as_ref();
   let notifications_config = &notifications_config;
   let signing_config = signing_config.as_ref();
+  let cache_config = cache_config.as_ref();
   let cache_upload_config = cache_upload_config.as_ref();
   let alert_manager = alert_manager.as_ref();
 
@@ -836,15 +903,17 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     &normalized_drv_path
   };
 
+  let project_context = get_project_for_build(pool, &claimed_build).await;
   let interval_rebuild = is_interval_rebuild(pool, build).await;
-  let build_extra_nix_args =
-    nix_args_for_build(&extra_nix_args, interval_rebuild);
+  let build_extra_nix_args = nix_args_for_build(
+    &extra_nix_args,
+    interval_rebuild,
+    cache_args_for_build(cache_config, project_context.as_ref().map(|(p, _)| p)),
+  );
 
   // Dispatch build started notification
   // If the project lookup fails, leave the at-most-once marker untouched.
-  if let Some((project, commit_hash)) =
-    get_project_for_build(pool, &claimed_build).await
-  {
+  if let Some((project, commit_hash)) = project_context.as_ref() {
     match repo::builds::mark_started_notified(pool, build.id).await {
       Ok(true) => {
         circus_notification::dispatch_build_started(
@@ -1334,9 +1403,97 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 
 #[cfg(test)]
 mod tests {
+  use circus_common::models::{BinaryCacheUpstream, BinaryCacheUpstreams};
   use circus_config::{CacheUploadConfig, S3CacheConfig};
+  use sqlx::types::Json;
 
   use super::*;
+
+  #[test]
+  fn test_cache_args_use_project_cache_and_upstreams() {
+    let cache_config = CacheConfig {
+      enabled: true,
+      cache_url: Some("https://ci.example.org/nix-cache/".to_string()),
+      upstreams: vec![circus_config::BinaryCacheUpstream {
+        url:        "https://global-cache.example.org/".to_string(),
+        public_key: Some("global-1:key".to_string()),
+      }],
+      ..Default::default()
+    };
+    let project = Project {
+      id:              Uuid::new_v4(),
+      name:            "project-a".to_string(),
+      description:     None,
+      repository_url:  "https://example.org/project-a.git".to_string(),
+      cache_enabled:   true,
+      cache_url:       Some(
+        "https://ci.example.org/projects/project-a/nix-cache/".to_string(),
+      ),
+      cache_upstreams: Json(BinaryCacheUpstreams(vec![BinaryCacheUpstream {
+        url:        "https://cache.nixos.org/".to_string(),
+        public_key: Some("cache.nixos.org-1:key".to_string()),
+      }])),
+      created_at:      chrono::Utc::now(),
+      updated_at:      chrono::Utc::now(),
+    };
+
+    let args = cache_args_for_build(&cache_config, Some(&project));
+
+    assert_eq!(
+      args,
+      vec![
+        "--option",
+        "extra-substituters",
+        "https://ci.example.org/projects/project-a/nix-cache/ https://cache.nixos.org/",
+        "--option",
+        "extra-trusted-public-keys",
+        "cache.nixos.org-1:key",
+      ]
+    );
+  }
+
+  #[test]
+  fn test_cache_args_fall_back_to_global_cache_when_project_cache_disabled() {
+    let cache_config = CacheConfig {
+      enabled: true,
+      cache_url: Some("https://ci.example.org/nix-cache/".to_string()),
+      upstreams: vec![circus_config::BinaryCacheUpstream {
+        url:        "https://global-cache.example.org/".to_string(),
+        public_key: Some("global-1:key".to_string()),
+      }],
+      ..Default::default()
+    };
+    let project = Project {
+      id:              Uuid::new_v4(),
+      name:            "project-a".to_string(),
+      description:     None,
+      repository_url:  "https://example.org/project-a.git".to_string(),
+      cache_enabled:   false,
+      cache_url:       Some(
+        "https://ci.example.org/projects/project-a/nix-cache/".to_string(),
+      ),
+      cache_upstreams: Json(BinaryCacheUpstreams(vec![BinaryCacheUpstream {
+        url:        "https://cache.nixos.org/".to_string(),
+        public_key: Some("cache.nixos.org-1:key".to_string()),
+      }])),
+      created_at:      chrono::Utc::now(),
+      updated_at:      chrono::Utc::now(),
+    };
+
+    let args = cache_args_for_build(&cache_config, Some(&project));
+
+    assert_eq!(
+      args,
+      vec![
+        "--option",
+        "extra-substituters",
+        "https://ci.example.org/nix-cache/ https://global-cache.example.org/",
+        "--option",
+        "extra-trusted-public-keys",
+        "global-1:key",
+      ]
+    );
+  }
 
   #[test]
   fn test_build_s3_store_uri_no_config() {
@@ -1426,19 +1583,24 @@ mod tests {
 
   #[test]
   fn test_nix_args_for_interval_rebuild_adds_rebuild() {
-    let args = nix_args_for_build(&["--print-build-logs".to_string()], true);
+    let args =
+      nix_args_for_build(&["--print-build-logs".to_string()], true, Vec::new());
     assert_eq!(args, vec!["--print-build-logs", "--rebuild"]);
   }
 
   #[test]
   fn test_nix_args_for_interval_rebuild_does_not_duplicate() {
-    let args = nix_args_for_build(&["--rebuild".to_string()], true);
+    let args = nix_args_for_build(&["--rebuild".to_string()], true, Vec::new());
     assert_eq!(args, vec!["--rebuild"]);
   }
 
   #[test]
   fn test_nix_args_for_source_build_keeps_base_args() {
-    let args = nix_args_for_build(&["--print-build-logs".to_string()], false);
+    let args = nix_args_for_build(
+      &["--print-build-logs".to_string()],
+      false,
+      Vec::new(),
+    );
     assert_eq!(args, vec!["--print-build-logs"]);
   }
 }
