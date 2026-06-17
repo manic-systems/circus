@@ -86,10 +86,10 @@ pub(super) async fn handle_signed_push(
     return Ok(webhook_not_configured(provider.display_name));
   };
 
-  let Some(ref secret_hash) = webhook_config.secret_hash else {
+  let Some(ref secret) = webhook_config.secret_hash else {
     return Ok(webhook_not_configured(provider.display_name));
   };
-  if !provider.is_signature_valid(&headers, &body, secret_hash) {
+  if !provider.is_signature_valid(&headers, &body, secret) {
     return Ok(invalid_signature_response());
   }
 

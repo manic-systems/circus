@@ -83,11 +83,11 @@ pub(super) async fn handle_webhook(
     return Ok(webhook_not_configured(DISPLAY_NAME));
   };
 
-  let Some(ref secret_hash) = webhook_config.secret_hash else {
+  let Some(ref secret) = webhook_config.secret_hash else {
     return Ok(webhook_not_configured(DISPLAY_NAME));
   };
   let signature = header_value(&headers, SIGNATURE_HEADER);
-  if !verify_signature(secret_hash, &body, signature) {
+  if !verify_signature(secret, &body, signature) {
     return Ok(invalid_signature_response());
   }
 

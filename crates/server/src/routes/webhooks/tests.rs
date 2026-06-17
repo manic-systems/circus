@@ -90,3 +90,45 @@ fn forgejo_policy_rejects_valid_gitea_signature_header() {
 
   assert!(forgejo::PROVIDER.is_signature_valid(&headers, body, secret));
 }
+
+#[test]
+fn webhook_project_id_parses_receiver_paths() {
+  let project_id = uuid::Uuid::new_v4();
+
+  assert_eq!(
+    webhook_project_id(&format!("/api/v1/webhooks/{project_id}/github")),
+    Some(project_id)
+  );
+  assert_eq!(webhook_project_id("/api/v1/projects/not-a-webhook"), None);
+  assert_eq!(
+    webhook_project_id("/api/v1/webhooks/not-a-uuid/github"),
+    None
+  );
+}
+
+#[test]
+fn webhook_rate_limiter_is_per_project() {
+  let limiter = WebhookRateLimiter::new();
+  let first = uuid::Uuid::new_v4();
+  let second = uuid::Uuid::new_v4();
+  let now = std::time::Instant::now();
+
+  for _ in 0..WEBHOOK_PROJECT_RATE_LIMIT {
+    assert!(limiter.allow(first, now));
+  }
+  assert!(!limiter.allow(first, now));
+  assert!(limiter.allow(second, now));
+}
+
+#[test]
+fn webhook_rate_limiter_refills() {
+  let limiter = WebhookRateLimiter::new();
+  let project_id = uuid::Uuid::new_v4();
+  let now = std::time::Instant::now();
+
+  for _ in 0..WEBHOOK_PROJECT_RATE_LIMIT {
+    assert!(limiter.allow(project_id, now));
+  }
+  assert!(!limiter.allow(project_id, now));
+  assert!(limiter.allow(project_id, now + WEBHOOK_RATE_LIMIT_WINDOW));
+}

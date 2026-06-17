@@ -1,7 +1,17 @@
+use std::{
+  sync::Arc,
+  time::{Duration, Instant},
+};
+
 use axum::{
+  Extension,
   Json,
   Router,
+  body::Body,
+  extract::Request,
   http::{HeaderMap, StatusCode},
+  middleware::{self, Next},
+  response::{IntoResponse, Response},
   routing::post,
 };
 use circus_common::{
@@ -28,6 +38,94 @@ struct WebhookResponse {
   message:  String,
 }
 
+struct WebhookBucket {
+  tokens:        f64,
+  last_refilled: Instant,
+}
+
+struct WebhookRateLimiter {
+  buckets: dashmap::DashMap<Uuid, WebhookBucket>,
+  rps:     f64,
+  burst:   f64,
+}
+
+const WEBHOOK_PROJECT_RATE_LIMIT: u32 = 10;
+const WEBHOOK_RATE_LIMIT_WINDOW: Duration = Duration::from_mins(1);
+const WEBHOOK_BUCKET_TTL: Duration = Duration::from_mins(5);
+
+impl WebhookRateLimiter {
+  fn new() -> Self {
+    Self {
+      buckets: dashmap::DashMap::new(),
+      rps:     f64::from(WEBHOOK_PROJECT_RATE_LIMIT)
+        / WEBHOOK_RATE_LIMIT_WINDOW.as_secs_f64(),
+      burst:   f64::from(WEBHOOK_PROJECT_RATE_LIMIT),
+    }
+  }
+
+  fn allow(&self, project_id: Uuid, now: Instant) -> bool {
+    self.buckets.retain(|_, bucket| {
+      now.duration_since(bucket.last_refilled) < WEBHOOK_BUCKET_TTL
+    });
+
+    let mut bucket = self.buckets.entry(project_id).or_insert_with(|| {
+      WebhookBucket {
+        tokens:        self.burst,
+        last_refilled: now,
+      }
+    });
+
+    let elapsed = now.duration_since(bucket.last_refilled).as_secs_f64();
+    bucket.tokens = elapsed.mul_add(self.rps, bucket.tokens).min(self.burst);
+    bucket.last_refilled = now;
+
+    if bucket.tokens < 1.0 {
+      return false;
+    }
+    bucket.tokens -= 1.0;
+    true
+  }
+}
+
+async fn webhook_rate_limit_middleware(
+  Extension(limiter): Extension<Arc<WebhookRateLimiter>>,
+  request: Request<Body>,
+  next: Next,
+) -> Response {
+  let Some(project_id) = webhook_project_id(request.uri().path()) else {
+    return next.run(request).await;
+  };
+
+  if !limiter.allow(project_id, Instant::now()) {
+    return (
+      StatusCode::TOO_MANY_REQUESTS,
+      Json(WebhookResponse {
+        accepted: false,
+        message:  "Webhook rate limit exceeded".to_string(),
+      }),
+    )
+      .into_response();
+  }
+
+  next.run(request).await
+}
+
+fn webhook_project_id(path: &str) -> Option<Uuid> {
+  let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+  if segments.next()? != "api" {
+    return None;
+  }
+  if segments.next()? != "v1" {
+    return None;
+  }
+  if segments.next()? != "webhooks" {
+    return None;
+  }
+  segments
+    .next()
+    .and_then(|segment| Uuid::parse_str(segment).ok())
+}
+
 pub fn router() -> Router<AppState> {
   Router::new()
     .route(
@@ -46,6 +144,8 @@ pub fn router() -> Router<AppState> {
       "/api/v1/webhooks/{project_id}/gitlab",
       post(gitlab::handle_webhook),
     )
+    .layer(middleware::from_fn(webhook_rate_limit_middleware))
+    .layer(Extension(Arc::new(WebhookRateLimiter::new())))
 }
 
 fn trace_webhook_repo(
