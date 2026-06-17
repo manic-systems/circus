@@ -59,12 +59,13 @@ pub struct BuilderSession {
 ///
 /// Returns the underlying sqlx error.
 pub async fn list(pool: &PgPool) -> Result<Vec<BuilderSession>> {
-  sqlx::query_as::<_, BuilderSession>(
-    "SELECT * FROM builder_sessions ORDER BY connected DESC, updated_at DESC",
+  Ok(
+    sqlx::query_as::<_, BuilderSession>(
+      "SELECT * FROM builder_sessions ORDER BY connected DESC, updated_at DESC",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Only the sessions that are currently connected (the in-memory
@@ -75,13 +76,14 @@ pub async fn list(pool: &PgPool) -> Result<Vec<BuilderSession>> {
 ///
 /// Returns the underlying sqlx error.
 pub async fn list_connected(pool: &PgPool) -> Result<Vec<BuilderSession>> {
-  sqlx::query_as::<_, BuilderSession>(
-    "SELECT * FROM builder_sessions WHERE connected = TRUE ORDER BY \
-     updated_at DESC",
+  Ok(
+    sqlx::query_as::<_, BuilderSession>(
+      "SELECT * FROM builder_sessions WHERE connected = TRUE ORDER BY \
+       updated_at DESC",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// One session by its stable `machine_id`.
@@ -96,8 +98,7 @@ pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
   )
   .bind(machine_id)
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?
+  .await?
   .ok_or_else(|| {
     CiError::NotFound(format!("Builder session {machine_id} not found"))
   })
@@ -128,11 +129,7 @@ pub async fn record_outcome(
      LEAST(consecutive_failures + 1, 4) - 1) + (random() * 30)::int), \
      updated_at = NOW() WHERE machine_id = $1"
   };
-  sqlx::query(sql)
-    .bind(machine_id)
-    .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+  sqlx::query(sql).bind(machine_id).execute(pool).await?;
   Ok(())
 }
 
@@ -151,8 +148,7 @@ pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
   )
   .bind(machine_id)
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(row.is_some_and(|(schedulable,)| schedulable))
 }
 
@@ -176,8 +172,7 @@ pub async fn prune_stale_ephemeral(
   )
   .bind(ttl_secs as f64)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(res.rows_affected())
 }
 
@@ -192,7 +187,6 @@ pub async fn reset_all_connected(pool: &PgPool) -> Result<u64> {
     "UPDATE builder_sessions SET connected = FALSE WHERE connected = TRUE",
   )
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(res.rows_affected())
 }

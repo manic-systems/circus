@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{Channel, CreateChannel},
 };
 
@@ -22,16 +22,8 @@ pub async fn create(pool: &PgPool, input: CreateChannel) -> Result<Channel> {
   .bind(input.jobset_id)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Channel '{}' already exists for this project",
-          input.name
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!("Channel '{}' already exists for this project", input.name)
   })
 }
 
@@ -57,13 +49,14 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<Channel>> {
-  sqlx::query_as::<_, Channel>(
-    "SELECT * FROM channels WHERE project_id = $1 ORDER BY name",
+  Ok(
+    sqlx::query_as::<_, Channel>(
+      "SELECT * FROM channels WHERE project_id = $1 ORDER BY name",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all channels.
@@ -72,10 +65,11 @@ pub async fn list_for_project(
 ///
 /// Returns error if database query fails.
 pub async fn list_all(pool: &PgPool) -> Result<Vec<Channel>> {
-  sqlx::query_as::<_, Channel>("SELECT * FROM channels ORDER BY name")
-    .fetch_all(pool)
-    .await
-    .map_err(CiError::Database)
+  Ok(
+    sqlx::query_as::<_, Channel>("SELECT * FROM channels ORDER BY name")
+      .fetch_all(pool)
+      .await?,
+  )
 }
 
 /// Look up a channel by name. Names are unique within a project, but channel
@@ -126,8 +120,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
   let result = sqlx::query("DELETE FROM channels WHERE id = $1")
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   if result.rows_affected() == 0 {
     return Err(CiError::NotFound(format!("Channel {id} not found")));
   }
@@ -145,17 +138,18 @@ pub async fn upsert(
   name: &str,
   jobset_id: Uuid,
 ) -> Result<Channel> {
-  sqlx::query_as::<_, Channel>(
-    "INSERT INTO channels (project_id, name, jobset_id) VALUES ($1, $2, $3) \
-     ON CONFLICT (project_id, name) DO UPDATE SET jobset_id = \
-     EXCLUDED.jobset_id RETURNING *",
+  Ok(
+    sqlx::query_as::<_, Channel>(
+      "INSERT INTO channels (project_id, name, jobset_id) VALUES ($1, $2, $3) \
+       ON CONFLICT (project_id, name) DO UPDATE SET jobset_id = \
+       EXCLUDED.jobset_id RETURNING *",
+    )
+    .bind(project_id)
+    .bind(name)
+    .bind(jobset_id)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(project_id)
-  .bind(name)
-  .bind(jobset_id)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Sync channels from declarative config.
@@ -180,8 +174,7 @@ pub async fn sync_for_project(
   .bind(project_id)
   .bind(&names)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   // Upsert each channel
   for channel in channels {
@@ -217,8 +210,7 @@ pub async fn auto_promote_if_complete(
   )
   .bind(evaluation_id)
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   let (total, completed) = row;
   if total == 0 || total != completed {
@@ -230,8 +222,7 @@ pub async fn auto_promote_if_complete(
     sqlx::query_as::<_, Channel>("SELECT * FROM channels WHERE jobset_id = $1")
       .bind(jobset_id)
       .fetch_all(pool)
-      .await
-      .map_err(CiError::Database)?;
+      .await?;
 
   for channel in channels {
     match promote(pool, channel.id, evaluation_id).await {

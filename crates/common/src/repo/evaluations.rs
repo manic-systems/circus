@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{
     CreateEvaluation,
     Evaluation,
@@ -107,16 +107,11 @@ async fn create_with_kind(
   .bind(&input.pr_action)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Evaluation for commit '{}' already exists in this jobset",
-          input.commit_hash
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!(
+      "Evaluation for commit '{}' already exists in this jobset",
+      input.commit_hash
+    )
   })
 }
 
@@ -163,14 +158,15 @@ pub async fn list_for_jobset(
   pool: &PgPool,
   jobset_id: Uuid,
 ) -> Result<Vec<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "SELECT * FROM evaluations WHERE jobset_id = $1 ORDER BY evaluation_time \
-     DESC",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT * FROM evaluations WHERE jobset_id = $1 ORDER BY \
+       evaluation_time DESC",
+    )
+    .bind(jobset_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List evaluations with optional `jobset_id` and status filters, with
@@ -203,19 +199,20 @@ pub async fn list_filtered_with_visibility(
   offset: i64,
   include_hidden: bool,
 ) -> Result<Vec<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "SELECT * FROM evaluations WHERE ($1::uuid IS NULL OR jobset_id = $1) AND \
-     ($2::text IS NULL OR status = $2) AND ($5::boolean OR hidden = false) \
-     ORDER BY evaluation_time DESC LIMIT $3 OFFSET $4",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT * FROM evaluations WHERE ($1::uuid IS NULL OR jobset_id = $1) \
+       AND ($2::text IS NULL OR status = $2) AND ($5::boolean OR hidden = \
+       false) ORDER BY evaluation_time DESC LIMIT $3 OFFSET $4",
+    )
+    .bind(jobset_id)
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
+    .bind(include_hidden)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .bind(status)
-  .bind(limit)
-  .bind(offset)
-  .bind(include_hidden)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count evaluations matching filter criteria.
@@ -252,8 +249,7 @@ pub async fn count_filtered_with_visibility(
   .bind(status)
   .bind(include_hidden)
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(row.0)
 }
 
@@ -294,14 +290,15 @@ pub async fn try_claim_pending(
   pool: &PgPool,
   id: Uuid,
 ) -> Result<Option<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "UPDATE evaluations SET status = 'running' WHERE id = $1 AND status = \
-     'pending' RETURNING *",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "UPDATE evaluations SET status = 'running' WHERE id = $1 AND status = \
+       'pending' RETURNING *",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(id)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Update evaluation status and optional error message.
@@ -340,14 +337,15 @@ pub async fn get_latest(
   pool: &PgPool,
   jobset_id: Uuid,
 ) -> Result<Option<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "SELECT * FROM evaluations WHERE jobset_id = $1 AND status = 'completed' \
-     ORDER BY evaluation_time DESC LIMIT 1",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT * FROM evaluations WHERE jobset_id = $1 AND status = \
+       'completed' ORDER BY evaluation_time DESC LIMIT 1",
+    )
+    .bind(jobset_id)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Set the inputs hash for an evaluation (used for eval caching).
@@ -364,8 +362,7 @@ pub async fn set_inputs_hash(
     .bind(hash)
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }
 
@@ -380,15 +377,16 @@ pub async fn get_by_inputs_hash(
   jobset_id: Uuid,
   inputs_hash: &str,
 ) -> Result<Option<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "SELECT * FROM evaluations WHERE jobset_id = $1 AND inputs_hash = $2 AND \
-     status = 'completed' ORDER BY evaluation_time DESC LIMIT 1",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT * FROM evaluations WHERE jobset_id = $1 AND inputs_hash = $2 \
+       AND status = 'completed' ORDER BY evaluation_time DESC LIMIT 1",
+    )
+    .bind(jobset_id)
+    .bind(inputs_hash)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .bind(inputs_hash)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count total evaluations.
@@ -399,8 +397,7 @@ pub async fn get_by_inputs_hash(
 pub async fn count(pool: &PgPool) -> Result<i64> {
   let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM evaluations")
     .fetch_one(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(row.0)
 }
 
@@ -413,13 +410,14 @@ pub async fn count(pool: &PgPool) -> Result<i64> {
 ///
 /// Returns error if database query fails.
 pub async fn list_pending(pool: &PgPool) -> Result<Vec<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "SELECT * FROM evaluations WHERE status = 'pending' ORDER BY \
-     evaluation_time ASC",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT * FROM evaluations WHERE status = 'pending' ORDER BY \
+       evaluation_time ASC",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List jobset IDs with at least one pending evaluation.
@@ -437,8 +435,7 @@ pub async fn list_jobsets_with_pending(pool: &PgPool) -> Result<Vec<Uuid>> {
     "SELECT DISTINCT jobset_id FROM evaluations WHERE status = 'pending'",
   )
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
@@ -452,13 +449,14 @@ pub async fn get_by_jobset_and_commit(
   jobset_id: Uuid,
   commit_hash: &str,
 ) -> Result<Option<Evaluation>> {
-  sqlx::query_as::<_, Evaluation>(
-    "SELECT * FROM evaluations WHERE jobset_id = $1 AND commit_hash = $2 \
-     ORDER BY (trigger_kind = 'interval') ASC, evaluation_time DESC LIMIT 1",
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT * FROM evaluations WHERE jobset_id = $1 AND commit_hash = $2 \
+       ORDER BY (trigger_kind = 'interval') ASC, evaluation_time DESC LIMIT 1",
+    )
+    .bind(jobset_id)
+    .bind(commit_hash)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .bind(commit_hash)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }

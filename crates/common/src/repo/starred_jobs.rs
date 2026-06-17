@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateStarredJob, StarredJob},
 };
 
@@ -28,14 +28,7 @@ pub async fn create(
   .bind(&data.job_name)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict("Job already starred".to_string())
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| "Job already starred".to_string())
 }
 
 /// Get a starred job by ID
@@ -69,16 +62,17 @@ pub async fn list_for_user(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<StarredJob>> {
-  sqlx::query_as::<_, StarredJob>(
-    "SELECT * FROM starred_jobs WHERE user_id = $1 ORDER BY created_at DESC \
-     LIMIT $2 OFFSET $3",
+  Ok(
+    sqlx::query_as::<_, StarredJob>(
+      "SELECT * FROM starred_jobs WHERE user_id = $1 ORDER BY created_at DESC \
+       LIMIT $2 OFFSET $3",
+    )
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(user_id)
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count starred jobs for a user

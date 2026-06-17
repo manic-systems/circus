@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{Result, SqlxResultExt},
   models::BuildOutput,
 };
 
@@ -27,15 +27,8 @@ pub async fn create(
   .bind(path)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    if let sqlx::Error::Database(db_err) = &e
-      && db_err.is_unique_violation()
-    {
-      return CiError::Conflict(format!(
-        "Build output with name '{name}' already exists for build {build}"
-      ));
-    }
-    CiError::Database(e)
+  .on_unique_violation(|| {
+    format!("Build output with name '{name}' already exists for build {build}")
   })
 }
 
@@ -48,13 +41,14 @@ pub async fn list_for_build(
   pool: &PgPool,
   build: Uuid,
 ) -> Result<Vec<BuildOutput>> {
-  sqlx::query_as::<_, BuildOutput>(
-    "SELECT * FROM build_outputs WHERE build = $1 ORDER BY name ASC",
+  Ok(
+    sqlx::query_as::<_, BuildOutput>(
+      "SELECT * FROM build_outputs WHERE build = $1 ORDER BY name ASC",
+    )
+    .bind(build)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(build)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Find build outputs by path.
@@ -66,13 +60,14 @@ pub async fn find_by_path(
   pool: &PgPool,
   path: &str,
 ) -> Result<Vec<BuildOutput>> {
-  sqlx::query_as::<_, BuildOutput>(
-    "SELECT * FROM build_outputs WHERE path = $1 ORDER BY build, name",
+  Ok(
+    sqlx::query_as::<_, BuildOutput>(
+      "SELECT * FROM build_outputs WHERE path = $1 ORDER BY build, name",
+    )
+    .bind(path)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(path)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Delete all build outputs for a build.
@@ -84,8 +79,7 @@ pub async fn delete_for_build(pool: &PgPool, build: Uuid) -> Result<u64> {
   let result = sqlx::query("DELETE FROM build_outputs WHERE build = $1")
     .bind(build)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
 
   Ok(result.rows_affected())
 }

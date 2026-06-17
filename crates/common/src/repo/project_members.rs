@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateProjectMember, ProjectMember, UpdateProjectMember},
   roles::ProjectRole,
 };
@@ -29,15 +29,8 @@ pub async fn create(
   .bind(data.role)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(
-          "User is already a member of this project".to_string(),
-        )
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    "User is already a member of this project".to_string()
   })
 }
 
@@ -73,14 +66,15 @@ pub async fn get_by_project_and_user(
   project_id: Uuid,
   user_id: Uuid,
 ) -> Result<Option<ProjectMember>> {
-  sqlx::query_as::<_, ProjectMember>(
-    "SELECT * FROM project_members WHERE project_id = $1 AND user_id = $2",
+  Ok(
+    sqlx::query_as::<_, ProjectMember>(
+      "SELECT * FROM project_members WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(project_id)
-  .bind(user_id)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all members of a project
@@ -92,13 +86,14 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<ProjectMember>> {
-  sqlx::query_as::<_, ProjectMember>(
-    "SELECT * FROM project_members WHERE project_id = $1 ORDER BY created_at",
+  Ok(
+    sqlx::query_as::<_, ProjectMember>(
+      "SELECT * FROM project_members WHERE project_id = $1 ORDER BY created_at",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all projects a user is a member of
@@ -110,13 +105,14 @@ pub async fn list_for_user(
   pool: &PgPool,
   user_id: Uuid,
 ) -> Result<Vec<ProjectMember>> {
-  sqlx::query_as::<_, ProjectMember>(
-    "SELECT * FROM project_members WHERE user_id = $1 ORDER BY created_at",
+  Ok(
+    sqlx::query_as::<_, ProjectMember>(
+      "SELECT * FROM project_members WHERE user_id = $1 ORDER BY created_at",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(user_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Update a project member's role with validation
@@ -218,17 +214,18 @@ pub async fn upsert(
   user_id: Uuid,
   role: ProjectRole,
 ) -> Result<ProjectMember> {
-  sqlx::query_as::<_, ProjectMember>(
-    "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, \
-     $3) ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role \
-     RETURNING *",
+  Ok(
+    sqlx::query_as::<_, ProjectMember>(
+      "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, \
+       $2, $3) ON CONFLICT (project_id, user_id) DO UPDATE SET role = \
+       EXCLUDED.role RETURNING *",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .bind(role)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(project_id)
-  .bind(user_id)
-  .bind(role)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Sync project members from declarative config.
@@ -257,8 +254,7 @@ pub async fn sync_for_project(
   .bind(project_id)
   .bind(&user_ids)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   // Upsert each member
   for member in members {

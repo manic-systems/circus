@@ -72,8 +72,7 @@ pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   .bind(info.sig)
   .bind(info.ca)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(())
 }
 
@@ -89,8 +88,7 @@ pub async fn get(pool: &PgPool, store_path: &str) -> Result<NarInfo> {
   )
   .bind(store_path)
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?
+  .await?
   .ok_or_else(|| CiError::NotFound(format!("narinfo for {store_path}")))
 }
 
@@ -111,8 +109,7 @@ pub async fn get_by_hash_part(
   )
   .bind(format!("/nix/store/{hash_part}-%"))
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?
+  .await?
   .ok_or_else(|| CiError::NotFound(format!("narinfo for hash {hash_part}")))
 }
 
@@ -131,8 +128,7 @@ pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
   )
   .bind(url)
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?
+  .await?
   .ok_or_else(|| CiError::NotFound(format!("narinfo for URL {url}")))
 }
 
@@ -144,7 +140,6 @@ pub async fn get_by_url(pool: &PgPool, url: &str) -> Result<NarInfo> {
 pub async fn count(pool: &PgPool) -> Result<i64> {
   let (n,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM narinfo_cache")
     .fetch_one(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(n)
 }

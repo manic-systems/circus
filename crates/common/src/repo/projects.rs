@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateProject, Project, UpdateProject},
   validate::Validate,
 };
@@ -23,14 +23,7 @@ pub async fn create(pool: &PgPool, input: CreateProject) -> Result<Project> {
   .bind(&input.repository_url)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!("Project '{}' already exists", input.name))
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| format!("Project '{}' already exists", input.name))
 }
 
 /// Get a project by ID.
@@ -69,14 +62,15 @@ pub async fn list(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Project>> {
-  sqlx::query_as::<_, Project>(
-    "SELECT * FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+  Ok(
+    sqlx::query_as::<_, Project>(
+      "SELECT * FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count total number of projects.
@@ -87,8 +81,7 @@ pub async fn list(
 pub async fn count(pool: &PgPool) -> Result<i64> {
   let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM projects")
     .fetch_one(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(row.0)
 }
 
@@ -120,14 +113,7 @@ pub async fn update(
   .bind(id)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!("Project '{name}' already exists"))
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| format!("Project '{name}' already exists"))
 }
 
 /// Insert or update a project by name.
@@ -137,17 +123,19 @@ pub async fn update(
 /// Returns error if database operation fails.
 pub async fn upsert(pool: &PgPool, input: CreateProject) -> Result<Project> {
   input.validate().map_err(CiError::Validation)?;
-  sqlx::query_as::<_, Project>(
-    "INSERT INTO projects (name, description, repository_url) VALUES ($1, $2, \
-     $3) ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, \
-     repository_url = EXCLUDED.repository_url RETURNING *",
+  Ok(
+    sqlx::query_as::<_, Project>(
+      "INSERT INTO projects (name, description, repository_url) VALUES ($1, \
+       $2, $3) ON CONFLICT (name) DO UPDATE SET description = \
+       EXCLUDED.description, repository_url = EXCLUDED.repository_url \
+       RETURNING *",
+    )
+    .bind(&input.name)
+    .bind(&input.description)
+    .bind(&input.repository_url)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(&input.name)
-  .bind(&input.description)
-  .bind(&input.repository_url)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List projects that have no active jobsets.
@@ -167,13 +155,14 @@ pub async fn upsert(pool: &PgPool, input: CreateProject) -> Result<Project> {
 pub async fn list_without_active_jobsets(
   pool: &PgPool,
 ) -> Result<Vec<Project>> {
-  sqlx::query_as::<_, Project>(
-    "SELECT p.* FROM projects p WHERE NOT EXISTS (SELECT 1 FROM jobsets j \
-     WHERE j.project_id = p.id)",
+  Ok(
+    sqlx::query_as::<_, Project>(
+      "SELECT p.* FROM projects p WHERE NOT EXISTS (SELECT 1 FROM jobsets j \
+       WHERE j.project_id = p.id)",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Delete a project by ID.

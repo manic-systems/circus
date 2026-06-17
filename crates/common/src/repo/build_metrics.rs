@@ -2,10 +2,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-  error::{CiError, Result},
-  models::BuildMetric,
-};
+use crate::{error::Result, models::BuildMetric};
 
 type PercentileRow = (DateTime<Utc>, Option<f64>, Option<f64>, Option<f64>);
 
@@ -46,19 +43,20 @@ pub async fn upsert(
   metric_value: f64,
   unit: &str,
 ) -> Result<BuildMetric> {
-  sqlx::query_as::<_, BuildMetric>(
-    "INSERT INTO build_metrics (build_id, metric_name, metric_value, unit) \
-     VALUES ($1, $2, $3, $4) ON CONFLICT (build_id, metric_name) DO UPDATE \
-     SET metric_value = EXCLUDED.metric_value, collected_at = NOW() RETURNING \
-     *",
+  Ok(
+    sqlx::query_as::<_, BuildMetric>(
+      "INSERT INTO build_metrics (build_id, metric_name, metric_value, unit) \
+       VALUES ($1, $2, $3, $4) ON CONFLICT (build_id, metric_name) DO UPDATE \
+       SET metric_value = EXCLUDED.metric_value, collected_at = NOW() \
+       RETURNING *",
+    )
+    .bind(build_id)
+    .bind(metric_name)
+    .bind(metric_value)
+    .bind(unit)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(build_id)
-  .bind(metric_name)
-  .bind(metric_value)
-  .bind(unit)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Calculate build failure rate over a time window.
@@ -83,8 +81,7 @@ pub async fn calculate_failure_rate(
   .bind(jobset_id)
   .bind(window_minutes)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   if rows.is_empty() {
     return Ok(0.0);
@@ -133,8 +130,7 @@ pub async fn get_build_stats_timeseries(
   .bind(jobset_id)
   .bind(bucket_minutes)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(
     rows
@@ -190,8 +186,7 @@ pub async fn get_duration_percentiles_timeseries(
   .bind(jobset_id)
   .bind(bucket_minutes)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(
     rows
@@ -234,8 +229,7 @@ pub async fn get_queue_depth_timeseries(
   .bind(hours)
   .bind(bucket_minutes)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(
     rows
@@ -260,8 +254,9 @@ pub async fn get_system_distribution(
   project_id: Option<Uuid>,
   hours: i32,
 ) -> Result<Vec<(String, i64)>> {
-  sqlx::query_as(
-    "SELECT 
+  Ok(
+    sqlx::query_as(
+      "SELECT 
       COALESCE(b.system, 'unknown') AS system,
       COUNT(*) AS build_count
     FROM builds b
@@ -271,10 +266,10 @@ pub async fn get_system_distribution(
       AND ($2::uuid IS NULL OR j.project_id = $2)
     GROUP BY b.system
     ORDER BY build_count DESC",
+    )
+    .bind(hours)
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(hours)
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }

@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateRemoteBuilder, RemoteBuilder},
 };
 
@@ -32,16 +32,8 @@ pub async fn create(
   .bind(&input.ssh_key_file)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Remote builder '{}' already exists",
-          input.name
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!("Remote builder '{}' already exists", input.name)
   })
 }
 
@@ -66,12 +58,13 @@ pub async fn get(pool: &PgPool, id: Uuid) -> Result<RemoteBuilder> {
 ///
 /// Returns error if database query fails.
 pub async fn list(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "SELECT * FROM remote_builders ORDER BY speed_factor DESC, name",
+  Ok(
+    sqlx::query_as::<_, RemoteBuilder>(
+      "SELECT * FROM remote_builders ORDER BY speed_factor DESC, name",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all enabled remote builders.
@@ -80,13 +73,14 @@ pub async fn list(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
 ///
 /// Returns error if database query fails.
 pub async fn list_enabled(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "SELECT * FROM remote_builders WHERE enabled = true ORDER BY speed_factor \
-     DESC, name",
+  Ok(
+    sqlx::query_as::<_, RemoteBuilder>(
+      "SELECT * FROM remote_builders WHERE enabled = true ORDER BY \
+       speed_factor DESC, name",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Find a suitable builder for the given system.
@@ -122,11 +116,12 @@ pub async fn find_for_system(
     },
   };
 
-  sqlx::query_as::<_, RemoteBuilder>(query)
-    .bind(system)
-    .fetch_all(pool)
-    .await
-    .map_err(CiError::Database)
+  Ok(
+    sqlx::query_as::<_, RemoteBuilder>(query)
+      .bind(system)
+      .fetch_all(pool)
+      .await?,
+  )
 }
 
 /// Record a build failure for a remote builder.
@@ -214,8 +209,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
   let result = sqlx::query("DELETE FROM remote_builders WHERE id = $1")
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   if result.rows_affected() == 0 {
     return Err(CiError::NotFound(format!("Remote builder {id} not found")));
   }
@@ -230,8 +224,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
 pub async fn count(pool: &PgPool) -> Result<i64> {
   let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM remote_builders")
     .fetch_one(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(row.0)
 }
 
@@ -244,31 +237,34 @@ pub async fn upsert(
   pool: &PgPool,
   params: &crate::models::RemoteBuilderParams<'_>,
 ) -> Result<RemoteBuilder> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "INSERT INTO remote_builders (name, ssh_uri, systems, max_jobs, \
-     speed_factor, supported_features, mandatory_features, enabled, \
-     public_host_key, ssh_key_file) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-     $9, $10) ON CONFLICT (name) DO UPDATE SET ssh_uri = EXCLUDED.ssh_uri, \
-     systems = EXCLUDED.systems, max_jobs = EXCLUDED.max_jobs, speed_factor = \
-     EXCLUDED.speed_factor, supported_features = EXCLUDED.supported_features, \
-     mandatory_features = EXCLUDED.mandatory_features, enabled = \
-     EXCLUDED.enabled, public_host_key = COALESCE(EXCLUDED.public_host_key, \
-     remote_builders.public_host_key), ssh_key_file = \
-     COALESCE(EXCLUDED.ssh_key_file, remote_builders.ssh_key_file) RETURNING *",
+  Ok(
+    sqlx::query_as::<_, RemoteBuilder>(
+      "INSERT INTO remote_builders (name, ssh_uri, systems, max_jobs, \
+       speed_factor, supported_features, mandatory_features, enabled, \
+       public_host_key, ssh_key_file) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
+       $9, $10) ON CONFLICT (name) DO UPDATE SET ssh_uri = EXCLUDED.ssh_uri, \
+       systems = EXCLUDED.systems, max_jobs = EXCLUDED.max_jobs, speed_factor \
+       = EXCLUDED.speed_factor, supported_features = \
+       EXCLUDED.supported_features, mandatory_features = \
+       EXCLUDED.mandatory_features, enabled = EXCLUDED.enabled, \
+       public_host_key = COALESCE(EXCLUDED.public_host_key, \
+       remote_builders.public_host_key), ssh_key_file = \
+       COALESCE(EXCLUDED.ssh_key_file, remote_builders.ssh_key_file) \
+       RETURNING *",
+    )
+    .bind(params.name)
+    .bind(params.ssh_uri)
+    .bind(params.systems)
+    .bind(params.max_jobs)
+    .bind(params.speed_factor)
+    .bind(params.supported_features)
+    .bind(params.mandatory_features)
+    .bind(params.enabled)
+    .bind(params.public_host_key)
+    .bind(params.ssh_key_file)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(params.name)
-  .bind(params.ssh_uri)
-  .bind(params.systems)
-  .bind(params.max_jobs)
-  .bind(params.speed_factor)
-  .bind(params.supported_features)
-  .bind(params.mandatory_features)
-  .bind(params.enabled)
-  .bind(params.public_host_key)
-  .bind(params.ssh_key_file)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Sync remote builders from declarative config.
@@ -288,8 +284,7 @@ pub async fn sync_all(
   sqlx::query("DELETE FROM remote_builders WHERE name != ALL($1::text[])")
     .bind(&names)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
 
   // Upsert each builder
   for builder in builders {

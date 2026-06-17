@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateNotificationConfig, NotificationConfig, NotificationType},
 };
 
@@ -29,16 +29,11 @@ pub async fn create(
   .bind(&input.config)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Notification config '{}' already exists for this project",
-          input.notification_type
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!(
+      "Notification config '{}' already exists for this project",
+      input.notification_type
+    )
   })
 }
 
@@ -51,14 +46,15 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<NotificationConfig>> {
-  sqlx::query_as::<_, NotificationConfig>(
-    "SELECT * FROM notification_configs WHERE project_id = $1 AND enabled = \
-     true ORDER BY created_at DESC",
+  Ok(
+    sqlx::query_as::<_, NotificationConfig>(
+      "SELECT * FROM notification_configs WHERE project_id = $1 AND enabled = \
+       true ORDER BY created_at DESC",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Delete a notification config for a project.
@@ -98,19 +94,20 @@ pub async fn upsert(
   config: &serde_json::Value,
   enabled: bool,
 ) -> Result<NotificationConfig> {
-  sqlx::query_as::<_, NotificationConfig>(
-    "INSERT INTO notification_configs (project_id, notification_type, config, \
-     enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, \
-     notification_type) DO UPDATE SET config = EXCLUDED.config, enabled = \
-     EXCLUDED.enabled RETURNING *",
+  Ok(
+    sqlx::query_as::<_, NotificationConfig>(
+      "INSERT INTO notification_configs (project_id, notification_type, \
+       config, enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, \
+       notification_type) DO UPDATE SET config = EXCLUDED.config, enabled = \
+       EXCLUDED.enabled RETURNING *",
+    )
+    .bind(project_id)
+    .bind(notification_type)
+    .bind(config)
+    .bind(enabled)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(project_id)
-  .bind(notification_type)
-  .bind(config)
-  .bind(enabled)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Sync notification configs from declarative config.
@@ -138,8 +135,7 @@ pub async fn sync_for_project(
   .bind(project_id)
   .bind(&type_strings)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   // Upsert each notification config
   for notification in notifications {

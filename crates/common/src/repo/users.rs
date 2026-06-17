@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateUser, LoginCredentials, UpdateUser, User, UserType},
   roles::GlobalRole,
   validation::{
@@ -67,20 +67,17 @@ pub async fn create(
   email_regex: Option<&Regex>,
 ) -> Result<User> {
   // Validate username
-  validate_username(&data.username)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
+  validate_username(&data.username)?;
 
   // Validate email
-  validate_email(&data.email, email_regex)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
+  validate_email(&data.email, email_regex)?;
 
   // Validate password
-  validate_password(&data.password)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
+  validate_password(&data.password)?;
 
   // Validate full name if provided
   if let Some(ref name) = data.full_name {
-    validate_full_name(name).map_err(|e| CiError::Validation(e.to_string()))?;
+    validate_full_name(name)?;
   }
 
   let role = data.role.unwrap_or(GlobalRole::ReadOnly);
@@ -98,14 +95,7 @@ pub async fn create(
   .bind(role)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict("Username or email already exists".to_string())
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| "Username or email already exists".to_string())
 }
 
 /// Authenticate a user with username and password
@@ -176,11 +166,12 @@ pub async fn get_by_username(
   pool: &PgPool,
   username: &str,
 ) -> Result<Option<User>> {
-  sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
-    .bind(username)
-    .fetch_optional(pool)
-    .await
-    .map_err(CiError::Database)
+  Ok(
+    sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+      .bind(username)
+      .fetch_optional(pool)
+      .await?,
+  )
 }
 
 /// Get a user by email
@@ -189,11 +180,12 @@ pub async fn get_by_username(
 ///
 /// Returns error if database query fails.
 pub async fn get_by_email(pool: &PgPool, email: &str) -> Result<Option<User>> {
-  sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
-    .bind(email)
-    .fetch_optional(pool)
-    .await
-    .map_err(CiError::Database)
+  Ok(
+    sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
+      .bind(email)
+      .fetch_optional(pool)
+      .await?,
+  )
 }
 
 /// List all users with pagination
@@ -202,14 +194,15 @@ pub async fn get_by_email(pool: &PgPool, email: &str) -> Result<Option<User>> {
 ///
 /// Returns error if database query fails.
 pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<User>> {
-  sqlx::query_as::<_, User>(
-    "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+  Ok(
+    sqlx::query_as::<_, User>(
+      "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count total users
@@ -278,8 +271,7 @@ pub async fn update_email(
   email: &str,
   email_regex: Option<&Regex>,
 ) -> Result<User> {
-  validate_email(email, email_regex)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
+  validate_email(email, email_regex)?;
 
   sqlx::query_as::<_, User>(
     "UPDATE users SET email = $1 WHERE id = $2 RETURNING *",
@@ -288,14 +280,7 @@ pub async fn update_email(
   .bind(id)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict("Email already in use".to_string())
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| "Email already in use".to_string())
 }
 
 /// Update user full name with validation
@@ -309,7 +294,7 @@ pub async fn update_full_name(
   full_name: Option<&str>,
 ) -> Result<()> {
   if let Some(name) = full_name {
-    validate_full_name(name).map_err(|e| CiError::Validation(e.to_string()))?;
+    validate_full_name(name)?;
   }
 
   sqlx::query("UPDATE users SET full_name = $1 WHERE id = $2")
@@ -330,8 +315,7 @@ pub async fn update_password(
   id: Uuid,
   password: &str,
 ) -> Result<()> {
-  validate_password(password)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
+  validate_password(password)?;
 
   let hash = hash_password(password)?;
   sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
@@ -437,8 +421,7 @@ pub async fn upsert_oauth_user(
     // Update existing user
     if let Some(e) = email {
       // Validate email before updating
-      validate_email(e, email_regex)
-        .map_err(|err| CiError::Validation(err.to_string()))?;
+      validate_email(e, email_regex)?;
       sqlx::query(
         "UPDATE users SET email = $1, last_login_at = NOW(), updated_at = \
          NOW() WHERE id = $2",
@@ -476,14 +459,7 @@ pub async fn upsert_oauth_user(
   .bind(user_type_str)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict("Username or email already in use".to_string())
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| "Username or email already in use".to_string())
 }
 
 /// Create a new session for a user. Returns (`session_token`, `session_id`).
@@ -512,8 +488,7 @@ pub async fn create_session(
   .bind(&token_hash)
   .bind(expires_at)
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok((token, session_id.0))
 }
@@ -568,8 +543,7 @@ pub async fn delete_session(pool: &PgPool, token: &str) -> Result<bool> {
     sqlx::query("DELETE FROM user_sessions WHERE session_token_hash = $1")
       .bind(&token_hash)
       .execute(pool)
-      .await
-      .map_err(CiError::Database)?;
+      .await?;
 
   Ok(result.rows_affected() > 0)
 }

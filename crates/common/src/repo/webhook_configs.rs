@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{CreateWebhookConfig, ForgeType, WebhookConfig},
 };
 
@@ -34,16 +34,11 @@ pub async fn create(
   .bind(secret)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Webhook config for forge '{}' already exists for this project",
-          input.forge_type
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!(
+      "Webhook config for forge '{}' already exists for this project",
+      input.forge_type
+    )
   })
 }
 
@@ -71,14 +66,15 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<WebhookConfig>> {
-  sqlx::query_as::<_, WebhookConfig>(
-    "SELECT * FROM webhook_configs WHERE project_id = $1 ORDER BY created_at \
-     DESC",
+  Ok(
+    sqlx::query_as::<_, WebhookConfig>(
+      "SELECT * FROM webhook_configs WHERE project_id = $1 ORDER BY \
+       created_at DESC",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Get a webhook config by project and forge type.
@@ -99,8 +95,7 @@ pub async fn get_by_project_and_forge(
   .bind(project_id)
   .bind(forge_type)
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   if let Some(config) = config.as_mut()
     && let Some(secret) = config.secret_hash.as_deref()
@@ -149,19 +144,20 @@ pub async fn upsert(
   let secret = secret
     .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
     .transpose()?;
-  sqlx::query_as::<_, WebhookConfig>(
-    "INSERT INTO webhook_configs (project_id, forge_type, secret_hash, \
-     enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, forge_type) DO \
-     UPDATE SET secret_hash = COALESCE(EXCLUDED.secret_hash, \
-     webhook_configs.secret_hash), enabled = EXCLUDED.enabled RETURNING *",
+  Ok(
+    sqlx::query_as::<_, WebhookConfig>(
+      "INSERT INTO webhook_configs (project_id, forge_type, secret_hash, \
+       enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, forge_type) \
+       DO UPDATE SET secret_hash = COALESCE(EXCLUDED.secret_hash, \
+       webhook_configs.secret_hash), enabled = EXCLUDED.enabled RETURNING *",
+    )
+    .bind(project_id)
+    .bind(forge_type)
+    .bind(secret)
+    .bind(enabled)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(project_id)
-  .bind(forge_type)
-  .bind(secret)
-  .bind(enabled)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Sync webhook configs from declarative config.
@@ -189,8 +185,7 @@ pub async fn sync_for_project(
   .bind(project_id)
   .bind(&type_strings)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   // Upsert each webhook config
   for webhook in webhooks {

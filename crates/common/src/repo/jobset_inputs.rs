@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{InputType, JobsetInput},
   nix,
 };
@@ -34,15 +34,8 @@ pub async fn create(
   .bind(revision)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Input '{name}' already exists in this jobset"
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!("Input '{name}' already exists in this jobset")
   })
 }
 
@@ -55,13 +48,14 @@ pub async fn list_for_jobset(
   pool: &PgPool,
   jobset_id: Uuid,
 ) -> Result<Vec<JobsetInput>> {
-  sqlx::query_as::<_, JobsetInput>(
-    "SELECT * FROM jobset_inputs WHERE jobset_id = $1 ORDER BY name ASC",
+  Ok(
+    sqlx::query_as::<_, JobsetInput>(
+      "SELECT * FROM jobset_inputs WHERE jobset_id = $1 ORDER BY name ASC",
+    )
+    .bind(jobset_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Delete a jobset input.
@@ -95,20 +89,21 @@ pub async fn upsert(
 ) -> Result<JobsetInput> {
   nix::validate::validate_jobset_input(name, input_type, value, revision)
     .map_err(CiError::Validation)?;
-  sqlx::query_as::<_, JobsetInput>(
-    "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, revision) \
-     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (jobset_id, name) DO UPDATE SET \
-     input_type = EXCLUDED.input_type, value = EXCLUDED.value, revision = \
-     EXCLUDED.revision RETURNING *",
+  Ok(
+    sqlx::query_as::<_, JobsetInput>(
+      "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, \
+       revision) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (jobset_id, name) DO \
+       UPDATE SET input_type = EXCLUDED.input_type, value = EXCLUDED.value, \
+       revision = EXCLUDED.revision RETURNING *",
+    )
+    .bind(jobset_id)
+    .bind(name)
+    .bind(input_type)
+    .bind(value)
+    .bind(revision)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .bind(name)
-  .bind(input_type)
-  .bind(value)
-  .bind(revision)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Sync jobset inputs from declarative config.
@@ -133,8 +128,7 @@ pub async fn sync_for_jobset(
   .bind(jobset_id)
   .bind(&names)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   // Upsert each input
   for input in inputs {

@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{Build, BuildStats, BuildStatus, CreateBuild},
 };
 
@@ -39,16 +39,11 @@ pub async fn create(pool: &PgPool, input: CreateBuild) -> Result<Build> {
   .bind(&input.required_features)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Build for job '{}' already exists in this evaluation",
-          input.job_name
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!(
+      "Build for job '{}' already exists in this evaluation",
+      input.job_name
+    )
   })
 }
 
@@ -61,13 +56,15 @@ pub async fn get_completed_by_drv_path(
   pool: &PgPool,
   drv_path: &str,
 ) -> Result<Option<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds WHERE drv_path = $1 AND status = 'succeeded' LIMIT 1",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT * FROM builds WHERE drv_path = $1 AND status = 'succeeded' \
+       LIMIT 1",
+    )
+    .bind(drv_path)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(drv_path)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Get a build by ID.
@@ -92,13 +89,14 @@ pub async fn list_for_evaluation(
   pool: &PgPool,
   evaluation_id: Uuid,
 ) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds WHERE evaluation_id = $1 ORDER BY created_at DESC",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT * FROM builds WHERE evaluation_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(evaluation_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(evaluation_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List builds for a jobset across a bounded set of evaluations.
@@ -115,16 +113,17 @@ pub async fn list_for_jobset_evaluations(
     return Ok(Vec::new());
   }
 
-  sqlx::query_as::<_, Build>(
-    "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id \
-     WHERE e.jobset_id = $1 AND b.evaluation_id = ANY($2) ORDER BY b.job_name \
-     ASC, e.evaluation_time DESC",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id \
+       WHERE e.jobset_id = $1 AND b.evaluation_id = ANY($2) ORDER BY \
+       b.job_name ASC, e.evaluation_time DESC",
+    )
+    .bind(jobset_id)
+    .bind(evaluation_ids)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(jobset_id)
-  .bind(evaluation_ids)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List pending builds, prioritizing constrained jobs before fungible ones so
@@ -141,28 +140,30 @@ pub async fn list_pending(
   limit: i64,
   schedulable_capacity: i32,
 ) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "WITH running_counts AS ( SELECT e.jobset_id, COUNT(*) AS running FROM \
-     builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE b.status = \
-     'running' GROUP BY e.jobset_id ), active_shares AS ( SELECT j.id AS \
-     jobset_id, j.scheduling_shares, COALESCE(rc.running, 0) AS running, \
-     SUM(j.scheduling_shares) OVER () AS total_shares FROM jobsets j JOIN \
-     evaluations e2 ON e2.jobset_id = j.id JOIN builds b2 ON b2.evaluation_id \
-     = e2.id AND b2.status = 'pending' LEFT JOIN running_counts rc ON \
-     rc.jobset_id = j.id WHERE j.scheduling_shares > 0 GROUP BY j.id, \
-     j.scheduling_shares, rc.running ) SELECT b.* FROM builds b JOIN \
-     evaluations e ON b.evaluation_id = e.id JOIN active_shares ash ON \
-     ash.jobset_id = e.jobset_id WHERE b.status = 'pending' ORDER BY \
-     b.priority DESC, cardinality(COALESCE(b.effective_features, \
-     b.required_features)) DESC, (ash.scheduling_shares::float / \
-     GREATEST(ash.total_shares, 1) - ash.running::float / GREATEST($2, 1)) \
-     DESC, b.created_at ASC, b.id ASC LIMIT $1",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "WITH running_counts AS ( SELECT e.jobset_id, COUNT(*) AS running FROM \
+       builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE b.status = \
+       'running' GROUP BY e.jobset_id ), active_shares AS ( SELECT j.id AS \
+       jobset_id, j.scheduling_shares, COALESCE(rc.running, 0) AS running, \
+       SUM(j.scheduling_shares) OVER () AS total_shares FROM jobsets j JOIN \
+       evaluations e2 ON e2.jobset_id = j.id JOIN builds b2 ON \
+       b2.evaluation_id = e2.id AND b2.status = 'pending' LEFT JOIN \
+       running_counts rc ON rc.jobset_id = j.id WHERE j.scheduling_shares > 0 \
+       GROUP BY j.id, j.scheduling_shares, rc.running ) SELECT b.* FROM \
+       builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN \
+       active_shares ash ON ash.jobset_id = e.jobset_id WHERE b.status = \
+       'pending' ORDER BY b.priority DESC, \
+       cardinality(COALESCE(b.effective_features, b.required_features)) DESC, \
+       (ash.scheduling_shares::float / GREATEST(ash.total_shares, 1) - \
+       ash.running::float / GREATEST($2, 1)) DESC, b.created_at ASC, b.id ASC \
+       LIMIT $1",
+    )
+    .bind(limit)
+    .bind(schedulable_capacity)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .bind(schedulable_capacity)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Atomically claim a pending build by setting it to running.
@@ -175,16 +176,17 @@ pub async fn list_pending(
 ///
 /// Returns error if database update fails.
 pub async fn start(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
-  sqlx::query_as::<_, Build>(
-    "WITH candidate AS ( SELECT id FROM builds WHERE id = $1 AND status = \
-     'pending' FOR UPDATE SKIP LOCKED ) UPDATE builds SET status = 'running', \
-     started_at = NOW() FROM candidate WHERE builds.id = candidate.id \
-     RETURNING builds.*",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "WITH candidate AS ( SELECT id FROM builds WHERE id = $1 AND status = \
+       'pending' FOR UPDATE SKIP LOCKED ) UPDATE builds SET status = \
+       'running', started_at = NOW() FROM candidate WHERE builds.id = \
+       candidate.id RETURNING builds.*",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(id)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Record that a build-start notification has been attempted.
@@ -202,8 +204,7 @@ pub async fn mark_started_notified(pool: &PgPool, id: Uuid) -> Result<bool> {
   )
   .bind(id)
   .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(claimed.is_some())
 }
 
@@ -216,17 +217,18 @@ pub async fn mark_started_notified(pool: &PgPool, id: Uuid) -> Result<bool> {
 ///
 /// Returns an error if the database update fails.
 pub async fn requeue(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
-  sqlx::query_as::<_, Build>(
-    "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = \
-     NULL, completed_at = NULL, effective_features = NULL WHERE id = $1 AND \
-     status = 'running' RETURNING * ), cleared AS ( DELETE FROM build_steps \
-     WHERE build_id = $1 AND EXISTS (SELECT 1 FROM bumped) ) SELECT * FROM \
-     bumped",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = \
+       NULL, completed_at = NULL, effective_features = NULL WHERE id = $1 AND \
+       status = 'running' RETURNING * ), cleared AS ( DELETE FROM build_steps \
+       WHERE build_id = $1 AND EXISTS (SELECT 1 FROM bumped) ) SELECT * FROM \
+       bumped",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(id)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Mark a build as completed with final status and outputs.
@@ -270,16 +272,17 @@ pub async fn list_pending_in_scheduler_order(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds WHERE status = 'pending' ORDER BY priority DESC, \
-     cardinality(COALESCE(effective_features, required_features)) DESC, \
-     created_at ASC, id ASC LIMIT $1 OFFSET $2",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT * FROM builds WHERE status = 'pending' ORDER BY priority DESC, \
+       cardinality(COALESCE(effective_features, required_features)) DESC, \
+       created_at ASC, id ASC LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// The set of system features any pending build for `system` requires.
@@ -301,8 +304,7 @@ pub async fn pending_feature_demand(
   )
   .bind(system)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(rows.into_iter().map(|(feature,)| feature).collect())
 }
 
@@ -323,15 +325,16 @@ pub async fn bump_priority(
   id: Uuid,
   delta: i32,
 ) -> Result<Option<Build>> {
-  sqlx::query_as::<_, Build>(
-    "UPDATE builds SET priority = priority + $2 WHERE id = $1 AND status = \
-     'pending' RETURNING *",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "UPDATE builds SET priority = priority + $2 WHERE id = $1 AND status = \
+       'pending' RETURNING *",
+    )
+    .bind(id)
+    .bind(delta)
+    .fetch_optional(pool)
+    .await?,
   )
-  .bind(id)
-  .bind(delta)
-  .fetch_optional(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List recent builds ordered by creation time.
@@ -340,13 +343,14 @@ pub async fn bump_priority(
 ///
 /// Returns error if database query fails.
 pub async fn list_recent(pool: &PgPool, limit: i64) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds ORDER BY created_at DESC LIMIT $1",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT * FROM builds ORDER BY created_at DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all builds for a project.
@@ -358,15 +362,16 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id \
-     JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $1 ORDER BY \
-     b.created_at DESC",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id \
+       JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $1 ORDER BY \
+       b.created_at DESC",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Get aggregate build statistics.
@@ -412,8 +417,7 @@ pub async fn reset_orphaned(
   )
   .bind(older_than_secs)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(result.rows_affected())
 }
@@ -433,21 +437,22 @@ pub async fn list_filtered(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds WHERE ($1::uuid IS NULL OR evaluation_id = $1) AND \
-     ($2::text IS NULL OR status = $2) AND ($3::text IS NULL OR system = $3) \
-     AND ($4::text IS NULL OR job_name ILIKE '%' || $4 || '%') ORDER BY \
-     created_at DESC LIMIT $5 OFFSET $6",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT * FROM builds WHERE ($1::uuid IS NULL OR evaluation_id = $1) \
+       AND ($2::text IS NULL OR status = $2) AND ($3::text IS NULL OR system \
+       = $3) AND ($4::text IS NULL OR job_name ILIKE '%' || $4 || '%') ORDER \
+       BY created_at DESC LIMIT $5 OFFSET $6",
+    )
+    .bind(evaluation_id)
+    .bind(status)
+    .bind(system)
+    .bind(job_name)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(evaluation_id)
-  .bind(status)
-  .bind(system)
-  .bind(job_name)
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count builds matching filter criteria.
@@ -472,8 +477,7 @@ pub async fn count_filtered(
   .bind(system)
   .bind(job_name)
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(row.0)
 }
 
@@ -495,8 +499,7 @@ pub async fn get_cancelled_among(
   )
   .bind(build_ids)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(rows.into_iter().map(|(id,)| id).collect())
 }
@@ -542,8 +545,7 @@ pub async fn cancel_cascade(pool: &PgPool, id: Uuid) -> Result<Vec<Build>> {
     )
     .bind(build_id)
     .fetch_all(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
 
     for (dep_id,) in dependents {
       if let Ok(build) = cancel(pool, dep_id).await {
@@ -602,8 +604,7 @@ pub async fn set_effective_features(
     .bind(features)
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }
 
@@ -616,8 +617,7 @@ pub async fn mark_signed(pool: &PgPool, id: Uuid) -> Result<()> {
   sqlx::query("UPDATE builds SET signed = true WHERE id = $1")
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }
 
@@ -643,8 +643,7 @@ pub async fn get_completed_by_drv_paths(
   )
   .bind(drv_paths)
   .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(
     builds
@@ -663,8 +662,7 @@ pub async fn list_pinned_ids(pool: &PgPool) -> Result<HashSet<Uuid>> {
   let rows: Vec<(Uuid,)> =
     sqlx::query_as("SELECT id FROM builds WHERE keep = true")
       .fetch_all(pool)
-      .await
-      .map_err(CiError::Database)?;
+      .await?;
   Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
@@ -698,8 +696,7 @@ pub async fn set_builder(
     .bind(builder_id)
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }
 
@@ -717,8 +714,7 @@ pub async fn set_agent(
     .bind(machine_id)
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }
 
@@ -731,14 +727,15 @@ pub async fn list_constituents(
   pool: &PgPool,
   build_id: Uuid,
 ) -> Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT b.* FROM builds b JOIN build_dependencies bd ON b.id = \
-     bd.dependency_build_id WHERE bd.build_id = $1 ORDER BY b.created_at",
+  Ok(
+    sqlx::query_as::<_, Build>(
+      "SELECT b.* FROM builds b JOIN build_dependencies bd ON b.id = \
+       bd.dependency_build_id WHERE bd.build_id = $1 ORDER BY b.created_at",
+    )
+    .bind(build_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(build_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Delete a build by ID.

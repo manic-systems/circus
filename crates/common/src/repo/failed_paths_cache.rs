@@ -1,10 +1,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-  error::{CiError, Result},
-  models::BuildStatus,
-};
+use crate::{error::Result, models::BuildStatus};
 
 /// Check if a derivation path is in the failed paths cache.
 ///
@@ -16,8 +13,7 @@ pub async fn is_cached_failure(pool: &PgPool, drv_path: &str) -> Result<bool> {
     sqlx::query_as("SELECT true FROM failed_paths_cache WHERE drv_path = $1")
       .bind(drv_path)
       .fetch_optional(pool)
-      .await
-      .map_err(CiError::Database)?;
+      .await?;
 
   Ok(row.is_some())
 }
@@ -44,8 +40,7 @@ pub async fn insert(
   .bind(source_build_id)
   .bind(&status_str)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(())
 }
@@ -59,8 +54,7 @@ pub async fn invalidate(pool: &PgPool, drv_path: &str) -> Result<()> {
   sqlx::query("DELETE FROM failed_paths_cache WHERE drv_path = $1")
     .bind(drv_path)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
 
   Ok(())
 }
@@ -77,8 +71,7 @@ pub async fn cleanup_expired(pool: &PgPool, ttl_seconds: u64) -> Result<u64> {
   )
   .bind(ttl_seconds as f64)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
 
   Ok(result.rows_affected())
 }

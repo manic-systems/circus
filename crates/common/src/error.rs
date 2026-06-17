@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use crate::validation::ValidationError;
+
 #[derive(Error, Debug)]
 pub enum CiError {
   #[error("Database error: {0}")]
@@ -64,6 +66,49 @@ impl CiError {
 }
 
 pub type Result<T> = std::result::Result<T, CiError>;
+
+impl From<ValidationError> for CiError {
+  fn from(error: ValidationError) -> Self {
+    Self::Validation(error.to_string())
+  }
+}
+
+pub trait SqlxResultExt<T> {
+  /// # Errors
+  ///
+  /// Returns `CiError::Conflict` for unique-constraint violations and
+  /// `CiError::Database` for other `SQLx` errors.
+  fn on_unique_violation(self, msg: impl FnOnce() -> String) -> Result<T>;
+}
+
+impl<T> SqlxResultExt<T> for std::result::Result<T, sqlx::Error> {
+  fn on_unique_violation(self, msg: impl FnOnce() -> String) -> Result<T> {
+    self.map_err(|e| {
+      match &e {
+        sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+          CiError::Conflict(msg())
+        },
+        _ => CiError::Database(e),
+      }
+    })
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn sqlx_result_ext_preserves_non_unique_errors() {
+    let result = Err::<(), _>(sqlx::Error::RowNotFound)
+      .on_unique_violation(|| "conflict".to_string());
+
+    assert!(matches!(
+      result,
+      Err(CiError::Database(sqlx::Error::RowNotFound))
+    ));
+  }
+}
 
 /// Check disk space on the given path
 ///

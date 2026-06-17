@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{ActiveJobset, CreateJobset, Jobset, JobsetState, UpdateJobset},
   validate::Validate,
 };
@@ -47,16 +47,8 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   .bind(keep_nr)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Jobset '{}' already exists in this project",
-          input.name
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!("Jobset '{}' already exists in this project", input.name)
   })
 }
 
@@ -84,16 +76,17 @@ pub async fn list_for_project(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Jobset>> {
-  sqlx::query_as::<_, Jobset>(
-    "SELECT * FROM jobsets WHERE project_id = $1 ORDER BY created_at DESC \
-     LIMIT $2 OFFSET $3",
+  Ok(
+    sqlx::query_as::<_, Jobset>(
+      "SELECT * FROM jobsets WHERE project_id = $1 ORDER BY created_at DESC \
+       LIMIT $2 OFFSET $3",
+    )
+    .bind(project_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all jobsets for a project without pagination. Used by webhook
@@ -107,13 +100,14 @@ pub async fn list_all_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<Jobset>> {
-  sqlx::query_as::<_, Jobset>(
-    "SELECT * FROM jobsets WHERE project_id = $1 ORDER BY created_at DESC",
+  Ok(
+    sqlx::query_as::<_, Jobset>(
+      "SELECT * FROM jobsets WHERE project_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(project_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count jobsets for a project.
@@ -126,8 +120,7 @@ pub async fn count_for_project(pool: &PgPool, project_id: Uuid) -> Result<i64> {
     sqlx::query_as("SELECT COUNT(*) FROM jobsets WHERE project_id = $1")
       .bind(project_id)
       .fetch_one(pool)
-      .await
-      .map_err(CiError::Database)?;
+      .await?;
   Ok(row.0)
 }
 
@@ -181,15 +174,8 @@ pub async fn update(
   .bind(id)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Jobset '{name}' already exists in this project"
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!("Jobset '{name}' already exists in this project")
   })
 }
 
@@ -232,31 +218,32 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
 
-  sqlx::query_as::<_, Jobset>(
-    "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-     flake_mode, check_interval, trigger_mode, branch, scheduling_shares, \
-     state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON \
-     CONFLICT (project_id, name) DO UPDATE SET nix_expression = \
-     EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = \
-     EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, \
-     trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, \
-     scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, \
-     keep_nr = EXCLUDED.keep_nr RETURNING *",
+  Ok(
+    sqlx::query_as::<_, Jobset>(
+      "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
+       flake_mode, check_interval, trigger_mode, branch, scheduling_shares, \
+       state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+       ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = \
+       EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = \
+       EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, \
+       trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, \
+       scheduling_shares = EXCLUDED.scheduling_shares, state = \
+       EXCLUDED.state, keep_nr = EXCLUDED.keep_nr RETURNING *",
+    )
+    .bind(input.project_id)
+    .bind(&input.name)
+    .bind(&input.nix_expression)
+    .bind(enabled)
+    .bind(flake_mode)
+    .bind(check_interval)
+    .bind(trigger_mode.as_str())
+    .bind(&input.branch)
+    .bind(scheduling_shares)
+    .bind(state.as_str())
+    .bind(keep_nr)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(input.project_id)
-  .bind(&input.name)
-  .bind(&input.nix_expression)
-  .bind(enabled)
-  .bind(flake_mode)
-  .bind(check_interval)
-  .bind(trigger_mode.as_str())
-  .bind(&input.branch)
-  .bind(scheduling_shares)
-  .bind(state.as_str())
-  .bind(keep_nr)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List all active jobsets with project info.
@@ -265,10 +252,11 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
 ///
 /// Returns error if database query fails.
 pub async fn list_active(pool: &PgPool) -> Result<Vec<ActiveJobset>> {
-  sqlx::query_as::<_, ActiveJobset>("SELECT * FROM active_jobsets")
-    .fetch_all(pool)
-    .await
-    .map_err(CiError::Database)
+  Ok(
+    sqlx::query_as::<_, ActiveJobset>("SELECT * FROM active_jobsets")
+      .fetch_all(pool)
+      .await?,
+  )
 }
 
 /// Mark a one-shot jobset as complete (set state to disabled).
@@ -283,8 +271,7 @@ pub async fn mark_one_shot_complete(pool: &PgPool, id: Uuid) -> Result<()> {
   )
   .bind(id)
   .execute(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(())
 }
 
@@ -297,8 +284,7 @@ pub async fn update_last_checked(pool: &PgPool, id: Uuid) -> Result<()> {
   sqlx::query("UPDATE jobsets SET last_checked_at = NOW() WHERE id = $1")
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }
 
@@ -317,8 +303,7 @@ pub async fn has_running_builds(
   )
   .bind(jobset_id)
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(count > 0)
 }
 
@@ -338,8 +323,7 @@ pub async fn has_unfinished_work(
   )
   .bind(jobset_id)
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(count > 0)
 }
 
@@ -354,13 +338,14 @@ pub async fn list_due_for_eval(
   pool: &PgPool,
   limit: i64,
 ) -> Result<Vec<ActiveJobset>> {
-  sqlx::query_as::<_, ActiveJobset>(
-    "SELECT * FROM active_jobsets WHERE last_checked_at IS NULL OR \
-     last_checked_at < NOW() - (check_interval || ' seconds')::interval ORDER \
-     BY last_checked_at NULLS FIRST LIMIT $1",
+  Ok(
+    sqlx::query_as::<_, ActiveJobset>(
+      "SELECT * FROM active_jobsets WHERE last_checked_at IS NULL OR \
+       last_checked_at < NOW() - (check_interval || ' seconds')::interval \
+       ORDER BY last_checked_at NULLS FIRST LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }

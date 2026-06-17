@@ -31,21 +31,22 @@ pub async fn create(
   pool: &PgPool,
   input: CreateBuildProduct,
 ) -> Result<BuildProduct> {
-  sqlx::query_as::<_, BuildProduct>(
-    "INSERT INTO build_products (build_id, name, path, sha256_hash, \
-     file_size, content_type, is_directory) VALUES ($1, $2, $3, $4, $5, $6, \
-     $7) RETURNING *",
+  Ok(
+    sqlx::query_as::<_, BuildProduct>(
+      "INSERT INTO build_products (build_id, name, path, sha256_hash, \
+       file_size, content_type, is_directory) VALUES ($1, $2, $3, $4, $5, $6, \
+       $7) RETURNING *",
+    )
+    .bind(input.build_id)
+    .bind(&input.name)
+    .bind(&input.path)
+    .bind(&input.sha256_hash)
+    .bind(input.file_size)
+    .bind(&input.content_type)
+    .bind(input.is_directory)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(input.build_id)
-  .bind(&input.name)
-  .bind(&input.path)
-  .bind(&input.sha256_hash)
-  .bind(input.file_size)
-  .bind(&input.content_type)
-  .bind(input.is_directory)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Get a build product by ID.
@@ -72,13 +73,15 @@ pub async fn list_for_build(
   pool: &PgPool,
   build_id: Uuid,
 ) -> Result<Vec<BuildProduct>> {
-  sqlx::query_as::<_, BuildProduct>(
-    "SELECT * FROM build_products WHERE build_id = $1 ORDER BY created_at ASC",
+  Ok(
+    sqlx::query_as::<_, BuildProduct>(
+      "SELECT * FROM build_products WHERE build_id = $1 ORDER BY created_at \
+       ASC",
+    )
+    .bind(build_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(build_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// List products whose build has `keep = true`.
@@ -91,18 +94,19 @@ pub async fn list_pinned(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<PinnedBuildProduct>> {
-  sqlx::query_as::<_, PinnedBuildProduct>(
-    "SELECT b.id AS build_id, b.job_name, b.system, b.status, b.created_at AS \
-     build_created_at, bp.id AS product_id, bp.name AS product_name, bp.path, \
-     bp.gc_root_path, bp.created_at AS product_created_at FROM builds b JOIN \
-     build_products bp ON bp.build_id = b.id WHERE b.keep = true ORDER BY \
-     b.created_at DESC, bp.created_at ASC LIMIT $1 OFFSET $2",
+  Ok(
+    sqlx::query_as::<_, PinnedBuildProduct>(
+      "SELECT b.id AS build_id, b.job_name, b.system, b.status, b.created_at \
+       AS build_created_at, bp.id AS product_id, bp.name AS product_name, \
+       bp.path, bp.gc_root_path, bp.created_at AS product_created_at FROM \
+       builds b JOIN build_products bp ON bp.build_id = b.id WHERE b.keep = \
+       true ORDER BY b.created_at DESC, bp.created_at ASC LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Count products whose build has `keep = true`.
@@ -116,8 +120,7 @@ pub async fn count_pinned(pool: &PgPool) -> Result<i64> {
      b.id WHERE b.keep = true",
   )
   .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)?;
+  .await?;
   Ok(count)
 }
 
@@ -129,14 +132,15 @@ pub async fn count_pinned(pool: &PgPool) -> Result<i64> {
 pub async fn list_pinned_for_gc(
   pool: &PgPool,
 ) -> Result<Vec<PinnedBuildProduct>> {
-  sqlx::query_as::<_, PinnedBuildProduct>(
-    "SELECT b.id AS build_id, b.job_name, b.system, b.status, b.created_at AS \
-     build_created_at, bp.id AS product_id, bp.name AS product_name, bp.path, \
-     bp.gc_root_path, bp.created_at AS product_created_at FROM builds b JOIN \
-     build_products bp ON bp.build_id = b.id WHERE b.keep = true ORDER BY \
-     b.created_at DESC, bp.created_at ASC",
+  Ok(
+    sqlx::query_as::<_, PinnedBuildProduct>(
+      "SELECT b.id AS build_id, b.job_name, b.system, b.status, b.created_at \
+       AS build_created_at, bp.id AS product_id, bp.name AS product_name, \
+       bp.path, bp.gc_root_path, bp.created_at AS product_created_at FROM \
+       builds b JOIN build_products bp ON bp.build_id = b.id WHERE b.keep = \
+       true ORDER BY b.created_at DESC, bp.created_at ASC",
+    )
+    .fetch_all(pool)
+    .await?,
   )
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }

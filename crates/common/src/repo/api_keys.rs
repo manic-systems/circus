@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::ApiKey,
   roles::GlobalRole,
 };
@@ -27,14 +27,7 @@ pub async fn create(
   .bind(role)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict("API key with this hash already exists".to_string())
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  .on_unique_violation(|| "API key with this hash already exists".to_string())
 }
 
 /// Insert or update an API key by hash.
@@ -48,17 +41,18 @@ pub async fn upsert(
   key_hash: &str,
   role: GlobalRole,
 ) -> Result<ApiKey> {
-  sqlx::query_as::<_, ApiKey>(
-    "INSERT INTO api_keys (name, key_hash, role) VALUES ($1, $2, $3) ON \
-     CONFLICT (key_hash) DO UPDATE SET name = EXCLUDED.name, role = \
-     EXCLUDED.role RETURNING *",
+  Ok(
+    sqlx::query_as::<_, ApiKey>(
+      "INSERT INTO api_keys (name, key_hash, role) VALUES ($1, $2, $3) ON \
+       CONFLICT (key_hash) DO UPDATE SET name = EXCLUDED.name, role = \
+       EXCLUDED.role RETURNING *",
+    )
+    .bind(name)
+    .bind(key_hash)
+    .bind(role)
+    .fetch_one(pool)
+    .await?,
   )
-  .bind(name)
-  .bind(key_hash)
-  .bind(role)
-  .fetch_one(pool)
-  .await
-  .map_err(CiError::Database)
 }
 
 /// Find an API key by its hash.
@@ -70,11 +64,12 @@ pub async fn get_by_hash(
   pool: &PgPool,
   key_hash: &str,
 ) -> Result<Option<ApiKey>> {
-  sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys WHERE key_hash = $1")
-    .bind(key_hash)
-    .fetch_optional(pool)
-    .await
-    .map_err(CiError::Database)
+  Ok(
+    sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys WHERE key_hash = $1")
+      .bind(key_hash)
+      .fetch_optional(pool)
+      .await?,
+  )
 }
 
 /// List all API keys.
@@ -83,10 +78,13 @@ pub async fn get_by_hash(
 ///
 /// Returns error if database query fails.
 pub async fn list(pool: &PgPool) -> Result<Vec<ApiKey>> {
-  sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys ORDER BY created_at DESC")
+  Ok(
+    sqlx::query_as::<_, ApiKey>(
+      "SELECT * FROM api_keys ORDER BY created_at DESC",
+    )
     .fetch_all(pool)
-    .await
-    .map_err(CiError::Database)
+    .await?,
+  )
 }
 
 /// Delete an API key by ID.
@@ -114,7 +112,6 @@ pub async fn touch_last_used(pool: &PgPool, id: Uuid) -> Result<()> {
   sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1")
     .bind(id)
     .execute(pool)
-    .await
-    .map_err(CiError::Database)?;
+    .await?;
   Ok(())
 }

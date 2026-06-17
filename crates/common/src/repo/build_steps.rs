@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result},
+  error::{CiError, Result, SqlxResultExt},
   models::{BuildStep, CreateBuildStep},
 };
 
@@ -24,16 +24,11 @@ pub async fn create(
   .bind(&input.command)
   .fetch_one(pool)
   .await
-  .map_err(|e| {
-    match &e {
-      sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-        CiError::Conflict(format!(
-          "Build step {} already exists for this build",
-          input.step_number
-        ))
-      },
-      _ => CiError::Database(e),
-    }
+  .on_unique_violation(|| {
+    format!(
+      "Build step {} already exists for this build",
+      input.step_number
+    )
   })
 }
 
@@ -71,11 +66,12 @@ pub async fn list_for_build(
   pool: &PgPool,
   build_id: Uuid,
 ) -> Result<Vec<BuildStep>> {
-  sqlx::query_as::<_, BuildStep>(
-    "SELECT * FROM build_steps WHERE build_id = $1 ORDER BY step_number ASC",
+  Ok(
+    sqlx::query_as::<_, BuildStep>(
+      "SELECT * FROM build_steps WHERE build_id = $1 ORDER BY step_number ASC",
+    )
+    .bind(build_id)
+    .fetch_all(pool)
+    .await?,
   )
-  .bind(build_id)
-  .fetch_all(pool)
-  .await
-  .map_err(CiError::Database)
 }
