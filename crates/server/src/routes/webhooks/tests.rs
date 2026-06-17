@@ -92,16 +92,17 @@ fn forgejo_policy_rejects_valid_gitea_signature_header() {
 }
 
 #[test]
-fn webhook_project_id_parses_receiver_paths() {
+fn webhook_path_parses_receiver_paths() {
   let project_id = uuid::Uuid::new_v4();
 
   assert_eq!(
-    webhook_project_id(&format!("/api/v1/webhooks/{project_id}/github")),
+    WebhookPath::parse(&format!("/api/v1/webhooks/{project_id}/github"))
+      .map(WebhookPath::project_id),
     Some(project_id)
   );
-  assert_eq!(webhook_project_id("/api/v1/projects/not-a-webhook"), None);
+  assert_eq!(WebhookPath::parse("/api/v1/projects/not-a-webhook"), None);
   assert_eq!(
-    webhook_project_id("/api/v1/webhooks/not-a-uuid/github"),
+    WebhookPath::parse("/api/v1/webhooks/not-a-uuid/github"),
     None
   );
 }

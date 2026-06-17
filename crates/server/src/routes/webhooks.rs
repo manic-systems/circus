@@ -43,6 +43,33 @@ struct WebhookBucket {
   last_refilled: Instant,
 }
 
+impl WebhookBucket {
+  const fn new(tokens: f64, now: Instant) -> Self {
+    Self {
+      tokens,
+      last_refilled: now,
+    }
+  }
+
+  fn is_expired(&self, now: Instant) -> bool {
+    now.duration_since(self.last_refilled) >= WEBHOOK_BUCKET_TTL
+  }
+
+  fn refill(&mut self, rps: f64, burst: f64, now: Instant) {
+    let elapsed = now.duration_since(self.last_refilled).as_secs_f64();
+    self.tokens = elapsed.mul_add(rps, self.tokens).min(burst);
+    self.last_refilled = now;
+  }
+
+  fn try_consume(&mut self) -> bool {
+    if self.tokens < 1.0 {
+      return false;
+    }
+    self.tokens -= 1.0;
+    true
+  }
+}
+
 struct WebhookRateLimiter {
   buckets: dashmap::DashMap<Uuid, WebhookBucket>,
   rps:     f64,
@@ -64,26 +91,43 @@ impl WebhookRateLimiter {
   }
 
   fn allow(&self, project_id: Uuid, now: Instant) -> bool {
-    self.buckets.retain(|_, bucket| {
-      now.duration_since(bucket.last_refilled) < WEBHOOK_BUCKET_TTL
-    });
+    self.buckets.retain(|_, bucket| !bucket.is_expired(now));
 
-    let mut bucket = self.buckets.entry(project_id).or_insert_with(|| {
-      WebhookBucket {
-        tokens:        self.burst,
-        last_refilled: now,
-      }
-    });
+    let mut bucket = self
+      .buckets
+      .entry(project_id)
+      .or_insert_with(|| WebhookBucket::new(self.burst, now));
 
-    let elapsed = now.duration_since(bucket.last_refilled).as_secs_f64();
-    bucket.tokens = elapsed.mul_add(self.rps, bucket.tokens).min(self.burst);
-    bucket.last_refilled = now;
+    bucket.refill(self.rps, self.burst, now);
+    bucket.try_consume()
+  }
+}
 
-    if bucket.tokens < 1.0 {
-      return false;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WebhookPath {
+  project_id: Uuid,
+}
+
+impl WebhookPath {
+  fn parse(path: &str) -> Option<Self> {
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    if segments.next()? != "api" {
+      return None;
     }
-    bucket.tokens -= 1.0;
-    true
+    if segments.next()? != "v1" {
+      return None;
+    }
+    if segments.next()? != "webhooks" {
+      return None;
+    }
+    let project_id = segments
+      .next()
+      .and_then(|segment| Uuid::parse_str(segment).ok())?;
+    Some(Self { project_id })
+  }
+
+  const fn project_id(self) -> Uuid {
+    self.project_id
   }
 }
 
@@ -92,11 +136,11 @@ async fn webhook_rate_limit_middleware(
   request: Request<Body>,
   next: Next,
 ) -> Response {
-  let Some(project_id) = webhook_project_id(request.uri().path()) else {
+  let Some(path) = WebhookPath::parse(request.uri().path()) else {
     return next.run(request).await;
   };
 
-  if !limiter.allow(project_id, Instant::now()) {
+  if !limiter.allow(path.project_id(), Instant::now()) {
     return (
       StatusCode::TOO_MANY_REQUESTS,
       Json(WebhookResponse {
@@ -108,22 +152,6 @@ async fn webhook_rate_limit_middleware(
   }
 
   next.run(request).await
-}
-
-fn webhook_project_id(path: &str) -> Option<Uuid> {
-  let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-  if segments.next()? != "api" {
-    return None;
-  }
-  if segments.next()? != "v1" {
-    return None;
-  }
-  if segments.next()? != "webhooks" {
-    return None;
-  }
-  segments
-    .next()
-    .and_then(|segment| Uuid::parse_str(segment).ok())
 }
 
 pub fn router() -> Router<AppState> {
