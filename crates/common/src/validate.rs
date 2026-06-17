@@ -1,35 +1,8 @@
 //! Input validation helpers
 
-use std::{
-  net::{IpAddr, Ipv4Addr, Ipv6Addr},
-  sync::LazyLock,
-};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use regex::Regex;
-
-static NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-  #[expect(
-    clippy::expect_used,
-    reason = "static regex initializer - invalid regex would be a programming \
-              error"
-  )]
-  {
-    Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
-      .expect("invalid NAME_RE regex pattern")
-  }
-});
-
-static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
-  #[expect(
-    clippy::expect_used,
-    reason = "static regex initializer - invalid regex would be a programming \
-              error"
-  )]
-  {
-    Regex::new(r"^[0-9a-fA-F]{1,64}$")
-      .expect("invalid COMMIT_HASH_RE regex pattern")
-  }
-});
+use circus_types::validation as shared_validation;
 
 /// Schemes considered insecure for repository URLs.
 const INSECURE_SCHEMES: &[&str] = &["file", "http"];
@@ -95,15 +68,7 @@ pub trait Validate {
 }
 
 pub(crate) fn validate_name(name: &str, field: &str) -> Result<(), String> {
-  if name.is_empty() || name.len() > 255 {
-    return Err(format!("{field} must be between 1 and 255 characters"));
-  }
-  if !NAME_RE.is_match(name) {
-    return Err(format!(
-      "{field} must start with alphanumeric and contain only [a-zA-Z0-9_-]"
-    ));
-  }
-  Ok(())
+  shared_validation::validate_name(name, field)
 }
 
 fn validate_repository_url(url: &str) -> Result<(), String> {
@@ -238,10 +203,7 @@ fn validate_check_interval(interval: i32) -> Result<(), String> {
 }
 
 pub(crate) fn validate_commit_hash(hash: &str) -> Result<(), String> {
-  if !COMMIT_HASH_RE.is_match(hash) {
-    return Err("commit_hash must be 1-64 hex characters".to_string());
-  }
-  Ok(())
+  shared_validation::validate_commit_hash(hash)
 }
 
 fn validate_ssh_uri(uri: &str) -> Result<(), String> {

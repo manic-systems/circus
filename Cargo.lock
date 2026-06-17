@@ -898,6 +898,7 @@ name = "circus-types"
 version = "0.11.0"
 dependencies = [
  "clap",
+ "regex",
  "serde",
  "serde_json",
  "sqlx",

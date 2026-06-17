@@ -4,6 +4,8 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
+pub mod validation;
+
 #[derive(
   Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
 )]

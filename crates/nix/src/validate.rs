@@ -1,6 +1,6 @@
 use std::{path::Path, sync::LazyLock};
 
-use circus_types::InputType;
+use circus_types::{InputType, validation as shared_validation};
 use regex::Regex;
 
 use crate::flake;
@@ -12,22 +12,6 @@ pub(crate) static SYSTEM_RE: LazyLock<Regex> = LazyLock::new(|| {
   }
 });
 
-static NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-  #[expect(clippy::expect_used, reason = "static regex initializer")]
-  {
-    Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
-      .expect("NAME_RE failed to compile")
-  }
-});
-
-static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
-  #[expect(clippy::expect_used, reason = "static regex initializer")]
-  {
-    Regex::new(r"^[0-9a-fA-F]{1,64}$")
-      .expect("COMMIT_HASH_RE failed to compile")
-  }
-});
-
 /// Validate a Circus/Nix identifier.
 ///
 /// # Errors
@@ -35,15 +19,7 @@ static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Returns an error if the name is empty, too long, or contains unsupported
 /// characters.
 pub fn validate_name(name: &str, field: &str) -> Result<(), String> {
-  if name.is_empty() || name.len() > 255 {
-    return Err(format!("{field} must be between 1 and 255 characters"));
-  }
-  if !NAME_RE.is_match(name) {
-    return Err(format!(
-      "{field} must start with alphanumeric and contain only [a-zA-Z0-9_-]"
-    ));
-  }
-  Ok(())
+  shared_validation::validate_name(name, field)
 }
 
 /// Validate a Git commit hash used by Nix inputs.
@@ -52,10 +28,7 @@ pub fn validate_name(name: &str, field: &str) -> Result<(), String> {
 ///
 /// Returns an error if the hash is not 1-64 hexadecimal characters.
 pub fn validate_commit_hash(hash: &str) -> Result<(), String> {
-  if !COMMIT_HASH_RE.is_match(hash) {
-    return Err("commit_hash must be 1-64 hex characters".to_string());
-  }
-  Ok(())
+  shared_validation::validate_commit_hash(hash)
 }
 
 /// Validate nix expression format.

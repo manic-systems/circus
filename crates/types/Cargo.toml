@@ -12,6 +12,7 @@ sqlx    = [ "dep:sqlx" ]
 
 [dependencies]
 clap  = { workspace = true, optional = true }
+regex.workspace = true
 serde.workspace = true
 sqlx  = { workspace = true, optional = true }
 
