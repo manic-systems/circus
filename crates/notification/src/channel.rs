@@ -30,7 +30,7 @@ use lettre::{
   message::{Mailbox, header::ContentType},
   transport::smtp::authentication::Credentials,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::{info, warn};
 
 use crate::{
@@ -159,6 +159,42 @@ trait Notifier {
   async fn deliver(&self, event: &BuildEvent) -> Result<(), String>;
 }
 
+trait StoredChannel: Clone + Serialize + DeserializeOwned {
+  fn validate_stored(&self) -> CiResult<()> {
+    Ok(())
+  }
+
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()>;
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()>;
+}
+
+fn from_stored_channel<T: StoredChannel>(
+  notification_type: NotificationType,
+  config: &serde_json::Value,
+  key: Option<&str>,
+) -> CiResult<T> {
+  let mut channel: T = serde_json::from_value(config.clone()).map_err(|e| {
+    CiError::Validation(format!(
+      "invalid {notification_type} notification config: {e}"
+    ))
+  })?;
+  channel.decrypt_secrets(key)?;
+  channel.validate_stored()?;
+  Ok(channel)
+}
+
+fn to_stored_value<T: StoredChannel>(
+  channel: &T,
+  key: Option<&str>,
+) -> CiResult<serde_json::Value> {
+  let mut channel = channel.clone();
+  channel.encrypt_secrets(key)?;
+  serde_json::to_value(channel).map_err(|e| {
+    CiError::Validation(format!("failed to serialize notification config: {e}"))
+  })
+}
+
 impl NotificationChannel {
   /// The stored `notification_type` discriminant for this channel.
   #[must_use]
@@ -224,58 +260,48 @@ impl NotificationChannel {
     config: &serde_json::Value,
     key: Option<&str>,
   ) -> CiResult<Self> {
-    let invalid = |e: serde_json::Error| {
-      CiError::Validation(format!(
-        "invalid {notification_type} notification config: {e}"
-      ))
-    };
     match notification_type {
       NotificationType::Webhook => {
-        let mut c: WebhookChannel =
-          serde_json::from_value(config.clone()).map_err(invalid)?;
-        validate_https_webhook_url(&c.url).map_err(CiError::Validation)?;
-        c.secret = c.secret.map(|s| decrypt_secret(&s, key)).transpose()?;
-        c.headers = c
-          .headers
-          .into_iter()
-          .map(|(k, v)| decrypt_secret(&v, key).map(|v| (k, v)))
-          .collect::<CiResult<_>>()?;
-        Ok(Self::Webhook(c))
+        Ok(Self::Webhook(from_stored_channel(
+          notification_type,
+          config,
+          key,
+        )?))
       },
       NotificationType::GithubStatus => {
-        let mut c: GithubStatusChannel =
-          serde_json::from_value(config.clone()).map_err(invalid)?;
-        c.token = decrypt_secret(&c.token, key)?;
-        Ok(Self::GithubStatus(c))
+        Ok(Self::GithubStatus(from_stored_channel(
+          notification_type,
+          config,
+          key,
+        )?))
       },
       NotificationType::GiteaStatus | NotificationType::ForgejoStatus => {
-        let mut c: GiteaStatusChannel =
-          serde_json::from_value(config.clone()).map_err(invalid)?;
-        c.token = decrypt_secret(&c.token, key)?;
-        Ok(Self::GiteaStatus(c))
+        Ok(Self::GiteaStatus(from_stored_channel(
+          notification_type,
+          config,
+          key,
+        )?))
       },
       NotificationType::GitlabStatus => {
-        let mut c: GitlabStatusChannel =
-          serde_json::from_value(config.clone()).map_err(invalid)?;
-        c.token = decrypt_secret(&c.token, key)?;
-        Ok(Self::GitlabStatus(c))
+        Ok(Self::GitlabStatus(from_stored_channel(
+          notification_type,
+          config,
+          key,
+        )?))
       },
       NotificationType::Slack => {
-        let mut c: SlackChannel =
-          serde_json::from_value(config.clone()).map_err(invalid)?;
-        c.webhook_url = decrypt_secret(&c.webhook_url, key)?;
-        validate_https_webhook_url(&c.webhook_url)
-          .map_err(CiError::Validation)?;
-        Ok(Self::Slack(c))
+        Ok(Self::Slack(from_stored_channel(
+          notification_type,
+          config,
+          key,
+        )?))
       },
       NotificationType::Email => {
-        let mut c: EmailConfig =
-          serde_json::from_value(config.clone()).map_err(invalid)?;
-        c.smtp_password = c
-          .smtp_password
-          .map(|s| decrypt_secret(&s, key))
-          .transpose()?;
-        Ok(Self::Email(c))
+        Ok(Self::Email(from_stored_channel(
+          notification_type,
+          config,
+          key,
+        )?))
       },
     }
   }
@@ -291,50 +317,13 @@ impl NotificationChannel {
     key: Option<&str>,
   ) -> CiResult<(NotificationType, serde_json::Value)> {
     let value = match self {
-      Self::Webhook(c) => {
-        let mut c = c.clone();
-        c.secret = c.secret.map(|s| encrypt_secret(&s, key)).transpose()?;
-        c.headers = c
-          .headers
-          .into_iter()
-          .map(|(k, v)| encrypt_secret(&v, key).map(|v| (k, v)))
-          .collect::<CiResult<_>>()?;
-        serde_json::to_value(c)
-      },
-      Self::GithubStatus(c) => {
-        let mut c = c.clone();
-        c.token = encrypt_secret(&c.token, key)?;
-        serde_json::to_value(c)
-      },
-      Self::GiteaStatus(c) => {
-        let mut c = c.clone();
-        c.token = encrypt_secret(&c.token, key)?;
-        serde_json::to_value(c)
-      },
-      Self::GitlabStatus(c) => {
-        let mut c = c.clone();
-        c.token = encrypt_secret(&c.token, key)?;
-        serde_json::to_value(c)
-      },
-      Self::Slack(c) => {
-        let mut c = c.clone();
-        c.webhook_url = encrypt_secret(&c.webhook_url, key)?;
-        serde_json::to_value(c)
-      },
-      Self::Email(c) => {
-        let mut c = c.clone();
-        c.smtp_password = c
-          .smtp_password
-          .map(|s| encrypt_secret(&s, key))
-          .transpose()?;
-        serde_json::to_value(c)
-      },
-    }
-    .map_err(|e| {
-      CiError::Validation(format!(
-        "failed to serialize notification config: {e}"
-      ))
-    })?;
+      Self::Webhook(c) => to_stored_value(c, key)?,
+      Self::GithubStatus(c) => to_stored_value(c, key)?,
+      Self::GiteaStatus(c) => to_stored_value(c, key)?,
+      Self::GitlabStatus(c) => to_stored_value(c, key)?,
+      Self::Slack(c) => to_stored_value(c, key)?,
+      Self::Email(c) => to_stored_value(c, key)?,
+    };
     Ok((self.notification_type(), value))
   }
 
@@ -355,6 +344,110 @@ impl NotificationChannel {
     // v1: prefix), then to_stored encrypts. Idempotent on re-sync.
     let channel = Self::from_stored(notification_type, config, key)?;
     Ok(channel.to_stored(key)?.1)
+  }
+}
+
+impl StoredChannel for WebhookChannel {
+  fn validate_stored(&self) -> CiResult<()> {
+    validate_https_webhook_url(&self.url).map_err(CiError::Validation)
+  }
+
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.secret = self
+      .secret
+      .take()
+      .map(|s| encrypt_secret(&s, key))
+      .transpose()?;
+    self.headers = std::mem::take(&mut self.headers)
+      .into_iter()
+      .map(|(k, v)| encrypt_secret(&v, key).map(|v| (k, v)))
+      .collect::<CiResult<_>>()?;
+    Ok(())
+  }
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.secret = self
+      .secret
+      .take()
+      .map(|s| decrypt_secret(&s, key))
+      .transpose()?;
+    self.headers = std::mem::take(&mut self.headers)
+      .into_iter()
+      .map(|(k, v)| decrypt_secret(&v, key).map(|v| (k, v)))
+      .collect::<CiResult<_>>()?;
+    Ok(())
+  }
+}
+
+impl StoredChannel for GithubStatusChannel {
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.token = encrypt_secret(&self.token, key)?;
+    Ok(())
+  }
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.token = decrypt_secret(&self.token, key)?;
+    Ok(())
+  }
+}
+
+impl StoredChannel for GiteaStatusChannel {
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.token = encrypt_secret(&self.token, key)?;
+    Ok(())
+  }
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.token = decrypt_secret(&self.token, key)?;
+    Ok(())
+  }
+}
+
+impl StoredChannel for GitlabStatusChannel {
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.token = encrypt_secret(&self.token, key)?;
+    Ok(())
+  }
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.token = decrypt_secret(&self.token, key)?;
+    Ok(())
+  }
+}
+
+impl StoredChannel for SlackChannel {
+  fn validate_stored(&self) -> CiResult<()> {
+    validate_https_webhook_url(&self.webhook_url).map_err(CiError::Validation)
+  }
+
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.webhook_url = encrypt_secret(&self.webhook_url, key)?;
+    Ok(())
+  }
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.webhook_url = decrypt_secret(&self.webhook_url, key)?;
+    Ok(())
+  }
+}
+
+impl StoredChannel for EmailConfig {
+  fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.smtp_password = self
+      .smtp_password
+      .take()
+      .map(|s| encrypt_secret(&s, key))
+      .transpose()?;
+    Ok(())
+  }
+
+  fn decrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
+    self.smtp_password = self
+      .smtp_password
+      .take()
+      .map(|s| decrypt_secret(&s, key))
+      .transpose()?;
+    Ok(())
   }
 }
 
