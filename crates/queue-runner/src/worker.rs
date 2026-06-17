@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
+  context::BuildContext,
   dispatch::supports_required_features,
   helpers::{get_project_for_build, is_interval_rebuild},
 };
@@ -207,34 +208,33 @@ impl WorkerPool {
           )
         };
 
-        if let Err(e) = run_build(
-          &pool,
-          &build,
-          &work_dir,
-          &nix_store_dir,
+        let ctx = BuildContext {
+          pool,
+          work_dir,
+          nix_store_dir,
           timeout,
           max_silent_time,
-          &log_config,
-          &gc_config,
-          &notifications_config,
+          log_config,
+          gc_config,
+          notifications_config,
           notification_secret_key,
-          &signing_config,
-          &cache_upload_config,
-          &alert_manager,
-          Arc::clone(&upload_semaphore),
-          Arc::clone(&semaphore),
+          signing_config,
+          cache_upload_config,
+          alert_manager,
+          upload_semaphore,
+          worker_semaphore: semaphore,
           scheduling_strategy,
           psi_threshold,
           psi_check_timeout,
-          Arc::clone(&psi_cache),
+          psi_cache,
           extra_nix_args,
-          Arc::clone(&agent_pool),
-          Arc::clone(&runner_caps),
+          agent_pool,
+          runner_caps,
           heartbeat_ttl,
-          ssh_require_host_key,
-        )
-        .await
-        {
+          require_host_key: ssh_require_host_key,
+        };
+
+        if let Err(e) = run_build(ctx, &build).await {
           tracing::error!(build_id = %build.id, "Build dispatch failed: {e}");
         }
       };
@@ -762,60 +762,49 @@ async fn run_on_runner(
   .map(Some)
 }
 
-#[tracing::instrument(skip(pool, build, work_dir, nix_store_dir, log_config, gc_config, notifications_config, notification_secret_key, signing_config, cache_upload_config, upload_semaphore, scheduling_strategy), fields(build_id = %build.id, job = %build.job_name))]
-#[expect(
-  clippy::too_many_arguments,
-  reason = "build execution coordinates database state, config, \
-            notifications, cache upload, and scheduler handles"
-)]
-#[expect(clippy::ref_option, reason = "used as fn parameter pattern")]
-#[expect(clippy::rc_buffer, reason = "extra args shared across calls")]
-async fn run_build(
-  pool: &PgPool,
-  build: &Build,
-  work_dir: &std::path::Path,
-  nix_store_dir: &std::path::Path,
-  timeout: Duration,
-  max_silent_time: Duration,
-  log_config: &LogConfig,
-  gc_config: &GcConfig,
-  notifications_config: &NotificationsConfig,
-  notification_secret_key: Option<String>,
-  signing_config: &SigningConfig,
-  cache_upload_config: &CacheUploadConfig,
-  alert_manager: &Option<AlertManager>,
-  upload_semaphore: Arc<Semaphore>,
-  worker_semaphore: Arc<Semaphore>,
-  scheduling_strategy: BuilderSchedulingStrategy,
-  psi_threshold: Option<f64>,
-  psi_check_timeout: Duration,
-  psi_cache: Arc<crate::psi::PsiCache>,
-  extra_nix_args: Arc<Vec<String>>,
-  agent_pool: Arc<crate::rpc::AgentPool>,
-  runner_caps: Arc<crate::caps::RunnerCaps>,
-  heartbeat_ttl: Duration,
-  require_host_key: bool,
-) -> color_eyre::Result<()> {
+#[tracing::instrument(skip(ctx, build), fields(build_id = %build.id, job = %build.job_name))]
+async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   // Reserve capacity before claiming the build so `running` means execution
   // can start immediately.
-  let Some(venue) = crate::dispatch::reserve_venue(
-    &agent_pool,
-    pool,
-    build,
-    build.system.as_deref(),
-    psi_threshold,
-    heartbeat_ttl,
-    &scheduling_strategy,
-    &worker_semaphore,
-    &runner_caps,
-    &psi_cache,
-    psi_check_timeout,
-    require_host_key,
-  )
-  .await
+  let Some(venue) =
+    crate::dispatch::reserve_venue(&ctx, build, build.system.as_deref()).await
   else {
     return Ok(());
   };
+
+  let BuildContext {
+    pool,
+    work_dir,
+    nix_store_dir,
+    timeout,
+    max_silent_time,
+    log_config,
+    gc_config,
+    notifications_config,
+    notification_secret_key,
+    signing_config,
+    cache_upload_config,
+    alert_manager,
+    upload_semaphore,
+    worker_semaphore,
+    scheduling_strategy,
+    psi_threshold,
+    psi_check_timeout,
+    psi_cache,
+    extra_nix_args,
+    runner_caps,
+    require_host_key,
+    ..
+  } = ctx;
+  let pool = &pool;
+  let work_dir = work_dir.as_path();
+  let nix_store_dir = nix_store_dir.as_path();
+  let log_config = log_config.as_ref();
+  let gc_config = gc_config.as_ref();
+  let notifications_config = &notifications_config;
+  let signing_config = signing_config.as_ref();
+  let cache_upload_config = cache_upload_config.as_ref();
+  let alert_manager = alert_manager.as_ref();
 
   let Some(claimed_build) = repo::builds::start(pool, build.id).await? else {
     tracing::debug!(build_id = %build.id, "Build already claimed, skipping");

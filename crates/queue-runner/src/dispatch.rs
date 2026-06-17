@@ -19,10 +19,11 @@ use circus_common::{
 };
 use circus_config::BuilderSchedulingStrategy;
 use sqlx::PgPool;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
 use crate::{
   builder::BuildResult,
+  context::BuildContext,
   rpc::{
     AgentPool,
     AgentSnapshot,
@@ -251,35 +252,14 @@ pub struct AgentDispatch<'a> {
 ///
 /// Only if the worker semaphore has been closed, which never happens during
 /// normal operation.
-#[expect(
-  clippy::too_many_arguments,
-  reason = "venue reservation needs the same scheduling context as dispatch"
-)]
 pub async fn reserve_venue(
-  agent_pool: &Arc<AgentPool>,
-  pool: &PgPool,
+  ctx: &BuildContext,
   build: &Build,
   system: Option<&str>,
-  psi_threshold: Option<f64>,
-  heartbeat_ttl: Duration,
-  strategy: &BuilderSchedulingStrategy,
-  worker_semaphore: &Arc<Semaphore>,
-  runner_caps: &crate::caps::RunnerCaps,
-  psi_cache: &crate::psi::PsiCache,
-  psi_check_timeout: Duration,
-  require_host_key: bool,
 ) -> Option<ExecutionReservation> {
   if let Some(system) = system
-    && let Some((meta, snap, slot)) = select_and_reserve_agent(
-      agent_pool,
-      pool,
-      build,
-      system,
-      psi_threshold,
-      heartbeat_ttl,
-      strategy,
-    )
-    .await
+    && let Some((meta, snap, slot)) =
+      select_and_reserve_agent(ctx, build, system).await
   {
     return Some(ExecutionReservation::Agent {
       meta,
@@ -289,17 +269,23 @@ pub async fn reserve_venue(
   }
 
   let features = build.scheduling_features();
-  let runner_ok = runner_caps.supports(system, features);
+  let runner_ok = ctx.runner_caps.supports(system, features);
   let ssh_ok = if runner_ok {
     false // the runner already qualifies
   } else if let Some(system) = system {
-    match repo::remote_builders::find_for_system(pool, system, strategy).await {
+    match repo::remote_builders::find_for_system(
+      &ctx.pool,
+      system,
+      &ctx.scheduling_strategy,
+    )
+    .await
+    {
       Ok(builders) => {
         let mut any = false;
         for b in &builders {
           // An unpinned builder is ineligible when host-key checking is
           // mandatory.
-          if require_host_key && b.public_host_key.is_none() {
+          if ctx.require_host_key && b.public_host_key.is_none() {
             continue;
           }
           if !supports_required_features(
@@ -309,10 +295,13 @@ pub async fn reserve_venue(
           ) {
             continue;
           }
-          if let Some(threshold) = psi_threshold
-            && let Some(snap) =
-              crate::psi::read_cached(psi_cache, &b.ssh_uri, psi_check_timeout)
-                .await
+          if let Some(threshold) = ctx.psi_threshold
+            && let Some(snap) = crate::psi::read_cached(
+              &ctx.psi_cache,
+              &b.ssh_uri,
+              ctx.psi_check_timeout,
+            )
+            .await
             && snap.exceeds(threshold)
           {
             continue;
@@ -343,7 +332,7 @@ pub async fn reserve_venue(
     clippy::expect_used,
     reason = "the worker semaphore is never closed, so acquire never errors"
   )]
-  let permit = Arc::clone(worker_semaphore)
+  let permit = Arc::clone(&ctx.worker_semaphore)
     .acquire_owned()
     .await
     .expect("worker semaphore is never closed");
@@ -351,22 +340,18 @@ pub async fn reserve_venue(
 }
 
 async fn select_and_reserve_agent(
-  agent_pool: &Arc<AgentPool>,
-  pool: &PgPool,
+  ctx: &BuildContext,
   build: &Build,
   system: &str,
-  psi_threshold: Option<f64>,
-  heartbeat_ttl: Duration,
-  strategy: &BuilderSchedulingStrategy,
 ) -> Option<(Arc<AgentMeta>, AgentSnapshot, SlotGuard)> {
-  let mut candidates = agent_pool.candidates_for(system);
+  let mut candidates = ctx.agent_pool.candidates_for(system);
   if candidates.is_empty() {
     return None;
   }
 
   // Missing or stale heartbeats are treated as unknown to match the SSH path.
-  let cutoff = Instant::now().checked_sub(heartbeat_ttl);
-  if let Some(t) = psi_threshold {
+  let cutoff = Instant::now().checked_sub(ctx.heartbeat_ttl);
+  if let Some(t) = ctx.psi_threshold {
     let t = t as f32;
     candidates.retain(|(_, snap)| {
       let hb = snap.heartbeat;
@@ -391,7 +376,7 @@ async fn select_and_reserve_agent(
     .iter()
     .any(|(_, snap)| snap.requires_trusted_ref())
   {
-    let trusted = trusted_build_context(pool, build).await;
+    let trusted = trusted_build_context(&ctx.pool, build).await;
     candidates.retain(|(_, snap)| {
       candidate_allowed_for_trusted_build(snap, trusted.as_ref())
     });
@@ -406,8 +391,11 @@ async fn select_and_reserve_agent(
 
   let mut eligible = Vec::with_capacity(candidates.len());
   for candidate in candidates {
-    match repo::builder_sessions::is_schedulable(pool, candidate.0.machine_id)
-      .await
+    match repo::builder_sessions::is_schedulable(
+      &ctx.pool,
+      candidate.0.machine_id,
+    )
+    .await
     {
       Ok(true) => eligible.push(candidate),
       Ok(false) => {
@@ -434,7 +422,7 @@ async fn select_and_reserve_agent(
   // Capability-preserving order: prefer builders that waste the fewest
   // currently-contended capabilities on this build, so a versatile builder is
   // kept free for the queued work that actually needs it.
-  let demand = repo::builds::pending_feature_demand(pool, system)
+  let demand = repo::builds::pending_feature_demand(&ctx.pool, system)
     .await
     .unwrap_or_else(|e| {
       tracing::warn!(
@@ -448,7 +436,7 @@ async fn select_and_reserve_agent(
     let sa = a.1.contended_surplus(build.scheduling_features(), &demand);
     let sb = b.1.contended_surplus(build.scheduling_features(), &demand);
     sa.cmp(&sb)
-      .then_with(|| strategy_order(strategy, &a.1, &b.1))
+      .then_with(|| strategy_order(&ctx.scheduling_strategy, &a.1, &b.1))
       .then_with(|| a.1.machine_id.cmp(&b.1.machine_id))
   });
 

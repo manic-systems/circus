@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod caps;
+pub mod context;
 pub mod dispatch;
 pub mod features;
 pub mod gha;
