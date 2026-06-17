@@ -132,6 +132,9 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/nix-cache/nar/{hash}` | NAR download | 200, 404 |
 | GET | `/nix-cache/nix-cache-info` | Nix binary cache metadata | 200 |
 | GET | `/nix-cache/{hash}` | NAR info lookup | 200, 404 |
+| GET | `/projects/{project}/nix-cache/nar/{hash}` | Project NAR download | 200, 404 |
+| GET | `/projects/{project}/nix-cache/nix-cache-info` | Project Nix binary cache metadata | 200, 404 |
+| GET | `/projects/{project}/nix-cache/{hash}` | Project NAR info lookup | 200, 404 |
 | GET | `/prometheus` | Prometheus metrics exposition | 200 |
 
 <!-- markdownlint-enable MD013 -->

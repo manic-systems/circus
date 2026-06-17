@@ -141,21 +141,28 @@ The dashboard shows channels under `/channels` and `/channel/{id}`.
 ### Binary Cache
 
 When enabled by the operator, Circus serves a Nix binary cache under
-`/nix-cache/`:
+`/nix-cache/` and per-project caches under
+`/projects/<project-name>/nix-cache/`:
 
 ```text
 GET /nix-cache/nix-cache-info
 GET /nix-cache/{hash}
 GET /nix-cache/nar/{hash}
+
+GET /projects/<project-name>/nix-cache/nix-cache-info
+GET /projects/<project-name>/nix-cache/{hash}
+GET /projects/<project-name>/nix-cache/nar/{hash}
 ```
 
 > [!NOTE]
 > Users normally consume this through Nix substituter configuration, not
 > manually. Ask your administrator for the public cache URL and trusted public
-> key if the cache is signed. Circus may serve NARs directly from the server's
-> local Nix store or redirect downloads to a short-lived signed S3 URL for
-> outputs uploaded by distributed agents. Nix follows these redirects
-> automatically.
+> key if the cache is signed. Project caches only expose outputs owned by that
+> project. Configured upstreams are used by Circus builds to avoid rebuilding
+> dependencies already available from another substituter. Circus may serve NARs
+> directly from the server's local Nix store or redirect downloads to a
+> short-lived signed S3 URL for outputs uploaded by distributed agents. Nix
+> follows these redirects automatically.
 
 ### Starred Jobs
 

@@ -278,6 +278,7 @@ configuration or the Nix store.
 | `cache`              | `enabled`                                              | `true`                                              | Serve a Nix binary cache at `/nix-cache/`        |
 | `cache`              | `secret_key_file`                                      | none                                                | Deprecated; outputs are signed via `[signing]`   |
 | `cache`              | `cache_url`                                            | none                                                | Public cache URL for channel manifests           |
+| `cache`              | `upstreams`                                            | `[]`                                                | Upstream binary caches used by global builds     |
 | `signing`            | `enabled`                                              | `false`                                             | Sign build outputs                               |
 | `signing`            | `key_file`                                             | none                                                | Signing key file path                            |
 | `cache_upload`       | `enabled`                                              | `false`                                             | Upload builds to external cache store            |
@@ -341,9 +342,16 @@ configuration or the Nix store.
 
 ## Binary Cache Storage
 
-Set `[cache].enabled = true` on the server to expose `/nix-cache/`. For outputs
-present in the server's Nix store, Circus generates narinfo from `nix path-info`
-and serves the corresponding NAR from the store.
+Set `[cache].enabled = true` on the server to expose the global cache at
+`/nix-cache/`. Each project also exposes its own cache at
+`/projects/<project-name>/nix-cache/` when that project's `cache_enabled` field
+is true. Global cache availability is controlled only by `[cache].enabled`;
+project caches are controlled per project.
+
+For outputs present in the server's Nix store, Circus generates narinfo from
+`nix path-info` and serves the corresponding NAR from the store. Project caches
+only serve outputs that belong to that project. The global cache preserves the
+old behavior and can serve all eligible Circus outputs.
 
 Only two kinds of local store paths are served: build outputs the queue-runner
 signed at build time (`[signing]` with a `key_file`; unsigned outputs are never
@@ -367,6 +375,49 @@ a short-lived S3 GET URL and redirects the client.
 If both `store_uri` and `s3.prefix` contain paths, Circus combines them. For
 example, `store_uri = "s3://bucket/root"` plus `s3.prefix = "nix-cache"` writes
 objects below `root/nix-cache/`.
+
+### Public Binary Cache Use
+
+Configure a public URL for the global cache with `[cache].cache_url`, for
+example:
+
+```toml
+[cache]
+enabled = true
+cache_url = "https://ci.example.org/nix-cache/"
+
+[[cache.upstreams]]
+url = "https://cache.nixos.org/"
+public_key = "cache.nixos.org-1:..."
+```
+
+Project cache URLs are stored on the project record. Declarative projects may
+set them in `[[declarative.projects]]`:
+
+```toml
+[[declarative.projects]]
+name = "my-project"
+repository_url = "https://github.com/example/my-project"
+cache_enabled = true
+cache_url = "https://ci.example.org/projects/my-project/nix-cache/"
+
+[[declarative.projects.cache_upstreams]]
+url = "https://cache.nixos.org/"
+public_key = "cache.nixos.org-1:..."
+```
+
+Users add the cache and its upstreams to `nix.conf` manually:
+
+```text
+extra-substituters = https://ci.example.org/projects/my-project/nix-cache/ https://cache.nixos.org/
+extra-trusted-public-keys = cache.nixos.org-1:...
+```
+
+Circus also passes the selected cache and upstream substituters to builds it
+controls. Project builds use the project's cache URL and upstreams; builds
+without project context use the global cache URL and upstreams. Upstreams are
+contacted directly by Nix clients/builders; Circus does not proxy upstream
+narinfos or NARs.
 
 ## Dashboard Page Access
 
