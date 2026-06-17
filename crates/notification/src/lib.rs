@@ -16,7 +16,7 @@ use std::{
 
 pub use channel::NotificationChannel;
 use circus_common::{
-  models::{Build, NotificationType, Project},
+  models::{Build, BuildStatus, NotificationType, Project},
   repo,
 };
 use circus_config::NotificationsConfig;
@@ -408,6 +408,7 @@ pub async fn dispatch_build_started(
 /// Returns an error string if notification delivery fails, so the caller can
 /// record it and schedule a retry.
 pub async fn process_notification_task(
+  pool: &PgPool,
   task: &circus_common::models::NotificationTask,
   encryption_key: Option<&str>,
 ) -> Result<(), String> {
@@ -425,6 +426,17 @@ pub async fn process_notification_task(
     .map_err(|e| format!("Invalid stored notification channel: {e}"))?;
     let event: BuildEvent = serde_json::from_value(event.clone())
       .map_err(|e| format!("Invalid stored build event: {e}"))?;
+    if channel.is_commit_status()
+      && stale_commit_status_event(pool, &event).await?
+    {
+      info!(
+        build_id = %event.build_id,
+        notification_type = %task.notification_type,
+        status = ?event.status,
+        "Skipping stale commit status notification"
+      );
+      return Ok(());
+    }
     return channel.deliver(&event).await;
   }
 
@@ -432,6 +444,30 @@ pub async fn process_notification_task(
     "Unrecognized notification task payload for type '{}'",
     task.notification_type
   ))
+}
+
+fn status_rank(status: BuildStatus) -> u8 {
+  match status {
+    BuildStatus::Pending => 0,
+    BuildStatus::Running => 1,
+    _ => 2,
+  }
+}
+
+async fn stale_commit_status_event(
+  pool: &PgPool,
+  event: &BuildEvent,
+) -> Result<bool, String> {
+  let build = repo::builds::get(pool, event.build_id).await.map_err(|e| {
+    format!("Failed to load build for notification freshness: {e}")
+  })?;
+  if build.status == event.status {
+    return Ok(false);
+  }
+  if status_rank(build.status) > status_rank(event.status) {
+    return Ok(true);
+  }
+  Ok(event.status.is_finished() && !build.status.is_finished())
 }
 
 /// Validate and encrypt the secret fields of every declarative notification

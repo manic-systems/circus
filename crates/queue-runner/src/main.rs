@@ -577,6 +577,7 @@ async fn notification_retry_loop(
 
     for task in tasks {
       match circus_notification::process_notification_task(
+        &pool,
         &task,
         secret_key.as_deref(),
       )
