@@ -10,7 +10,7 @@ askama.workspace                         = true
 async-compression.workspace              = true
 async-stream.workspace                   = true
 axum.workspace                           = true
-axum-extra.workspace                     = true
+axum-extra                              = { workspace = true, features = [ "cookie" ] }
 base64.workspace                         = true
 chrono.workspace                         = true
 circus-proto.workspace                   = true
@@ -36,9 +36,11 @@ serde.workspace                          = true
 serde_json.workspace                     = true
 sha2.workspace                           = true
 sqlx                                     = { workspace = true, features = [ "sqlite" ] }
+strip-ansi-escapes.workspace             = true
 subtle.workspace                         = true
 tar.workspace                            = true
 thiserror.workspace                      = true
+time.workspace                           = true
 tokio.workspace                          = true
 tokio-util.workspace                     = true
 toml.workspace                           = true

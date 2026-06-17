@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 circus-logs.workspace  = true
+circus-common.workspace = true
 circus-proto.workspace = true
 
 async-compression.workspace   = true
@@ -25,6 +26,7 @@ hex.workspace                 = true
 libc.workspace                = true
 nix.workspace                 = true
 parking_lot.workspace         = true
+procfs.workspace              = true
 reqwest.workspace             = true
 rustls.workspace              = true
 rustls-native-certs.workspace = true

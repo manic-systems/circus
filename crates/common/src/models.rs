@@ -249,25 +249,33 @@ impl Build {
 }
 
 #[derive(
-  Debug, Clone, Copy, Serialize, Deserialize, sqlx::Type, PartialEq, Eq,
+  Debug,
+  Clone,
+  Copy,
+  Serialize,
+  Deserialize,
+  PartialEq,
+  Eq,
+  num_enum::IntoPrimitive,
+  num_enum::TryFromPrimitive,
 )]
+#[repr(i32)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum BuildStatus {
-  Pending,
-  Running,
-  Succeeded,
-  Failed,
-  DependencyFailed,
-  Aborted,
-  Cancelled,
-  FailedWithOutput,
-  Timeout,
-  CachedFailure,
-  UnsupportedSystem,
-  LogLimitExceeded,
-  NarSizeLimitExceeded,
-  NonDeterministic,
+  Pending              = 0,
+  Running              = 1,
+  Succeeded            = 2,
+  Failed               = 3,
+  DependencyFailed     = 4,
+  Aborted              = 5,
+  Cancelled            = 6,
+  FailedWithOutput     = 7,
+  Timeout              = 8,
+  CachedFailure        = 9,
+  UnsupportedSystem    = 10,
+  LogLimitExceeded     = 11,
+  NarSizeLimitExceeded = 12,
+  NonDeterministic     = 13,
 }
 
 impl BuildStatus {
@@ -317,44 +325,52 @@ impl BuildStatus {
   /// Returns the database integer representation of this status.
   /// Note: This uses an internal numbering scheme (0-13), not Hydra exit codes.
   #[must_use]
-  pub const fn as_i32(&self) -> i32 {
-    match self {
-      Self::Pending => 0,
-      Self::Running => 1,
-      Self::Succeeded => 2,
-      Self::Failed => 3,
-      Self::DependencyFailed => 4,
-      Self::Aborted => 5,
-      Self::Cancelled => 6,
-      Self::FailedWithOutput => 7,
-      Self::Timeout => 8,
-      Self::CachedFailure => 9,
-      Self::UnsupportedSystem => 10,
-      Self::LogLimitExceeded => 11,
-      Self::NarSizeLimitExceeded => 12,
-      Self::NonDeterministic => 13,
-    }
+  pub fn as_i32(&self) -> i32 {
+    (*self).into()
   }
 
   /// Converts a database integer to `BuildStatus`.
   /// This is the inverse of `as_i32()` for reading from the database.
   #[must_use]
-  pub const fn from_i32(code: i32) -> Option<Self> {
-    match code {
-      0 => Some(Self::Pending),
-      1 => Some(Self::Running),
-      2 => Some(Self::Succeeded),
-      3 => Some(Self::Failed),
-      4 => Some(Self::DependencyFailed),
-      5 => Some(Self::Aborted),
-      6 => Some(Self::Cancelled),
-      7 => Some(Self::FailedWithOutput),
-      8 => Some(Self::Timeout),
-      9 => Some(Self::CachedFailure),
-      10 => Some(Self::UnsupportedSystem),
-      11 => Some(Self::LogLimitExceeded),
-      12 => Some(Self::NarSizeLimitExceeded),
-      13 => Some(Self::NonDeterministic),
+  pub fn from_i32(code: i32) -> Option<Self> {
+    Self::try_from(code).ok()
+  }
+
+  const fn db_str(self) -> &'static str {
+    match self {
+      Self::Pending => "pending",
+      Self::Running => "running",
+      Self::Succeeded => "succeeded",
+      Self::Failed => "failed",
+      Self::DependencyFailed => "dependency_failed",
+      Self::Aborted => "aborted",
+      Self::Cancelled => "cancelled",
+      Self::FailedWithOutput => "failed_with_output",
+      Self::Timeout => "timeout",
+      Self::CachedFailure => "cached_failure",
+      Self::UnsupportedSystem => "unsupported_system",
+      Self::LogLimitExceeded => "log_limit_exceeded",
+      Self::NarSizeLimitExceeded => "nar_size_limit_exceeded",
+      Self::NonDeterministic => "non_deterministic",
+    }
+  }
+
+  fn from_db_str(status: &str) -> Option<Self> {
+    match status {
+      "pending" => Some(Self::Pending),
+      "running" => Some(Self::Running),
+      "succeeded" => Some(Self::Succeeded),
+      "failed" => Some(Self::Failed),
+      "dependency_failed" => Some(Self::DependencyFailed),
+      "aborted" => Some(Self::Aborted),
+      "cancelled" => Some(Self::Cancelled),
+      "failed_with_output" => Some(Self::FailedWithOutput),
+      "timeout" => Some(Self::Timeout),
+      "cached_failure" => Some(Self::CachedFailure),
+      "unsupported_system" => Some(Self::UnsupportedSystem),
+      "log_limit_exceeded" => Some(Self::LogLimitExceeded),
+      "nar_size_limit_exceeded" => Some(Self::NarSizeLimitExceeded),
+      "non_deterministic" => Some(Self::NonDeterministic),
       _ => None,
     }
   }
@@ -420,6 +436,75 @@ impl std::fmt::Display for BuildStatus {
       Self::NonDeterministic => "non-deterministic",
     };
     write!(f, "{s}")
+  }
+}
+
+impl sqlx::Type<sqlx::Postgres> for BuildStatus {
+  fn type_info() -> sqlx::postgres::PgTypeInfo {
+    <String as sqlx::Type<sqlx::Postgres>>::type_info()
+  }
+
+  fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+    <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+  }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for BuildStatus {
+  fn encode_by_ref(
+    &self,
+    buf: &mut sqlx::postgres::PgArgumentBuffer,
+  ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+    <&str as sqlx::Encode<sqlx::Postgres>>::encode(self.db_str(), buf)
+  }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for BuildStatus {
+  fn decode(
+    value: sqlx::postgres::PgValueRef<'r>,
+  ) -> Result<Self, sqlx::error::BoxDynError> {
+    let status = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+    Self::from_db_str(status)
+      .ok_or_else(|| {
+        std::io::Error::new(
+          std::io::ErrorKind::InvalidData,
+          format!("unknown build status '{status}'"),
+        )
+      })
+      .map_err(Into::into)
+  }
+}
+
+#[cfg(test)]
+mod build_status_tests {
+  use super::BuildStatus;
+
+  #[test]
+  fn build_status_i32_round_trips() {
+    for (code, status) in [
+      (0, BuildStatus::Pending),
+      (1, BuildStatus::Running),
+      (2, BuildStatus::Succeeded),
+      (3, BuildStatus::Failed),
+      (4, BuildStatus::DependencyFailed),
+      (5, BuildStatus::Aborted),
+      (6, BuildStatus::Cancelled),
+      (7, BuildStatus::FailedWithOutput),
+      (8, BuildStatus::Timeout),
+      (9, BuildStatus::CachedFailure),
+      (10, BuildStatus::UnsupportedSystem),
+      (11, BuildStatus::LogLimitExceeded),
+      (12, BuildStatus::NarSizeLimitExceeded),
+      (13, BuildStatus::NonDeterministic),
+    ] {
+      assert_eq!(status.as_i32(), code);
+      assert_eq!(BuildStatus::from_i32(code), Some(status));
+    }
+  }
+
+  #[test]
+  fn build_status_from_i32_preserves_unknown_fallback() {
+    assert_eq!(BuildStatus::from_i32(-1), None);
+    assert_eq!(BuildStatus::from_i32(14), None);
   }
 }
 

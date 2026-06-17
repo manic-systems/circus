@@ -34,7 +34,7 @@ async-compression = { version = "0.4.42", default-features = false, features = [
 ] }
 async-stream = "0.3.6"
 axum = "0.8.9"
-axum-extra = { version = "0.12.6", features = [ "typed-header" ] }
+axum-extra = { version = "0.12.6", features = [ "typed-header", "cookie" ] }
 base64 = "0.22.1"
 capnp = "0.25.4"
 capnp-futures = "0.25.2"
@@ -67,11 +67,13 @@ nix = { version = "0.31.3", default-features = false, features = [
   "process",
 ] }
 nix-nar = "0.4.0"
+num_enum = "0.7.6"
 oauth2 = "5.0.0"
 openapiv3 = "2.2.0"
 parking_lot = "0.12.5"
 password-hash = { version = "0.6.1", features = [ "getrandom" ] }
 percent-encoding = "2.3.2"
+procfs = "0.18.0"
 regex = "1.12.3"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "json",
@@ -94,6 +96,7 @@ sqlx = { version = "0.9.0", features = [
   "uuid",
   "migrate",
 ] }
+strip-ansi-escapes = "0.2.1"
 subtle = "2.6.1"
 tar = "0.4.46"
 tempfile = "3.27.0"

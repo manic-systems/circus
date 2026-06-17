@@ -122,32 +122,12 @@ pub fn check_disk_space(path: &std::path::Path) -> Result<DiskSpaceInfo> {
 
   #[cfg(unix)]
   {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
-    let cpath = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-      CiError::DiskSpace("Invalid path for disk check".to_string())
-    })?;
-    // SAFETY: zeroing a C struct is safe; all-zero is a valid representation
-    // for statfs and the subsequent statfs() call will populate it.
-    #[expect(
-      clippy::undocumented_unsafe_blocks,
-      reason = "trivial unsafe for FFI struct init"
-    )]
-    let mut statfs: libc::statfs = unsafe { std::mem::zeroed() };
-
-    // SAFETY: cpath is a valid CString, statfs is a valid pointer to a
-    // zeroed statfs struct.
-    #[expect(
-      clippy::undocumented_unsafe_blocks,
-      reason = "trivial unsafe FFI call with valid pointers"
-    )]
-    if unsafe { libc::statfs(cpath.as_ptr(), &raw mut statfs) } != 0 {
-      return Err(CiError::Io(std::io::Error::last_os_error()));
-    }
-
-    let bavail = statfs.f_bavail * statfs.f_bsize.cast_unsigned();
-    let bfree = statfs.f_bfree * statfs.f_bsize.cast_unsigned();
-    let btotal = statfs.f_blocks * statfs.f_bsize.cast_unsigned();
+    let stat = nix::sys::statvfs::statvfs(path)
+      .map_err(|e| CiError::Io(std::io::Error::from_raw_os_error(e as i32)))?;
+    let block_size = stat.fragment_size();
+    let bavail = stat.blocks_available().saturating_mul(block_size);
+    let bfree = stat.blocks_free().saturating_mul(block_size);
+    let btotal = stat.blocks().saturating_mul(block_size);
 
     Ok(DiskSpaceInfo {
       total_gb:     to_gb(btotal),
@@ -163,78 +143,12 @@ pub fn check_disk_space(path: &std::path::Path) -> Result<DiskSpaceInfo> {
 
   #[cfg(not(unix))]
   {
-    let available = fs_available_space(path)?;
-    Ok(DiskSpaceInfo {
-      total_gb:     0.0,
-      free_gb:      to_gb(available),
-      available_gb: to_gb(available),
-      percent_used: 0.0,
-    })
-  }
-}
-
-#[cfg(not(unix))]
-fn fs_available_space(path: &std::path::Path) -> Result<u64> {
-  use std::io::Read;
-
-  let metadata = std::fs::metadata(path)?;
-  let volume = path.to_path_buf();
-  if let Some(parent) = path.parent() {
-    let volume = if path.is_file() {
-      parent.to_path_buf()
-    } else {
-      volume
-    };
-    #[cfg(windows)]
-    {
-      let vol = widestring::WideCString::from_os_str(&volume).map_err(|e| {
-        CiError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
-      })?;
-      let mut lp_sz_path: [u16; 261] = [0; 261];
-      for (i, c) in
-        std::os::windows::ffi::OsStrExt::encode_wide(&vol).enumerate()
-      {
-        if i < 261 {
-          lp_sz_path[i] = c;
-        }
-      }
-      let mut lp_free_bytes: u64 = 0;
-      let mut lp_total_bytes: u64 = 0;
-      let lp_sectors_per_cluster: u64 = 0;
-      let lp_bytes_per_sector: u64 = 0;
-      unsafe {
-        GetDiskFreeSpaceW(
-          lp_sz_path.as_ptr(),
-          &mut lp_sectors_per_cluster as *mut _ as *mut _,
-          &mut lp_bytes_per_sector as *mut _ as *mut _,
-          &mut lp_free_bytes,
-          &mut lp_total_bytes,
-        );
-      }
-      Ok(lp_free_bytes)
-    }
-    #[cfg(not(windows))]
+    let _ = path;
     Err(CiError::Io(std::io::Error::new(
       std::io::ErrorKind::Other,
       "Disk space check not implemented for this platform",
     )))
-  } else {
-    Err(CiError::Io(std::io::Error::new(
-      std::io::ErrorKind::Other,
-      "Cannot determine parent path",
-    )))
   }
-}
-
-#[cfg(windows)]
-extern "system" {
-  fn GetDiskFreeSpaceW(
-    lp_root_path_name: *const u16,
-    lp_sectors_per_cluster: *mut u64,
-    lp_bytes_per_sector: *mut u64,
-    lp_free_bytes_available_to_caller: *mut u64,
-    lp_total_number_of_bytes: *mut u64,
-  ) -> i32;
 }
 
 /// Disk space information
