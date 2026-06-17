@@ -835,11 +835,14 @@ impl runner::Server for RunnerImpl {
       let file_hash_opt = Some(verified.file_hash.as_str());
       let file_size_opt =
         (compression != "none").then_some(verified.file_size as i64);
-      let project_id = project_id_for_build(&db_pool, build_id)
-        .await
-        .map_err(|e| {
-          capnp::Error::failed(format!("failed to resolve build project: {e}"))
-        })?;
+      let project_id =
+        project_id_for_build(&db_pool, build_id)
+          .await
+          .map_err(|e| {
+            capnp::Error::failed(format!(
+              "failed to resolve build project: {e}"
+            ))
+          })?;
 
       // Sign over the canonical Nix fingerprint (store path, nar hash, nar
       // size, refs) with the nar hash in sha256 base32. Never persist an
@@ -867,18 +870,18 @@ impl runner::Server for RunnerImpl {
       if let Err(e) = circus_common::repo::narinfo_cache::upsert(
         &db_pool,
         circus_common::repo::narinfo_cache::UpsertNarInfo {
-          store_path:  &store_path,
-          nar_hash:    &verified.nar_hash,
-          nar_size:    verified.nar_size as i64,
-          file_hash:   file_hash_opt,
-          file_size:   file_size_opt,
+          store_path: &store_path,
+          nar_hash: &verified.nar_hash,
+          nar_size: verified.nar_size as i64,
+          file_hash: file_hash_opt,
+          file_size: file_size_opt,
           compression: &compression,
-          url:         &url,
-          deriver:     deriver.as_deref(),
-          references:  &references,
-          sig:         signed_sig.as_deref(),
-          ca:          ca.as_deref(),
-          build_id:    Some(build_id),
+          url: &url,
+          deriver: deriver.as_deref(),
+          references: &references,
+          sig: signed_sig.as_deref(),
+          ca: ca.as_deref(),
+          build_id: Some(build_id),
           project_id,
         },
       )

@@ -329,7 +329,9 @@ fn cache_args_for_build(
           .0
           .0
           .iter()
-          .map(|upstream| (upstream.url.as_str(), upstream.public_key.as_deref()))
+          .map(|upstream| {
+            (upstream.url.as_str(), upstream.public_key.as_deref())
+          })
           .collect(),
       )
     } else if config.enabled {
@@ -338,7 +340,9 @@ fn cache_args_for_build(
         config
           .upstreams
           .iter()
-          .map(|upstream| (upstream.url.as_str(), upstream.public_key.as_deref()))
+          .map(|upstream| {
+            (upstream.url.as_str(), upstream.public_key.as_deref())
+          })
           .collect(),
       )
     } else {
@@ -908,7 +912,10 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   let build_extra_nix_args = nix_args_for_build(
     &extra_nix_args,
     interval_rebuild,
-    cache_args_for_build(cache_config, project_context.as_ref().map(|(p, _)| p)),
+    cache_args_for_build(
+      cache_config,
+      project_context.as_ref().map(|(p, _)| p),
+    ),
   );
 
   // Dispatch build started notification
@@ -919,8 +926,8 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         circus_notification::dispatch_build_started(
           pool,
           &claimed_build,
-          &project,
-          &commit_hash,
+          project,
+          commit_hash,
           notifications_config,
           notification_secret_key.as_deref(),
         )
@@ -1482,17 +1489,14 @@ mod tests {
 
     let args = cache_args_for_build(&cache_config, Some(&project));
 
-    assert_eq!(
-      args,
-      vec![
-        "--option",
-        "extra-substituters",
-        "https://ci.example.org/nix-cache/ https://global-cache.example.org/",
-        "--option",
-        "extra-trusted-public-keys",
-        "global-1:key",
-      ]
-    );
+    assert_eq!(args, vec![
+      "--option",
+      "extra-substituters",
+      "https://ci.example.org/nix-cache/ https://global-cache.example.org/",
+      "--option",
+      "extra-trusted-public-keys",
+      "global-1:key",
+    ]);
   }
 
   #[test]
