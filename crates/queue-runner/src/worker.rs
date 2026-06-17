@@ -1,4 +1,9 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+  collections::HashMap,
+  path::{Path, PathBuf},
+  sync::Arc,
+  time::Duration,
+};
 
 use circus_common::{
   alerts::AlertManager,
@@ -27,14 +32,24 @@ use circus_config::{
 };
 use dashmap::DashMap;
 use sqlx::PgPool;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::{
+  fs,
+  process::Command,
+  sync::{OwnedSemaphorePermit, RwLock, Semaphore},
+  time::{sleep, timeout},
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
+  builder::{self as build_runner, BuildResult},
+  caps::RunnerCaps,
   context::BuildContext,
-  dispatch::supports_required_features,
+  dispatch::{self, supports_required_features},
+  features,
   helpers::{get_project_for_build, is_interval_rebuild},
+  psi::{self, PsiCache},
+  rpc::AgentPool,
 };
 
 pub type ActiveBuilds = Arc<DashMap<Uuid, CancellationToken>>;
@@ -54,9 +69,9 @@ pub struct WorkerPool {
   signing_config:      Arc<SigningConfig>,
   cache_upload_config: Arc<CacheUploadConfig>,
   alert_manager:       Arc<Option<AlertManager>>,
-  psi_cache:           Arc<crate::psi::PsiCache>,
-  agent_pool:          Arc<crate::rpc::AgentPool>,
-  runner_caps:         Arc<crate::caps::RunnerCaps>,
+  psi_cache:           Arc<PsiCache>,
+  agent_pool:          Arc<AgentPool>,
+  runner_caps:         Arc<RunnerCaps>,
   heartbeat_ttl:       Duration,
   drain_token:         CancellationToken,
   active_builds:       ActiveBuilds,
@@ -79,8 +94,8 @@ impl WorkerPool {
     signing_config: SigningConfig,
     cache_upload_config: CacheUploadConfig,
     alert_config: Option<AlertConfig>,
-    agent_pool: Arc<crate::rpc::AgentPool>,
-    runner_caps: Arc<crate::caps::RunnerCaps>,
+    agent_pool: Arc<AgentPool>,
+    runner_caps: Arc<RunnerCaps>,
     heartbeat_ttl: Duration,
   ) -> Self {
     let alert_manager = alert_config.map(AlertManager::new);
@@ -98,7 +113,7 @@ impl WorkerPool {
       signing_config: Arc::new(signing_config),
       cache_upload_config: Arc::new(cache_upload_config),
       alert_manager: Arc::new(alert_manager),
-      psi_cache: crate::psi::PsiCache::new(),
+      psi_cache: PsiCache::new(),
       agent_pool,
       runner_caps,
       heartbeat_ttl,
@@ -117,14 +132,11 @@ impl WorkerPool {
   /// though they do not hold worker permits.
   pub async fn wait_for_drain(&self) {
     let build_timeout = self.hot_config.read().await.build_timeout;
-    let _ = tokio::time::timeout(
-      Duration::from_secs(build_timeout.as_secs() + 60),
-      async {
-        while !self.active_builds.is_empty() {
-          tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-      },
-    )
+    let _ = timeout(Duration::from_secs(build_timeout.as_secs() + 60), async {
+      while !self.active_builds.is_empty() {
+        sleep(Duration::from_millis(100)).await;
+      }
+    })
     .await;
   }
 
@@ -134,12 +146,12 @@ impl WorkerPool {
   }
 
   #[must_use]
-  pub const fn agent_pool(&self) -> &Arc<crate::rpc::AgentPool> {
+  pub const fn agent_pool(&self) -> &Arc<AgentPool> {
     &self.agent_pool
   }
 
   #[must_use]
-  pub const fn runner_caps(&self) -> &Arc<crate::caps::RunnerCaps> {
+  pub const fn runner_caps(&self) -> &Arc<RunnerCaps> {
     &self.runner_caps
   }
 
@@ -180,8 +192,7 @@ impl WorkerPool {
       let result = async {
         // Computed here so slow dry-runs on a cold queue don't serialize the
         // scheduler loop.
-        let build =
-          crate::features::ensure_effective_features(&pool, build).await;
+        let build = features::ensure_effective_features(&pool, build).await;
 
         let (
           timeout,
@@ -253,7 +264,7 @@ impl WorkerPool {
 
 /// Query nix path-info for narHash and narSize of an output path.
 async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
-  let output = tokio::process::Command::new("nix")
+  let output = Command::new("nix")
     .args(["path-info", "--json", output_path])
     .output()
     .await
@@ -341,7 +352,7 @@ async fn sign_outputs(
 
   let mut any_failed = false;
   for output_path in output_paths {
-    let result = tokio::process::Command::new("nix")
+    let result = Command::new("nix")
       .args([
         "store",
         "sign",
@@ -397,7 +408,7 @@ async fn push_to_cache(
     let _permit = semaphore.acquire().await;
     let mut success = false;
     for attempt in 0..=max_retries {
-      let result = tokio::process::Command::new("nix")
+      let result = Command::new("nix")
         .args(["copy", "--to", &full_store_uri, path])
         .kill_on_drop(true)
         .output()
@@ -421,7 +432,7 @@ async fn push_to_cache(
               max_retries,
               "Push to cache failed, retrying: {stderr}"
             );
-            tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+            sleep(Duration::from_secs(2u64.pow(attempt))).await;
           } else {
             tracing::error!(
               output = path,
@@ -436,7 +447,7 @@ async fn push_to_cache(
               attempt = attempt + 1,
               "nix copy error, retrying: {e}"
             );
-            tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+            sleep(Duration::from_secs(2u64.pow(attempt))).await;
           } else {
             tracing::error!(output = path, "nix copy permanently failed: {e}");
           }
@@ -516,16 +527,16 @@ async fn try_remote_build(
   pool: &PgPool,
   build: &Build,
   drv_path: &str,
-  work_dir: &std::path::Path,
+  work_dir: &Path,
   timeout: Duration,
-  live_log_path: Option<&std::path::Path>,
+  live_log_path: Option<&Path>,
   strategy: &BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
-  psi_cache: &crate::psi::PsiCache,
+  psi_cache: &PsiCache,
   extra_nix_args: &[String],
   require_host_key: bool,
-) -> Option<crate::builder::BuildResult> {
+) -> Option<BuildResult> {
   let system = build.system.as_deref()?;
 
   let builders = repo::remote_builders::find_for_system(pool, system, strategy)
@@ -562,8 +573,7 @@ async fn try_remote_build(
     }
     if let Some(threshold) = psi_threshold
       && let Some(snap) =
-        crate::psi::read_cached(psi_cache, &builder.ssh_uri, psi_check_timeout)
-          .await
+        psi::read_cached(psi_cache, &builder.ssh_uri, psi_check_timeout).await
       && snap.exceeds(threshold)
     {
       tracing::debug!(
@@ -599,7 +609,7 @@ async fn try_remote_build(
     } else {
       format!("ssh://{}", builder.ssh_uri)
     };
-    let result = crate::builder::run_nix_build_remote(
+    let result = build_runner::run_nix_build_remote(
       drv_path,
       work_dir,
       timeout,
@@ -665,7 +675,7 @@ async fn collect_metrics_and_alert(
   }
 
   for path in output_paths {
-    if let Ok(meta) = tokio::fs::metadata(path).await {
+    if let Ok(meta) = fs::metadata(path).await {
       let size = meta.len();
       if let Err(e) = repo::build_metrics::upsert(
         pool,
@@ -705,21 +715,21 @@ async fn collect_metrics_and_alert(
   reason = "on-runner execution needs the full SSH/local scheduling context"
 )]
 async fn run_on_runner(
-  permit: tokio::sync::OwnedSemaphorePermit,
+  permit: OwnedSemaphorePermit,
   pool: &PgPool,
   build: &Build,
   drv_path: &str,
-  work_dir: &std::path::Path,
+  work_dir: &Path,
   timeout: Duration,
-  live_log_path: &std::path::Path,
+  live_log_path: &Path,
   scheduling_strategy: &BuilderSchedulingStrategy,
   psi_threshold: Option<f64>,
   psi_check_timeout: Duration,
-  psi_cache: &Arc<crate::psi::PsiCache>,
+  psi_cache: &Arc<PsiCache>,
   extra_nix_args: &[String],
-  runner_caps: &crate::caps::RunnerCaps,
+  runner_caps: &RunnerCaps,
   require_host_key: bool,
-) -> circus_common::error::Result<Option<crate::builder::BuildResult>> {
+) -> circus_common::error::Result<Option<BuildResult>> {
   let _permit = permit;
   if build.system.is_some()
     && let Some(r) = try_remote_build(
@@ -751,7 +761,7 @@ async fn run_on_runner(
     );
     return Ok(None);
   }
-  crate::builder::run_nix_build(
+  build_runner::run_nix_build(
     drv_path,
     work_dir,
     timeout,
@@ -767,7 +777,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   // Reserve capacity before claiming the build so `running` means execution
   // can start immediately.
   let Some(venue) =
-    crate::dispatch::reserve_venue(&ctx, build, build.system.as_deref()).await
+    dispatch::reserve_venue(&ctx, build, build.system.as_deref()).await
   else {
     return Ok(());
   };
@@ -884,14 +894,14 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   // Set up live log path
   let live_log_path =
     log_config.log_dir.join(format!("{}.active.log", build.id));
-  let _ = tokio::fs::create_dir_all(&log_config.log_dir).await;
+  let _ = fs::create_dir_all(&log_config.log_dir).await;
 
   let cache_upload_enabled_s3 =
     presigned_s3_upload_available(cache_upload_config);
 
   let result = match venue {
-    crate::dispatch::ExecutionReservation::Agent { meta, snap, slot } => {
-      let opts = crate::dispatch::AgentDispatch {
+    dispatch::ExecutionReservation::Agent { meta, snap, slot } => {
+      let opts = dispatch::AgentDispatch {
         timeout,
         max_silent_time,
         extra_nix_args: &build_extra_nix_args,
@@ -900,7 +910,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         fail_build_on_upload_error: cache_upload_config
           .fail_build_on_upload_error,
       };
-      if let Some(r) = crate::dispatch::run_on_agent(
+      if let Some(r) = dispatch::run_on_agent(
         &meta,
         &snap,
         slot,
@@ -937,7 +947,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         Ok(None)
       }
     },
-    crate::dispatch::ExecutionReservation::Runner(permit) => {
+    dispatch::ExecutionReservation::Runner(permit) => {
       run_on_runner(
         permit,
         pool,
@@ -966,7 +976,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     Ok(None) => {
       match repo::builds::requeue(pool, build.id).await {
         Ok(Some(_)) => {
-          let _ = tokio::fs::remove_file(&live_log_path).await;
+          let _ = fs::remove_file(&live_log_path).await;
         },
         Ok(None) => {
           tracing::debug!(
@@ -1015,7 +1025,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
       let log_path = if let Some(ref storage) = log_storage {
         let final_path = storage.log_path(&build.id);
         if live_log_path.exists() {
-          if let Err(e) = tokio::fs::rename(&live_log_path, &final_path).await {
+          if let Err(e) = fs::rename(&live_log_path, &final_path).await {
             tracing::warn!(build_id = %build.id, "Failed to rename build log: {e}");
           }
         } else {
@@ -1040,7 +1050,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         // The outputs JSON is a HashMap<String, String> where keys are output
         // names and values are store paths. We need to match paths to
         // names correctly.
-        let path_to_name: std::collections::HashMap<String, String> = build
+        let path_to_name: HashMap<String, String> = build
           .outputs
           .as_ref()
           .and_then(|v| v.as_object())
@@ -1199,10 +1209,8 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           return Ok(());
         }
 
-        let primary_output = build_result
-          .output_paths
-          .first()
-          .map(std::string::String::as_str);
+        let primary_output =
+          build_result.output_paths.first().map(String::as_str);
 
         repo::builds::complete(
           pool,
@@ -1240,7 +1248,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           .bind(build.id)
           .execute(pool)
           .await?;
-          if let Err(e) = tokio::fs::remove_file(&live_log_path).await {
+          if let Err(e) = fs::remove_file(&live_log_path).await {
             tracing::debug!(build_id = %build.id, "Failed to remove retry live log: {e}");
           }
           return Ok(());
@@ -1282,7 +1290,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
       {
         tracing::warn!(build_id = %build.id, "Failed to write error log: {e}");
       }
-      if let Err(e) = tokio::fs::remove_file(&live_log_path).await {
+      if let Err(e) = fs::remove_file(&live_log_path).await {
         tracing::debug!(build_id = %build.id, "Failed to remove failed live log: {e}");
       }
 

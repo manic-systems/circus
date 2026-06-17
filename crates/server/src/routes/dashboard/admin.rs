@@ -5,7 +5,7 @@
 //! order, so a non-admin attempting to forge a request never reaches the
 //! database.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashMap, env, io::ErrorKind};
 
 use axum::{
   Form,
@@ -19,6 +19,7 @@ use circus_common::models::{
   SystemStatus,
   UserType,
 };
+use tokio::fs;
 use uuid::Uuid;
 
 use super::{
@@ -317,8 +318,7 @@ pub(super) async fn admin_page(
   .unwrap_or_default();
 
   // Count builds per builder
-  let mut builds_per_builder: std::collections::HashMap<Uuid, i64> =
-    std::collections::HashMap::new();
+  let mut builds_per_builder: HashMap<Uuid, i64> = HashMap::new();
   for build in &running_builds {
     if let Some(builder_id) = build.builder_id {
       *builds_per_builder.entry(builder_id).or_insert(0) += 1;
@@ -449,9 +449,9 @@ pub(super) async fn admin_page(
         }
       })
       .collect();
-  let config_path = std::env::var("CIRCUS_CONFIG_FILE")
+  let config_path = env::var("CIRCUS_CONFIG_FILE")
     .unwrap_or_else(|_| "circus.toml".to_string());
-  let config_contents = match tokio::fs::read_to_string(&config_path).await {
+  let config_contents = match fs::read_to_string(&config_path).await {
     Ok(contents) => {
       circus_config::Config::from_toml_with_defaults(&contents)
         .ok()
@@ -462,7 +462,7 @@ pub(super) async fn admin_page(
         })
         .unwrap_or(contents)
     },
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    Err(e) if e.kind() == ErrorKind::NotFound => {
       toml::Value::try_from(circus_config::Config::default()).map_or_else(
         |_| String::new(),
         |mut value| {

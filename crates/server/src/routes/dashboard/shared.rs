@@ -3,6 +3,8 @@
 //! `pub(super)` so sibling modules (auth, admin, pages, ...) can use them
 //! without re-exporting them at the dashboard module's external surface.
 
+use std::convert::Infallible;
+
 use askama::Template;
 use axum::{
   extract::FromRequestParts,
@@ -19,11 +21,12 @@ use circus_common::models::{
 };
 use circus_config::{PageAccessLevel, ServerConfig};
 use circus_proto::nix_log::{self, LogLine};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::{
   permissions::{self, Permission, UiPermissions},
-  state::AppState,
+  state::{AppState, CsrfToken},
 };
 
 pub(super) trait RenderExt: Template {
@@ -196,7 +199,7 @@ impl DashboardContext {
       is_authenticated: is_authenticated(extensions),
       auth_name:        auth_name(extensions),
       csrf_token:       extensions
-        .get::<crate::state::CsrfToken>()
+        .get::<CsrfToken>()
         .map(|t| t.0.clone())
         .unwrap_or_default(),
       permissions:      UiPermissions::from_extensions(extensions),
@@ -212,7 +215,6 @@ impl DashboardContext {
     reason = "dashboard handlers return axum Response directly"
   )]
   pub(super) fn check_csrf(&self, submitted: &str) -> Result<(), Response> {
-    use subtle::ConstantTimeEq;
     if self.csrf_token.is_empty()
       || self
         .csrf_token
@@ -252,7 +254,7 @@ impl DashboardContext {
 }
 
 impl FromRequestParts<AppState> for DashboardContext {
-  type Rejection = std::convert::Infallible;
+  type Rejection = Infallible;
 
   async fn from_request_parts(
     parts: &mut Parts,

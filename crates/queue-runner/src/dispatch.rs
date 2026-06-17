@@ -19,11 +19,15 @@ use circus_common::{
 };
 use circus_config::BuilderSchedulingStrategy;
 use sqlx::PgPool;
-use tokio::sync::{OwnedSemaphorePermit, oneshot};
+use tokio::{
+  process::Command,
+  sync::{OwnedSemaphorePermit, oneshot},
+};
 
 use crate::{
   builder::BuildResult,
   context::BuildContext,
+  psi,
   rpc::{
     AgentPool,
     AgentSnapshot,
@@ -296,7 +300,7 @@ pub async fn reserve_venue(
             continue;
           }
           if let Some(threshold) = ctx.psi_threshold
-            && let Some(snap) = crate::psi::read_cached(
+            && let Some(snap) = psi::read_cached(
               &ctx.psi_cache,
               &b.ssh_uri,
               ctx.psi_check_timeout,
@@ -540,7 +544,7 @@ pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
 pub(crate) async fn try_read_drv_outputs(
   drv_path: &str,
 ) -> color_eyre::Result<Vec<String>> {
-  let out = tokio::process::Command::new("nix-store")
+  let out = Command::new("nix-store")
     .args(["--query", "--outputs", drv_path])
     .output()
     .await?;

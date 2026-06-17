@@ -12,6 +12,8 @@ use circus_config::{
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 
+use crate::{caps::RunnerCaps, psi::PsiCache, rpc::AgentPool};
+
 pub struct BuildContext {
   pub pool:                    PgPool,
   pub work_dir:                Arc<PathBuf>,
@@ -30,10 +32,10 @@ pub struct BuildContext {
   pub scheduling_strategy:     BuilderSchedulingStrategy,
   pub psi_threshold:           Option<f64>,
   pub psi_check_timeout:       Duration,
-  pub psi_cache:               Arc<crate::psi::PsiCache>,
+  pub psi_cache:               Arc<PsiCache>,
   pub extra_nix_args:          Arc<Vec<String>>,
-  pub agent_pool:              Arc<crate::rpc::AgentPool>,
-  pub runner_caps:             Arc<crate::caps::RunnerCaps>,
+  pub agent_pool:              Arc<AgentPool>,
+  pub runner_caps:             Arc<RunnerCaps>,
   pub heartbeat_ttl:           Duration,
   pub require_host_key:        bool,
 }

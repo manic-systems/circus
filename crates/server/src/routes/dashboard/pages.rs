@@ -5,14 +5,19 @@
 //! These handlers do not mutate server state; they only render templates.
 //! Mutating admin actions live in `super::admin`.
 
-use std::collections::HashMap;
+use std::{
+  cmp::Reverse,
+  collections::{BTreeMap, HashMap},
+  path::Path as StdPath,
+};
 
 use axum::{
   extract::{Path, Query, State},
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
 };
-use circus_common::models::{BuildStatus, Evaluation};
+use circus_common::models::{Build, BuildStatus, Evaluation};
+use tokio::fs;
 use uuid::Uuid;
 
 use super::{
@@ -270,7 +275,7 @@ pub(super) async fn project_page(
       .unwrap_or_default();
     evals.append(&mut js_evals);
   }
-  evals.sort_by_key(|e| std::cmp::Reverse(e.evaluation_time));
+  evals.sort_by_key(|e| Reverse(e.evaluation_time));
   evals.truncate(10);
 
   let tmpl = ProjectTemplate {
@@ -321,8 +326,7 @@ pub(super) async fn jobset_page(
   .await
   .unwrap_or_default();
 
-  let mut builds_by_eval: HashMap<Uuid, Vec<&circus_common::models::Build>> =
-    HashMap::new();
+  let mut builds_by_eval: HashMap<Uuid, Vec<&Build>> = HashMap::new();
   for b in &builds {
     builds_by_eval.entry(b.evaluation_id).or_default().push(b);
   }
@@ -442,10 +446,8 @@ pub(super) async fn jobset_jobs_page(
     })
     .collect();
 
-  let mut builds_by_job: std::collections::BTreeMap<
-    String,
-    std::collections::HashMap<Uuid, circus_common::models::Build>,
-  > = std::collections::BTreeMap::new();
+  let mut builds_by_job: BTreeMap<String, HashMap<Uuid, Build>> =
+    BTreeMap::new();
   for build in builds {
     builds_by_job
       .entry(build.job_name.clone())
@@ -688,7 +690,7 @@ pub(super) async fn builds_page(
 
   let pagination = Pagination::new(total, offset, limit);
 
-  let mut context_by_eval = std::collections::HashMap::new();
+  let mut context_by_eval = HashMap::new();
   for item in &items {
     if context_by_eval.contains_key(&item.evaluation_id) {
       continue;
@@ -874,7 +876,7 @@ pub(super) async fn build_log(
   };
   let Some(path) = crate::routes::canonical_log_file(
     &state.config.logs.log_dir,
-    std::path::Path::new(path),
+    StdPath::new(path),
   )
   .await
   else {
@@ -883,7 +885,7 @@ pub(super) async fn build_log(
     );
   };
 
-  let Ok(raw) = tokio::fs::read_to_string(path).await else {
+  let Ok(raw) = fs::read_to_string(path).await else {
     return Ok(
       (StatusCode::NOT_FOUND, "Log file is unavailable").into_response(),
     );
@@ -934,7 +936,7 @@ pub(super) async fn queue_page(
   let builders = circus_common::repo::remote_builders::list(&state.pool)
     .await
     .unwrap_or_default();
-  let builder_map: std::collections::HashMap<Uuid, String> =
+  let builder_map: HashMap<Uuid, String> =
     builders.into_iter().map(|b| (b.id, b.name)).collect();
 
   // Agent machine_id -> name map
@@ -949,10 +951,8 @@ pub(super) async fn queue_page(
   // (project_id, project_name, jobset_id, jobset_name). Cache so each unique
   // evaluation costs at most one eval + jobset + project lookup, regardless of
   // how many builds share it.
-  let mut context_by_eval: std::collections::HashMap<
-    Uuid,
-    (Uuid, String, Uuid, String),
-  > = std::collections::HashMap::new();
+  let mut context_by_eval: HashMap<Uuid, (Uuid, String, Uuid, String)> =
+    HashMap::new();
   for b in running.iter().chain(pending.iter()) {
     if context_by_eval.contains_key(&b.evaluation_id) {
       continue;
@@ -978,7 +978,7 @@ pub(super) async fn queue_page(
     );
   }
 
-  let context_for = |b: &circus_common::models::Build| {
+  let context_for = |b: &Build| {
     context_by_eval.get(&b.evaluation_id).map_or_else(
       || (None, String::new(), None, String::new()),
       |(pid, pname, jid, jname)| {
