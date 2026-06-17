@@ -1,6 +1,9 @@
 //! Input validation helpers
 
-use std::sync::LazyLock;
+use std::{
+  net::{IpAddr, Ipv4Addr, Ipv6Addr},
+  sync::LazyLock,
+};
 
 use regex::Regex;
 
@@ -39,62 +42,46 @@ const INTERNAL_HOSTS: &[&str] = &[
   "100.100.100.200", // Alibaba metadata
 ];
 
-/// Extract the hostname from a URL (best-effort, no full URL parser needed).
 fn extract_host_from_url(url: &str) -> Option<String> {
-  // Strip scheme
-  let after_scheme = url.split("://").nth(1)?;
-  // Strip userinfo (user@host)
-  let after_user = after_scheme
-    .split_once('@')
-    .map_or(after_scheme, |(_, rest)| rest);
-  // Take host:port, strip port and path
-  let host_port = after_user.split('/').next()?;
-  let host = if let Some(rest) = host_port.strip_prefix('[') {
-    let (host, _rest) = rest.split_once(']')?;
-    host
-  } else {
-    host_port.split(':').next()?
-  };
-  if host.is_empty() {
-    return None;
-  }
-  Some(host.to_lowercase())
+  url::Url::parse(url)
+    .ok()
+    .and_then(|u| u.host_str().map(str::to_lowercase))
 }
 
-/// Check if a hostname is internal/metadata (SSRF targets).
 fn is_internal_host(host: &str) -> bool {
-  if INTERNAL_HOSTS.contains(&host) {
-    return true;
-  }
-  // Block localhost variants
-  if host == "localhost"
-    || host == "127.0.0.1"
-    || host == "::1"
-    || host == "[::1]"
+  let host = host.trim_matches(['[', ']']);
+  if INTERNAL_HOSTS.contains(&host)
+    || host == "localhost"
+    || host.ends_with(".internal")
   {
     return true;
   }
-  // Block link-local 169.254.x.x
-  if host.starts_with("169.254.") {
-    return true;
+
+  let Ok(ip) = host.parse::<IpAddr>() else {
+    return false;
+  };
+
+  match ip {
+    IpAddr::V4(v4) => is_internal_ipv4(v4),
+    IpAddr::V6(v6) => {
+      v6.is_loopback()
+        || is_unique_local_ipv6(v6)
+        || is_link_local_ipv6(v6)
+        || v6.to_ipv4_mapped().is_some_and(is_internal_ipv4)
+    },
   }
-  // Block 10.x.x.x
-  if host.starts_with("10.") {
-    return true;
-  }
-  // Block 172.16-31.x.x
-  if host.starts_with("172.")
-    && let Some(second_octet) = host.split('.').nth(1)
-    && let Ok(n) = second_octet.parse::<u8>()
-    && (16..=31).contains(&n)
-  {
-    return true;
-  }
-  // Block 192.168.x.x
-  if host.starts_with("192.168.") {
-    return true;
-  }
-  false
+}
+
+const fn is_internal_ipv4(ip: Ipv4Addr) -> bool {
+  ip.is_private() || ip.is_loopback() || ip.is_link_local()
+}
+
+const fn is_unique_local_ipv6(ip: Ipv6Addr) -> bool {
+  (ip.segments()[0] & 0xFE00) == 0xFC00
+}
+
+const fn is_link_local_ipv6(ip: Ipv6Addr) -> bool {
+  (ip.segments()[0] & 0xFFC0) == 0xFE80
 }
 
 /// Trait for validating request DTOs before persisting.
@@ -870,6 +857,27 @@ mod tests {
     assert!(validate_repository_url("http://10.0.0.1/repo.git").is_err());
     assert!(validate_repository_url("http://192.168.1.1/repo.git").is_err());
     assert!(validate_repository_url("http://172.16.0.1/repo.git").is_err());
+  }
+
+  #[test]
+  fn test_repository_url_rejects_internal_ipv6_networks() {
+    assert!(validate_repository_url("http://[::1]/repo.git").is_err());
+    assert!(validate_repository_url("http://[fc00::1]/repo.git").is_err());
+    assert!(validate_repository_url("http://[fe80::1]/repo.git").is_err());
+    assert!(
+      validate_repository_url("http://[::ffff:192.168.1.1]/repo.git").is_err()
+    );
+  }
+
+  #[test]
+  fn test_repository_url_rejects_internal_hostnames() {
+    assert!(
+      validate_repository_url("http://service.internal/repo.git").is_err()
+    );
+    assert!(
+      validate_repository_url("http://metadata.google.internal/repo.git")
+        .is_err()
+    );
   }
 
   #[test]
