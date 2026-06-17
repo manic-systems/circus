@@ -375,12 +375,12 @@ async fn test_starred_jobs_crud() {
   .expect("create user");
 
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("star-project-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("star-project-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");
@@ -497,12 +497,12 @@ async fn test_starred_jobs_delete_by_job() {
   .expect("create user");
 
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("del-project-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("del-project-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");
@@ -578,12 +578,12 @@ async fn test_project_members_crud() {
   .expect("create user");
 
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("member-project-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("member-project-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");
@@ -714,12 +714,12 @@ async fn test_project_members_permissions() {
   .expect("create member user");
 
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("perm-project-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("perm-project-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");

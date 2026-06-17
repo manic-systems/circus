@@ -16,7 +16,7 @@ use circus_common::{
   UpdateProject,
   Validate,
   WebhookConfig,
-  models::{CreateWebhookConfig, ForgeType},
+  models::{BinaryCacheUpstreams, CreateWebhookConfig, ForgeType},
 };
 use circus_nix as nix;
 use serde::{Deserialize, Serialize};
@@ -257,12 +257,12 @@ async fn setup_project(
   permissions::require_api(&extensions, Permission::CreateProjects)?;
 
   let create_project = CreateProject {
-    name:           body.name,
-    repository_url: body.repository_url,
-    description:    body.description,
-    cache_enabled:  true,
-    cache_url:      None,
-    cache_upstreams: Default::default(),
+    name:            body.name,
+    repository_url:  body.repository_url,
+    description:     body.description,
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   };
   create_project
     .validate()

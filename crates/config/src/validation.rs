@@ -1,21 +1,13 @@
+use circus_types::validation::{
+  validate_binary_cache_upstream,
+  validate_cache_url,
+};
 use color_eyre::eyre::{self, WrapErr, bail};
 
 use crate::{Config, DatabaseConfig};
 
-fn validate_cache_url(url: &str, field: &str) -> eyre::Result<()> {
-  if url.trim().is_empty() {
-    bail!("{field} cannot be empty");
-  }
-  if url.len() > 2048 {
-    bail!("{field} must be at most 2048 characters");
-  }
-  if !matches!(
-    url.split_once("://").map(|(scheme, _)| scheme),
-    Some("http" | "https" | "s3" | "ssh" | "ssh-ng" | "file")
-  ) {
-    bail!("{field} must use http, https, s3, ssh, ssh-ng, or file");
-  }
-  Ok(())
+fn validate_shared(result: Result<(), String>) -> eyre::Result<()> {
+  result.map_err(|error| eyre::eyre!(error))
 }
 
 impl DatabaseConfig {
@@ -85,49 +77,30 @@ impl Config {
     }
 
     if let Some(url) = self.cache.cache_url.as_deref() {
-      validate_cache_url(url, "cache.cache_url")?;
+      validate_shared(validate_cache_url(url, "cache.cache_url"))?;
     }
     for (idx, upstream) in self.cache.upstreams.iter().enumerate() {
-      validate_cache_url(
-        &upstream.url,
-        &format!("cache.upstreams[{idx}].url"),
-      )?;
-      if upstream
-        .public_key
-        .as_deref()
-        .is_some_and(|key| key.trim().is_empty())
-      {
-        bail!("cache.upstreams[{idx}].public_key cannot be empty");
-      }
+      validate_shared(validate_binary_cache_upstream(
+        upstream,
+        &format!("cache.upstreams[{idx}]"),
+      ))?;
     }
-    for (project_idx, project) in
-      self.declarative.projects.iter().enumerate()
-    {
+    for (project_idx, project) in self.declarative.projects.iter().enumerate() {
       if let Some(url) = project.cache_url.as_deref() {
-        validate_cache_url(
+        validate_shared(validate_cache_url(
           url,
           &format!("declarative.projects[{project_idx}].cache_url"),
-        )?;
+        ))?;
       }
       for (upstream_idx, upstream) in project.cache_upstreams.iter().enumerate()
       {
-        validate_cache_url(
-          &upstream.url,
+        validate_shared(validate_binary_cache_upstream(
+          upstream,
           &format!(
             "declarative.projects[{project_idx}].\
-             cache_upstreams[{upstream_idx}].url"
+             cache_upstreams[{upstream_idx}]"
           ),
-        )?;
-        if upstream
-          .public_key
-          .as_deref()
-          .is_some_and(|key| key.trim().is_empty())
-        {
-          bail!(
-            "declarative.projects[{project_idx}].\
-             cache_upstreams[{upstream_idx}].public_key cannot be empty"
-          );
-        }
+        ))?;
       }
     }
 

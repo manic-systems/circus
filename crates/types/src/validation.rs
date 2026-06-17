@@ -3,6 +3,8 @@ use std::{fmt, str::FromStr, sync::LazyLock};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::BinaryCacheUpstream;
+
 static NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
   #[expect(
     clippy::expect_used,
@@ -136,6 +138,50 @@ pub fn validate_name(name: &str, field: &str) -> Result<(), String> {
 pub fn validate_commit_hash(hash: &str) -> Result<(), String> {
   if !COMMIT_HASH_RE.is_match(hash) {
     return Err("commit_hash must be 1-64 hex characters".to_string());
+  }
+  Ok(())
+}
+
+/// Validate a binary cache URL accepted by global and project cache settings.
+///
+/// # Errors
+///
+/// Returns an error if the URL is empty, too long, or uses an unsupported
+/// scheme.
+pub fn validate_cache_url(url: &str, field: &str) -> Result<(), String> {
+  if url.trim().is_empty() {
+    return Err(format!("{field} cannot be empty"));
+  }
+  if url.len() > 2048 {
+    return Err(format!("{field} must be at most 2048 characters"));
+  }
+  if !matches!(
+    url.split_once("://").map(|(scheme, _)| scheme),
+    Some("http" | "https" | "s3" | "ssh" | "ssh-ng" | "file")
+  ) {
+    return Err(format!(
+      "{field} must use http, https, s3, ssh, ssh-ng, or file"
+    ));
+  }
+  Ok(())
+}
+
+/// Validate one binary cache upstream entry.
+///
+/// # Errors
+///
+/// Returns an error if the upstream URL or public key field is invalid.
+pub fn validate_binary_cache_upstream(
+  upstream: &BinaryCacheUpstream,
+  field: &str,
+) -> Result<(), String> {
+  validate_cache_url(&upstream.url, &format!("{field}.url"))?;
+  if upstream
+    .public_key
+    .as_deref()
+    .is_some_and(|key| key.trim().is_empty())
+  {
+    return Err(format!("{field}.public_key cannot be empty"));
   }
   Ok(())
 }

@@ -2,14 +2,17 @@
 
 mod env;
 mod load;
+mod queue;
 mod redact;
 mod structs;
 mod validation;
 
 pub use circus_logs::TracingConfig;
+pub use circus_types::BinaryCacheUpstream;
 #[cfg(test)]
 pub(crate) use env::{apply_env_vars, parse_env_value, set_nested};
 #[cfg(test)] pub(crate) use load::deep_merge;
+pub use queue::*;
 pub use redact::redact_secrets;
 pub use structs::*;
 #[cfg(test)]
@@ -119,13 +122,13 @@ mod tests {
   fn test_declarative_config_serialization_roundtrip() {
     let config = DeclarativeConfig {
       projects:        vec![DeclarativeProject {
-        name:           "test".to_string(),
-        repository_url: "https://example.com/repo".to_string(),
-        description:    Some("desc".to_string()),
-        cache_enabled:  true,
-        cache_url:      None,
+        name:            "test".to_string(),
+        repository_url:  "https://example.com/repo".to_string(),
+        description:     Some("desc".to_string()),
+        cache_enabled:   true,
+        cache_url:       None,
         cache_upstreams: Vec::new(),
-        jobsets:        vec![DeclarativeJobset {
+        jobsets:         vec![DeclarativeJobset {
           name:              "checks".to_string(),
           nix_expression:    "checks".to_string(),
           enabled:           true,
@@ -138,10 +141,10 @@ mod tests {
           keep_nr:           None,
           inputs:            vec![],
         }],
-        notifications:  vec![],
-        webhooks:       vec![],
-        channels:       vec![],
-        members:        vec![],
+        notifications:   vec![],
+        webhooks:        vec![],
+        channels:        vec![],
+        members:         vec![],
       }],
       api_keys:        vec![DeclarativeApiKey {
         name:     "test-key".to_string(),

@@ -31,23 +31,23 @@ async fn test_project_search() {
 
   // Create test projects
   let project1 = repo::projects::create(&pool, CreateProject {
-    name:           format!("search-test-alpha-{}", Uuid::new_v4().simple()),
-    description:    Some("Alpha testing project".to_string()),
-    repository_url: "https://github.com/test/alpha".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("search-test-alpha-{}", Uuid::new_v4().simple()),
+    description:     Some("Alpha testing project".to_string()),
+    repository_url:  "https://github.com/test/alpha".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project 1");
 
   let project2 = repo::projects::create(&pool, CreateProject {
-    name:           format!("search-test-beta-{}", Uuid::new_v4().simple()),
-    description:    Some("Beta testing project".to_string()),
-    repository_url: "https://github.com/test/beta".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("search-test-beta-{}", Uuid::new_v4().simple()),
+    description:     Some("Beta testing project".to_string()),
+    repository_url:  "https://github.com/test/beta".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project 2");
@@ -102,12 +102,12 @@ async fn test_build_search_with_filters() {
 
   // Setup: project -> jobset -> evaluation -> builds
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("build-search-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("build-search-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");
@@ -258,12 +258,12 @@ async fn test_multi_entity_search() {
 
   // Create project with jobset, evaluation, and build
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("multi-search-{}", Uuid::new_v4().simple()),
-    description:    Some("Multi-entity search test".to_string()),
-    repository_url: "https://github.com/test/multi".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("multi-search-{}", Uuid::new_v4().simple()),
+    description:     Some("Multi-entity search test".to_string()),
+    repository_url:  "https://github.com/test/multi".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");
@@ -350,12 +350,12 @@ async fn test_search_pagination() {
   let mut project_ids = vec![];
   for i in 0..5 {
     let project = repo::projects::create(&pool, CreateProject {
-      name:           format!("page-test-{}-{}", i, Uuid::new_v4().simple()),
-      description:    Some(format!("Page test project {i}")),
-      repository_url: "https://github.com/test/page".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            format!("page-test-{}-{}", i, Uuid::new_v4().simple()),
+      description:     Some(format!("Page test project {i}")),
+      repository_url:  "https://github.com/test/page".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     })
     .await
     .expect("create project");
@@ -411,23 +411,23 @@ async fn test_search_sorting() {
 
   // Create projects in reverse alphabetical order
   let project_z = repo::projects::create(&pool, CreateProject {
-    name:           format!("zzz-sort-test-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/z".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("zzz-sort-test-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/z".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project z");
 
   let project_a = repo::projects::create(&pool, CreateProject {
-    name:           format!("aaa-sort-test-{}", Uuid::new_v4().simple()),
-    description:    None,
-    repository_url: "https://github.com/test/a".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("aaa-sort-test-{}", Uuid::new_v4().simple()),
+    description:     None,
+    repository_url:  "https://github.com/test/a".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project a");
@@ -489,12 +489,12 @@ async fn test_quick_search() {
 
   // Create test data: project -> jobset -> evaluation -> build
   let project = repo::projects::create(&pool, CreateProject {
-    name:           format!("quick-search-{}", Uuid::new_v4().simple()),
-    description:    Some("Quick search test".to_string()),
-    repository_url: "https://github.com/test/quick".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("quick-search-{}", Uuid::new_v4().simple()),
+    description:     Some("Quick search test".to_string()),
+    repository_url:  "https://github.com/test/quick".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");

@@ -91,21 +91,15 @@ pub async fn run(
 
   // Upsert projects and their jobsets
   for decl_project in &config.projects {
-    let cache_upstreams = decl_project
-      .cache_upstreams
-      .iter()
-      .map(|upstream| crate::models::BinaryCacheUpstream {
-        url:        upstream.url.clone(),
-        public_key: upstream.public_key.clone(),
-      })
-      .collect();
     let project = repo::projects::upsert(pool, CreateProject {
-      name:           decl_project.name.clone(),
-      repository_url: decl_project.repository_url.clone(),
-      description:    decl_project.description.clone(),
-      cache_enabled:  decl_project.cache_enabled,
-      cache_url:      decl_project.cache_url.clone(),
-      cache_upstreams: crate::models::BinaryCacheUpstreams(cache_upstreams),
+      name:            decl_project.name.clone(),
+      repository_url:  decl_project.repository_url.clone(),
+      description:     decl_project.description.clone(),
+      cache_enabled:   decl_project.cache_enabled,
+      cache_url:       decl_project.cache_url.clone(),
+      cache_upstreams: crate::models::BinaryCacheUpstreams(
+        decl_project.cache_upstreams.clone(),
+      ),
     })
     .await?;
 

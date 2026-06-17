@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use circus_common::models::BinaryCacheUpstreams;
 use circus_config::{
   BuilderSchedulingStrategy,
   CacheConfig,
@@ -302,12 +303,12 @@ async fn test_fair_share_scheduling() {
   let project_hi = circus_common::repo::projects::create(
     &pool,
     circus_common::models::CreateProject {
-      name:           format!("fair-hi-{}", uuid::Uuid::new_v4()),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            format!("fair-hi-{}", uuid::Uuid::new_v4()),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     },
   )
   .await
@@ -316,12 +317,12 @@ async fn test_fair_share_scheduling() {
   let project_lo = circus_common::repo::projects::create(
     &pool,
     circus_common::models::CreateProject {
-      name:           format!("fair-lo-{}", uuid::Uuid::new_v4()),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            format!("fair-lo-{}", uuid::Uuid::new_v4()),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     },
   )
   .await
@@ -554,12 +555,12 @@ async fn test_atomic_build_claiming() {
   let project = circus_common::repo::projects::create(
     &pool,
     circus_common::models::CreateProject {
-      name:           format!("runner-test-{}", uuid::Uuid::new_v4()),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            format!("runner-test-{}", uuid::Uuid::new_v4()),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     },
   )
   .await
@@ -655,12 +656,12 @@ async fn test_orphan_build_reset() {
   let project = circus_common::repo::projects::create(
     &pool,
     circus_common::models::CreateProject {
-      name:           format!("orphan-test-{}", uuid::Uuid::new_v4()),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            format!("orphan-test-{}", uuid::Uuid::new_v4()),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     },
   )
   .await
@@ -772,12 +773,12 @@ async fn test_get_cancelled_among() {
   let project = circus_common::repo::projects::create(
     &pool,
     circus_common::models::CreateProject {
-      name:           format!("cancel-among-{}", uuid::Uuid::new_v4()),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            format!("cancel-among-{}", uuid::Uuid::new_v4()),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     },
   )
   .await

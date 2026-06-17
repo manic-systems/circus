@@ -30,12 +30,12 @@ async fn get_pool() -> Option<sqlx::PgPool> {
 /// Helper: create a project with a unique name.
 async fn create_test_project(pool: &sqlx::PgPool, prefix: &str) -> Project {
   repo::projects::create(pool, CreateProject {
-    name:           format!("{prefix}-{}", uuid::Uuid::new_v4()),
-    description:    Some("Test project".to_string()),
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            format!("{prefix}-{}", uuid::Uuid::new_v4()),
+    description:     Some("Test project".to_string()),
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project")
@@ -126,11 +126,11 @@ async fn test_project_crud() {
 
   // Update
   let updated = repo::projects::update(&pool, project.id, UpdateProject {
-    name:           None,
-    description:    Some("Updated description".to_string()),
-    repository_url: None,
-    cache_enabled:  None,
-    cache_url:      None,
+    name:            None,
+    description:     Some("Updated description".to_string()),
+    repository_url:  None,
+    cache_enabled:   None,
+    cache_url:       None,
     cache_upstreams: None,
   })
   .await
@@ -162,12 +162,12 @@ async fn test_project_unique_constraint() {
   let name = format!("unique-test-{}", uuid::Uuid::new_v4());
 
   let _project = repo::projects::create(&pool, CreateProject {
-    name:           name.clone(),
-    description:    None,
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            name.clone(),
+    description:     None,
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create first project");
@@ -177,9 +177,9 @@ async fn test_project_unique_constraint() {
     name,
     description: None,
     repository_url: "https://github.com/test/repo2".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    cache_enabled: true,
+    cache_url: None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await;
 

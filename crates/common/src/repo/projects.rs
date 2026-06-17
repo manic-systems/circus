@@ -1,5 +1,4 @@
-use sqlx::PgPool;
-use sqlx::types::Json;
+use sqlx::{PgPool, types::Json};
 use uuid::Uuid;
 
 use crate::{
@@ -16,9 +15,8 @@ use crate::{
 pub async fn create(pool: &PgPool, input: CreateProject) -> Result<Project> {
   input.validate().map_err(CiError::Validation)?;
   sqlx::query_as::<_, Project>(
-    "INSERT INTO projects (name, description, repository_url, \
-     cache_enabled, cache_url, cache_upstreams) VALUES ($1, $2, $3, $4, $5, \
-     $6) RETURNING *",
+    "INSERT INTO projects (name, description, repository_url, cache_enabled, \
+     cache_url, cache_upstreams) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
   )
   .bind(&input.name)
   .bind(&input.description)
@@ -109,9 +107,8 @@ pub async fn update(
   let repository_url = input.repository_url.unwrap_or(existing.repository_url);
   let cache_enabled = input.cache_enabled.unwrap_or(existing.cache_enabled);
   let cache_url = input.cache_url.or(existing.cache_url);
-  let cache_upstreams = input
-    .cache_upstreams
-    .unwrap_or_else(|| existing.cache_upstreams.0);
+  let cache_upstreams =
+    input.cache_upstreams.unwrap_or(existing.cache_upstreams.0);
 
   sqlx::query_as::<_, Project>(
     "UPDATE projects SET name = $1, description = $2, repository_url = $3, \
@@ -140,8 +137,8 @@ pub async fn upsert(pool: &PgPool, input: CreateProject) -> Result<Project> {
   Ok(
     sqlx::query_as::<_, Project>(
       "INSERT INTO projects (name, description, repository_url, \
-       cache_enabled, cache_url, cache_upstreams) VALUES ($1, $2, $3, $4, \
-       $5, $6) ON CONFLICT (name) DO UPDATE SET description = \
+       cache_enabled, cache_url, cache_upstreams) VALUES ($1, $2, $3, $4, $5, \
+       $6) ON CONFLICT (name) DO UPDATE SET description = \
        EXCLUDED.description, repository_url = EXCLUDED.repository_url, \
        cache_enabled = EXCLUDED.cache_enabled, cache_url = \
        EXCLUDED.cache_url, cache_upstreams = EXCLUDED.cache_upstreams \

@@ -96,21 +96,6 @@ fn validate_repository_url(url: &str) -> Result<(), String> {
   Ok(())
 }
 
-fn validate_cache_url(url: &str, field: &str) -> Result<(), String> {
-  if url.trim().is_empty() {
-    return Err(format!("{field} cannot be empty"));
-  }
-  if url.len() > 2048 {
-    return Err(format!("{field} must be at most 2048 characters"));
-  }
-  let parsed =
-    url::Url::parse(url).map_err(|_| format!("{field} must be a URL"))?;
-  match parsed.scheme() {
-    "http" | "https" | "s3" | "ssh" | "ssh-ng" | "file" => Ok(()),
-    scheme => Err(format!("{field} has unsupported scheme {scheme}")),
-  }
-}
-
 /// SSRF guard for outbound webhook URLs (Slack, generic webhooks, ...).
 /// Rejects schemes other than http/https, internal hostnames, and cloud
 /// metadata endpoints.
@@ -342,6 +327,11 @@ fn validate_positive_i32(val: i32, field: &str) -> Result<(), String> {
   Ok(())
 }
 
+use circus_types::validation::{
+  validate_binary_cache_upstream,
+  validate_cache_url,
+};
+
 use crate::models::{
   CreateBuild,
   CreateChannel,
@@ -367,12 +357,7 @@ impl Validate for CreateProject {
       validate_cache_url(url, "cache_url")?;
     }
     for upstream in &self.cache_upstreams.0 {
-      validate_cache_url(&upstream.url, "cache_upstreams.url")?;
-      if let Some(public_key) = &upstream.public_key
-        && public_key.trim().is_empty()
-      {
-        return Err("cache_upstreams.public_key cannot be empty".to_string());
-      }
+      validate_binary_cache_upstream(upstream, "cache_upstreams")?;
     }
     Ok(())
   }
@@ -394,12 +379,7 @@ impl Validate for UpdateProject {
     }
     if let Some(upstreams) = &self.cache_upstreams {
       for upstream in &upstreams.0 {
-        validate_cache_url(&upstream.url, "cache_upstreams.url")?;
-        if let Some(public_key) = &upstream.public_key
-          && public_key.trim().is_empty()
-        {
-          return Err("cache_upstreams.public_key cannot be empty".to_string());
-        }
+        validate_binary_cache_upstream(upstream, "cache_upstreams")?;
       }
     }
     Ok(())
@@ -534,16 +514,17 @@ mod tests {
   use uuid::Uuid;
 
   use super::*;
+  use crate::models::BinaryCacheUpstreams;
 
   #[test]
   fn test_create_project_valid() {
     let p = CreateProject {
-      name:           "my-project".to_string(),
-      description:    Some("A test project".to_string()),
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            "my-project".to_string(),
+      description:     Some("A test project".to_string()),
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     };
     assert!(p.validate().is_ok());
   }
@@ -551,32 +532,32 @@ mod tests {
   #[test]
   fn test_create_project_invalid_name() {
     let p = CreateProject {
-      name:           String::new(),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            String::new(),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     };
     assert!(p.validate().is_err());
 
     let p = CreateProject {
-      name:           "-starts-with-dash".to_string(),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            "-starts-with-dash".to_string(),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     };
     assert!(p.validate().is_err());
 
     let p = CreateProject {
-      name:           "has spaces".to_string(),
-      description:    None,
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            "has spaces".to_string(),
+      description:     None,
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     };
     assert!(p.validate().is_err());
   }
@@ -585,12 +566,12 @@ mod tests {
   fn test_create_project_invalid_url() {
     // URL without scheme separator is rejected structurally
     let p = CreateProject {
-      name:           "valid-name".to_string(),
-      description:    None,
-      repository_url: "not-a-url".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            "valid-name".to_string(),
+      description:     None,
+      repository_url:  "not-a-url".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     };
     assert!(p.validate().is_err());
   }
@@ -598,12 +579,12 @@ mod tests {
   #[test]
   fn test_create_project_description_too_long() {
     let p = CreateProject {
-      name:           "valid-name".to_string(),
-      description:    Some("a".repeat(4097)),
-      repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+      name:            "valid-name".to_string(),
+      description:     Some("a".repeat(4097)),
+      repository_url:  "https://github.com/test/repo".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
     };
     assert!(p.validate().is_err());
   }

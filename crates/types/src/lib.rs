@@ -4,6 +4,15 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BinaryCacheUpstreams(pub Vec<BinaryCacheUpstream>);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BinaryCacheUpstream {
+  pub url:        String,
+  pub public_key: Option<String>,
+}
+
 pub mod validation;
 
 #[derive(

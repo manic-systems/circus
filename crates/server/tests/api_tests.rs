@@ -6,6 +6,7 @@ use axum::{
   body::Body,
   http::{Request, StatusCode},
 };
+use circus_common::models::BinaryCacheUpstreams;
 use tower::ServiceExt;
 
 const ADMIN_TOKEN: &str = "circus_test_admin";
@@ -121,12 +122,12 @@ async fn build_app_with_admin_key(pool: sqlx::PgPool) -> axum::Router {
 
 async fn create_test_project(pool: &sqlx::PgPool) -> uuid::Uuid {
   circus_common::repo::projects::create(pool, circus_common::CreateProject {
-    name:           format!("security-test-{}", uuid::Uuid::new_v4()),
-    repository_url: "https://github.com/test/repo".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
-    description:    None,
+    name:            format!("security-test-{}", uuid::Uuid::new_v4()),
+    repository_url:  "https://github.com/test/repo".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
+    description:     None,
   })
   .await
   .unwrap()
@@ -637,30 +638,27 @@ async fn test_project_cache_serves_only_owned_persisted_narinfo() {
   let project_a = circus_common::repo::projects::create(
     &pool,
     circus_common::CreateProject {
-      name:           project_a_name.clone(),
-      repository_url: "https://github.com/test/cache-a".to_string(),
-      cache_enabled:  true,
-      cache_url:      Some(format!(
+      name:            project_a_name.clone(),
+      repository_url:  "https://github.com/test/cache-a".to_string(),
+      cache_enabled:   true,
+      cache_url:       Some(format!(
         "https://ci.example.org/projects/{project_a_name}/nix-cache/"
       )),
-      cache_upstreams: Default::default(),
-      description:    None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
     },
   )
   .await
   .unwrap();
   let project_b_name = format!("cache-b-{}", uuid::Uuid::new_v4().simple());
-  circus_common::repo::projects::create(
-    &pool,
-    circus_common::CreateProject {
-      name:           project_b_name.clone(),
-      repository_url: "https://github.com/test/cache-b".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
-      description:    None,
-    },
-  )
+  circus_common::repo::projects::create(&pool, circus_common::CreateProject {
+    name:            project_b_name.clone(),
+    repository_url:  "https://github.com/test/cache-b".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
+    description:     None,
+  })
   .await
   .unwrap();
 
@@ -695,7 +693,9 @@ async fn test_project_cache_serves_only_owned_persisted_narinfo() {
     .clone()
     .oneshot(
       Request::builder()
-        .uri(format!("/projects/{project_a_name}/nix-cache/{hash}.narinfo"))
+        .uri(format!(
+          "/projects/{project_a_name}/nix-cache/{hash}.narinfo"
+        ))
         .body(Body::empty())
         .unwrap(),
     )
@@ -706,7 +706,9 @@ async fn test_project_cache_serves_only_owned_persisted_narinfo() {
   let response = app
     .oneshot(
       Request::builder()
-        .uri(format!("/projects/{project_b_name}/nix-cache/{hash}.narinfo"))
+        .uri(format!(
+          "/projects/{project_b_name}/nix-cache/{hash}.narinfo"
+        ))
         .body(Body::empty())
         .unwrap(),
     )

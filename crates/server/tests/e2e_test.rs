@@ -46,12 +46,12 @@ async fn test_e2e_project_eval_build_flow() {
   // 1. Create a project
   let project_name = format!("e2e-test-{}", uuid::Uuid::new_v4());
   let project = circus_common::repo::projects::create(&pool, CreateProject {
-    name:           project_name.clone(),
-    description:    Some("E2E test project".to_string()),
-    repository_url: "https://github.com/test/e2e".to_string(),
-      cache_enabled:  true,
-      cache_url:      None,
-      cache_upstreams: Default::default(),
+    name:            project_name.clone(),
+    description:     Some("E2E test project".to_string()),
+    repository_url:  "https://github.com/test/e2e".to_string(),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: BinaryCacheUpstreams::default(),
   })
   .await
   .expect("create project");

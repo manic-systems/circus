@@ -1,39 +1,31 @@
 //! Data models for CI
 
 use chrono::{DateTime, Utc};
-pub use circus_types::{AuthKind, ForgeType, InputType, NotificationType};
+pub use circus_types::{
+  AuthKind,
+  BinaryCacheUpstream,
+  BinaryCacheUpstreams,
+  ForgeType,
+  InputType,
+  NotificationType,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::roles::{GlobalRole, ProjectRole};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BinaryCacheUpstreams(pub Vec<BinaryCacheUpstream>);
-
-impl Default for BinaryCacheUpstreams {
-  fn default() -> Self {
-    Self(Vec::new())
-  }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BinaryCacheUpstream {
-  pub url:        String,
-  pub public_key: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Project {
-  pub id:             Uuid,
-  pub name:           String,
-  pub description:    Option<String>,
-  pub repository_url: String,
-  pub cache_enabled:  bool,
-  pub cache_url:      Option<String>,
+  pub id:              Uuid,
+  pub name:            String,
+  pub description:     Option<String>,
+  pub repository_url:  String,
+  pub cache_enabled:   bool,
+  pub cache_url:       Option<String>,
   pub cache_upstreams: sqlx::types::Json<BinaryCacheUpstreams>,
-  pub created_at:     DateTime<Utc>,
-  pub updated_at:     DateTime<Utc>,
+  pub created_at:      DateTime<Utc>,
+  pub updated_at:      DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -850,23 +842,23 @@ pub struct PaginatedResponse<T> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateProject {
-  pub name:           String,
-  pub description:    Option<String>,
-  pub repository_url: String,
+  pub name:            String,
+  pub description:     Option<String>,
+  pub repository_url:  String,
   #[serde(default = "default_project_cache_enabled")]
-  pub cache_enabled:  bool,
-  pub cache_url:      Option<String>,
+  pub cache_enabled:   bool,
+  pub cache_url:       Option<String>,
   #[serde(default)]
   pub cache_upstreams: BinaryCacheUpstreams,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateProject {
-  pub name:           Option<String>,
-  pub description:    Option<String>,
-  pub repository_url: Option<String>,
-  pub cache_enabled:  Option<bool>,
-  pub cache_url:      Option<String>,
+  pub name:            Option<String>,
+  pub description:     Option<String>,
+  pub repository_url:  Option<String>,
+  pub cache_enabled:   Option<bool>,
+  pub cache_url:       Option<String>,
   pub cache_upstreams: Option<BinaryCacheUpstreams>,
 }
 
