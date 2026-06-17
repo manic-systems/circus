@@ -7,6 +7,13 @@ use std::{
 };
 
 pub use circus_logs::TracingConfig;
+use circus_types::{
+  ForgeType,
+  GlobalRole,
+  InputType,
+  NotificationType,
+  ProjectRole,
+};
 use color_eyre::eyre::{self, WrapErr, bail};
 use config as config_crate;
 use serde::{Deserialize, Serialize};
@@ -907,7 +914,7 @@ pub struct DeclarativeProject {
 pub struct DeclarativeNotification {
   /// Notification type: `github_status`, `email`, `gitlab_status`,
   /// `gitea_status`, `webhook`
-  pub notification_type: String,
+  pub notification_type: NotificationType,
   /// Type-specific configuration (JSON object)
   pub config:            serde_json::Value,
   #[serde(default = "default_true")]
@@ -918,7 +925,7 @@ pub struct DeclarativeNotification {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclarativeWebhook {
   /// Forge type: github, gitea, gitlab
-  pub forge_type:  String,
+  pub forge_type:  ForgeType,
   /// Webhook secret (inline, for dev/testing only)
   pub secret:      Option<String>,
   /// Path to a file containing the webhook secret (for production)
@@ -942,15 +949,15 @@ pub struct DeclarativeProjectMember {
   pub username: String,
   /// Role: member, maintainer, or admin
   #[serde(default = "default_member_role")]
-  pub role:     String,
+  pub role:     ProjectRole,
 }
 
 const fn default_psi_check_timeout() -> u64 {
   5
 }
 
-fn default_member_role() -> String {
-  "member".to_string()
+const fn default_member_role() -> ProjectRole {
+  ProjectRole::Member
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -984,7 +991,7 @@ pub struct DeclarativeJobset {
 pub struct DeclarativeJobsetInput {
   pub name:       String,
   /// Input type: git, string, boolean, path, or build
-  pub input_type: String,
+  pub input_type: InputType,
   pub value:      String,
   /// Git revision (for git inputs)
   pub revision:   Option<String>,
@@ -998,7 +1005,7 @@ pub struct DeclarativeApiKey {
   /// Path to a file containing the API key (for production use with secrets).
   pub key_file: Option<String>,
   #[serde(default = "default_role")]
-  pub role:     String,
+  pub role:     GlobalRole,
 }
 
 /// Declarative user definition for configuration-driven user management.
@@ -1012,13 +1019,13 @@ pub struct DeclarativeUser {
   /// Path to a file containing the password (for production use with secrets).
   pub password_file: Option<String>,
   #[serde(default = "default_user_role")]
-  pub role:          String,
+  pub role:          GlobalRole,
   #[serde(default = "default_true")]
   pub enabled:       bool,
 }
 
-fn default_user_role() -> String {
-  "read-only".to_string()
+const fn default_user_role() -> GlobalRole {
+  GlobalRole::ReadOnly
 }
 
 const fn default_true() -> bool {
@@ -1037,8 +1044,8 @@ const fn default_scheduling_shares() -> i32 {
   100
 }
 
-fn default_role() -> String {
-  "read-only".to_string()
+const fn default_role() -> GlobalRole {
+  GlobalRole::ReadOnly
 }
 
 const fn default_notification_max_attempts() -> i32 {
@@ -1953,7 +1960,7 @@ mod tests {
       Some("interval")
     );
     assert_eq!(config.api_keys.len(), 1);
-    assert_eq!(config.api_keys[0].role, "admin");
+    assert_eq!(config.api_keys[0].role, GlobalRole::Admin);
   }
 
   #[test]
@@ -2005,7 +2012,7 @@ mod tests {
         name:     "test-key".to_string(),
         key:      Some("circus_test".to_string()),
         key_file: None,
-        role:     "admin".to_string(),
+        role:     GlobalRole::Admin,
       }],
       users:           vec![],
       remote_builders: vec![],
@@ -2036,7 +2043,7 @@ mod tests {
             key = "circus_test_123"
         "#;
     let config: DeclarativeConfig = toml::from_str(toml_str).unwrap();
-    assert_eq!(config.api_keys[0].role, "read-only");
+    assert_eq!(config.api_keys[0].role, GlobalRole::ReadOnly);
   }
 
   fn table(m: toml::map::Map<String, toml::Value>) -> toml::Value {

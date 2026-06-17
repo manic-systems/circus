@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
   error::{CiError, Result},
-  models::{CreateNotificationConfig, NotificationConfig},
+  models::{CreateNotificationConfig, NotificationConfig, NotificationType},
 };
 
 /// Create a new notification config.
@@ -25,7 +25,7 @@ pub async fn create(
      VALUES ($1, $2, $3) RETURNING *",
   )
   .bind(input.project_id)
-  .bind(&input.notification_type)
+  .bind(input.notification_type)
   .bind(&input.config)
   .fetch_one(pool)
   .await
@@ -94,7 +94,7 @@ pub async fn delete_for_project(
 pub async fn upsert(
   pool: &PgPool,
   project_id: Uuid,
-  notification_type: &str,
+  notification_type: NotificationType,
   config: &serde_json::Value,
   enabled: bool,
 ) -> Result<NotificationConfig> {
@@ -125,7 +125,7 @@ pub async fn sync_for_project(
   notifications: &[DeclarativeNotification],
 ) -> Result<()> {
   // Get notification types from declarative config
-  let types: Vec<&str> = notifications
+  let type_strings: Vec<&str> = notifications
     .iter()
     .map(|n| n.notification_type.as_str())
     .collect();
@@ -136,7 +136,7 @@ pub async fn sync_for_project(
      notification_type != ALL($2::text[])",
   )
   .bind(project_id)
-  .bind(&types)
+  .bind(&type_strings)
   .execute(pool)
   .await
   .map_err(CiError::Database)?;
@@ -146,7 +146,7 @@ pub async fn sync_for_project(
     upsert(
       pool,
       project_id,
-      &notification.notification_type,
+      notification.notification_type,
       &notification.config,
       notification.enabled,
     )

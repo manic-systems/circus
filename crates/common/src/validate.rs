@@ -31,8 +31,6 @@ static COMMIT_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Schemes considered insecure for repository URLs.
 const INSECURE_SCHEMES: &[&str] = &["file", "http"];
 
-const VALID_FORGE_TYPES: &[&str] = &["github", "gitea", "forgejo", "gitlab"];
-
 /// Known internal/metadata IP ranges and hostnames to block for SSRF
 /// protection.
 const INTERNAL_HOSTS: &[&str] = &[
@@ -380,16 +378,6 @@ fn validate_positive_i32(val: i32, field: &str) -> Result<(), String> {
   Ok(())
 }
 
-fn validate_forge_type(forge_type: &str) -> Result<(), String> {
-  if !VALID_FORGE_TYPES.contains(&forge_type) {
-    return Err(format!(
-      "forge_type must be one of: {}",
-      VALID_FORGE_TYPES.join(", ")
-    ));
-  }
-  Ok(())
-}
-
 use crate::models::{
   CreateBuild,
   CreateChannel,
@@ -549,7 +537,6 @@ impl Validate for UpdateRemoteBuilder {
 
 impl Validate for CreateWebhookConfig {
   fn validate(&self) -> Result<(), String> {
-    validate_forge_type(&self.forge_type)?;
     Ok(())
   }
 }
@@ -812,20 +799,10 @@ mod tests {
   fn test_create_webhook_config_valid() {
     let wh = CreateWebhookConfig {
       project_id: Uuid::new_v4(),
-      forge_type: "github".to_string(),
+      forge_type: crate::models::ForgeType::Github,
       secret:     None,
     };
     assert!(wh.validate().is_ok());
-  }
-
-  #[test]
-  fn test_create_webhook_config_invalid_forge() {
-    let wh = CreateWebhookConfig {
-      project_id: Uuid::new_v4(),
-      forge_type: "bitbucket".to_string(),
-      secret:     None,
-    };
-    assert!(wh.validate().is_err());
   }
 
   #[test]

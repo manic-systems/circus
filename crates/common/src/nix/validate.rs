@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::flake;
+use crate::models::InputType;
 
 pub(crate) static SYSTEM_RE: LazyLock<Regex> = LazyLock::new(|| {
   #[expect(clippy::expect_used, reason = "static regex initializer, fine")]
@@ -46,7 +47,7 @@ pub fn validate_nix_expression(expr: &str) -> Result<(), String> {
 /// Nix at the local filesystem.
 pub fn validate_jobset_input(
   name: &str,
-  input_type: &str,
+  input_type: InputType,
   value: &str,
   revision: Option<&str>,
 ) -> Result<(), String> {
@@ -65,15 +66,8 @@ pub fn validate_jobset_input(
   }
 
   match input_type {
-    "git" => flake::Ref::parse(value).map(|_| ()),
-    "string" | "boolean" | "build" => Ok(()),
-    "path" => {
-      Err(
-        "path jobset inputs are not allowed from untrusted configuration"
-          .to_string(),
-      )
-    },
-    other => Err(format!("unsupported jobset input type '{other}'")),
+    InputType::Git => flake::Ref::parse(value).map(|_| ()),
+    InputType::String | InputType::Boolean | InputType::Build => Ok(()),
   }
 }
 
@@ -137,21 +131,26 @@ mod tests {
   #[test]
   fn jobset_input_blocks_local_path_inputs() {
     assert!(
-      validate_jobset_input("nixpkgs", "git", "path:/var/lib/circus", None)
-        .is_err()
+      validate_jobset_input(
+        "nixpkgs",
+        InputType::Git,
+        "path:/var/lib/circus",
+        None
+      )
+      .is_err()
     );
-    assert!(
-      validate_jobset_input("src", "path", "/var/lib/circus", None).is_err()
-    );
+    assert!(serde_json::from_str::<InputType>("\"path\"").is_err());
     assert!(
       validate_jobset_input(
         "nixpkgs",
-        "git",
+        InputType::Git,
         "github:NixOS/nixpkgs",
         Some("abcdef"),
       )
       .is_ok()
     );
-    assert!(validate_jobset_input("flag", "boolean", "true", None).is_ok());
+    assert!(
+      validate_jobset_input("flag", InputType::Boolean, "true", None).is_ok()
+    );
   }
 }

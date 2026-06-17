@@ -7,8 +7,7 @@ use uuid::Uuid;
 use crate::{
   error::{CiError, Result},
   models::{CreateProjectMember, ProjectMember, UpdateProjectMember},
-  roles::VALID_PROJECT_ROLES,
-  validation::validate_role,
+  roles::ProjectRole,
 };
 
 /// Add a member to a project with role validation
@@ -21,17 +20,13 @@ pub async fn create(
   project_id: Uuid,
   data: &CreateProjectMember,
 ) -> Result<ProjectMember> {
-  // Validate role
-  validate_role(&data.role, VALID_PROJECT_ROLES)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
-
   sqlx::query_as::<_, ProjectMember>(
     "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, \
      $3) RETURNING *",
   )
   .bind(project_id)
   .bind(data.user_id)
-  .bind(&data.role)
+  .bind(data.role)
   .fetch_one(pool)
   .await
   .map_err(|e| {
@@ -134,10 +129,7 @@ pub async fn update(
   id: Uuid,
   data: &UpdateProjectMember,
 ) -> Result<ProjectMember> {
-  if let Some(ref role) = data.role {
-    validate_role(role, VALID_PROJECT_ROLES)
-      .map_err(|e| CiError::Validation(e.to_string()))?;
-
+  if let Some(role) = data.role {
     sqlx::query_as::<_, ProjectMember>(
       "UPDATE project_members SET role = $1 WHERE id = $2 RETURNING *",
     )
@@ -208,17 +200,11 @@ pub async fn check_permission(
   pool: &PgPool,
   project_id: Uuid,
   user_id: Uuid,
-  required_role: &str,
+  required_role: ProjectRole,
 ) -> Result<bool> {
-  use crate::roles::has_project_permission;
-
   let member = get_by_project_and_user(pool, project_id, user_id).await?;
 
-  if let Some(m) = member {
-    Ok(has_project_permission(&m.role, required_role))
-  } else {
-    Ok(false)
-  }
+  Ok(member.is_some_and(|m| m.role.has_permission(required_role)))
 }
 
 /// Upsert a project member (insert or update on conflict).
@@ -230,12 +216,8 @@ pub async fn upsert(
   pool: &PgPool,
   project_id: Uuid,
   user_id: Uuid,
-  role: &str,
+  role: ProjectRole,
 ) -> Result<ProjectMember> {
-  // Validate role
-  validate_role(role, VALID_PROJECT_ROLES)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
-
   sqlx::query_as::<_, ProjectMember>(
     "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, \
      $3) ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role \
@@ -281,7 +263,7 @@ pub async fn sync_for_project(
   // Upsert each member
   for member in members {
     if let Some(user_id) = resolve_user(&member.username) {
-      upsert(pool, project_id, user_id, &member.role).await?;
+      upsert(pool, project_id, user_id, member.role).await?;
     } else {
       tracing::warn!(
           project_id = %project_id,

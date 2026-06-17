@@ -7,12 +7,11 @@ use uuid::Uuid;
 use crate::{
   error::{CiError, Result},
   models::{CreateUser, LoginCredentials, UpdateUser, User, UserType},
-  roles::{ROLE_READ_ONLY, VALID_ROLES},
+  roles::GlobalRole,
   validation::{
     validate_email,
     validate_full_name,
     validate_password,
-    validate_role,
     validate_username,
   },
 };
@@ -84,10 +83,7 @@ pub async fn create(
     validate_full_name(name).map_err(|e| CiError::Validation(e.to_string()))?;
   }
 
-  // Validate role
-  let role = data.role.as_deref().unwrap_or(ROLE_READ_ONLY);
-  validate_role(role, VALID_ROLES)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
+  let role = data.role.unwrap_or(GlobalRole::ReadOnly);
 
   let password_hash = hash_password(&data.password)?;
 
@@ -254,7 +250,7 @@ pub async fn update(
     update_password(pool, id, password).await?;
   }
 
-  if let Some(ref role) = data.role {
+  if let Some(role) = data.role {
     update_role(pool, id, role).await?;
   }
 
@@ -351,10 +347,11 @@ pub async fn update_password(
 /// # Errors
 ///
 /// Returns error if validation fails or database update fails.
-pub async fn update_role(pool: &PgPool, id: Uuid, role: &str) -> Result<()> {
-  validate_role(role, VALID_ROLES)
-    .map_err(|e| CiError::Validation(e.to_string()))?;
-
+pub async fn update_role(
+  pool: &PgPool,
+  id: Uuid,
+  role: GlobalRole,
+) -> Result<()> {
   sqlx::query("UPDATE users SET role = $1 WHERE id = $2")
     .bind(role)
     .bind(id)

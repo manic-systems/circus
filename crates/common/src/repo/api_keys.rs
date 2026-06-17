@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::{
   error::{CiError, Result},
   models::ApiKey,
+  roles::GlobalRole,
 };
 
 /// Create a new API key.
@@ -15,7 +16,7 @@ pub async fn create(
   pool: &PgPool,
   name: &str,
   key_hash: &str,
-  role: &str,
+  role: GlobalRole,
 ) -> Result<ApiKey> {
   sqlx::query_as::<_, ApiKey>(
     "INSERT INTO api_keys (name, key_hash, role) VALUES ($1, $2, $3) \
@@ -45,7 +46,7 @@ pub async fn upsert(
   pool: &PgPool,
   name: &str,
   key_hash: &str,
-  role: &str,
+  role: GlobalRole,
 ) -> Result<ApiKey> {
   sqlx::query_as::<_, ApiKey>(
     "INSERT INTO api_keys (name, key_hash, role) VALUES ($1, $2, $3) ON \

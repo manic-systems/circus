@@ -167,32 +167,6 @@ pub fn validate_password(password: &str) -> Result<(), ValidationError> {
   Ok(())
 }
 
-/// Validate role against allowed roles
-///
-/// # Errors
-///
-/// Returns error if role is not in the allowed list.
-pub fn validate_role(
-  role: &str,
-  allowed: &[&str],
-) -> Result<(), ValidationError> {
-  if role.is_empty() {
-    return Err(ValidationError {
-      field:   "role".to_string(),
-      message: "Role is required".to_string(),
-    });
-  }
-
-  if !allowed.contains(&role) {
-    return Err(ValidationError {
-      field:   "role".to_string(),
-      message: format!("Invalid role. Must be one of: {}", allowed.join(", ")),
-    });
-  }
-
-  Ok(())
-}
-
 /// Validate full name (optional field)
 /// - Max 255 characters
 /// - Must not contain control characters

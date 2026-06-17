@@ -266,7 +266,7 @@ pub async fn run(
     let key_hash = hex::encode(hasher.finalize());
 
     let api_key =
-      repo::api_keys::upsert(pool, &decl_key.name, &key_hash, &decl_key.role)
+      repo::api_keys::upsert(pool, &decl_key.name, &key_hash, decl_key.role)
         .await?;
 
     tracing::info!(
@@ -309,7 +309,7 @@ pub async fn run(
         email: Some(decl_user.email.clone()),
         full_name: decl_user.full_name.clone(),
         password,
-        role: Some(decl_user.role.clone()),
+        role: Some(decl_user.role),
         enabled: Some(decl_user.enabled),
         public_dashboard: None,
       };
@@ -331,7 +331,7 @@ pub async fn run(
         email:     decl_user.email.clone(),
         full_name: decl_user.full_name.clone(),
         password:  pwd,
-        role:      Some(decl_user.role.clone()),
+        role:      Some(decl_user.role),
       };
       match repo::users::create(pool, &create, None).await {
         Ok(user) => {

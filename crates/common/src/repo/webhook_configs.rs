@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
   error::{CiError, Result},
-  models::{CreateWebhookConfig, WebhookConfig},
+  models::{CreateWebhookConfig, ForgeType, WebhookConfig},
 };
 
 /// Create a new webhook config.
@@ -30,7 +30,7 @@ pub async fn create(
      ($1, $2, $3) RETURNING *",
   )
   .bind(input.project_id)
-  .bind(&input.forge_type)
+  .bind(input.forge_type)
   .bind(secret)
   .fetch_one(pool)
   .await
@@ -89,7 +89,7 @@ pub async fn list_for_project(
 pub async fn get_by_project_and_forge(
   pool: &PgPool,
   project_id: Uuid,
-  forge_type: &str,
+  forge_type: ForgeType,
   encryption_key: Option<&str>,
 ) -> Result<Option<WebhookConfig>> {
   let mut config = sqlx::query_as::<_, WebhookConfig>(
@@ -141,7 +141,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
 pub async fn upsert(
   pool: &PgPool,
   project_id: Uuid,
-  forge_type: &str,
+  forge_type: ForgeType,
   secret: Option<&str>,
   enabled: bool,
   encryption_key: Option<&str>,
@@ -178,7 +178,7 @@ pub async fn sync_for_project(
   encryption_key: Option<&str>,
 ) -> Result<()> {
   // Get forge types from declarative config
-  let types: Vec<&str> =
+  let type_strings: Vec<&str> =
     webhooks.iter().map(|w| w.forge_type.as_str()).collect();
 
   // Delete webhook configs not in declarative config
@@ -187,7 +187,7 @@ pub async fn sync_for_project(
      ALL($2::text[])",
   )
   .bind(project_id)
-  .bind(&types)
+  .bind(&type_strings)
   .execute(pool)
   .await
   .map_err(CiError::Database)?;
@@ -199,7 +199,7 @@ pub async fn sync_for_project(
     upsert(
       pool,
       project_id,
-      &webhook.forge_type,
+      webhook.forge_type,
       secret.as_deref(),
       webhook.enabled,
       encryption_key,

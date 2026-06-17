@@ -3,7 +3,10 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{error::Result, models::NotificationTask};
+use crate::{
+  error::Result,
+  models::{NotificationTask, NotificationType},
+};
 
 /// Create a new notification task for later delivery
 ///
@@ -12,7 +15,7 @@ use crate::{error::Result, models::NotificationTask};
 /// Returns error if database insert fails.
 pub async fn create(
   pool: &PgPool,
-  notification_type: &str,
+  notification_type: NotificationType,
   payload: serde_json::Value,
   max_attempts: i32,
 ) -> Result<NotificationTask> {

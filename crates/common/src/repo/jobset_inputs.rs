@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
   error::{CiError, Result},
-  models::JobsetInput,
+  models::{InputType, JobsetInput},
   nix,
 };
 
@@ -17,7 +17,7 @@ pub async fn create(
   pool: &PgPool,
   jobset_id: Uuid,
   name: &str,
-  input_type: &str,
+  input_type: InputType,
   value: &str,
   revision: Option<&str>,
 ) -> Result<JobsetInput> {
@@ -89,7 +89,7 @@ pub async fn upsert(
   pool: &PgPool,
   jobset_id: Uuid,
   name: &str,
-  input_type: &str,
+  input_type: InputType,
   value: &str,
   revision: Option<&str>,
 ) -> Result<JobsetInput> {
@@ -142,7 +142,7 @@ pub async fn sync_for_jobset(
       pool,
       jobset_id,
       &input.name,
-      &input.input_type,
+      input.input_type,
       &input.value,
       input.revision.as_deref(),
     )

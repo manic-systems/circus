@@ -46,7 +46,7 @@ async fn test_user_crud() {
       email:     email.clone(),
       full_name: Some("Test User".to_string()),
       password:  "secure_password_123".to_string(),
-      role:      Some("admin".to_string()),
+      role:      Some(circus_common::roles::GlobalRole::Admin),
     },
     None,
   )
@@ -56,7 +56,7 @@ async fn test_user_crud() {
   assert_eq!(user.username, username);
   assert_eq!(user.email, email);
   assert_eq!(user.full_name.as_deref(), Some("Test User"));
-  assert_eq!(user.role, "admin");
+  assert_eq!(user.role, circus_common::roles::GlobalRole::Admin);
   assert!(user.enabled);
   assert!(user.password_hash.is_some());
 
@@ -102,11 +102,15 @@ async fn test_user_crud() {
   assert_eq!(updated.full_name.as_deref(), Some("Updated Name"));
 
   // Update role
-  repo::users::update_role(&pool, user.id, "read-only")
-    .await
-    .expect("update role");
+  repo::users::update_role(
+    &pool,
+    user.id,
+    circus_common::roles::GlobalRole::ReadOnly,
+  )
+  .await
+  .expect("update role");
   let updated = repo::users::get(&pool, user.id).await.expect("get updated");
-  assert_eq!(updated.role, "read-only");
+  assert_eq!(updated.role, circus_common::roles::GlobalRole::ReadOnly);
 
   // Disable user
   repo::users::set_enabled(&pool, user.id, false)
@@ -579,14 +583,14 @@ async fn test_project_members_crud() {
   let member =
     repo::project_members::create(&pool, project.id, &CreateProjectMember {
       user_id: user.id,
-      role:    "maintainer".to_string(),
+      role:    circus_common::roles::ProjectRole::Maintainer,
     })
     .await
     .expect("add member");
 
   assert_eq!(member.project_id, project.id);
   assert_eq!(member.user_id, user.id);
-  assert_eq!(member.role, "maintainer");
+  assert_eq!(member.role, circus_common::roles::ProjectRole::Maintainer);
 
   // Get by ID
   let fetched = repo::project_members::get(&pool, member.id)
@@ -619,17 +623,17 @@ async fn test_project_members_crud() {
   // Update role
   let updated =
     repo::project_members::update(&pool, member.id, &UpdateProjectMember {
-      role: Some("admin".to_string()),
+      role: Some(circus_common::roles::ProjectRole::Admin),
     })
     .await
     .expect("update role");
-  assert_eq!(updated.role, "admin");
+  assert_eq!(updated.role, circus_common::roles::ProjectRole::Admin);
 
   // Can't add duplicate member
   let duplicate =
     repo::project_members::create(&pool, project.id, &CreateProjectMember {
       user_id: user.id,
-      role:    "member".to_string(),
+      role:    circus_common::roles::ProjectRole::Member,
     })
     .await;
   assert!(matches!(
@@ -711,21 +715,21 @@ async fn test_project_members_permissions() {
   // Add members with different roles
   repo::project_members::create(&pool, project.id, &CreateProjectMember {
     user_id: admin_user.id,
-    role:    "admin".to_string(),
+    role:    circus_common::roles::ProjectRole::Admin,
   })
   .await
   .expect("add admin");
 
   repo::project_members::create(&pool, project.id, &CreateProjectMember {
     user_id: maintainer_user.id,
-    role:    "maintainer".to_string(),
+    role:    circus_common::roles::ProjectRole::Maintainer,
   })
   .await
   .expect("add maintainer");
 
   repo::project_members::create(&pool, project.id, &CreateProjectMember {
     user_id: member_user.id,
-    role:    "member".to_string(),
+    role:    circus_common::roles::ProjectRole::Member,
   })
   .await
   .expect("add member");
@@ -736,7 +740,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       admin_user.id,
-      "member"
+      circus_common::roles::ProjectRole::Member
     )
     .await
     .expect("check admin")
@@ -746,7 +750,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       admin_user.id,
-      "maintainer"
+      circus_common::roles::ProjectRole::Maintainer
     )
     .await
     .expect("check admin maintainer")
@@ -756,7 +760,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       admin_user.id,
-      "admin"
+      circus_common::roles::ProjectRole::Admin
     )
     .await
     .expect("check admin admin")
@@ -768,7 +772,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       maintainer_user.id,
-      "member"
+      circus_common::roles::ProjectRole::Member
     )
     .await
     .expect("check maintainer member")
@@ -778,7 +782,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       maintainer_user.id,
-      "maintainer"
+      circus_common::roles::ProjectRole::Maintainer
     )
     .await
     .expect("check maintainer maintainer")
@@ -788,7 +792,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       maintainer_user.id,
-      "admin"
+      circus_common::roles::ProjectRole::Admin
     )
     .await
     .expect("check maintainer admin")
@@ -800,7 +804,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       member_user.id,
-      "member"
+      circus_common::roles::ProjectRole::Member
     )
     .await
     .expect("check member")
@@ -810,7 +814,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       member_user.id,
-      "maintainer"
+      circus_common::roles::ProjectRole::Maintainer
     )
     .await
     .expect("check member maintainer")
@@ -820,7 +824,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       member_user.id,
-      "admin"
+      circus_common::roles::ProjectRole::Admin
     )
     .await
     .expect("check member admin")
@@ -846,7 +850,7 @@ async fn test_project_members_permissions() {
       &pool,
       project.id,
       non_member.id,
-      "member"
+      circus_common::roles::ProjectRole::Member
     )
     .await
     .expect("check non-member")
