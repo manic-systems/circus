@@ -7,116 +7,105 @@ use crate::{
   SlackNotificationConfig,
 };
 
-impl std::fmt::Debug for GithubActionsPoolConfig {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("GithubActionsPoolConfig")
-      .field("workflow_repository", &self.workflow_repository)
-      .field("workflow", &self.workflow)
-      .field("ref_name", &self.ref_name)
-      .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
-      .field("token_file", &self.token_file)
-      .field("runner_url", &self.runner_url)
-      .field("oidc_audience", &self.oidc_audience)
-      .field("agent_binary_url", &self.agent_binary_url)
-      .finish()
-  }
-}
-impl std::fmt::Debug for GitHubOAuthConfig {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("GitHubOAuthConfig")
-      .field("client_id", &self.client_id)
-      .field("client_secret", &"[REDACTED]")
-      .field("client_secret_file", &self.client_secret_file)
-      .field("redirect_uri", &self.redirect_uri)
-      .finish()
-  }
-}
-impl std::fmt::Debug for NotificationsConfig {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("NotificationsConfig")
-      .field(
-        "webhook_url",
-        &self.webhook_url.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("webhook_url_file", &self.webhook_url_file)
-      .field(
-        "github_token",
-        &self.github_token.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("github_token_file", &self.github_token_file)
-      .field("gitea_url", &self.gitea_url)
-      .field(
-        "gitea_token",
-        &self.gitea_token.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("gitea_token_file", &self.gitea_token_file)
-      .field("gitlab_url", &self.gitlab_url)
-      .field(
-        "gitlab_token",
-        &self.gitlab_token.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("gitlab_token_file", &self.gitlab_token_file)
-      .field("email", &self.email)
-      .field("alerts", &self.alerts)
-      .field("slack", &self.slack)
-      .field("enable_retry_queue", &self.enable_retry_queue)
-      .field("max_retry_attempts", &self.max_retry_attempts)
-      .field("retention_days", &self.retention_days)
-      .field("retry_poll_interval", &self.retry_poll_interval)
-      .finish()
-  }
-}
-impl std::fmt::Debug for SlackNotificationConfig {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("SlackNotificationConfig")
-      .field("webhook_url", &"[REDACTED]")
-      .field("webhook_url_file", &self.webhook_url_file)
-      .field("on_failure_only", &self.on_failure_only)
-      .finish()
-  }
+macro_rules! redact_debug_field {
+  ($debug:ident, $self:ident, $field:ident,visible) => {
+    $debug.field(stringify!($field), &$self.$field);
+  };
+  ($debug:ident, $self:ident, $field:ident,secret) => {
+    $debug.field(stringify!($field), &"[REDACTED]");
+  };
+  ($debug:ident, $self:ident, $field:ident,optional_secret) => {
+    $debug.field(
+      stringify!($field),
+      &$self.$field.as_ref().map(|_| "[REDACTED]"),
+    );
+  };
 }
 
-impl std::fmt::Debug for EmailConfig {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("EmailConfig")
-      .field("smtp_host", &self.smtp_host)
-      .field("smtp_port", &self.smtp_port)
-      .field("smtp_user", &self.smtp_user)
-      .field(
-        "smtp_password",
-        &self.smtp_password.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("smtp_password_file", &self.smtp_password_file)
-      .field("from_address", &self.from_address)
-      .field("to_addresses", &self.to_addresses)
-      .field("tls", &self.tls)
-      .field("on_failure_only", &self.on_failure_only)
-      .finish()
-  }
+macro_rules! redact_debug {
+  ($ty:ident { $($field:ident: $kind:ident),* $(,)? }) => {
+    impl std::fmt::Debug for $ty {
+      fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct(stringify!($ty));
+        $(
+          redact_debug_field!(debug, self, $field, $kind);
+        )*
+        debug.finish()
+      }
+    }
+  };
 }
-impl std::fmt::Debug for S3CacheConfig {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("S3CacheConfig")
-      .field("region", &self.region)
-      .field("prefix", &self.prefix)
-      .field("access_key_id", &self.access_key_id)
-      .field(
-        "secret_access_key",
-        &self.secret_access_key.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("secret_access_key_file", &self.secret_access_key_file)
-      .field(
-        "session_token",
-        &self.session_token.as_ref().map(|_| "[REDACTED]"),
-      )
-      .field("session_token_file", &self.session_token_file)
-      .field("endpoint_url", &self.endpoint_url)
-      .field("use_path_style", &self.use_path_style)
-      .finish()
-  }
-}
+
+redact_debug!(GithubActionsPoolConfig {
+  workflow_repository: visible,
+  workflow:            visible,
+  ref_name:            visible,
+  token:               optional_secret,
+  token_file:          visible,
+  runner_url:          visible,
+  oidc_audience:       visible,
+  agent_binary_url:    visible,
+});
+
+redact_debug!(GitHubOAuthConfig {
+  client_id:          visible,
+  client_secret:      secret,
+  client_secret_file: visible,
+  redirect_uri:       visible,
+});
+
+redact_debug!(NotificationsConfig {
+  webhook_url:         optional_secret,
+  webhook_url_file:    visible,
+  github_token:        optional_secret,
+  github_token_file:   visible,
+  gitea_url:           visible,
+  gitea_token:         optional_secret,
+  gitea_token_file:    visible,
+  gitlab_url:          visible,
+  gitlab_token:        optional_secret,
+  gitlab_token_file:   visible,
+  email:               visible,
+  alerts:              visible,
+  slack:               visible,
+  enable_retry_queue:  visible,
+  max_retry_attempts:  visible,
+  retention_days:      visible,
+  retry_poll_interval: visible,
+});
+
+redact_debug!(SlackNotificationConfig {
+  webhook_url:      secret,
+  webhook_url_file: visible,
+  on_failure_only:  visible,
+});
+
+redact_debug!(EmailConfig {
+  smtp_host:          visible,
+  smtp_port:          visible,
+  smtp_user:          visible,
+  smtp_password:      optional_secret,
+  smtp_password_file: visible,
+  from_address:       visible,
+  to_addresses:       visible,
+  tls:                visible,
+  on_failure_only:    visible,
+});
+
+redact_debug!(S3CacheConfig {
+  region:                 visible,
+  prefix:                 visible,
+  access_key_id:          visible,
+  secret_access_key:      optional_secret,
+  secret_access_key_file: visible,
+  session_token:          optional_secret,
+  session_token_file:     visible,
+  endpoint_url:           visible,
+  use_path_style:         visible,
+});
 
 /// Declarative project/jobset/api-key/user definitions.
+/// Keep this list in sync with the `redact_debug!` secret fields above.
 const SECRET_KEYS: &[&str] = &[
   "api_key",
   "client_secret",
