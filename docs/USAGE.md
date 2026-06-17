@@ -530,17 +530,17 @@ GET /api/v1/admin/builders/sessions/connected
 GET /api/v1/admin/builders/sessions/{machine_id}
 ```
 
-The same data is available from `circus-admin`:
+The same data is available from `circusctl`:
 
 ```bash
 # List all recorded persistent and ephemeral agent sessions
-$ circus-admin builders sessions
+$ circusctl admin builders sessions
 
 # Only list currently connected sessions
-$ circus-admin builders sessions --connected
+$ circusctl admin builders sessions --connected
 
 # Show one session by stable machine ID
-$ circus-admin builders session <machine-id>
+$ circusctl admin builders session <machine-id>
 ```
 
 The queue-runner prefers connected agents over SSH builders when both match a

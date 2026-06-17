@@ -83,6 +83,12 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | POST | `/api/v1/news` | Create a news entry (admin only) | 201 |
 | DELETE | `/api/v1/news/{id}` | Delete a news entry (admin only) | 204 |
 | GET | `/api/v1/openapi.json` | OpenAPI specification | 200 |
+| GET | `/api/v1/operator/failures` | Recent failed builds with project context | 200 |
+| GET | `/api/v1/operator/overview` | Operator dashboard overview | 200 |
+| GET | `/api/v1/operator/projects` | Project summaries for operator dashboards | 200 |
+| GET | `/api/v1/operator/queue` | Queued builds grouped by system | 200 |
+| GET | `/api/v1/operator/recent-builds` | Recent builds with project context | 200 |
+| GET | `/api/v1/operator/workers` | Worker status summaries | 200 |
 | GET | `/api/v1/projects` | List projects | 200 |
 | POST | `/api/v1/projects` | Create a project | 200 |
 | POST | `/api/v1/projects/probe` | Probe a repository URL for jobset hints | 200 |

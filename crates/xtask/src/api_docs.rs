@@ -79,17 +79,20 @@ fn generate() -> Result<String> {
     "`HEAD`, and `OPTIONS` requests require an API key or authenticated\n",
   );
   out.push_str(
-    "session unless `server.require_api_key_for_reads = false` is configured.\n",
+    "session unless `server.require_api_key_for_reads = false` is \
+     configured.\n",
   );
   out.push_str("Mutating requests require\n");
   out.push_str(
-    "`Authorization: Bearer <api-key>` or an authenticated browser session and\n",
+    "`Authorization: Bearer <api-key>` or an authenticated browser session \
+     and\n",
   );
   out.push_str(
     "may require a specific role. Public compatibility endpoints such as\n",
   );
   out.push_str(
-    "webhooks, health, metrics, and cache routes live outside that API key gate.\n\n",
+    "webhooks, health, metrics, and cache routes live outside that API key \
+     gate.\n\n",
   );
   out.push_str("## Endpoints\n\n");
   out.push_str("<!-- markdownlint-disable MD013 -->\n\n");
