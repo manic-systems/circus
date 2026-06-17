@@ -12,6 +12,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use circus_common::psi::parse_pressure_triplet_avg10;
 use dashmap::DashMap;
 use tokio::time::Instant;
 
@@ -123,18 +124,11 @@ pub async fn read_cached(
 /// Each file emits a `some` line and (for memory/io) a `full` line. We
 /// take the first `some avg10=` value from each of the three stanzas.
 fn parse(text: &str) -> Option<PsiSnapshot> {
-  let mut some_avg10s = text.lines().filter_map(|line| {
-    let rest = line.strip_prefix("some ")?;
-    rest
-      .split_whitespace()
-      .find_map(|kv| kv.strip_prefix("avg10="))
-      .and_then(|v| v.parse::<f64>().ok())
-  });
-
+  let (cpu, memory, io) = parse_pressure_triplet_avg10(text)?;
   Some(PsiSnapshot {
-    cpu_avg10:    some_avg10s.next()?,
-    memory_avg10: some_avg10s.next()?,
-    io_avg10:     some_avg10s.next()?,
+    cpu_avg10:    cpu,
+    memory_avg10: memory,
+    io_avg10:     io,
   })
 }
 

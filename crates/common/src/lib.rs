@@ -11,6 +11,7 @@ pub mod migrate;
 pub mod migrate_cli;
 pub mod models;
 pub mod pg_notify;
+pub mod psi;
 pub mod repo;
 
 pub mod bootstrap;

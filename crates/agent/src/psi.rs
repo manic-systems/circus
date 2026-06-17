@@ -42,23 +42,6 @@ fn read_avg(path: &str) -> (f32, f32) {
   let Ok(contents) = fs::read_to_string(path) else {
     return (0.0, 0.0);
   };
-  for line in contents.lines() {
-    if let Some(rest) = line.strip_prefix("some ") {
-      return parse_avg10_avg60(rest);
-    }
-  }
-  (0.0, 0.0)
-}
-
-fn parse_avg10_avg60(line: &str) -> (f32, f32) {
-  let mut a10 = 0.0;
-  let mut a60 = 0.0;
-  for kv in line.split_whitespace() {
-    if let Some(v) = kv.strip_prefix("avg10=") {
-      a10 = v.parse().unwrap_or(0.0);
-    } else if let Some(v) = kv.strip_prefix("avg60=") {
-      a60 = v.parse().unwrap_or(0.0);
-    }
-  }
-  (a10, a60)
+  circus_common::psi::parse_pressure_some(&contents)
+    .map_or((0.0, 0.0), |avg| (avg.avg10 as f32, avg.avg60 as f32))
 }
