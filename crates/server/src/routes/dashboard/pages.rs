@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 
-use askama::Template;
 use axum::{
   extract::{Path, Query, State},
   http::{Extensions, StatusCode, header},
@@ -23,8 +22,10 @@ use super::{
     JobStatusCell,
     JobStatusColumn,
     JobStatusRow,
+    Pagination,
     ProjectSummaryView,
     QueueBuildView,
+    RenderExt,
     StarredJobView,
     auth_name,
     build_view,
@@ -202,11 +203,7 @@ pub(super) async fn home(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render the paginated project list at `/projects`.
@@ -229,26 +226,21 @@ pub(super) async fn projects_page(
     .await
     .unwrap_or(0);
 
-  let total_pages = (total + limit - 1) / limit.max(1);
-  let page = offset / limit.max(1) + 1;
+  let pagination = Pagination::new(total, offset, limit);
   let tmpl = ProjectsTemplate {
     projects: items,
     limit,
-    has_prev: offset > 0,
-    has_next: offset + limit < total,
-    prev_offset: (offset - limit).max(0),
-    next_offset: offset + limit,
-    page,
-    total_pages,
+    has_prev: pagination.has_prev,
+    has_next: pagination.has_next,
+    prev_offset: pagination.prev_offset,
+    next_offset: pagination.next_offset,
+    page: pagination.page,
+    total_pages: pagination.total_pages,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn project_page(
@@ -298,11 +290,7 @@ pub(super) async fn project_page(
     auth_name: auth_name(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn jobset_page(
@@ -409,11 +397,7 @@ pub(super) async fn jobset_page(
     auth_name: auth_name(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn jobset_jobs_page(
@@ -532,11 +516,7 @@ pub(super) async fn jobset_jobs_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render the paginated evaluation list at `/evaluations`, enriched with
@@ -591,26 +571,21 @@ pub(super) async fn evaluations_page(
     enriched.push(eval_view_with_context(e, &jname, &pname));
   }
 
-  let total_pages = (total + limit - 1) / limit.max(1);
-  let page = offset / limit.max(1) + 1;
+  let pagination = Pagination::new(total, offset, limit);
   let tmpl = EvaluationsTemplate {
     evals: enriched,
     limit,
-    has_prev: offset > 0,
-    has_next: offset + limit < total,
-    prev_offset: (offset - limit).max(0),
-    next_offset: offset + limit,
-    page,
-    total_pages,
+    has_prev: pagination.has_prev,
+    has_next: pagination.has_next,
+    prev_offset: pagination.prev_offset,
+    next_offset: pagination.next_offset,
+    page: pagination.page,
+    total_pages: pagination.total_pages,
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn evaluation_page(
@@ -701,11 +676,7 @@ pub(super) async fn evaluation_page(
     auth_name:       auth_name(&extensions),
     csrf_token:      super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render the filterable build listing at `/builds`. Each row is
@@ -744,8 +715,7 @@ pub(super) async fn builds_page(
   .await
   .unwrap_or(0);
 
-  let total_pages = (total + limit - 1) / limit.max(1);
-  let page = offset / limit.max(1) + 1;
+  let pagination = Pagination::new(total, offset, limit);
 
   let mut context_by_eval = std::collections::HashMap::new();
   for item in &items {
@@ -804,23 +774,19 @@ pub(super) async fn builds_page(
       })
       .collect(),
     limit,
-    has_prev: offset > 0,
-    has_next: offset + limit < total,
-    prev_offset: (offset - limit).max(0),
-    next_offset: offset + limit,
-    page,
-    total_pages,
+    has_prev: pagination.has_prev,
+    has_next: pagination.has_next,
+    prev_offset: pagination.prev_offset,
+    next_offset: pagination.next_offset,
+    page: pagination.page,
+    total_pages: pagination.total_pages,
     filter_status: params.status.unwrap_or_default(),
     filter_system: params.system.unwrap_or_default(),
     filter_job: params.job_name.unwrap_or_default(),
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn build_page(
@@ -914,11 +880,7 @@ pub(super) async fn build_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Serve a build's full log as plain text.
@@ -1130,11 +1092,7 @@ pub(super) async fn queue_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render the list of all release channels at `/channels`.
@@ -1156,11 +1114,7 @@ pub(super) async fn channels_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn channel_page(
@@ -1217,11 +1171,7 @@ pub(super) async fn channel_page(
     is_admin: is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render `/starred`: the signed-in user's starred jobs with the latest
@@ -1338,11 +1288,7 @@ pub(super) async fn starred_page(
     auth_name: auth_name(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn metrics_page(
@@ -1358,11 +1304,7 @@ pub(super) async fn metrics_page(
     is_admin:  is_admin(&extensions),
     auth_name: auth_name(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn project_setup_page(
@@ -1382,11 +1324,7 @@ pub(super) async fn project_setup_page(
     auth_name:  auth_name(&extensions),
     csrf_token: super::csrf::csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 #[cfg(test)]

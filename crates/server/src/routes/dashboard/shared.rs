@@ -3,9 +3,10 @@
 //! `pub(super)` so sibling modules (auth, admin, pages, ...) can use them
 //! without re-exporting them at the dashboard module's external surface.
 
+use askama::Template;
 use axum::{
-  http::Extensions,
-  response::{IntoResponse, Redirect, Response},
+  http::{Extensions, StatusCode},
+  response::{Html, IntoResponse, Redirect, Response},
 };
 use circus_common::models::{
   ApiKey,
@@ -20,6 +21,48 @@ use circus_proto::nix_log::{self, LogLine};
 use uuid::Uuid;
 
 use crate::permissions::{self, Permission};
+
+pub(super) trait RenderExt: Template {
+  #[expect(
+    clippy::result_large_err,
+    reason = "dashboard handlers return axum Response directly"
+  )]
+  fn render_html_or_500(&self) -> Result<Html<String>, Response> {
+    self.render().map(Html).map_err(|error| {
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Template error: {error}"),
+      )
+        .into_response()
+    })
+  }
+}
+
+impl<T: Template> RenderExt for T {}
+
+pub(super) struct Pagination {
+  pub(super) page:        i64,
+  pub(super) total_pages: i64,
+  pub(super) has_prev:    bool,
+  pub(super) has_next:    bool,
+  pub(super) prev_offset: i64,
+  pub(super) next_offset: i64,
+}
+
+impl Pagination {
+  #[must_use]
+  pub(super) fn new(total: i64, offset: i64, limit: i64) -> Self {
+    let limit = limit.max(1);
+    Self {
+      page:        offset / limit + 1,
+      total_pages: (total + limit - 1) / limit,
+      has_prev:    offset > 0,
+      has_next:    offset + limit < total,
+      prev_offset: (offset - limit).max(0),
+      next_offset: offset + limit,
+    }
+  }
+}
 
 // View models (pre-formatted for templates)
 

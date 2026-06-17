@@ -7,7 +7,6 @@
 
 use std::cmp::Ordering;
 
-use askama::Template;
 use axum::{
   Form,
   extract::{Path, Query, State},
@@ -28,6 +27,8 @@ use super::{
   shared::{
     ApiKeyView,
     DashboardPage,
+    Pagination,
+    RenderExt,
     UserView,
     auth_name,
     enforce_page_access,
@@ -502,11 +503,7 @@ pub(super) async fn admin_page(
     auth_name: auth_name(&extensions),
     csrf_token: csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render the user-management page at `/users`. Admin-only because the
@@ -555,27 +552,22 @@ pub(super) async fn users_page(
     })
     .collect();
 
-  let total_pages = (total + limit - 1) / limit.max(1);
-  let page = offset / limit.max(1) + 1;
+  let pagination = Pagination::new(total, offset, limit);
 
   let tmpl = UsersTemplate {
     users,
     limit,
-    has_prev: offset > 0,
-    has_next: offset + limit < total,
-    prev_offset: (offset - limit).max(0),
-    next_offset: offset + limit,
-    page,
-    total_pages,
+    has_prev: pagination.has_prev,
+    has_next: pagination.has_next,
+    prev_offset: pagination.prev_offset,
+    next_offset: pagination.next_offset,
+    page: pagination.page,
+    total_pages: pagination.total_pages,
     is_admin: true, // Already checked above
     auth_name: auth_name(&extensions),
     csrf_token: csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 /// Render the news page at `/news`: list of recent announcements plus,
@@ -594,11 +586,7 @@ pub(super) async fn news_page(
     auth_name: auth_name(&extensions),
     csrf_token: csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 #[derive(serde::Deserialize)]
@@ -768,11 +756,7 @@ pub(super) async fn notifications_page(
     auth_name: auth_name(&extensions),
     csrf_token: csrf_from(&extensions),
   };
-  Ok(Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  ))
+  tmpl.render_html_or_500()
 }
 
 pub(super) async fn notifications_create(
