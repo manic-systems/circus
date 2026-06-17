@@ -1,7 +1,7 @@
 use axum::{
   Router,
   extract::{Path, State},
-  http::StatusCode,
+  http::{Extensions, StatusCode},
   response::{
     IntoResponse,
     Response,
@@ -12,14 +12,33 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{
+  error::ApiError,
+  permissions::{self, Permission},
+  state::AppState,
+};
+
+async fn get_visible_build(
+  state: &AppState,
+  id: Uuid,
+  extensions: &Extensions,
+) -> Result<circus_common::Build, ApiError> {
+  let build = circus_common::repo::builds::get(&state.pool, id).await?;
+  circus_common::repo::evaluations::get_visible(
+    &state.pool,
+    build.evaluation_id,
+    permissions::check(extensions, Permission::Admin),
+  )
+  .await?;
+  Ok(build)
+}
 
 async fn get_build_log(
+  extensions: Extensions,
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-  // Verify build exists
-  let _build = circus_common::repo::builds::get(&state.pool, id).await?;
+  get_visible_build(&state, id, &extensions).await?;
 
   let log_storage = circus_common::log_storage::LogStorage::new(
     state.config.logs.log_dir.clone(),
@@ -52,13 +71,14 @@ async fn get_build_log(
 }
 
 async fn stream_build_log(
+  extensions: Extensions,
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<
   Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>,
   ApiError,
 > {
-  let build = circus_common::repo::builds::get(&state.pool, id).await?;
+  let build = get_visible_build(&state, id, &extensions).await?;
 
   let log_storage = circus_common::log_storage::LogStorage::new(
     state.config.logs.log_dir.clone(),

@@ -423,13 +423,13 @@ async fn delete_starred_job(
   extensions: axum::http::Extensions,
   Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-  let _user = extensions.get::<User>().cloned().ok_or_else(|| {
+  let user = extensions.get::<User>().cloned().ok_or_else(|| {
     ApiError(circus_common::error::CiError::Unauthorized(
       "User authentication required".to_string(),
     ))
   })?;
 
-  repo::starred_jobs::delete(&state.pool, id).await?;
+  repo::starred_jobs::delete_for_user(&state.pool, user.id, id).await?;
   Ok(StatusCode::NO_CONTENT)
 }
 

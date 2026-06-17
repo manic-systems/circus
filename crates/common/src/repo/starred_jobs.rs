@@ -130,6 +130,29 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
   Ok(())
 }
 
+/// Delete a starred job by ID for a specific user.
+///
+/// # Errors
+///
+/// Returns error if database delete fails or the user's starred job does not
+/// exist.
+pub async fn delete_for_user(
+  pool: &PgPool,
+  user_id: Uuid,
+  id: Uuid,
+) -> Result<()> {
+  let result =
+    sqlx::query("DELETE FROM starred_jobs WHERE id = $1 AND user_id = $2")
+      .bind(id)
+      .bind(user_id)
+      .execute(pool)
+      .await?;
+  if result.rows_affected() == 0 {
+    return Err(CiError::NotFound(format!("Starred job {id} not found")));
+  }
+  Ok(())
+}
+
 /// Delete a starred job by user and job details
 ///
 /// # Errors

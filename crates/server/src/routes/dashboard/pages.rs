@@ -899,6 +899,16 @@ pub(super) async fn build_log(
   else {
     return Ok((StatusCode::NOT_FOUND, "Build not found").into_response());
   };
+  if circus_common::repo::evaluations::get_visible(
+    &state.pool,
+    build.evaluation_id,
+    ctx.is_admin,
+  )
+  .await
+  .is_err()
+  {
+    return Ok((StatusCode::NOT_FOUND, "Build not found").into_response());
+  }
 
   let Some(path) = build.log_path.as_deref().filter(|p| !p.is_empty()) else {
     return Ok(
