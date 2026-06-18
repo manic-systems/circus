@@ -208,6 +208,13 @@ configuration or the Nix store.
 | `ui`                 | `enabled`                                              | `true`                                              | Mount bundled dashboard and static UI routes     |
 | `ui`                 | `dashboard`                                            | `true`                                              | Mount server-rendered dashboard/login pages      |
 | `ui`                 | `assets`                                               | `true`                                              | Serve bundled static UI assets                   |
+| `ui`                 | `brand_name`                                           | `circus`                                            | Dashboard sidebar brand name                     |
+| `ui`                 | `brand_subtitle`                                       | `Nix CI`                                            | Dashboard sidebar brand subtitle                 |
+| `ui`                 | `logo_url`                                             | none                                                | Optional logo URL                                |
+| `ui`                 | `favicon_url`                                          | none                                                | Optional favicon URL                             |
+| `ui`                 | `custom_css`                                           | none                                                | CSS file served as `/static/custom.css`          |
+| `ui`                 | `static_dir`                                           | none                                                | Directory served below `/static/custom/`         |
+| `ui.css_variables`   | CSS variable names                                     | `{}`                                                | Variables emitted in `/static/theme.css`         |
 | `evaluator`          | `poll_interval`                                        | `60`                                                | Seconds between git poll cycles                  |
 | `evaluator`          | `git_timeout`                                          | `600`                                               | Git operation timeout (seconds)                  |
 | `evaluator`          | `nix_timeout`                                          | `1800`                                              | Nix evaluation timeout (seconds)                 |

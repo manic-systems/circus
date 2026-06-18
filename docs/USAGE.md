@@ -69,6 +69,51 @@ Common dashboard pages:
 
 Admin-only dashboard pages are covered in the admin section.
 
+### Customizing the Dashboard
+
+Operators can customize the bundled dashboard without replacing the frontend.
+The server loads bundled CSS first, generated CSS variables second, and optional
+custom CSS last.
+
+```toml
+[ui]
+brand_name = "Acme CI"
+brand_subtitle = "Nix build farm"
+logo_url = "/static/custom/logo.svg"
+favicon_url = "/static/custom/favicon.svg"
+custom_css = "/etc/circus/dashboard.css"
+static_dir = "/etc/circus/static"
+
+[ui.css_variables]
+accent = "#2563eb"
+bg = "#0f172a"
+text = "#f8fafc"
+```
+
+With the NixOS module, equivalent convenience options are available:
+
+```nix
+{
+  services.circus.ui = {
+    brandName = "Acme CI";
+    brandSubtitle = "Nix build farm";
+    logoUrl = "/static/custom/logo.svg";
+    faviconUrl = "/static/custom/favicon.svg";
+    customCss = ./dashboard.css;
+    staticDir = ./static;
+    cssVariables = {
+      accent = "#2563eb";
+      bg = "#0f172a";
+      text = "#f8fafc";
+    };
+  };
+}
+```
+
+Files in `static_dir` are served below `/static/custom/`. For a completely
+custom frontend, disable the bundled dashboard with `ui.dashboard = false` and
+build against the `/api/v1` endpoints directly.
+
 ### Reading Build Status
 
 Builds move through statuses such as `pending`, `running`, `succeeded`,
