@@ -233,9 +233,19 @@ pub(super) struct QueueTemplate {
 #[template(path = "channels.html")]
 pub(super) struct ChannelsTemplate {
   pub(super) ui:        UiTemplateConfig,
-  pub(super) channels:  Vec<Channel>,
+  pub(super) channels:  Vec<ChannelView>,
   pub(super) is_admin:  bool,
   pub(super) auth_name: String,
+}
+
+pub(super) struct ChannelView {
+  pub(super) id:                    Uuid,
+  pub(super) name:                  String,
+  pub(super) current_evaluation_id: Option<Uuid>,
+  pub(super) updated_at:            String,
+  pub(super) status_text:           String,
+  pub(super) status_class:          String,
+  pub(super) job_count:             i64,
 }
 
 #[derive(Template)]
@@ -408,7 +418,7 @@ mod tests {
   }
 
   #[test]
-  fn dashboard_renders_operator_console_with_failures_first() {
+  fn dashboard_renders_operator_console_with_agents_and_builds() {
     let html = dashboard(
       vec![build(Uuid::nil(), "checks.default", "Failed", "failed")],
       vec![build(Uuid::nil(), "checks.default", "Failed", "failed")],
@@ -416,7 +426,8 @@ mod tests {
     .render()
     .expect("render dashboard");
     assert!(html.contains("Dashboard"));
-    assert!(html.contains("Failures"));
+    assert!(html.contains("Agents"));
+    assert!(html.contains("Queue"));
     assert!(html.contains("/builds?status=failed"));
     assert!(html.contains("status-failed"));
     assert!(html.contains("data-table dense-table"));
@@ -430,7 +441,8 @@ mod tests {
       .render()
       .expect("render empty dashboard");
     assert!(html.contains("No builds yet"));
-    assert!(html.contains("No failed builds"));
+    assert!(html.contains("Agents"));
+    assert!(html.contains("Queue"));
     assert!(html.contains("filter project, job, system"));
   }
 

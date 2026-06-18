@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
@@ -17,69 +17,90 @@
 {% block content %}
 <h1>Build Queue</h1>
 
-<h2>Running ({{ running_count }})</h2>
-{% if running_builds.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No builds currently running</div>
-  <div class="empty-hint">Running builds will appear here when the queue runner picks them up.</div>
-</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Started</th><th>Elapsed</th><th>Builder</th></tr>
-  </thead>
-  <tbody>
-    {% for b in running_builds %}
-    <tr>
-      <td>{% match b.project_id %}{% when Some with (project_id) %}<a href="/project/{{ project_id }}">{{ b.project_name }}</a>{% when None %}-{% endmatch %}</td>
-      <td>{% match b.jobset_id %}{% when Some with (jobset_id) %}<a href="/jobset/{{ jobset_id }}">{{ b.jobset_name }}</a>{% when None %}-{% endmatch %}</td>
-      <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
-      <td>{{ b.system }}</td>
-      <td>{{ b.started_at }}</td>
-      <td{% if let Some(ts) = b.started_epoch %} data-live-elapsed="{{ ts }}"{% endif %}>{{ b.elapsed }}</td>
-      <td>{% match b.builder_name %}{% when Some with (name) %}{{ name }}{% when None %}local{% endmatch %}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% endif %}
+<form method="get" action="/queue" class="filter-form">
+  <label>Status: <select name="status">
+    <option value="">All</option>
+    <option value="running">Running</option>
+    <option value="pending">Pending</option>
+  </select></label>
+  <label>System: <input type="text" name="system" placeholder="e.g. x86_64-linux"></label>
+  <label>Job: <input type="text" name="job_name" placeholder="job name"></label>
+  <button type="submit" class="btn btn-secondary">Filter</button>
+</form>
 
-<h2>Pending ({{ pending_count }})</h2>
-{% if pending_builds.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No builds pending</div>
-  <div class="empty-hint">Pending builds appear after an evaluation discovers new derivations to build.</div>
-</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>#</th><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Priority</th><th>Created</th>{% if permissions.bump_to_front %}<th></th>{% endif %}</tr>
-  </thead>
-  <tbody>
-    {% for b in pending_builds %}
-    <tr>
-      <td>{{ b.queue_pos }}</td>
-      <td>{% match b.project_id %}{% when Some with (project_id) %}<a href="/project/{{ project_id }}">{{ b.project_name }}</a>{% when None %}-{% endmatch %}</td>
-      <td>{% match b.jobset_id %}{% when Some with (jobset_id) %}<a href="/jobset/{{ jobset_id }}">{{ b.jobset_name }}</a>{% when None %}-{% endmatch %}</td>
-      <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
-      <td>{{ b.system }}</td>
-      <td>{{ b.priority }}</td>
-      <td>{{ b.created_at }}</td>
-      {% if permissions.bump_to_front %}
-      <td class="row-actions">
-        <form method="POST" action="/build/{{ b.id }}/bump" class="inline-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="bump-button" title="Increase this build's priority so the scheduler picks it sooner">&uarr; Push forward</button>
-        </form>
-      </td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% endif %}
+<section class="panel panel-running">
+  <div class="panel-header">
+    <h2>Running</h2>
+    <span class="badge badge-running">{{ running_count }}</span>
+  </div>
+  {% if running_builds.is_empty() %}
+  <div class="empty compact-empty">
+    <div class="empty-title">No builds currently running</div>
+    <div class="empty-hint">Running builds will appear here when the queue runner picks them up.</div>
+  </div>
+  {% else %}
+  <div class="table-wrap compact-table-wrap">
+  <table>
+    <thead>
+      <tr><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Started</th><th>Elapsed</th><th>Builder</th></tr>
+    </thead>
+    <tbody>
+      {% for b in running_builds %}
+      <tr>
+        <td>{% match b.project_id %}{% when Some with (project_id) %}<a href="/project/{{ project_id }}">{{ b.project_name }}</a>{% when None %}-{% endmatch %}</td>
+        <td>{% match b.jobset_id %}{% when Some with (jobset_id) %}<a href="/jobset/{{ jobset_id }}">{{ b.jobset_name }}</a>{% when None %}-{% endmatch %}</td>
+        <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
+        <td>{{ b.system }}</td>
+        <td>{{ b.started_at }}</td>
+        <td{% if let Some(ts) = b.started_epoch %} data-live-elapsed="{{ ts }}"{% endif %}>{{ b.elapsed }}</td>
+        <td>{% match b.builder_name %}{% when Some with (name) %}{{ name }}{% when None %}local{% endmatch %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel panel-pending">
+  <div class="panel-header">
+    <h2>Pending</h2>
+    <span class="badge badge-pending">{{ pending_count }}</span>
+  </div>
+  {% if pending_builds.is_empty() %}
+  <div class="empty compact-empty">
+    <div class="empty-title">No builds pending</div>
+    <div class="empty-hint">Pending builds appear after an evaluation discovers new derivations to build.</div>
+  </div>
+  {% else %}
+  <div class="table-wrap compact-table-wrap">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Project</th><th>Jobset</th><th>Job</th><th>System</th><th>Priority</th><th>Created</th>{% if permissions.bump_to_front %}<th></th>{% endif %}</tr>
+    </thead>
+    <tbody>
+      {% for b in pending_builds %}
+      <tr>
+        <td>{{ b.queue_pos }}</td>
+        <td>{% match b.project_id %}{% when Some with (project_id) %}<a href="/project/{{ project_id }}">{{ b.project_name }}</a>{% when None %}-{% endmatch %}</td>
+        <td>{% match b.jobset_id %}{% when Some with (jobset_id) %}<a href="/jobset/{{ jobset_id }}">{{ b.jobset_name }}</a>{% when None %}-{% endmatch %}</td>
+        <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
+        <td>{{ b.system }}</td>
+        <td>{{ b.priority }}</td>
+        <td>{{ b.created_at }}</td>
+        {% if permissions.bump_to_front %}
+        <td class="row-actions">
+          <form method="POST" action="/build/{{ b.id }}/bump" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-small btn-secondary" title="Increase this build's priority so the scheduler picks it sooner">&uarr; Push forward</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
 {% endblock %}

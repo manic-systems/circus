@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
@@ -14,14 +14,13 @@
   <a href="/project/{{ project_id }}">{{ project_name }}</a> <span class="sep">/</span>
   <a href="/project/{{ project_id }}#jobsets">Jobsets</a> <span class="sep">/</span>
   <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a> <span class="sep">/</span>
-  <a href="/jobset/{{ jobset_id }}">Evaluations</a> <span class="sep">/</span>
   <span class="current">{{ eval.commit_short }}</span>
 </nav>
 {% endblock %}
 {% block content %}
 <h1>Evaluation {{ eval.commit_short }}</h1>
 {% if is_admin %}
-<div class="action-bar">
+<div class="page-actions">
   <form class="inline" method="POST" action="/evaluation/{{ eval.id }}/visibility">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="return_to" value="/evaluation/{{ eval.id }}">
@@ -30,7 +29,7 @@
     <button class="btn btn-small btn-secondary" type="submit">Unhide Evaluation</button>
     {% else %}
     <input type="hidden" name="hidden" value="true">
-    <button class="btn btn-small btn-outline" type="submit">Hide Evaluation</button>
+    <button class="btn btn-small btn-secondary" type="submit">Hide Evaluation</button>
     {% endif %}
   </form>
 </div>

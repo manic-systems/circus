@@ -568,6 +568,11 @@ p {
   gap: 12px;
 }
 
+.panel-actions .badge {
+  font-size: 11px;
+  line-height: 14px;
+}
+
 .panel-header a:hover,
 .card-header a:hover {
   color: var(--text);
@@ -577,6 +582,14 @@ p {
 .form-card,
 .metric-card {
   padding: 12px;
+}
+
+.panel-body {
+  padding: 12px;
+}
+
+.panel-body > :last-child {
+  margin-bottom: 0;
 }
 
 .dashboard-grid {
@@ -1128,16 +1141,37 @@ tbody tr:hover {
 
 .filter-bar,
 .filter-form,
-.metrics-controls,
-.action-bar,
 .quick-actions,
 .wizard-actions,
 .pagination {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.metrics-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.metrics-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 550;
+}
+
+.metrics-controls select {
+  width: auto;
 }
 
 .panel .filter-bar {
@@ -1242,7 +1276,9 @@ button,
 .topbar .btn,
 .topbar button,
 .filter-bar .btn,
-.filter-bar button {
+.filter-bar button,
+.filter-form .btn,
+.filter-form button {
   height: 28px;
   padding: 0 10px;
   font-size: 12px;
@@ -1260,7 +1296,6 @@ button:hover,
 }
 
 .btn-secondary,
-.btn-outline,
 .bump-button,
 .pagination a,
 .quick-actions a {
@@ -1270,7 +1305,6 @@ button:hover,
 }
 
 .btn-secondary:hover,
-.btn-outline:hover,
 .bump-button:hover,
 .pagination a:hover,
 .quick-actions a:hover {
@@ -1456,10 +1490,53 @@ button:disabled {
   gap: 16px;
 }
 
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  height: 320px;
+  padding: 16px;
+}
+
+.metric-card h3 {
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 650;
+}
+
+.metric-card canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.metric-panel {
+  display: flex;
+  flex-direction: column;
+  height: 356px;
+}
+
+.metric-chart-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  min-height: 0;
+}
+
+.metric-chart-body canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+}
+
 .load-bar {
+  position: relative;
   display: inline-flex;
   min-width: 88px;
   justify-content: center;
+  align-items: center;
   padding: 2px 8px;
   color: var(--text-muted);
   background: var(--surface);
@@ -1469,6 +1546,23 @@ button:disabled {
   font-size: 12px;
   line-height: 16px;
   font-weight: 550;
+  overflow: hidden;
+}
+
+.load-bar > span:first-child {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--load-percent, 0%);
+  background: var(--accent);
+  opacity: 0.18;
+  z-index: 0;
+}
+
+.load-bar-text {
+  position: relative;
+  z-index: 1;
 }
 
 .flash-message {
@@ -1739,4 +1833,181 @@ button:disabled {
     height: 40px;
     padding: 6px 8px;
   }
+}
+
+/* Announcement banners */
+.announcements {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.announcement-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.announcement-line span {
+  flex: 1;
+}
+
+.announcement-close {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Modal dialogs */
+dialog {
+  margin: auto;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-layout);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-header h2 {
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: 650;
+}
+
+.dialog-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.dialog-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Page action toolbar */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Make dashboard sidebar widgets stack nicely */
+.operator-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+/* Better spacing inside build detail */
+.build-detail-section {
+  margin-bottom: 16px;
+}
+
+.build-detail-section > h2 {
+  margin-bottom: 10px;
+}
+
+.build-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.build-meta-item {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-panel);
+}
+
+.build-meta-label {
+  color: var(--text-subtle);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.build-meta-value {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 18px;
+  word-break: break-word;
+}
+
+/* Running/pending panel header */
+.panel-status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-status-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Inline status badge count */
+.badge-count {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Queue running/pending panels */
+.panel-running {
+  margin-bottom: 14px;
+}
+
+/* Section panel titles */
+.section-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 650;
 }

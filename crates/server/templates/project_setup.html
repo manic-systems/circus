@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
@@ -38,7 +38,7 @@
     <div id="outputs-list"></div>
     <div class="wizard-actions">
       <button class="btn" onclick="goToStep(3)">Continue</button>
-      <button class="btn btn-outline" onclick="goToStep(1)">Back</button>
+      <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
     </div>
   </div>
 
@@ -56,7 +56,7 @@
       </div>
       <div class="wizard-actions">
         <button class="btn" onclick="goToStep(4)">Review</button>
-        <button class="btn btn-outline" onclick="goToStep(2)">Back</button>
+        <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
       </div>
     </div>
   </div>
@@ -70,7 +70,7 @@
       <div id="summary-jobsets"></div>
       <div class="wizard-actions">
         <button class="btn" id="create-btn" onclick="createProject()">Create Project</button>
-        <button class="btn btn-outline" onclick="goToStep(3)">Back</button>
+        <button class="btn btn-secondary" onclick="goToStep(3)">Back</button>
       </div>
       <div id="create-status" class="form-status"></div>
     </div>

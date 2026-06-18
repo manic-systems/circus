@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block breadcrumbs %}

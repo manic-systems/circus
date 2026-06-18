@@ -50,6 +50,7 @@ use super::{
     BuildTemplate,
     BuildsTemplate,
     ChannelTemplate,
+    ChannelView,
     ChannelsTemplate,
     EvaluationTemplate,
     EvaluationsTemplate,
@@ -1132,10 +1133,37 @@ pub(super) async fn channels_page(
     .await
     .unwrap_or_default();
 
+  let channel_views = channels
+    .into_iter()
+    .map(|channel| {
+      let has_eval = channel.current_evaluation_id.is_some();
+      ChannelView {
+        id:                    channel.id,
+        name:                  channel.name,
+        current_evaluation_id: channel.current_evaluation_id,
+        updated_at:            channel
+          .updated_at
+          .format("%Y-%m-%d %H:%M UTC")
+          .to_string(),
+        status_text:           if has_eval {
+          "Active".into()
+        } else {
+          "Pending".into()
+        },
+        status_class:          if has_eval {
+          "completed".into()
+        } else {
+          "pending".into()
+        },
+        job_count:             0,
+      }
+    })
+    .collect();
+
   let tmpl = ChannelsTemplate {
-    ui: ui_config(&state),
-    channels,
-    is_admin: ctx.is_admin,
+    ui:        ui_config(&state),
+    channels:  channel_views,
+    is_admin:  ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
   };
   tmpl.render_html_or_500()

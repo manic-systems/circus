@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
@@ -25,18 +25,18 @@
 <p><strong>Created:</strong> {{ project.created_at.format("%Y-%m-%d %H:%M") }}</p>
 
 {% if is_admin %}
-<div class="action-bar">
-  <a class="btn btn-small" href="/project/{{ project.id }}/notifications">Notifications</a>
-  <button class="btn btn-danger btn-small" onclick="deleteProject()">Delete Project</button>
+<div class="page-actions">
+  <button type="button" class="btn btn-small btn-secondary" onclick="document.getElementById('add-jobset-dialog').showModal()">Add Jobset</button>
+  <a class="btn btn-small btn-secondary" href="/project/{{ project.id }}/notifications">Notifications</a>
+  <button class="btn btn-small btn-danger" onclick="deleteProject()">Delete Project</button>
 </div>
-{% endif %}
 
-<h2 id="jobsets">Jobsets</h2>
-
-{% if is_admin %}
-<details>
-  <summary>Add Jobset</summary>
-  <div class="form-card">
+<dialog id="add-jobset-dialog">
+  <div class="dialog-header">
+    <h2>Add Jobset</h2>
+    <button type="button" class="btn-ghost dialog-close" onclick="document.getElementById('add-jobset-dialog').close()" aria-label="Close">&times;</button>
+  </div>
+  <div class="dialog-body">
     <form id="create-jobset-form">
       <div class="form-group">
         <label for="js-name">Name</label>
@@ -56,96 +56,107 @@
           <option value="interval">Interval rebuild</option>
         </select>
       </div>
-      <button type="submit" class="btn">Add Jobset</button>
     </form>
     <div id="jobset-msg"></div>
   </div>
-</details>
+  <div class="dialog-footer">
+    <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-jobset-dialog').close()">Cancel</button>
+    <button type="submit" class="btn" form="create-jobset-form">Add Jobset</button>
+  </div>
+</dialog>
 {% endif %}
 
-{% if jobsets.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No jobsets configured</div>
-  {% if is_admin %}
-  <div class="empty-hint">Add a jobset above to start evaluating this project.</div>
+<section class="panel">
+  <div class="panel-header"><h2 id="jobsets">Jobsets</h2></div>
+  {% if jobsets.is_empty() %}
+  <div class="empty compact-empty">
+    <div class="empty-title">No jobsets configured</div>
+    {% if is_admin %}
+    <div class="empty-hint">Add a jobset above to start evaluating this project.</div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="table-wrap compact-table-wrap">
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Trigger</th><th>Interval</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
+    </thead>
+    <tbody>
+      {% for j in jobsets %}
+      <tr>
+        <td><a href="/jobset/{{ j.id }}">{{ j.name }}</a></td>
+        <td><code>{{ j.nix_expression }}</code></td>
+        <td>{% if j.flake_mode %}Yes{% else %}No{% endif %}</td>
+        <td>{% if j.enabled %}Yes{% else %}No{% endif %}</td>
+        <td>
+          {% match j.trigger_mode %}
+            {% when circus_common::models::JobsetTriggerMode::SourceChange %}
+              Source change
+            {% when circus_common::models::JobsetTriggerMode::Interval %}
+              Interval rebuild
+          {% endmatch %}
+        </td>
+        <td>{{ j.check_interval }}s</td>
+        {% if is_admin %}
+        <td>
+          <form class="inline" method="POST" action="/jobset/{{ j.id }}/delete" onsubmit="return confirm('Delete this jobset and all of its evaluations/builds?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-danger btn-small" type="submit">Delete</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
   {% endif %}
-</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Trigger</th><th>Interval</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
-  </thead>
-  <tbody>
-    {% for j in jobsets %}
-    <tr>
-      <td><a href="/jobset/{{ j.id }}">{{ j.name }}</a></td>
-      <td><code>{{ j.nix_expression }}</code></td>
-      <td>{% if j.flake_mode %}Yes{% else %}No{% endif %}</td>
-      <td>{% if j.enabled %}Yes{% else %}No{% endif %}</td>
-      <td>
-        {% match j.trigger_mode %}
-          {% when circus_common::models::JobsetTriggerMode::SourceChange %}
-            Source change
-          {% when circus_common::models::JobsetTriggerMode::Interval %}
-            Interval rebuild
-        {% endmatch %}
-      </td>
-      <td>{{ j.check_interval }}s</td>
-      {% if is_admin %}
-      <td>
-        <form class="inline" method="POST" action="/jobset/{{ j.id }}/delete" onsubmit="return confirm('Delete this jobset and all of its evaluations/builds?')">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button class="btn btn-danger btn-small" type="submit">Delete</button>
-        </form>
-      </td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% endif %}
+</section>
 
-<h2 id="evaluations">Recent Evaluations</h2>
-{% if recent_evals.is_empty() %}
-<div class="empty">No evaluations yet for this project.</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>Commit</th><th>Status</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
-  </thead>
-  <tbody>
-    {% for e in recent_evals %}
-    <tr>
-      <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
-      <td>
-        <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
-        {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
-      </td>
-      <td>{{ e.time }}</td>
-      {% if is_admin %}
-      <td>
-        <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="return_to" value="/project/{{ project.id }}">
-          {% if e.hidden %}
-          <input type="hidden" name="hidden" value="false">
-          <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
-          {% else %}
-          <input type="hidden" name="hidden" value="true">
-          <button class="btn btn-small btn-outline" type="submit">Hide</button>
-          {% endif %}
-        </form>
-      </td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% endif %}
+<section class="panel" style="margin-top: 14px">
+  <div class="panel-header"><h2 id="evaluations">Recent Evaluations</h2></div>
+  {% if recent_evals.is_empty() %}
+  <div class="empty compact-empty">
+    <div class="empty-title">No evaluations yet</div>
+    <div class="empty-hint">Evaluations appear once a jobset runs.</div>
+  </div>
+  {% else %}
+  <div class="table-wrap compact-table-wrap">
+  <table>
+    <thead>
+      <tr><th>Commit</th><th>Status</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
+    </thead>
+    <tbody>
+      {% for e in recent_evals %}
+      <tr>
+        <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
+        <td>
+          <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
+          {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+        </td>
+        <td>{{ e.time }}</td>
+        {% if is_admin %}
+        <td>
+          <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="return_to" value="/project/{{ project.id }}">
+            {% if e.hidden %}
+            <input type="hidden" name="hidden" value="false">
+            <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
+            {% else %}
+            <input type="hidden" name="hidden" value="true">
+            <button class="btn btn-small btn-secondary" type="submit">Hide</button>
+            {% endif %}
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
 {% endblock %}
 {% block scripts %}
 {% if is_admin %}

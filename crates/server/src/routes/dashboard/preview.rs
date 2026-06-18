@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use askama::Template;
 use axum::{
+  Json,
   Router,
   body::Body,
   http::{StatusCode, header},
@@ -24,7 +25,7 @@ use circus_common::models::{
   SystemStatus,
 };
 use circus_config::UiConfig;
-use sqlx::types::Json;
+use sqlx::types::Json as SqlxJson;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
@@ -52,6 +53,7 @@ use super::{
     BuilderView,
     BuildsTemplate,
     ChannelTemplate,
+    ChannelView,
     ChannelsTemplate,
     EvaluationTemplate,
     EvaluationsTemplate,
@@ -80,6 +82,13 @@ pub fn router() -> Router {
     .route("/__preview", get(index))
     .route("/static/theme.css", get(theme_css))
     .nest_service("/static", ServeDir::new(static_dir()))
+    .route("/api/v1/projects", get(api_projects))
+    .route("/api/v1/metrics/timeseries/builds", get(api_metrics_builds))
+    .route(
+      "/api/v1/metrics/timeseries/duration",
+      get(api_metrics_duration),
+    )
+    .route("/api/v1/metrics/systems", get(api_metrics_systems))
     .route("/", get(home))
     .route("/projects", get(projects))
     .route("/projects/new", get(project_setup))
@@ -123,7 +132,8 @@ async fn theme_css() -> Response {
     .header(header::CONTENT_TYPE, "text/css")
     .header(header::CACHE_CONTROL, "no-cache")
     .body(Body::from(
-      ":root {\n  --accent: #7c3aed;\n  --accent-strong: #5b21b6;\n}\n",
+      ":root {\n  --accent: #111827;\n  --accent-hover: #000000;\n  \
+       --accent-strong: #374151;\n}\n",
     ))
     .unwrap_or_else(|error| {
       Response::builder()
@@ -135,6 +145,50 @@ async fn theme_css() -> Response {
 
 fn static_dir() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static")
+}
+
+async fn api_projects() -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "data": [
+      { "id": "00000000-0000-0000-0000-000000000001", "name": "circus" }
+    ]
+  }))
+}
+
+async fn api_metrics_builds() -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "timestamps": [
+      "2026-06-18T08:00:00Z",
+      "2026-06-18T09:00:00Z",
+      "2026-06-18T10:00:00Z",
+      "2026-06-18T11:00:00Z",
+      "2026-06-18T12:00:00Z"
+    ],
+    "total": [12, 18, 14, 22, 16],
+    "failed": [1, 2, 0, 3, 1]
+  }))
+}
+
+async fn api_metrics_duration() -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "timestamps": [
+      "2026-06-18T08:00:00Z",
+      "2026-06-18T09:00:00Z",
+      "2026-06-18T10:00:00Z",
+      "2026-06-18T11:00:00Z",
+      "2026-06-18T12:00:00Z"
+    ],
+    "p50": [45, 52, 48, 61, 55],
+    "p95": [180, 210, 195, 240, 220],
+    "p99": [300, 340, 310, 380, 350]
+  }))
+}
+
+async fn api_metrics_systems() -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "systems": ["x86_64-linux", "aarch64-linux"],
+    "counts": [42, 18]
+  }))
 }
 
 async fn home() -> Response {
@@ -388,7 +442,15 @@ async fn queue() -> Response {
 async fn channels() -> Response {
   render(ChannelsTemplate {
     ui:        ui(),
-    channels:  vec![channel_fixture()],
+    channels:  vec![ChannelView {
+      id:                    id(5),
+      name:                  "latest".into(),
+      current_evaluation_id: Some(id(3)),
+      updated_at:            "2026-06-18 12:02 UTC".into(),
+      status_text:           "Completed".into(),
+      status_class:          "completed".into(),
+      job_count:             3,
+    }],
     is_admin:  true,
     auth_name: "operator".into(),
   })
@@ -603,7 +665,7 @@ fn project_fixture() -> Project {
     repository_url:  "https://github.com/manic-systems/circus".into(),
     cache_enabled:   true,
     cache_url:       Some("https://cache.example.invalid".into()),
-    cache_upstreams: Json(BinaryCacheUpstreams::default()),
+    cache_upstreams: SqlxJson(BinaryCacheUpstreams::default()),
     created_at:      Utc::now() - Duration::days(30),
     updated_at:      Utc::now() - Duration::minutes(5),
   }
@@ -620,6 +682,8 @@ fn jobset_fixture() -> Jobset {
     check_interval:    600,
     trigger_mode:      JobsetTriggerMode::SourceChange,
     branch:            Some("main".into()),
+    branch_pattern:    None,
+    tag_pattern:       None,
     scheduling_shares: 100,
     created_at:        Utc::now() - Duration::days(20),
     updated_at:        Utc::now() - Duration::minutes(5),

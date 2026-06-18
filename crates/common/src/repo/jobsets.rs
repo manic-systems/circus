@@ -30,9 +30,9 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
 
   sqlx::query_as::<_, Jobset>(
     "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-     flake_mode, check_interval, trigger_mode, branch, scheduling_shares, \
-     state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
-     RETURNING *",
+     flake_mode, check_interval, trigger_mode, branch, branch_pattern, \
+     tag_pattern, scheduling_shares, state, keep_nr) VALUES ($1, $2, $3, $4, \
+     $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *",
   )
   .bind(input.project_id)
   .bind(&input.name)
@@ -42,6 +42,8 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   .bind(check_interval)
   .bind(trigger_mode.as_str())
   .bind(&input.branch)
+  .bind(&input.branch_pattern)
+  .bind(&input.tag_pattern)
   .bind(scheduling_shares)
   .bind(state.as_str())
   .bind(keep_nr)
@@ -150,6 +152,8 @@ pub async fn update(
   let check_interval = input.check_interval.unwrap_or(existing.check_interval);
   let trigger_mode = input.trigger_mode.unwrap_or(existing.trigger_mode);
   let branch = input.branch.or(existing.branch);
+  let branch_pattern = input.branch_pattern.or(existing.branch_pattern);
+  let tag_pattern = input.tag_pattern.or(existing.tag_pattern);
   let scheduling_shares = input
     .scheduling_shares
     .unwrap_or(existing.scheduling_shares);
@@ -158,8 +162,8 @@ pub async fn update(
   sqlx::query_as::<_, Jobset>(
     "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, \
      flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, \
-     scheduling_shares = $8, state = $9, keep_nr = $10 WHERE id = $11 \
-     RETURNING *",
+     branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = \
+     $11, keep_nr = $12 WHERE id = $13 RETURNING *",
   )
   .bind(&name)
   .bind(&nix_expression)
@@ -168,6 +172,8 @@ pub async fn update(
   .bind(check_interval)
   .bind(trigger_mode.as_str())
   .bind(&branch)
+  .bind(&branch_pattern)
+  .bind(&tag_pattern)
   .bind(scheduling_shares)
   .bind(state.as_str())
   .bind(keep_nr)
@@ -221,14 +227,16 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   Ok(
     sqlx::query_as::<_, Jobset>(
       "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-       flake_mode, check_interval, trigger_mode, branch, scheduling_shares, \
-       state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
-       ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = \
-       EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = \
-       EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, \
-       trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, \
-       scheduling_shares = EXCLUDED.scheduling_shares, state = \
-       EXCLUDED.state, keep_nr = EXCLUDED.keep_nr RETURNING *",
+       flake_mode, check_interval, trigger_mode, branch, branch_pattern, \
+       tag_pattern, scheduling_shares, state, keep_nr) VALUES ($1, $2, $3, \
+       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (project_id, \
+       name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled \
+       = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = \
+       EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch \
+       = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, \
+       tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = \
+       EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = \
+       EXCLUDED.keep_nr RETURNING *",
     )
     .bind(input.project_id)
     .bind(&input.name)
@@ -238,6 +246,8 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
     .bind(check_interval)
     .bind(trigger_mode.as_str())
     .bind(&input.branch)
+    .bind(&input.branch_pattern)
+    .bind(&input.tag_pattern)
     .bind(scheduling_shares)
     .bind(state.as_str())
     .bind(keep_nr)

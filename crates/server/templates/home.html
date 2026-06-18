@@ -3,50 +3,13 @@
 {% block topbar %}{% endblock %}
 {% block topbar_title %}Dashboard{% endblock %}
 {% block topbar_context %}Nix evaluations, builds, workers, and queue state{% endblock %}
-{% block sidebar %}
-<div class="nav-group dashboard-nav">
-  <div class="nav-label">Operate</div>
-  <div class="nav-links">
-    <a href="/builds">Builds</a>
-    <a href="/queue">Queue</a>
-    <a href="/evaluations">Evaluations</a>
-    <a href="/projects">Projects</a>
-    <a href="/channels">Channels</a>
-    <a href="/starred">Starred</a>
-    <a href="/metrics">Metrics</a>
-  </div>
-</div>
-<div class="nav-group dashboard-nav">
-  <div class="nav-label">System</div>
-  <div class="nav-links">
-    <a href="/news">News</a>
-    {% if is_admin %}
-    <a href="/users">Users</a>
-    <a href="/admin">Admin</a>
-    {% endif %}
-  </div>
-</div>
-<section class="sidebar-panel">
-  <div class="sidebar-panel-header"><strong>Builders</strong><span>{{ worker_online }} running</span></div>
-  <ul class="builder-list">
-    {% for w in workers %}
-    <li>
-      <strong class="truncate">{{ w.system }}</strong>
-      <span class="text-muted">{{ w.status_text }}</span>
-      <span class="builder-bar"><span style="width: {% if w.max_jobs > 0 %}{{ w.current_jobs * 100 / w.max_jobs }}{% else %}0{% endif %}%"></span></span>
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-{% endblock %}
 {% block content %}
 <header class="page-header operator-header">
   <div>
     <div class="dashboard-title-row"><h1>Dashboard</h1></div>
-    <p class="page-subtitle">Evaluations, builds, workers, and project health.</p>
+    <p class="page-subtitle">Evaluations, builds, agents, and project health.</p>
   </div>
   <div class="operator-header-actions">
-    <span class="refresh-state">refreshed <span class="numeric">{{ refreshed_at }}</span> · auto-refresh off</span>
     {% if !auth_name.is_empty() %}
     <span class="auth-user">{{ auth_name }}</span>
     <form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
@@ -61,9 +24,12 @@
 </header>
 
 {% if !announcements.is_empty() %}
-<div class="motd-line" role="status">
+<div class="announcements" role="status">
   {% for item in announcements %}
-  <span><strong>{{ item.title }}</strong>: {{ item.content }}</span>
+  <div class="announcement-line" data-announcement>
+    <span><strong>{{ item.title }}</strong>: {{ item.content }}</span>
+    <button type="button" class="btn-ghost announcement-close" aria-label="Dismiss announcement" onclick="this.parentElement.remove()">&times;</button>
+  </div>
   {% endfor %}
 </div>
 {% endif %}
@@ -73,16 +39,43 @@
   <a class="metric-cell" href="/builds"><span>Total builds</span><strong>{{ total_builds }}</strong><small>all tracked builds</small></a>
   <a class="metric-cell metric-success" href="/builds?status=succeeded"><span>Succeeded</span><strong>{{ completed_builds }}</strong><small>{% if total_builds > 0 %}{{ completed_builds * 100 / total_builds }}% of all builds{% else %}0% of all builds{% endif %}</small></a>
   <a class="metric-cell metric-failed" href="/builds?status=failed"><span>Failed</span><strong>{{ failed_builds }}</strong><small>{% if total_builds > 0 %}{{ failed_builds * 100 / total_builds }}% of all builds{% else %}0% of all builds{% endif %}</small></a>
-  <a class="metric-cell metric-running" href="/builds?status=running"><span>Active</span><strong>{{ running_builds }}</strong><small>builders available</small></a>
+  <a class="metric-cell metric-running" href="/builds?status=running"><span>Running</span><strong>{{ running_builds }}</strong><small>currently running</small></a>
   <a class="metric-cell" href="/queue"><span>Queued</span><strong>{{ pending_builds }}</strong><small>pending now</small></a>
   <a class="metric-cell metric-success" href="/builds?status=succeeded"><span>Success rate</span><strong>{% if finished_builds > 0 %}{{ completed_builds * 100 / finished_builds }}%{% else %}-{% endif %}</strong><small>completed / finished</small></a>
 </section>
 <section class="dashboard-grid" aria-label="Build farm overview">
   <div class="operator-primary">
+    <section class="panel projects-panel">
+      <div class="panel-header"><h2>Projects</h2><span class="panel-actions"><a href="/projects">all projects</a>{% if is_admin %}<a href="/projects/new">new project</a>{% endif %}</span></div>
+      {% if projects.is_empty() %}
+      <div class="empty compact-empty"><div class="empty-title">No projects yet</div>{% if is_admin %}<div class="empty-hint"><a href="/projects/new">Create a project</a> to get started.</div>{% endif %}</div>
+      {% else %}
+      <div class="table-wrap compact-table-wrap">
+        <table class="data-table dense-table">
+          <thead><tr><th>Project</th><th>Jobsets</th><th>Last eval</th><th>Eval status</th><th>Failing jobs</th><th>Queued</th><th>Systems</th><th>Updated</th></tr></thead>
+          <tbody>
+            {% for p in projects %}
+            <tr>
+              <td class="truncate" title="{{ p.name }}"><a href="/project/{{ p.id }}">{{ p.name }}</a></td>
+              <td class="numeric">{{ p.jobset_count }}</td>
+              <td class="mono nowrap">{{ p.last_eval_time }}</td>
+              <td><span class="status status-{{ p.last_eval_class }}">{{ p.last_eval_status }}</span></td>
+              <td class="numeric"><a href="/builds?status=failed">{{ p.failing_jobs }}</a></td>
+              <td class="numeric"><a href="/queue">{{ p.queued_jobs }}</a></td>
+              <td class="mono truncate" title="{{ p.systems }}">{{ p.systems }}</td>
+              <td class="mono nowrap">{{ p.updated_at }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+
     <section class="panel panel-recent">
       <div class="panel-header">
-        <h2>Recent builds</h2>
-        <a href="/builds">open builds</a>
+        <h2>Builds</h2>
+        <a href="/builds">all builds</a>
       </div>
       <form class="filter-bar" data-table-filter="recent-builds">
         <input type="search" aria-label="Filter recent builds" placeholder="filter project, job, system" data-filter-text>
@@ -93,7 +86,7 @@
           <option value="running">Running</option>
           <option value="pending">Queued</option>
         </select>
-        <a class="btn btn-secondary" href="/builds" data-open-selected>Open selected</a>
+        <a class="btn btn-small btn-secondary" href="/builds" data-open-selected>Open selected</a>
       </form>
       {% if recent_builds.is_empty() %}
       <div class="empty compact-empty"><div class="empty-title">No builds yet</div><div class="empty-hint">Builds appear once an evaluation produces jobs.</div></div>
@@ -120,25 +113,21 @@
       {% endif %}
     </section>
 
-    <section class="panel projects-panel">
-      <div class="panel-header"><h2>Projects needing attention</h2><span class="panel-actions"><a href="/projects">all projects</a>{% if is_admin %}<a href="/projects/new">new project</a>{% endif %}</span></div>
-      {% if projects.is_empty() %}
-      <div class="empty compact-empty"><div class="empty-title">No projects yet</div>{% if is_admin %}<div class="empty-hint"><a href="/projects/new">Create a project</a> to get started.</div>{% endif %}</div>
+    <section class="panel panel-agents">
+      <div class="panel-header"><h2>Agents</h2><a href="/admin#agents">manage</a></div>
+      {% if workers.is_empty() %}
+      <div class="empty compact-empty"><div class="empty-title">No agents</div><div class="empty-hint">No agent sessions have checked in.</div></div>
       {% else %}
       <div class="table-wrap compact-table-wrap">
         <table class="data-table dense-table">
-          <thead><tr><th>Project</th><th>Jobsets</th><th>Last eval</th><th>Eval status</th><th>Failing jobs</th><th>Queued</th><th>Systems</th><th>Updated</th></tr></thead>
+          <thead><tr><th>Name</th><th>System</th><th>Status</th><th>Load</th></tr></thead>
           <tbody>
-            {% for p in projects %}
+            {% for w in workers %}
             <tr>
-              <td class="truncate" title="{{ p.name }}"><a href="/project/{{ p.id }}">{{ p.name }}</a></td>
-              <td class="numeric">{{ p.jobset_count }}</td>
-              <td class="mono nowrap">{{ p.last_eval_time }}</td>
-              <td><span class="status status-{{ p.last_eval_class }}">{{ p.last_eval_status }}</span></td>
-              <td class="numeric"><a href="/builds?status=failed">{{ p.failing_jobs }}</a></td>
-              <td class="numeric"><a href="/queue">{{ p.queued_jobs }}</a></td>
-              <td class="mono truncate" title="{{ p.systems }}">{{ p.systems }}</td>
-              <td class="mono nowrap">{{ p.updated_at }}</td>
+              <td class="truncate" title="{{ w.name }}"><strong>{{ w.name }}</strong></td>
+              <td class="mono nowrap">{{ w.system }}</td>
+              <td><span class="status status-{{ w.status_class }}">{{ w.status_text }}</span></td>
+              <td class="mono nowrap">{{ w.current_jobs }}/{{ w.max_jobs }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -149,48 +138,8 @@
   </div>
 
   <aside class="operator-sidebar" aria-label="Build farm inspector">
-    <section class="panel panel-health">
-      <div class="panel-header"><h2>Health</h2><span class="refresh-state">{{ refreshed_at }}</span></div>
-      <div class="health-ledger" aria-label="Build farm health">
-        <a class="health-row" href="/builds?status=failed"><span class="health-label">Failed</span><span class="health-value{% if failed_builds > 0 %} health-failed{% endif %}">{{ failed_builds }}</span></a>
-        <a class="health-row" href="/builds?status=running"><span class="health-label">Running</span><span class="health-value{% if running_builds > 0 %} health-running{% endif %}">{{ running_builds }}</span></a>
-        <a class="health-row" href="/queue"><span class="health-label">Queued</span><span class="health-value{% if pending_builds > 0 %} health-queued{% endif %}">{{ pending_builds }}</span></a>
-        <a class="health-row" href="/builds?status=succeeded"><span class="health-label">Succeeded</span><span class="health-value{% if completed_builds > 0 %} health-succeeded{% endif %}">{{ completed_builds }}</span></a>
-        <a class="health-row" href="/builds"><span class="health-label">Total</span><span class="health-value">{{ total_builds }}</span></a>
-        <a class="health-row" href="/builds?status=succeeded"><span class="health-label">Success</span><span class="health-value">{% if finished_builds > 0 %}{{ completed_builds * 100 / finished_builds }}%{% else %}-{% endif %}</span></a>
-      </div>
-    </section>
-
-    <section class="panel panel-failures">
-      <div class="panel-header">
-        <h2>Failures</h2>
-        <a href="/builds?status=failed">all failed</a>
-      </div>
-      {% if failed_builds_list.is_empty() %}
-      <div class="failure-empty">
-        <div class="empty-title">No failed builds</div>
-        <div class="empty-hint">Failure queue is clear.</div>
-      </div>
-      {% else %}
-      <div class="table-wrap compact-table-wrap">
-        <table class="data-table dense-table">
-          <thead><tr><th>Job</th><th>System</th><th>Log</th></tr></thead>
-          <tbody>
-            {% for b in failed_builds_list %}
-            <tr data-status="{{ b.status_class }}" data-project="{{ b.project_name }}" data-system="{{ b.system }}" data-job="{{ b.job_name }}">
-              <td class="mono truncate" title="{{ b.project_name }} / {{ b.job_name }}"><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
-              <td class="mono nowrap">{{ b.system }}</td>
-              <td>{% if b.has_log %}<a href="/build/{{ b.id }}/log">log</a>{% else %}-{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% endif %}
-    </section>
-
     <section class="panel panel-queue">
-      <div class="panel-header"><h2>Queue and workers</h2><a href="/queue">queue</a></div>
+      <div class="panel-header"><h2>Queue</h2><a href="/queue">queue</a></div>
       <h3>Queued by system</h3>
       {% if queue_by_system.is_empty() %}
       <div class="section-empty">No queued builds.</div>
@@ -201,16 +150,16 @@
         {% endfor %}
       </ul>
       {% endif %}
-      <h3>Workers</h3>
-      {% if workers.is_empty() %}
-      <div class="section-empty"><div class="empty-title">No workers</div><div class="empty-hint">No builder sessions have checked in.</div></div>
+    </section>
+
+    <section class="panel panel-recent-evals">
+      <div class="panel-header"><h2>Recent evaluations</h2><a href="/evaluations">all</a></div>
+      {% if recent_evals.is_empty() %}
+      <div class="section-empty">No recent evaluations.</div>
       {% else %}
-      <ul class="worker-list">
-        {% for w in workers %}
-        <li>
-          <span class="worker-main"><strong class="truncate" title="{{ w.name }}">{{ w.name }}</strong><span class="mono truncate" title="{{ w.system }}">{{ w.system }}</span></span>
-          <span class="worker-side"><span class="status status-{{ w.status_class }}">{{ w.status_text }}</span><span class="mono">{{ w.current_jobs }}/{{ w.max_jobs }}</span></span>
-        </li>
+      <ul class="summary-list">
+        {% for e in recent_evals %}
+        <li><a href="/evaluation/{{ e.id }}"><span class="mono">{{ e.commit_short }}</span><span class="status status-{{ e.status_class }}">{{ e.status_text }}</span></a></li>
         {% endfor %}
       </ul>
       {% endif %}

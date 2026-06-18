@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}{{ ui.brand_name }}{% endblock %}</title>
   {% if ui.has_favicon %}<link rel="icon" href="{{ ui.favicon_url }}">{% endif %}
-  <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v2">
+  <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v5">
   <link rel="stylesheet" href="/static/theme.css">
   {% if ui.has_custom_css %}<link rel="stylesheet" href="/static/custom.css">{% endif %}
 </head>
@@ -93,10 +93,24 @@
   <script>
   (function() {
     var path = window.location.pathname;
+    var parentMap = {
+      '/build/': '/builds',
+      '/project/': '/projects',
+      '/jobset/': '/projects',
+      '/evaluation/': '/evaluations',
+      '/channel/': '/channels',
+    };
+    var effectivePath = path;
+    for (var prefix in parentMap) {
+      if (path.startsWith(prefix)) {
+        effectivePath = parentMap[prefix];
+        break;
+      }
+    }
     var links = document.querySelectorAll('.nav-links a');
     for (var i = 0; i < links.length; i++) {
       var href = links[i].getAttribute('href');
-      if (href === '/' ? path === '/' : path === href || path.startsWith(href + '/')) {
+      if (href === '/' ? path === '/' : effectivePath === href || path === href || path.startsWith(href + '/')) {
         links[i].classList.add('active');
       }
     }

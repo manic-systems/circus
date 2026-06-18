@@ -3,57 +3,59 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block content %}
-<h1>Announcements</h1>
+<h1>News</h1>
 
 {% if is_admin %}
-<div class="card">
-  <div class="card-body">
-    <h3>Post Announcement</h3>
+<section class="panel">
+  <div class="panel-header"><h2>Post news item</h2></div>
+  <div class="panel-body">
     <form method="POST" action="/news" id="news-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label for="title">Title</label>
-        <input type="text" id="title" name="title" required maxlength="200" class="form-control">
+        <input type="text" id="title" name="title" required maxlength="200">
       </div>
       <div class="form-group">
         <label for="content">Content</label>
-        <textarea id="content" name="content" rows="4" required class="form-control"></textarea>
+        <textarea id="content" name="content" rows="4" required></textarea>
       </div>
-      <button type="submit" class="btn btn-primary">Post</button>
+      <button type="submit" class="btn">Post</button>
     </form>
   </div>
-</div>
+</section>
 {% endif %}
 
 {% if items.is_empty() %}
 <div class="empty">
-  <div class="empty-title">No announcements</div>
-  <div class="empty-hint">System news and announcements will appear here.</div>
+  <div class="empty-title">No news</div>
+  <div class="empty-hint">News items will appear here.</div>
 </div>
 {% else %}
 <div class="news-list">
   {% for item in items %}
-  <div class="news-item card">
-    <div class="card-body">
-      <div class="news-header">
-        <h3 class="news-title">{{ item.title }}</h3>
+  <section class="panel news-item">
+    <div class="panel-header">
+      <h2 class="news-title">{{ item.title }}</h2>
+      <span class="panel-actions">
         <span class="news-date">{{ item.created_at.format("%Y-%m-%d %H:%M UTC") }}</span>
         {% if is_admin %}
-        <form method="POST" action="/news/{{ item.id }}/delete" style="display:inline">
+        <form method="POST" action="/news/{{ item.id }}/delete" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this announcement?')">Delete</button>
+          <button type="submit" class="btn btn-small btn-danger" onclick="return confirm('Delete this news item?')">Delete</button>
         </form>
         {% endif %}
-      </div>
+      </span>
+    </div>
+    <div class="panel-body">
       <div class="news-content">{{ item.content }}</div>
     </div>
-  </div>
+  </section>
   {% endfor %}
 </div>
 {% endif %}

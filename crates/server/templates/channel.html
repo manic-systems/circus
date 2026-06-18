@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
@@ -45,39 +45,43 @@
     {% endmatch %}
 </div>
 {% else %}
-<h2>Contents ({{ builds.len() }} jobs)</h2>
-<div class="stat-bar">
-  {% if succeeded_count > 0 %}<span class="badge badge-succeeded">{{ succeeded_count }} succeeded</span>{% endif %}
-  {% if failed_count > 0 %}<span class="badge badge-failed">{{ failed_count }} failed</span>{% endif %}
-  {% if pending_count > 0 %}<span class="badge badge-pending">{{ pending_count }} pending</span>{% endif %}
-</div>
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th>Job</th>
-      <th>System</th>
-      <th>Status</th>
-      <th>Output</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for b in builds %}
-    <tr>
-      <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
-      <td>{{ b.system }}</td>
-      <td><span class="badge badge-{{ b.status_class }}">{{ b.status_text }}</span></td>
-      <td>
-        {% if !b.output_path.is_empty() %}
-        <code class="path-short">{{ b.output_path }}</code>
-        {% else %}
-        -
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
+<section class="panel">
+  <div class="panel-header">
+    <h2>Contents ({{ builds.len() }} jobs)</h2>
+    <span class="panel-actions">
+      {% if succeeded_count > 0 %}<span class="badge badge-succeeded">{{ succeeded_count }} succeeded</span>{% endif %}
+      {% if failed_count > 0 %}<span class="badge badge-failed">{{ failed_count }} failed</span>{% endif %}
+      {% if pending_count > 0 %}<span class="badge badge-pending">{{ pending_count }} pending</span>{% endif %}
+    </span>
+  </div>
+  <div class="table-wrap compact-table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Job</th>
+        <th>System</th>
+        <th>Status</th>
+        <th>Output</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in builds %}
+      <tr>
+        <td><a href="/build/{{ b.id }}">{{ b.job_name }}</a></td>
+        <td>{{ b.system }}</td>
+        <td><span class="badge badge-{{ b.status_class }}">{{ b.status_text }}</span></td>
+        <td>
+          {% if !b.output_path.is_empty() %}
+          <code class="path-short">{{ b.output_path }}</code>
+          {% else %}
+          -
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
 {% endif %}
 {% endblock %}

@@ -3,10 +3,16 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
+{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs">
+  <a href="/">Home</a> <span class="sep">/</span>
+  <span class="current">Starred</span>
+</nav>
 {% endblock %}
 {% block content %}
 <h1>Starred Jobs</h1>
@@ -31,7 +37,7 @@
       <th>Jobset</th>
       <th>Job Name</th>
       <th>Latest Status</th>
-      <th>Actions</th>
+      <th class="row-actions">Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -49,10 +55,10 @@
       <td>
         <span class="badge badge-{{ s.status_class }}">{{ s.status_text }}</span>
       </td>
-      <td>
-        <button class="btn btn-small" onclick="unstar('{{ s.id }}')">Unstar</button>
+      <td class="row-actions">
+        <button class="btn btn-small btn-secondary" onclick="unstar('{{ s.id }}')">Unstar</button>
         {% if let Some(id) = s.latest_build_id %}
-        <a href="/build/{{ id }}" class="btn btn-small">View Build</a>
+        <a href="/build/{{ id }}" class="btn btn-small btn-secondary">View Build</a>
         {% endif %}
       </td>
     </tr>

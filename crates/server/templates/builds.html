@@ -3,9 +3,9 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block content %}
@@ -21,7 +21,7 @@
   </select></label>
   <label>System: <input type="text" name="system" value="{{ filter_system }}" placeholder="e.g. x86_64-linux"></label>
   <label>Job: <input type="text" name="job_name" value="{{ filter_job }}" placeholder="job name"></label>
-  <button type="submit">Filter</button>
+  <button type="submit" class="btn btn-secondary">Filter</button>
 </form>
 
 {% if builds.is_empty() %}
@@ -50,15 +50,15 @@
 </table>
 </div>
 {% if total_pages > 1 %}
-<div class="pagination">
+<nav class="pagination">
   {% if has_prev %}
-  <a href="/builds?offset={{ prev_offset }}&limit={{ limit }}&status={{ filter_status }}&system={{ filter_system }}&job_name={{ filter_job }}">&laquo; Previous</a>
+  <a href="/builds?offset={{ prev_offset }}&limit={{ limit }}&status={{ filter_status }}&system={{ filter_system }}&job_name={{ filter_job }}" class="btn btn-small btn-secondary">&laquo; Previous</a>
   {% endif %}
-  <span>Page {{ page }} of {{ total_pages }}</span>
+  <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
   {% if has_next %}
-  <a href="/builds?offset={{ next_offset }}&limit={{ limit }}&status={{ filter_status }}&system={{ filter_system }}&job_name={{ filter_job }}">Next &raquo;</a>
+  <a href="/builds?offset={{ next_offset }}&limit={{ limit }}&status={{ filter_status }}&system={{ filter_system }}&job_name={{ filter_job }}" class="btn btn-small btn-secondary">Next &raquo;</a>
   {% endif %}
-</div>
+</nav>
 {% endif %}
 {% endif %}
 {% endblock %}

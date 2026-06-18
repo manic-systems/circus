@@ -132,7 +132,10 @@ pub fn document() -> Value {
             "enabled":        { "type": "boolean" },
             "check_interval": { "type": "integer" },
             "trigger_mode":   { "type": "string", "enum": ["source_change", "interval"] },
-            "state":          { "type": "string" }
+            "state":          { "type": "string" },
+            "branch":         { "type": ["string", "null"] },
+            "branch_pattern": { "type": ["string", "null"] },
+            "tag_pattern":    { "type": ["string", "null"] }
           }
         },
         "JobsetInput": {

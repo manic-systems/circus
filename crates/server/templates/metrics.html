@@ -5,10 +5,17 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
+{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs">
+  <a href="/">Home</a> <span class="sep">/</span>
+  <span class="current">Metrics</span>
+</nav>
 {% endblock %}
 
 {% block content %}
@@ -33,34 +40,42 @@
 </div>
 
 <div class="metrics-grid">
-  <div class="metric-card">
-    <h3>Build Counts Over Time</h3>
-    <canvas id="builds-chart"></canvas>
-  </div>
+  <section class="panel metric-panel">
+    <div class="panel-header"><h2>Build Counts Over Time</h2></div>
+    <div class="metric-chart-body">
+      <canvas id="builds-chart"></canvas>
+      <p class="empty-hint chart-empty" id="builds-chart-empty" hidden>No data available</p>
+    </div>
+  </section>
 
-  <div class="metric-card">
-    <h3>Build Duration Percentiles</h3>
-    <canvas id="duration-chart"></canvas>
-  </div>
+  <section class="panel metric-panel">
+    <div class="panel-header"><h2>Build Duration Percentiles</h2></div>
+    <div class="metric-chart-body">
+      <canvas id="duration-chart"></canvas>
+      <p class="empty-hint chart-empty" id="duration-chart-empty" hidden>No data available</p>
+    </div>
+  </section>
 
-  <div class="metric-card">
-    <h3>Builds by System</h3>
-    <canvas id="systems-chart"></canvas>
-  </div>
+  <section class="panel metric-panel">
+    <div class="panel-header"><h2>Builds by System</h2></div>
+    <div class="metric-chart-body">
+      <canvas id="systems-chart"></canvas>
+      <p class="empty-hint chart-empty" id="systems-chart-empty" hidden>No data available</p>
+    </div>
+  </section>
 
-  <div class="metric-card">
-    <h3>Success Rate Trend</h3>
-    <canvas id="success-rate-chart"></canvas>
-  </div>
+  <section class="panel metric-panel">
+    <div class="panel-header"><h2>Success Rate Trend</h2></div>
+    <div class="metric-chart-body">
+      <canvas id="success-rate-chart"></canvas>
+      <p class="empty-hint chart-empty" id="success-rate-chart-empty" hidden>No data available</p>
+    </div>
+  </section>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script
-  src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
-  integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
-  crossorigin="anonymous">
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 // Configuration
 const API_BASE = '/api/v1/metrics';
@@ -69,6 +84,21 @@ let currentProjectId = null;
 
 // Chart instances
 let buildsChart, durationChart, systemsChart, successRateChart;
+
+function cssVar(name, fallback) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+function hexToRgba(hex, alpha) {
+  let c = hex.replace('#', '');
+  if (c.length === 3) {
+    c = c.split('').map(ch => ch + ch).join('');
+  }
+  const r = parseInt(c.substring(0, 2), 16);
+  const g = parseInt(c.substring(2, 4), 16);
+  const b = parseInt(c.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 // Initialize charts on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -107,7 +137,19 @@ async function loadProjects() {
   }
 }
 
+function setChartEmpty(chartId, emptyId, isEmpty) {
+  const canvas = document.getElementById(chartId);
+  const empty = document.getElementById(emptyId);
+  if (canvas && empty) {
+    canvas.hidden = isEmpty;
+    empty.hidden = !isEmpty;
+  }
+}
+
 async function loadData() {
+  if (typeof Chart === 'undefined' || !buildsChart) {
+    return;
+  }
   const params = new URLSearchParams();
   params.set('hours', currentHours);
   params.set('bucket', 60);
@@ -119,18 +161,33 @@ async function loadData() {
     // Load build stats
     const buildsResponse = await fetch(`${API_BASE}/timeseries/builds?${params}`);
     const buildsData = await buildsResponse.json();
-    updateBuildsChart(buildsData);
-    updateSuccessRateChart(buildsData);
+    const buildsEmpty = !buildsData.timestamps || buildsData.timestamps.length === 0;
+    setChartEmpty('builds-chart', 'builds-chart-empty', buildsEmpty);
+    if (!buildsEmpty) {
+      updateBuildsChart(buildsData);
+      updateSuccessRateChart(buildsData);
+    }
 
     // Load duration percentiles
     const durationResponse = await fetch(`${API_BASE}/timeseries/duration?${params}`);
     const durationData = await durationResponse.json();
-    updateDurationChart(durationData);
+    const durationEmpty = !durationData.timestamps || durationData.timestamps.length === 0;
+    setChartEmpty('duration-chart', 'duration-chart-empty', durationEmpty);
+    if (!durationEmpty) {
+      updateDurationChart(durationData);
+    }
 
     // Load system distribution
     const systemsResponse = await fetch(`${API_BASE}/systems?${params}`);
     const systemsData = await systemsResponse.json();
-    updateSystemsChart(systemsData);
+    const systemsEmpty = !systemsData.systems || systemsData.systems.length === 0;
+    setChartEmpty('systems-chart', 'systems-chart-empty', systemsEmpty);
+    if (!systemsEmpty) {
+      updateSystemsChart(systemsData);
+    }
+
+    // Success rate uses the same data as builds; mirror its empty state
+    setChartEmpty('success-rate-chart', 'success-rate-chart-empty', buildsEmpty);
   } catch (error) {
     console.error('Failed to load metrics data:', error);
     showError(document.querySelector('.metrics-grid'), 'Failed to load metrics data. Please try again later.');
@@ -138,10 +195,49 @@ async function loadData() {
 }
 
 function initCharts() {
-  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-  // Theme-aware color for chart labels.
-  const style = getComputedStyle(document.documentElement);
-  Chart.defaults.color = style.getPropertyValue('--fg-secondary').trim() || '#666';
+  if (typeof Chart === 'undefined') {
+    console.error('Chart.js library failed to load');
+    ['builds-chart', 'duration-chart', 'systems-chart', 'success-rate-chart'].forEach(id => {
+      const canvas = document.getElementById(id);
+      if (canvas) canvas.hidden = true;
+    });
+    document.querySelectorAll('.chart-empty').forEach(el => {
+      el.textContent = 'Chart library unavailable';
+      el.hidden = false;
+    });
+    return;
+  }
+  Chart.defaults.font.family = cssVar('--font-sans', 'Inter, system-ui, sans-serif');
+  Chart.defaults.font.size = 11;
+
+  const colors = {
+    success: cssVar('--status-success', '#0f7a3b'),
+    failed: cssVar('--status-failed', '#b91c1c'),
+    running: cssVar('--status-running', '#007481'),
+    accent: cssVar('--accent', '#111827'),
+    muted: cssVar('--text-muted', '#52606d'),
+    border: cssVar('--border', '#d3d9df'),
+    subtle: cssVar('--text-subtle', '#7a8793')
+  };
+  Chart.defaults.color = colors.muted;
+
+  const commonScales = {
+    x: {
+      grid: { color: colors.border, tickColor: 'transparent', drawBorder: false },
+      ticks: { color: colors.muted, maxRotation: 0 }
+    },
+    y: {
+      beginAtZero: true,
+      grid: { color: colors.border, tickColor: 'transparent', drawBorder: false },
+      ticks: { color: colors.muted }
+    }
+  };
+  const commonPlugins = {
+    legend: {
+      position: 'top',
+      labels: { color: colors.muted, usePointStyle: true, boxWidth: 6, padding: 14 }
+    }
+  };
 
   // Build counts chart
   const buildsCtx = document.getElementById('builds-chart').getContext('2d');
@@ -153,14 +249,18 @@ function initCharts() {
         {
           label: 'Successful',
           data: [],
-          backgroundColor: '#28a745',
-          borderRadius: 4
+          backgroundColor: hexToRgba(colors.success, 0.75),
+          borderColor: colors.success,
+          borderWidth: 1,
+          borderRadius: 2
         },
         {
           label: 'Failed',
           data: [],
-          backgroundColor: '#dc3545',
-          borderRadius: 4
+          backgroundColor: hexToRgba(colors.failed, 0.75),
+          borderColor: colors.failed,
+          borderWidth: 1,
+          borderRadius: 2
         }
       ]
     },
@@ -170,17 +270,17 @@ function initCharts() {
       scales: {
         x: {
           stacked: true,
-          grid: { display: false }
+          grid: { display: false },
+          ticks: { color: colors.muted, maxRotation: 0 }
         },
         y: {
           stacked: true,
           beginAtZero: true,
-          ticks: { stepSize: 1 }
+          ticks: { stepSize: 1, color: colors.muted },
+          grid: { color: colors.border, tickColor: 'transparent', drawBorder: false }
         }
       },
-      plugins: {
-        legend: { position: 'top' }
-      }
+      plugins: commonPlugins
     }
   });
 
@@ -194,26 +294,32 @@ function initCharts() {
         {
           label: 'P50 (Median)',
           data: [],
-          borderColor: '#007bff',
-          backgroundColor: 'rgba(0, 123, 255, 0.1)',
+          borderColor: colors.accent,
+          backgroundColor: hexToRgba(colors.accent, 0.08),
           fill: true,
-          tension: 0.3
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 4
         },
         {
           label: 'P95',
           data: [],
-          borderColor: '#ffc107',
-          backgroundColor: 'rgba(255, 193, 7, 0.1)',
+          borderColor: colors.running,
+          backgroundColor: hexToRgba(colors.running, 0.08),
           fill: true,
-          tension: 0.3
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 4
         },
         {
           label: 'P99',
           data: [],
-          borderColor: '#dc3545',
-          backgroundColor: 'rgba(220, 53, 69, 0.1)',
+          borderColor: colors.failed,
+          backgroundColor: hexToRgba(colors.failed, 0.08),
           fill: true,
-          tension: 0.3
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 4
         }
       ]
     },
@@ -221,17 +327,18 @@ function initCharts() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
+        ...commonScales,
         y: {
-          beginAtZero: true,
+          ...commonScales.y,
           title: {
             display: true,
-            text: 'Duration (seconds)'
+            text: 'Duration (seconds)',
+            color: colors.subtle,
+            font: { size: 11, weight: 600 }
           }
         }
       },
-      plugins: {
-        legend: { position: 'top' }
-      }
+      plugins: commonPlugins
     }
   });
 
@@ -244,22 +351,26 @@ function initCharts() {
       datasets: [{
         data: [],
         backgroundColor: [
-          '#007bff',
-          '#28a745',
-          '#ffc107',
-          '#dc3545',
-          '#6f42c1',
-          '#20c997',
-          '#fd7e14',
-          '#e83e8c'
-        ]
+          colors.success,
+          colors.running,
+          colors.accent,
+          colors.muted,
+          colors.border,
+          colors.failed,
+          colors.subtle
+        ],
+        borderColor: cssVar('--surface', '#ffffff'),
+        borderWidth: 2
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right' }
+        legend: {
+          position: 'right',
+          labels: { color: colors.muted, usePointStyle: true, boxWidth: 8 }
+        }
       }
     }
   });
@@ -273,29 +384,31 @@ function initCharts() {
       datasets: [{
         label: 'Success Rate (%)',
         data: [],
-        borderColor: '#28a745',
-        backgroundColor: 'rgba(40, 167, 69, 0.1)',
+        borderColor: colors.success,
+        backgroundColor: hexToRgba(colors.success, 0.08),
         fill: true,
-        tension: 0.3
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
+        ...commonScales,
         y: {
-          beginAtZero: true,
+          ...commonScales.y,
           max: 100,
           ticks: {
+            color: colors.muted,
             callback: function(value) {
               return value + '%';
             }
           }
         }
       },
-      plugins: {
-        legend: { position: 'top' }
-      }
+      plugins: commonPlugins
     }
   });
 }
@@ -349,64 +462,4 @@ function updateSuccessRateChart(data) {
   successRateChart.update();
 }
 </script>
-
-<style>
-.metrics-controls {
-  background: var(--surface);
-  padding: 1rem;
-  border-radius: var(--radius);
-  margin-bottom: 1.5rem;
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: wrap;
-  color: var(--fg);
-}
-
-.metrics-controls label {
-  font-weight: 600;
-  color: var(--fg-secondary);
-}
-
-.metrics-controls select {
-  padding: 0.375rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface);
-  color: var(--fg);
-  font-size: 0.875rem;
-}
-
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-  gap: 1.5rem;
-}
-
-.metric-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  box-shadow: var(--shadow-xs);
-  color: var(--fg);
-}
-
-.metric-card h3 {
-  margin-top: 0;
-  margin-bottom: 1rem;
-  font-size: 1.1rem;
-  color: var(--fg);
-}
-
-.metric-card canvas {
-  max-height: 300px;
-}
-
-@media (max-width: 768px) {
-  .metrics-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
 {% endblock %}

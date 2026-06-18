@@ -3,52 +3,37 @@
 {% block auth %}
 {% if !auth_name.is_empty() %}
 <span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button type="submit">Logout</button></form>
+<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
 {% else %}
-<a href="/login">Login</a>
+<a class="btn btn-secondary" href="/login">Login</a>
 {% endif %}
 {% endblock %}
 {% block content %}
 <h1>User Management</h1>
 
 {% if is_admin %}
-<details>
-  <summary>Create User</summary>
-  <div class="form-card">
-    <form id="create-user-form">
-      <div class="form-group">
-        <label for="user-username">Username</label>
-        <input type="text" id="user-username" required pattern="[a-zA-Z0-9_-]+" minlength="3" maxlength="50">
-      </div>
-      <div class="form-group">
-        <label for="user-email">Email</label>
-        <input type="email" id="user-email" required>
-      </div>
-      <div class="form-group">
-        <label for="user-fullname">Full Name (optional)</label>
-        <input type="text" id="user-fullname">
-      </div>
-      <div class="form-group">
-        <label for="user-password">Password</label>
-        <input type="password" id="user-password" required minlength="8">
-      </div>
-      <div class="form-group">
-        <label for="user-role">Role</label>
-        <select id="user-role">
-          <option value="read-only" selected>read-only</option>
-          <option value="admin">admin</option>
-          <option value="create-projects">create-projects</option>
-          <option value="eval-jobset">eval-jobset</option>
-          <option value="cancel-build">cancel-build</option>
-          <option value="restart-jobs">restart-jobs</option>
-          <option value="bump-to-front">bump-to-front</option>
-        </select>
-      </div>
+<section class="panel">
+  <div class="panel-header"><h2>Create user</h2></div>
+  <div class="panel-body">
+    <form id="create-user-form" class="filter-form">
+      <label>Username: <input type="text" id="user-username" required pattern="[a-zA-Z0-9_-]+" minlength="3" maxlength="50"></label>
+      <label>Email: <input type="email" id="user-email" required></label>
+      <label>Full Name: <input type="text" id="user-fullname"></label>
+      <label>Password: <input type="password" id="user-password" required minlength="8"></label>
+      <label>Role: <select id="user-role">
+        <option value="read-only" selected>read-only</option>
+        <option value="admin">admin</option>
+        <option value="create-projects">create-projects</option>
+        <option value="eval-jobset">eval-jobset</option>
+        <option value="cancel-build">cancel-build</option>
+        <option value="restart-jobs">restart-jobs</option>
+        <option value="bump-to-front">bump-to-front</option>
+      </select></label>
       <button type="submit" class="btn">Create User</button>
     </form>
     <div id="user-msg"></div>
   </div>
-</details>
+</section>
 {% endif %}
 
 {% if users.is_empty() %}
@@ -67,7 +52,7 @@
       <th>Type</th>
       <th>Enabled</th>
       <th>Last Login</th>
-      {% if is_admin %}<th>Actions</th>{% endif %}
+      {% if is_admin %}<th class="row-actions">Actions</th>{% endif %}
     </tr>
   </thead>
   <tbody>
@@ -80,11 +65,11 @@
       <td>{% if u.enabled %}Yes{% else %}No{% endif %}</td>
       <td>{{ u.last_login_at }}</td>
       {% if is_admin %}
-      <td>
-        <button class="btn btn-small" onclick="toggleUser('{{ u.id }}', {{ !u.enabled }})">
+      <td class="row-actions">
+        <button class="btn btn-small btn-secondary" onclick="toggleUser('{{ u.id }}', {{ !u.enabled }})">
           {% if u.enabled %}Disable{% else %}Enable{% endif %}
         </button>
-        <button class="btn btn-danger btn-small" onclick="deleteUser('{{ u.id }}')">Delete</button>
+        <button class="btn btn-small btn-danger" onclick="deleteUser('{{ u.id }}')">Delete</button>
       </td>
       {% endif %}
     </tr>
@@ -95,11 +80,11 @@
 
 <nav class="pagination">
   {% if has_prev %}
-  <a href="/users?limit={{ limit }}&offset={{ prev_offset }}" class="btn btn-small">Previous</a>
+  <a href="/users?limit={{ limit }}&offset={{ prev_offset }}" class="btn btn-small btn-secondary">Previous</a>
   {% endif %}
-  <span>Page {{ page }} of {{ total_pages }}</span>
+  <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
   {% if has_next %}
-  <a href="/users?limit={{ limit }}&offset={{ next_offset }}" class="btn btn-small">Next</a>
+  <a href="/users?limit={{ limit }}&offset={{ next_offset }}" class="btn btn-small btn-secondary">Next</a>
   {% endif %}
 </nav>
 {% endif %}
