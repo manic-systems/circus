@@ -4,7 +4,7 @@
   testers,
   self,
 }: let
-  # Password files for testing passwordFile option.
+  # Password files for testing password_file configuration.
   # Passwords must be at least 12 characters with at least one uppercase letter.
   adminPasswordFile = pkgs.writeText "admin-password" "SecretAdmin123!";
   userPasswordFile = pkgs.writeText "user-password" "SecretUser123!";
@@ -21,37 +21,41 @@ in
       _module.args.self = self;
 
       services.circus = {
-        declarative = {
-          users = {
-            # Admin user with passwordFile
-            decl-admin = {
+        settings.declarative = {
+          users = [
+            # Admin user with password_file
+            {
+              username = "decl-admin";
               email = "admin@test.local";
-              passwordFile = toString adminPasswordFile;
+              password_file = toString adminPasswordFile;
               role = "admin";
-            };
-            # Regular user with passwordFile
-            decl-user = {
+            }
+            # Regular user with password_file
+            {
+              username = "decl-user";
               email = "user@test.local";
-              passwordFile = toString userPasswordFile;
+              password_file = toString userPasswordFile;
               role = "read-only";
-            };
-            # User with passwordFile
-            decl-user2 = {
+            }
+            # User with password_file
+            {
+              username = "decl-user2";
               email = "user2@test.local";
-              passwordFile = toString userPasswordFile;
+              password_file = toString userPasswordFile;
               role = "read-only";
-            };
-            # Disabled user with passwordFile
-            decl-disabled = {
+            }
+            # Disabled user with password_file
+            {
+              username = "decl-disabled";
               email = "disabled@test.local";
-              passwordFile = toString disabledPasswordFile;
+              password_file = toString disabledPasswordFile;
               role = "read-only";
               enabled = false;
-            };
-          };
+            }
+          ];
 
           # Replace vm-common's bootstrap key list entirely.
-          apiKeys = lib.mkForce [
+          api_keys = lib.mkForce [
             {
               name = "decl-admin-key";
               key = "circus_decl_admin";
@@ -69,43 +73,43 @@ in
           projects = lib.mkForce [
             {
               name = "decl-project-1";
-              repositoryUrl = "https://github.com/test/decl1";
+              repository_url = "https://github.com/test/decl1";
               description = "First declarative project";
               jobsets = [
                 {
                   name = "enabled-jobset";
-                  nixExpression = "packages";
+                  nix_expression = "packages";
                   enabled = true;
-                  flakeMode = true;
-                  checkInterval = 300;
+                  flake_mode = true;
+                  check_interval = 300;
                   state = "enabled";
                 }
                 {
                   name = "disabled-jobset";
-                  nixExpression = "disabled";
+                  nix_expression = "disabled";
                   state = "disabled";
                 }
                 {
                   name = "oneshot-jobset";
-                  nixExpression = "oneshot";
+                  nix_expression = "oneshot";
                   state = "one_shot";
                 }
                 {
                   name = "oneatatime-jobset";
-                  nixExpression = "exclusive";
+                  nix_expression = "exclusive";
                   state = "one_at_a_time";
-                  checkInterval = 60;
+                  check_interval = 60;
                 }
               ];
             }
             {
               name = "decl-project-2";
-              repositoryUrl = "https://github.com/test/decl2";
+              repository_url = "https://github.com/test/decl2";
               jobsets = [
                 {
                   name = "main";
-                  nixExpression = ".";
-                  flakeMode = true;
+                  nix_expression = ".";
+                  flake_mode = true;
                 }
               ];
             }
@@ -115,25 +119,25 @@ in
             # runtime, so the declarative path drives a real evaluation + build.
             {
               name = "decl-e2e";
-              repositoryUrl = "file:///var/lib/circus/test-repos/decl-flake.git";
+              repository_url = "file:///var/lib/circus/test-repos/decl-flake.git";
               description = "Declarative project that actually evaluates";
               jobsets = [
                 {
                   name = "packages";
-                  nixExpression = "packages";
-                  flakeMode = true;
+                  nix_expression = "packages";
+                  flake_mode = true;
                   branch = "master";
                   state = "enabled";
-                  checkInterval = 10;
+                  check_interval = 10;
                 }
                 # Same repo, disabled: the evaluator must never touch it.
                 {
                   name = "off";
-                  nixExpression = "packages";
-                  flakeMode = true;
+                  nix_expression = "packages";
+                  flake_mode = true;
                   branch = "master";
                   state = "disabled";
-                  checkInterval = 10;
+                  check_interval = 10;
                 }
               ];
             }
@@ -201,7 +205,7 @@ in
           code = lines[-1]
           assert code in ("200", "302", "303"), f"Expected redirect on login, got {code}"
 
-      with subtest("Web login with declarative user (passwordFile) succeeds"):
+      with subtest("Web login with declarative user (password_file) succeeds"):
           result = machine.succeed(
               "curl -s -w '\\n%{http_code}' "
               "-X POST http://127.0.0.1:3000/login "
@@ -211,7 +215,7 @@ in
           code = lines[-1]
           assert code in ("200", "302", "303"), f"Expected redirect on login, got {code}"
 
-      with subtest("Web login with declarative user2 (passwordFile) succeeds"):
+      with subtest("Web login with declarative user2 (password_file) succeeds"):
           result = machine.succeed(
               "curl -s -w '\\n%{http_code}' "
               "-X POST http://127.0.0.1:3000/login "
@@ -521,7 +525,7 @@ in
       with subtest("Re-evaluation with unchanged source produces no second evaluation"):
           # The evaluator caches by (jobset_id, source_commit). A second poll
           # against the same commit must not create a duplicate evaluation row.
-          # We wait one poll cycle (checkInterval = 10s) then assert the count
+          # We wait one poll cycle (check_interval = 10s) then assert the count
           # is still 1.
           time.sleep(15)
           eval_count = int(machine.succeed(

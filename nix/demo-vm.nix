@@ -6,7 +6,7 @@
   inherit (lib.modules) mkForce;
   circusPkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
 
-  # Demo password file to demonstrate passwordFile option
+  # Demo password file to demonstrate password_file configuration.
   # Password must be at least 12 characters with at least one uppercase letter
   demoPasswordFile = pkgs.writeText "demo-password" "DemoPassword123!";
 
@@ -27,8 +27,8 @@
     ## VM hardware
     # As it turns out 2gb and 2 cores is not enough.
     virtualisation = {
-      memorySize = lib.mkForce 4096;
-      cores = lib.mkForce 4;
+      memorySize = mkForce 4096;
+      cores = mkForce 4;
     };
 
     ## Seed an admin API key on first boot
@@ -39,7 +39,7 @@
       after = ["circus-server.service"];
       requires = ["circus-server.service"];
       wantedBy = ["multi-user.target"];
-      path = [pkgs.postgresql pkgs.curl];
+      path = with pkgs; [postgresql curl];
       script = ''
         # Wait for server to be ready
         for i in $(seq 1 30); do
@@ -90,19 +90,21 @@
             port = 3000;
             cors_permissive = mkForce true;
           };
-        };
 
-        declarative.users = {
-          admin = {
-            email = "admin@circus.local";
-            password = "AdminPassword123!";
-            role = "admin";
-          };
-          demo = {
-            email = "demo@circus.local";
-            role = "read-only";
-            passwordFile = toString demoPasswordFile;
-          };
+          declarative.users = [
+            {
+              username = "admin";
+              email = "admin@circus.local";
+              password = "AdminPassword123!";
+              role = "admin";
+            }
+            {
+              username = "demo";
+              email = "demo@circus.local";
+              role = "read-only";
+              password_file = toString demoPasswordFile;
+            }
+          ];
         };
       };
 
@@ -127,17 +129,24 @@
 
     # Useful tools inside the VM
     environment.systemPackages = with pkgs; [
-      circusPkgs.circus-cli
       curl
       jq
       btop
       nix-eval-jobs
       zstd
+
+      # Demo VMs should be able to use the admin CLI  and CLI should be
+      # individually testable. As there is no separate toggle for this
+      # we can make it explicit here.
+      circusPkgs.circus-cli
     ];
 
-    # Misc VM settings
-    networking.hostName = "circus-demo";
-    networking.firewall.allowedTCPPorts = [3000];
+    networking = {
+      # Misc VM settings
+      hostName = "circus-demo";
+      firewall.allowedTCPPorts = [3000];
+    };
+
     system.stateVersion = "26.11";
   });
 in

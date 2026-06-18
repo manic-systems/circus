@@ -39,170 +39,35 @@
     name,
     features,
     speed,
-  }: {
-    pkgs,
-    lib,
-    ...
-  }: let
-    circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-  in {
-    imports = [self.nixosModules.circus-agent];
-    _module.args.self = self;
-
-    environment.systemPackages = with pkgs; [
-      nix
-      curl
-      jq
+  }: {lib, ...}: {
+    imports = [
+      (import ../common/distributed-agent.nix {
+        inherit self name features speed;
+        maxJobs = 1;
+      })
     ];
-    nix = {
-      settings.experimental-features = [
-        "nix-command"
-        "flakes"
-      ];
-      settings.substituters = lib.mkForce [];
-      settings.system-features = lib.mkForce (
-        [
-          "nixos-test"
-          "benchmark"
-          "big-parallel"
-        ]
-        ++ features
-      );
-    };
 
-    environment.etc."circus-agent/token".text = "demo-agent-token-please-rotate";
-
-    services.circus-agent = {
-      enable = true;
-      package = circus-packages.circus-agent;
-      authTokenFile = "/etc/circus-agent/token";
-      settings.agent = {
-        inherit name;
-        runner_url = "circus://runner:8443";
-        systems = [pkgs.stdenv.hostPlatform.system];
-        supported_features = features;
-        max_jobs = 1;
-        speed_factor = speed;
-        heartbeat_interval_secs = 3;
-        reconnect_delay_secs = 2;
-      };
-    };
+    nix.settings.system-features = lib.mkForce (
+      [
+        "nixos-test"
+        "benchmark"
+        "big-parallel"
+      ]
+      ++ features
+    );
   };
 in
   testers.runNixOSTest {
     name = "circus-capability-scheduling";
 
     nodes = {
-      runner = {
-        pkgs,
-        lib,
-        ...
-      }: let
-        circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-      in {
-        imports = [self.nixosModules.circus];
-        _module.args.self = self;
+      runner = {pkgs, ...}: {
+        imports = [(import ../common/distributed-runner.nix {inherit self;})];
 
         virtualisation.diskSize = 10000;
 
-        programs.git.enable = true;
-        security.sudo.enable = true;
-        environment.systemPackages = with pkgs; [
-          curl
-          jq
-          openssl
-          python3
-          util-linux
-        ];
-
-        environment.etc."circus/cache-key.sec" = {
-          text = "circus-test-cache-1:C7h9wunIEh7kCa2Ylpa/omVaLewO7gQTb2LEPCPeJ0G6ZsLd2SaJZyt44z6nX5RanSkkrjM4xwapqVPneHY83A==";
-          mode = "0400";
-          user = "circus";
-        };
-
-        nix.settings.experimental-features = [
-          "nix-command"
-          "flakes"
-        ];
-        nix.settings.substituters = lib.mkForce [];
-        networking.firewall.allowedTCPPorts = [
-          3000
-          8000
-          8443
-        ];
-
-        services.postgresql = {
-          enable = true;
-          ensureDatabases = ["circus"];
-          ensureUsers = [
-            {
-              name = "circus";
-              ensureDBOwnership = true;
-            }
-          ];
-        };
-
-        services.circus = {
-          enable = true;
-          package = circus-packages.circus-server;
-          evaluatorPackage = circus-packages.circus-evaluator;
-          queueRunnerPackage = circus-packages.circus-queue-runner;
-          migratePackage = circus-packages.circus-cli;
-
-          server.enable = true;
-          evaluator.enable = true;
-          queueRunner.enable = true;
-
-          settings = {
-            database.url = "postgresql:///circus?host=/run/postgresql";
-            server = {
-              host = "0.0.0.0";
-              port = 3000;
-              cors_permissive = false;
-              allowed_url_schemes = [
-                "https"
-                "http"
-                "file"
-              ];
-            };
-            gc.enabled = false;
-            logs.log_dir = "/var/lib/circus/logs";
-            cache.enabled = true;
-            signing = {
-              enabled = true;
-              key_file = "/etc/circus/cache-key.sec";
-            };
-            tracing = {
-              level = "info";
-              format = "compact";
-            };
-            queue_runner = {
-              poll_interval = 3;
-              work_dir = "/var/lib/circus/queue-runner";
-              strict_errors = false;
-              rpc = {
-                bind = "0.0.0.0:8443";
-                allow_plaintext = true;
-                max_connections = 64;
-                heartbeat_ttl_secs = 30;
-                auth_tokens = [
-                  "${builtins.hashString "sha256" "demo-agent-token-please-rotate"}"
-                ];
-                cache_substituter = "http://runner:3000/nix-cache";
-                cache_public_key = "circus-test-cache-1:umbC3dkmiWcreOM+p1+UWp0pJK4zOMcGqalT53h2PNw=";
-              };
-            };
-          };
-
-          declarative.apiKeys = [
-            {
-              name = "bootstrap-admin";
-              key = "circus_bootstrap_key";
-              role = "admin";
-            }
-          ];
-        };
+        environment.systemPackages = [pkgs.python3];
+        networking.firewall.allowedTCPPorts = [8000];
       };
 
       kvm = mkAgent {
