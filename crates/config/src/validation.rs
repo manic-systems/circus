@@ -6,6 +6,20 @@ use color_eyre::eyre::{self, WrapErr, bail};
 
 use crate::{Config, DatabaseConfig};
 
+fn validate_css_variable_name(name: &str) -> eyre::Result<()> {
+  let name = name.trim_start_matches("--");
+  if name.is_empty()
+    || !name
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+  {
+    bail!(
+      "ui.css_variables keys must use letters, numbers, '-', or '_': {name}"
+    );
+  }
+  Ok(())
+}
+
 fn validate_shared(result: Result<(), String>) -> eyre::Result<()> {
   result.map_err(|error| eyre::eyre!(error))
 }
@@ -69,6 +83,17 @@ impl Config {
     // Validate server settings
     if self.server.port == 0 {
       bail!("Server port must be greater than 0");
+    }
+
+    if self.ui.brand_name.trim().is_empty() {
+      bail!("ui.brand_name cannot be empty");
+    }
+
+    for (name, value) in &self.ui.css_variables {
+      validate_css_variable_name(name)?;
+      if value.trim().is_empty() {
+        bail!("ui.css_variables.{name} cannot be empty");
+      }
     }
 
     // Validate evaluator settings

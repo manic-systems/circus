@@ -15,7 +15,7 @@ use axum::{
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::templates::LoginTemplate;
+use super::templates::{LoginTemplate, UiTemplateConfig};
 use crate::{
   session_cookie::{
     API_KEY_SESSION_COOKIE,
@@ -28,8 +28,13 @@ use crate::{
   state::AppState,
 };
 
-pub(super) async fn login_page() -> Html<String> {
+fn ui_config(state: &AppState) -> UiTemplateConfig {
+  UiTemplateConfig::from_config(&state.config.ui)
+}
+
+pub(super) async fn login_page(State(state): State<AppState>) -> Html<String> {
   let tmpl = LoginTemplate {
+    ui:        ui_config(&state),
     error:     None,
     is_admin:  false,
     auth_name: String::new(),
@@ -107,6 +112,7 @@ pub(super) async fn login_action(
     .await;
 
     let tmpl = LoginTemplate {
+      ui:        ui_config(&state),
       error:     Some("Invalid username or password".to_string()),
       is_admin:  false,
       auth_name: String::new(),
@@ -127,6 +133,7 @@ pub(super) async fn login_action(
     let token = token.trim();
     if token.is_empty() {
       let tmpl = LoginTemplate {
+        ui:        ui_config(&state),
         error:     Some("API key is required".to_string()),
         is_admin:  false,
         auth_name: String::new(),
@@ -185,6 +192,7 @@ pub(super) async fn login_action(
       .await;
 
       let tmpl = LoginTemplate {
+        ui:        ui_config(&state),
         error:     Some("Invalid API key".to_string()),
         is_admin:  false,
         auth_name: String::new(),
@@ -198,6 +206,7 @@ pub(super) async fn login_action(
     }
   } else {
     let tmpl = LoginTemplate {
+      ui:        ui_config(&state),
       error:     Some(
         "Please provide either username/password or API key".to_string(),
       ),

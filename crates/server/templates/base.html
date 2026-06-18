@@ -4,17 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>{% block title %}circus{% endblock %}</title>
+  <title>{% block title %}{{ ui.brand_name }}{% endblock %}</title>
+  {% if ui.has_favicon %}<link rel="icon" href="{{ ui.favicon_url }}">{% endif %}
   <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v2">
+  <link rel="stylesheet" href="/static/theme.css">
+  {% if ui.has_custom_css %}<link rel="stylesheet" href="/static/custom.css">{% endif %}
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="sidebar-brand">
         <a href="/">
+          {% if ui.has_logo %}<img class="brand-logo" src="{{ ui.logo_url }}" alt="" aria-hidden="true">{% endif %}
           <span class="brand-copy">
-            <span class="brand-name">circus</span>
-            <span class="brand-subtitle">Nix CI</span>
+            <span class="brand-name">{{ ui.brand_name }}</span>
+            <span class="brand-subtitle">{{ ui.brand_subtitle }}</span>
           </span>
         </a>
       </div>
@@ -72,7 +76,7 @@
         </div>
       </main>
       <footer class="footer">
-        <p>circus &mdash; Nix-based continuous integration</p>
+        <p>{{ ui.brand_name }} &mdash; {{ ui.brand_subtitle }}</p>
       </footer>
     </div>
   </div>

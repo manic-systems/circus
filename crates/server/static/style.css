@@ -193,6 +193,13 @@ pre {
   text-decoration: none;
 }
 
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
 .brand-copy {
   display: grid;
   gap: 0;

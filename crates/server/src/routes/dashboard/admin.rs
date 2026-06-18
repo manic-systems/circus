@@ -42,10 +42,15 @@ use super::{
     NotificationsTemplate,
     PinnedOutputView,
     SortHeaderView,
+    UiTemplateConfig,
     UsersTemplate,
   },
 };
 use crate::{permissions::Permission, state::AppState};
+
+fn ui_config(state: &AppState) -> UiTemplateConfig {
+  UiTemplateConfig::from_config(&state.config.ui)
+}
 
 #[derive(Default, serde::Deserialize)]
 pub(super) struct AdminParams {
@@ -481,6 +486,7 @@ pub(super) async fn admin_page(
   };
 
   let tmpl = AdminTemplate {
+    ui: ui_config(&state),
     status,
     builders,
     agents,
@@ -550,6 +556,7 @@ pub(super) async fn users_page(
   let pagination = Pagination::new(total, offset, limit);
 
   let tmpl = UsersTemplate {
+    ui: ui_config(&state),
     users,
     limit,
     has_prev: pagination.has_prev,
@@ -576,6 +583,7 @@ pub(super) async fn news_page(
     .await
     .unwrap_or_default();
   let tmpl = NewsTemplate {
+    ui: ui_config(&state),
     items,
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
@@ -745,6 +753,7 @@ pub(super) async fn notifications_page(
   .await
   .unwrap_or_default();
   let tmpl = NotificationsTemplate {
+    ui: ui_config(&state),
     project,
     configs,
     is_admin: ctx.is_admin,

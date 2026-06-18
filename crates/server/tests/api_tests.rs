@@ -302,6 +302,137 @@ async fn test_ui_assets_can_be_disabled_independently() {
 }
 
 #[tokio::test]
+async fn test_ui_theme_css_serves_configured_variables() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let mut config = circus_config::Config::default();
+  config
+    .ui
+    .css_variables
+    .insert("accent".to_string(), "#2563eb".to_string());
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/theme.css")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let css = String::from_utf8(body.to_vec()).unwrap();
+  assert!(css.contains("--accent: #2563eb;"));
+}
+
+#[tokio::test]
+async fn test_ui_custom_css_file_is_served() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let css_path = std::env::temp_dir()
+    .join(format!("circus-custom-{}.css", uuid::Uuid::new_v4()));
+  std::fs::write(&css_path, ":root { --accent: #be123c; }\n").unwrap();
+
+  let mut config = circus_config::Config::default();
+  config.ui.custom_css = Some(css_path.clone());
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/custom.css")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let css = String::from_utf8(body.to_vec()).unwrap();
+  assert!(css.contains("--accent: #be123c"));
+  let _ = std::fs::remove_file(css_path);
+}
+
+#[tokio::test]
+async fn test_ui_custom_static_directory_is_served() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let static_dir = std::env::temp_dir()
+    .join(format!("circus-static-{}", uuid::Uuid::new_v4()));
+  std::fs::create_dir(&static_dir).unwrap();
+  std::fs::write(static_dir.join("logo.svg"), "<svg></svg>\n").unwrap();
+
+  let mut config = circus_config::Config::default();
+  config.ui.static_dir = Some(static_dir.clone());
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/static/custom/logo.svg")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let svg = String::from_utf8(body.to_vec()).unwrap();
+  assert!(svg.contains("<svg>"));
+  let _ = std::fs::remove_dir_all(static_dir);
+}
+
+#[tokio::test]
+async fn test_ui_branding_renders_in_dashboard_shell() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let mut config = circus_config::Config::default();
+  config.ui.brand_name = "Acme CI".to_string();
+  config.ui.brand_subtitle = "Nix build farm".to_string();
+  config.ui.logo_url = Some("/static/custom/logo.svg".to_string());
+  config.ui.favicon_url = Some("/static/custom/favicon.svg".to_string());
+  config.ui.custom_css = Some(std::env::temp_dir().join("circus-brand.css"));
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/login")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let html = String::from_utf8(body.to_vec()).unwrap();
+  assert!(html.contains("Acme CI"));
+  assert!(html.contains("Nix build farm"));
+  assert!(html.contains("/static/custom/logo.svg"));
+  assert!(html.contains("/static/custom/favicon.svg"));
+  assert!(html.contains("/static/theme.css"));
+  assert!(html.contains("/static/custom.css"));
+}
+
+#[tokio::test]
 async fn test_project_endpoints() {
   let Some(pool) = get_pool().await else {
     return;

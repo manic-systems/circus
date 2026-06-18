@@ -62,9 +62,14 @@ use super::{
     ProjectsTemplate,
     QueueTemplate,
     StarredTemplate,
+    UiTemplateConfig,
   },
 };
 use crate::{operator, state::AppState};
+
+fn ui_config(state: &AppState) -> UiTemplateConfig {
+  UiTemplateConfig::from_config(&state.config.ui)
+}
 
 #[derive(serde::Deserialize)]
 pub(super) struct PageParams {
@@ -204,6 +209,7 @@ pub(super) async fn home(
     .unwrap_or_default();
 
   let tmpl = HomeTemplate {
+    ui: ui_config(&state),
     total_builds: overview.total_builds,
     completed_builds: overview.completed_builds,
     failed_builds: overview.failed_builds,
@@ -259,6 +265,7 @@ pub(super) async fn projects_page(
 
   let pagination = Pagination::new(total, offset, limit);
   let tmpl = ProjectsTemplate {
+    ui: ui_config(&state),
     projects: items,
     limit,
     has_prev: pagination.has_prev,
@@ -310,6 +317,7 @@ pub(super) async fn project_page(
   evals.truncate(10);
 
   let tmpl = ProjectTemplate {
+    ui: ui_config(&state),
     project,
     jobsets,
     recent_evals: evals.iter().map(eval_view).collect(),
@@ -412,6 +420,7 @@ pub(super) async fn jobset_page(
   }
 
   let tmpl = JobsetTemplate {
+    ui: ui_config(&state),
     project,
     jobset,
     eval_summaries: summaries,
@@ -524,6 +533,7 @@ pub(super) async fn jobset_jobs_page(
   }
 
   let tmpl = JobsetJobsTemplate {
+    ui: ui_config(&state),
     project,
     jobset,
     columns,
@@ -585,6 +595,7 @@ pub(super) async fn evaluations_page(
 
   let pagination = Pagination::new(total, offset, limit);
   let tmpl = EvaluationsTemplate {
+    ui: ui_config(&state),
     evals: enriched,
     limit,
     has_prev: pagination.has_prev,
@@ -670,6 +681,7 @@ pub(super) async fn evaluation_page(
     .count() as i64;
 
   let tmpl = EvaluationTemplate {
+    ui:              ui_config(&state),
     eval:            eval_view(&eval),
     builds:          builds.iter().map(build_view).collect(),
     project_name:    project.name,
@@ -760,6 +772,7 @@ pub(super) async fn builds_page(
   }
 
   let tmpl = BuildsTemplate {
+    ui: ui_config(&state),
     builds: items
       .iter()
       .map(|item| {
@@ -869,6 +882,7 @@ pub(super) async fn build_page(
   };
 
   let tmpl = BuildTemplate {
+    ui: ui_config(&state),
     build: build_view(&build),
     builder_label,
     steps,
@@ -1095,6 +1109,7 @@ pub(super) async fn queue_page(
     .collect();
 
   let tmpl = QueueTemplate {
+    ui: ui_config(&state),
     pending_builds,
     running_builds,
     pending_count,
@@ -1118,6 +1133,7 @@ pub(super) async fn channels_page(
     .unwrap_or_default();
 
   let tmpl = ChannelsTemplate {
+    ui: ui_config(&state),
     channels,
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
@@ -1167,6 +1183,7 @@ pub(super) async fn channel_page(
     .count() as i64;
 
   let tmpl = ChannelTemplate {
+    ui: ui_config(&state),
     channel,
     builds: builds.iter().map(build_view).collect(),
     succeeded_count,
@@ -1278,6 +1295,7 @@ pub(super) async fn starred_page(
   };
 
   let tmpl = StarredTemplate {
+    ui: ui_config(&state),
     starred_jobs,
     is_logged_in,
     is_admin: ctx.is_admin,
@@ -1293,6 +1311,7 @@ pub(super) async fn metrics_page(
 ) -> Result<Html<String>, Response> {
   enforce_page_access(&state.config.server, &ctx, DashboardPage::Metrics)?;
   let tmpl = MetricsTemplate {
+    ui:        ui_config(&state),
     is_admin:  ctx.is_admin,
     auth_name: ctx.auth_name,
   };
@@ -1300,6 +1319,7 @@ pub(super) async fn metrics_page(
 }
 
 pub(super) async fn project_setup_page(
+  State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
   if !ctx.is_admin {
@@ -1312,6 +1332,7 @@ pub(super) async fn project_setup_page(
   }
 
   let tmpl = ProjectSetupTemplate {
+    ui:         ui_config(&state),
     is_admin:   ctx.is_admin,
     auth_name:  ctx.auth_name,
     csrf_token: ctx.csrf_token,

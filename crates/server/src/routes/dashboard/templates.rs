@@ -17,6 +17,7 @@ use circus_common::models::{
   Project,
   SystemStatus,
 };
+use circus_config::UiConfig;
 use uuid::Uuid;
 
 use super::shared::{
@@ -35,9 +36,37 @@ use super::shared::{
 };
 use crate::permissions::UiPermissions;
 
+#[derive(Clone)]
+pub(super) struct UiTemplateConfig {
+  pub(super) brand_name:     String,
+  pub(super) brand_subtitle: String,
+  pub(super) logo_url:       String,
+  pub(super) has_logo:       bool,
+  pub(super) favicon_url:    String,
+  pub(super) has_favicon:    bool,
+  pub(super) has_custom_css: bool,
+}
+
+impl UiTemplateConfig {
+  pub(super) fn from_config(config: &UiConfig) -> Self {
+    let logo_url = config.logo_url.clone().unwrap_or_default();
+    let favicon_url = config.favicon_url.clone().unwrap_or_default();
+    Self {
+      brand_name: config.brand_name.clone(),
+      brand_subtitle: config.brand_subtitle.clone(),
+      has_logo: !logo_url.is_empty(),
+      logo_url,
+      has_favicon: !favicon_url.is_empty(),
+      favicon_url,
+      has_custom_css: config.custom_css.is_some(),
+    }
+  }
+}
+
 #[derive(Template)]
 #[template(path = "home.html")]
 pub(super) struct HomeTemplate {
+  pub(super) ui:                 UiTemplateConfig,
   pub(super) total_builds:       i64,
   pub(super) completed_builds:   i64,
   pub(super) failed_builds:      i64,
@@ -60,6 +89,7 @@ pub(super) struct HomeTemplate {
 #[derive(Template)]
 #[template(path = "projects.html")]
 pub(super) struct ProjectsTemplate {
+  pub(super) ui:          UiTemplateConfig,
   pub(super) projects:    Vec<Project>,
   pub(super) limit:       i64,
   pub(super) has_prev:    bool,
@@ -76,6 +106,7 @@ pub(super) struct ProjectsTemplate {
 #[derive(Template)]
 #[template(path = "project.html")]
 pub(super) struct ProjectTemplate {
+  pub(super) ui:           UiTemplateConfig,
   pub(super) project:      Project,
   pub(super) jobsets:      Vec<Jobset>,
   pub(super) recent_evals: Vec<EvalView>,
@@ -87,6 +118,7 @@ pub(super) struct ProjectTemplate {
 #[derive(Template)]
 #[template(path = "jobset.html")]
 pub(super) struct JobsetTemplate {
+  pub(super) ui:             UiTemplateConfig,
   pub(super) project:        Project,
   pub(super) jobset:         Jobset,
   pub(super) eval_summaries: Vec<EvalSummaryView>,
@@ -98,6 +130,7 @@ pub(super) struct JobsetTemplate {
 #[derive(Template)]
 #[template(path = "jobset_jobs.html")]
 pub(super) struct JobsetJobsTemplate {
+  pub(super) ui:            UiTemplateConfig,
   pub(super) project:       Project,
   pub(super) jobset:        Jobset,
   pub(super) columns:       Vec<JobStatusColumn>,
@@ -110,6 +143,7 @@ pub(super) struct JobsetJobsTemplate {
 #[derive(Template)]
 #[template(path = "evaluations.html")]
 pub(super) struct EvaluationsTemplate {
+  pub(super) ui:          UiTemplateConfig,
   pub(super) evals:       Vec<EvalView>,
   pub(super) limit:       i64,
   pub(super) has_prev:    bool,
@@ -126,6 +160,7 @@ pub(super) struct EvaluationsTemplate {
 #[derive(Template)]
 #[template(path = "evaluation.html")]
 pub(super) struct EvaluationTemplate {
+  pub(super) ui:              UiTemplateConfig,
   pub(super) eval:            EvalView,
   pub(super) builds:          Vec<BuildView>,
   pub(super) project_name:    String,
@@ -144,6 +179,7 @@ pub(super) struct EvaluationTemplate {
 #[derive(Template)]
 #[template(path = "builds.html")]
 pub(super) struct BuildsTemplate {
+  pub(super) ui:            UiTemplateConfig,
   pub(super) builds:        Vec<BuildView>,
   pub(super) limit:         i64,
   pub(super) has_prev:      bool,
@@ -162,6 +198,7 @@ pub(super) struct BuildsTemplate {
 #[derive(Template)]
 #[template(path = "build.html")]
 pub(super) struct BuildTemplate {
+  pub(super) ui:                UiTemplateConfig,
   pub(super) build:             BuildView,
   pub(super) builder_label:     String,
   pub(super) steps:             Vec<BuildStep>,
@@ -181,6 +218,7 @@ pub(super) struct BuildTemplate {
 #[derive(Template)]
 #[template(path = "queue.html")]
 pub(super) struct QueueTemplate {
+  pub(super) ui:             UiTemplateConfig,
   pub(super) pending_builds: Vec<QueueBuildView>,
   pub(super) running_builds: Vec<QueueBuildView>,
   pub(super) pending_count:  i64,
@@ -194,6 +232,7 @@ pub(super) struct QueueTemplate {
 #[derive(Template)]
 #[template(path = "channels.html")]
 pub(super) struct ChannelsTemplate {
+  pub(super) ui:        UiTemplateConfig,
   pub(super) channels:  Vec<Channel>,
   pub(super) is_admin:  bool,
   pub(super) auth_name: String,
@@ -202,6 +241,7 @@ pub(super) struct ChannelsTemplate {
 #[derive(Template)]
 #[template(path = "channel.html")]
 pub(super) struct ChannelTemplate {
+  pub(super) ui:              UiTemplateConfig,
   pub(super) channel:         Channel,
   pub(super) builds:          Vec<BuildView>,
   pub(super) succeeded_count: i64,
@@ -214,6 +254,7 @@ pub(super) struct ChannelTemplate {
 #[derive(Template)]
 #[template(path = "news.html")]
 pub(super) struct NewsTemplate {
+  pub(super) ui:         UiTemplateConfig,
   pub(super) items:      Vec<NewsItem>,
   pub(super) is_admin:   bool,
   pub(super) auth_name:  String,
@@ -323,6 +364,7 @@ mod tests {
     failed_builds_list: Vec<BuildView>,
   ) -> HomeTemplate {
     HomeTemplate {
+      ui: UiTemplateConfig::from_config(&UiConfig::default()),
       total_builds: 1859,
       completed_builds: 1480,
       failed_builds: 272,
@@ -416,6 +458,7 @@ mod tests {
 #[derive(Template)]
 #[template(path = "admin.html")]
 pub(super) struct AdminTemplate {
+  pub(super) ui:                      UiTemplateConfig,
   pub(super) status:                  SystemStatus,
   pub(super) builders:                Vec<BuilderView>,
   pub(super) agents:                  Vec<AgentView>,
@@ -437,6 +480,7 @@ pub(super) struct AdminTemplate {
 #[derive(Template)]
 #[template(path = "project_setup.html")]
 pub(super) struct ProjectSetupTemplate {
+  pub(super) ui:         UiTemplateConfig,
   pub(super) is_admin:   bool,
   pub(super) auth_name:  String,
   pub(super) csrf_token: String,
@@ -445,6 +489,7 @@ pub(super) struct ProjectSetupTemplate {
 #[derive(Template)]
 #[template(path = "login.html")]
 pub(super) struct LoginTemplate {
+  pub(super) ui:        UiTemplateConfig,
   pub(super) error:     Option<String>,
   pub(super) is_admin:  bool,
   pub(super) auth_name: String,
@@ -453,6 +498,7 @@ pub(super) struct LoginTemplate {
 #[derive(Template)]
 #[template(path = "users.html")]
 pub(super) struct UsersTemplate {
+  pub(super) ui:          UiTemplateConfig,
   pub(super) users:       Vec<UserView>,
   pub(super) limit:       i64,
   pub(super) has_prev:    bool,
@@ -469,6 +515,7 @@ pub(super) struct UsersTemplate {
 #[derive(Template)]
 #[template(path = "starred.html")]
 pub(super) struct StarredTemplate {
+  pub(super) ui:           UiTemplateConfig,
   pub(super) starred_jobs: Vec<StarredJobView>,
   pub(super) is_logged_in: bool,
   pub(super) is_admin:     bool,
@@ -479,6 +526,7 @@ pub(super) struct StarredTemplate {
 #[derive(Template)]
 #[template(path = "metrics.html")]
 pub(super) struct MetricsTemplate {
+  pub(super) ui:        UiTemplateConfig,
   pub(super) is_admin:  bool,
   pub(super) auth_name: String,
 }
@@ -486,6 +534,7 @@ pub(super) struct MetricsTemplate {
 #[derive(Template)]
 #[template(path = "notifications.html")]
 pub(super) struct NotificationsTemplate {
+  pub(super) ui:         UiTemplateConfig,
   pub(super) project:    Project,
   pub(super) configs:    Vec<circus_common::models::NotificationConfig>,
   pub(super) is_admin:   bool,

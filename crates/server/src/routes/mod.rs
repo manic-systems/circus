@@ -32,7 +32,7 @@ use std::{
 use axum::{
   Router,
   body::Body,
-  extract::ConnectInfo,
+  extract::{ConnectInfo, State},
   http::{HeaderValue, Request, StatusCode, header},
   middleware::{self, Next},
   response::{IntoResponse, Response},
@@ -43,6 +43,7 @@ use dashmap::DashMap;
 use tower_http::{
   cors::{AllowOrigin, Any, CorsLayer},
   limit::RequestBodyLimitLayer,
+  services::ServeDir,
   set_header::SetResponseHeaderLayer,
   trace::TraceLayer,
 };
@@ -144,6 +145,62 @@ async fn serve_style_css() -> Response {
   .into_response()
 }
 
+async fn serve_theme_css(State(state): State<AppState>) -> Response {
+  let mut css = String::from(":root {\n");
+  for (name, value) in &state.config.ui.css_variables {
+    css.push_str("  ");
+    if !name.starts_with("--") {
+      css.push_str("--");
+    }
+    css.push_str(name);
+    css.push_str(": ");
+    css.push_str(value);
+    css.push_str(";\n");
+  }
+  css.push_str("}\n");
+
+  #[expect(
+    clippy::expect_used,
+    reason = "response builder with static values cannot fail"
+  )]
+  {
+    Response::builder()
+      .header(header::CONTENT_TYPE, "text/css")
+      .header(header::CACHE_CONTROL, "no-cache")
+      .body(Body::from(css))
+      .expect("response builder should not fail")
+  }
+  .into_response()
+}
+
+async fn serve_custom_css(State(state): State<AppState>) -> Response {
+  let Some(path) = state.config.ui.custom_css.as_ref() else {
+    return StatusCode::NOT_FOUND.into_response();
+  };
+
+  match tokio::fs::read_to_string(path).await {
+    Ok(css) =>
+    {
+      #[expect(
+        clippy::expect_used,
+        reason = "response builder with static values cannot fail"
+      )]
+      {
+        Response::builder()
+          .header(header::CONTENT_TYPE, "text/css")
+          .header(header::CACHE_CONTROL, "no-cache")
+          .body(Body::from(css))
+          .expect("response builder should not fail")
+      }
+      .into_response()
+    },
+    Err(error) => {
+      tracing::warn!(path = %path.display(), "failed to read custom CSS: {error}");
+      StatusCode::NOT_FOUND.into_response()
+    },
+  }
+}
+
 pub fn api_router(state: AppState) -> Router<AppState> {
   Router::new()
     .merge(projects::router())
@@ -180,7 +237,17 @@ pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
   let mut router = Router::new();
 
   if config.ui.assets_enabled() {
-    router = router.route("/static/style.css", get(serve_style_css));
+    router = router
+      .route("/static/style.css", get(serve_style_css))
+      .route("/static/theme.css", get(serve_theme_css));
+
+    if config.ui.custom_css.is_some() {
+      router = router.route("/static/custom.css", get(serve_custom_css));
+    }
+
+    if let Some(static_dir) = config.ui.static_dir.as_ref() {
+      router = router.nest_service("/static/custom", ServeDir::new(static_dir));
+    }
   }
 
   if config.ui.dashboard_enabled() {

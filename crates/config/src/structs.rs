@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use circus_logs::TracingConfig;
 use circus_types::{
@@ -123,11 +123,27 @@ pub struct ServerConfig {
 pub struct UiConfig {
   /// Mount any bundled UI route. Disable this for API-only/headless
   /// deployments.
-  pub enabled:   bool,
+  pub enabled:        bool,
   /// Mount server-rendered dashboard, login, and logout pages.
-  pub dashboard: bool,
+  pub dashboard:      bool,
   /// Serve bundled static UI assets.
-  pub assets:    bool,
+  pub assets:         bool,
+  /// Display name rendered in the dashboard sidebar and document title.
+  pub brand_name:     String,
+  /// Short subtitle rendered under the brand name.
+  pub brand_subtitle: String,
+  /// Optional logo URL. Use `/static/custom/<file>` with `static_dir` for
+  /// self-hosted logos.
+  pub logo_url:       Option<String>,
+  /// Optional favicon URL. Use `/static/custom/<file>` with `static_dir` for
+  /// self-hosted favicons.
+  pub favicon_url:    Option<String>,
+  /// Optional CSS file served at `/static/custom.css` after bundled styles.
+  pub custom_css:     Option<PathBuf>,
+  /// Optional directory served below `/static/custom/`.
+  pub static_dir:     Option<PathBuf>,
+  /// CSS custom properties emitted at `/static/theme.css`.
+  pub css_variables:  BTreeMap<String, String>,
 }
 
 impl UiConfig {
@@ -724,9 +740,16 @@ impl Default for ServerConfig {
 impl Default for UiConfig {
   fn default() -> Self {
     Self {
-      enabled:   true,
-      dashboard: true,
-      assets:    true,
+      enabled:        true,
+      dashboard:      true,
+      assets:         true,
+      brand_name:     "circus".to_string(),
+      brand_subtitle: "Nix CI".to_string(),
+      logo_url:       None,
+      favicon_url:    None,
+      custom_css:     None,
+      static_dir:     None,
+      css_variables:  BTreeMap::new(),
     }
   }
 }
