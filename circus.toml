@@ -21,9 +21,20 @@ request_timeout = 30
 # rate_limit_burst     = 20   # burst size before rate limit enforcement
 
 [ui]
-assets    = true
-dashboard = true
-enabled   = true
+assets         = true
+brand_name     = "circus"
+brand_subtitle = "Nix CI"
+dashboard      = true
+enabled        = true
+# logo_url    = "/static/custom/logo.svg"
+# favicon_url = "/static/custom/favicon.svg"
+# custom_css  = "/etc/circus/dashboard.css"
+# static_dir  = "/etc/circus/static"
+
+# [ui.css_variables]
+# accent = "#2563eb"
+# bg     = "#f8fafc"
+# text   = "#0f172a"
 
 [evaluator]
 allow_ifd     = false
