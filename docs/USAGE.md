@@ -90,18 +90,19 @@ bg = "#0f172a"
 text = "#f8fafc"
 ```
 
-With the NixOS module, equivalent convenience options are available:
+With the NixOS module, set the same TOML-shaped keys under
+`services.circus.settings`:
 
 ```nix
 {
-  services.circus.ui = {
-    brandName = "Acme CI";
-    brandSubtitle = "Nix build farm";
-    logoUrl = "/static/custom/logo.svg";
-    faviconUrl = "/static/custom/favicon.svg";
-    customCss = ./dashboard.css;
-    staticDir = ./static;
-    cssVariables = {
+  services.circus.settings.ui = {
+    brand_name = "Acme CI";
+    brand_subtitle = "Nix build farm";
+    logo_url = "/static/custom/logo.svg";
+    favicon_url = "/static/custom/favicon.svg";
+    custom_css = ./dashboard.css;
+    static_dir = ./static;
+    css_variables = {
       accent = "#2563eb";
       bg = "#0f172a";
       text = "#f8fafc";
@@ -695,14 +696,14 @@ admin API:
 $ circusctl admin config get
 
 # Replace the server's configured TOML file body
-$ circusctl admin config apply ./circus.toml
+$ circusctl admin config apply /etc/circus/circus.toml
 ```
 
 This updates the config file body exposed by the server. This feature is
 experimental, and the runtime behavior still depends on which settings the
 daemons reload dynamically and which require a service restart. For the full
 configuration schema, see [INSTALL.md](./INSTALL.md) and the repository's
-`circus.toml`. Until further notice, **use this with caution**.
+`circus.example.toml`. Until further notice, **use this with caution**.
 
 ### Audit Log
 

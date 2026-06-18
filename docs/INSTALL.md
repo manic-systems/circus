@@ -153,16 +153,17 @@ This makes the dashboard available at `http://localhost:8080` instead.
 
 ## Configuration
 
-Circus reads configuration from a TOML file with environment variable overrides.
-The override hierarchy is as follows:
+Circus service binaries require an explicit TOML configuration file. Pass it
+with `--config` or set `CIRCUS_CONFIG_FILE`. Environment variables override the
+file.
 
 1. Compiled defaults
-2. `circus.toml` in the working directory
-3. File at `CIRCUS_CONFIG_FILE` env var
-4. `CIRCUS_*` env vars (`__` as nested separator, e.g. `CIRCUS_DATABASE__URL`)
+2. File from `--config` or `CIRCUS_CONFIG_FILE`
+3. `CIRCUS_*` env vars (`__` as nested separator, e.g. `CIRCUS_DATABASE__URL`)
 
-See `circus.toml` in the repository root for a compact example. The Rust config
-types in `crates/config/src/structs.rs` remain the schema source of truth.
+See `circus.example.toml` in the repository root for a compact example. The Rust
+config types in `crates/config/src/structs.rs` remain the schema source of
+truth.
 
 ### Configuration Reference
 
@@ -663,9 +664,9 @@ $ cargo build -p circus-cli
 $ cargo build -p circus-agent
 ```
 
-Run all service binaries with the same `CIRCUS_CONFIG_FILE` or equivalent
-`CIRCUS_*` environment overrides. The NixOS module runs migrations before
-starting `circus-server`; manual or non-NixOS deployments should run
+Run all service binaries with the same `--config <path>` or
+`CIRCUS_CONFIG_FILE`. The NixOS module runs migrations before starting
+`circus-server`; manual or non-NixOS deployments should run
 `circus-migrate up <database_url>` before starting upgraded services.
 
 ## Distributed Builders
