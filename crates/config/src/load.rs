@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+  fs,
+  path::{Path, PathBuf},
+};
 
 use color_eyre::eyre::{self, WrapErr, bail};
 use config as config_crate;
@@ -115,44 +118,38 @@ impl Config {
     Ok(())
   }
 
-  /// Load configuration from file and environment variables.
+  /// Load configuration from an explicit file and environment variables.
   ///
   /// Merges three layers (later wins):
   ///
   /// 1. Compiled defaults (`Config::default()`)
-  /// 2. TOML config file (`CIRCUS_CONFIG_FILE` or `./circus.toml`)
+  /// 2. TOML config file from `path` or `CIRCUS_CONFIG_FILE`
   /// 3. `CIRCUS_*` environment variables (`__` = nesting separator)
   ///
   /// # Errors
   ///
   /// Returns error if configuration loading or validation fails.
-  pub fn load() -> eyre::Result<Self> {
+  pub fn load(path: Option<&Path>) -> eyre::Result<Self> {
     let mut table = toml::Value::try_from(Self::default())
       .wrap_err("failed to serialize config defaults")?;
 
-    let file_contents = if let Ok(path) = std::env::var("CIRCUS_CONFIG_FILE") {
-      if Path::new(&path).exists() {
-        Some(
-          fs::read_to_string(&path)
-            .wrap_err_with(|| format!("failed to read config file {path}"))?,
-        )
-      } else {
-        None
-      }
-    } else if Path::new("circus.toml").exists() {
-      Some(
-        fs::read_to_string("circus.toml")
-          .wrap_err("failed to read circus.toml")?,
-      )
-    } else {
-      None
-    };
-
-    if let Some(contents) = file_contents {
-      let file_table: toml::Value =
-        toml::from_str(&contents).wrap_err("failed to parse config file")?;
-      deep_merge(&mut table, file_table);
+    let config_path = match path {
+      Some(path) => Some(path.to_path_buf()),
+      None => std::env::var_os("CIRCUS_CONFIG_FILE").map(PathBuf::from),
     }
+    .ok_or_else(|| {
+      eyre::eyre!(
+        "configuration file is required; pass --config or set \
+         CIRCUS_CONFIG_FILE"
+      )
+    })?;
+
+    let contents = fs::read_to_string(&config_path).wrap_err_with(|| {
+      format!("failed to read config file {}", config_path.display())
+    })?;
+    let file_table: toml::Value =
+      toml::from_str(&contents).wrap_err("failed to parse config file")?;
+    deep_merge(&mut table, file_table);
 
     apply_env_vars(&mut table, std::env::vars());
 

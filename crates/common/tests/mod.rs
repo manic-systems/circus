@@ -51,8 +51,8 @@ async fn test_database_connection_full() -> color_eyre::Result<()> {
 
 #[test]
 fn test_config_loading() -> color_eyre::Result<()> {
-  // Test default config loading
-  let config = Config::load()?;
+  // Test compiled defaults.
+  let config = Config::default();
   assert!(config.validate().is_ok());
 
   // Test that defaults are reasonable

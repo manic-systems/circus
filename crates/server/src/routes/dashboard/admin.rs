@@ -5,7 +5,7 @@
 //! order, so a non-admin attempting to forge a request never reaches the
 //! database.
 
-use std::{cmp::Ordering, collections::HashMap, env, io::ErrorKind};
+use std::{cmp::Ordering, collections::HashMap, env};
 
 use axum::{
   Form,
@@ -454,33 +454,30 @@ pub(super) async fn admin_page(
         }
       })
       .collect();
-  let config_path = env::var("CIRCUS_CONFIG_FILE")
-    .unwrap_or_else(|_| "circus.toml".to_string());
-  let config_contents = match fs::read_to_string(&config_path).await {
-    Ok(contents) => {
-      circus_config::Config::from_toml_with_defaults(&contents)
-        .ok()
-        .and_then(|config| {
-          let mut value = toml::Value::try_from(&config).ok()?;
-          circus_config::redact_secrets(&mut value);
-          toml::to_string_pretty(&value).ok()
-        })
-        .unwrap_or(contents)
-    },
-    Err(e) if e.kind() == ErrorKind::NotFound => {
-      toml::Value::try_from(circus_config::Config::default()).map_or_else(
-        |_| String::new(),
-        |mut value| {
-          circus_config::redact_secrets(&mut value);
-          toml::to_string_pretty(&value).unwrap_or_default()
-        },
-      )
-    },
-    Err(_) => String::new(),
+  let config_path = env::var("CIRCUS_CONFIG_FILE").unwrap_or_default();
+  let config_contents = if config_path.is_empty() {
+    String::new()
+  } else {
+    match fs::read_to_string(&config_path).await {
+      Ok(contents) => {
+        circus_config::Config::from_toml_with_defaults(&contents)
+          .ok()
+          .and_then(|config| {
+            let mut value = toml::Value::try_from(&config).ok()?;
+            circus_config::redact_secrets(&mut value);
+            toml::to_string_pretty(&value).ok()
+          })
+          .unwrap_or(contents)
+      },
+      Err(_) => String::new(),
+    }
   };
-  let config_editable = state.config.server.config_editor_enabled;
+  let config_editable =
+    state.config.server.config_editor_enabled && !config_path.is_empty();
   let config_read_only_reason = if config_editable {
     String::new()
+  } else if config_path.is_empty() {
+    "CIRCUS_CONFIG_FILE is not set; no config file is available".to_string()
   } else {
     "Config editor is disabled by server configuration".to_string()
   };

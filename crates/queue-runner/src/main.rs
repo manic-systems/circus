@@ -30,6 +30,9 @@ use tokio_util::sync::CancellationToken;
 #[command(about = "CI Queue Runner - Build dispatch and execution")]
 struct Cli {
   #[arg(short, long)]
+  config: Option<PathBuf>,
+
+  #[arg(short, long)]
   workers: Option<usize>,
 }
 
@@ -39,8 +42,9 @@ async fn main() -> color_eyre::Result<()> {
   circus_common::install_crypto_provider()?;
 
   let cli = Cli::parse();
+  let config_path = cli.config.clone();
 
-  let config = Config::load()?;
+  let config = Config::load(cli.config.as_deref())?;
   circus_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Queue Runner");
@@ -210,7 +214,7 @@ async fn main() -> color_eyre::Result<()> {
       () = failed_paths_cleanup_loop(db.pool().clone(), Arc::clone(&hot_config), failed_paths_cache) => {}
       () = cancel_checker_loop(db.pool().clone(), active_builds) => {}
       () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
-      () = sighup_loop(Arc::clone(&hot_config)) => {}
+      () = sighup_loop(Arc::clone(&hot_config), config_path) => {}
       () = heartbeat_loop(db.pool().clone(), qr_config.poll_interval) => {}
       () = shutdown_signal() => {
           tracing::info!("Shutdown signal received, draining in-flight builds...");
@@ -477,7 +481,10 @@ async fn heartbeat_loop(pool: sqlx::PgPool, poll_interval_seconds: u64) {
   }
 }
 
-async fn sighup_loop(hot_config: Arc<RwLock<HotConfig>>) {
+async fn sighup_loop(
+  hot_config: Arc<RwLock<HotConfig>>,
+  config_path: Option<PathBuf>,
+) {
   #[expect(clippy::infinite_loop, reason = "intentional SIGHUP handler loop")]
   #[cfg(unix)]
   {
@@ -492,7 +499,7 @@ async fn sighup_loop(hot_config: Arc<RwLock<HotConfig>>) {
     loop {
       sighup.recv().await;
       tracing::info!("SIGHUP received, reloading configuration");
-      match Config::load() {
+      match Config::load(config_path.as_deref()) {
         Ok(new_config) => {
           let new_hot = HotConfig::from_config(&new_config);
           tracing::info!(

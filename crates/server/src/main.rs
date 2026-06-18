@@ -1,5 +1,5 @@
 #[cfg(not(unix))] use std::future::pending;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use circus_common::Database;
 use circus_config::Config;
@@ -12,6 +12,9 @@ use tokio::net::TcpListener;
 #[command(name = "circus-server")]
 #[command(about = "CI Server - Web API and UI")]
 struct Cli {
+  #[arg(short, long)]
+  config: Option<PathBuf>,
+
   #[arg(short = 'H', long)]
   host: Option<String>,
 
@@ -63,10 +66,10 @@ async fn main() -> color_eyre::Result<()> {
   color_eyre::install()?;
   circus_common::install_crypto_provider()?;
 
-  let mut config = Config::load()?;
-  circus_common::init_tracing(&config.tracing);
-
   let cli = Cli::parse();
+
+  let mut config = Config::load(cli.config.as_deref())?;
+  circus_common::init_tracing(&config.tracing);
 
   let host = cli.host.unwrap_or_else(|| config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);

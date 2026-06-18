@@ -1,5 +1,5 @@
 #[cfg(not(unix))] use std::future::pending;
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use circus_common::Database;
 use circus_config::Config;
@@ -10,16 +10,16 @@ use clap::Parser;
 #[command(about = "CI Evaluator - Git polling and Nix evaluation")]
 struct Cli {
   #[arg(short, long)]
-  config: Option<String>,
+  config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
   color_eyre::install()?;
   circus_common::install_crypto_provider()?;
-  let _cli = Cli::parse();
+  let cli = Cli::parse();
 
-  let config = Config::load()?;
+  let config = Config::load(cli.config.as_deref())?;
   circus_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Evaluator");

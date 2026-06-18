@@ -363,6 +363,40 @@ mod tests {
   }
 
   #[test]
+  fn load_requires_explicit_config_path() {
+    let old = std::env::var_os("CIRCUS_CONFIG_FILE");
+    unsafe {
+      std::env::remove_var("CIRCUS_CONFIG_FILE");
+    }
+
+    let err = Config::load(None).unwrap_err().to_string();
+    assert!(err.contains("configuration file is required"));
+
+    if let Some(value) = old {
+      unsafe {
+        std::env::set_var("CIRCUS_CONFIG_FILE", value);
+      }
+    }
+  }
+
+  #[test]
+  fn load_reads_explicit_config_path() {
+    let path = std::env::temp_dir().join(format!(
+      "circus-config-test-{}.toml",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    std::fs::write(&path, "[server]\nport = 4321\n").unwrap();
+
+    let config = Config::load(Some(&path)).unwrap();
+    assert_eq!(config.server.port, 4321);
+
+    let _ = std::fs::remove_file(path);
+  }
+
+  #[test]
   fn test_unsupported_timeout_config() {
     let mut config = Config::default();
     config.queue_runner.unsupported_timeout = Some(Duration::from_hours(1));

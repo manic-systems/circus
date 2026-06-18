@@ -22,11 +22,8 @@ use uuid::Uuid;
 
 use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
 
-fn config_file_path() -> std::path::PathBuf {
-  std::env::var_os("CIRCUS_CONFIG_FILE").map_or_else(
-    || std::path::PathBuf::from("circus.toml"),
-    std::path::PathBuf::from,
-  )
+fn config_file_path() -> Option<std::path::PathBuf> {
+  std::env::var_os("CIRCUS_CONFIG_FILE").map(std::path::PathBuf::from)
 }
 
 async fn list_builders(
@@ -326,7 +323,18 @@ async fn get_config_file(
   _auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<Json<ConfigFileResponse>, ApiError> {
-  let path = config_file_path();
+  let Some(path) = config_file_path() else {
+    return Ok(Json(ConfigFileResponse {
+      path:             String::new(),
+      contents:         String::new(),
+      requires_restart: true,
+      editable:         false,
+      read_only_reason: Some(
+        "CIRCUS_CONFIG_FILE is not set; no config file is available"
+          .to_string(),
+      ),
+    }));
+  };
   let contents = match tokio::fs::read_to_string(&path).await {
     Ok(contents) => {
       let parsed = circus_config::Config::from_toml_with_defaults(&contents)
@@ -345,20 +353,6 @@ async fn get_config_file(
       toml::to_string_pretty(&value).map_err(|e| {
         ApiError(circus_common::CiError::Internal(format!(
           "Failed to render effective configuration: {e}"
-        )))
-      })?
-    },
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-      let mut value = toml::Value::try_from(circus_config::Config::default())
-        .map_err(|e| {
-        ApiError(circus_common::CiError::Internal(format!(
-          "Failed to serialize default configuration: {e}"
-        )))
-      })?;
-      circus_config::redact_secrets(&mut value);
-      toml::to_string_pretty(&value).map_err(|e| {
-        ApiError(circus_common::CiError::Internal(format!(
-          "Failed to render default configuration: {e}"
         )))
       })?
     },
@@ -399,7 +393,11 @@ async fn update_config_file(
     )))
   })?;
 
-  let path = config_file_path();
+  let Some(path) = config_file_path() else {
+    return Err(ApiError(circus_common::CiError::Forbidden(
+      "CIRCUS_CONFIG_FILE is not set; no config file is available".to_string(),
+    )));
+  };
   let tmp_path = path.with_extension("toml.tmp");
   tokio::fs::write(&tmp_path, &rendered)
     .await
