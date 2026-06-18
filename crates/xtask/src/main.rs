@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 
 mod api_docs;
 mod openapi_check;
+mod preview_frontend;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Circus workspace tasks")]
@@ -25,9 +26,19 @@ enum Cmd {
   /// Verify that every API route registered in the server has a matching
   /// entry in the hand-written `OpenAPI` document.
   OpenapiCheck,
+  /// Serve fixture-backed dashboard HTML for local frontend iteration.
+  PreviewFrontend {
+    /// Address to bind.
+    #[arg(long, default_value_t = preview_frontend::default_host())]
+    host: std::net::IpAddr,
+    /// Port to bind.
+    #[arg(long, default_value_t = 3001)]
+    port: u16,
+  },
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
   #![expect(clippy::print_stderr, reason = "xtask error output is intentional")]
   if let Err(e) = color_eyre::install() {
     eprintln!("failed to install color-eyre reporter: {e}");
@@ -37,6 +48,9 @@ fn main() -> ExitCode {
   let result = match cli.command {
     Cmd::ApiDocs { check } => api_docs::run(check),
     Cmd::OpenapiCheck => openapi_check::run(),
+    Cmd::PreviewFrontend { host, port } => {
+      preview_frontend::run(host, port).await
+    },
   };
   match result {
     Ok(()) => ExitCode::SUCCESS,

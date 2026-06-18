@@ -897,12 +897,14 @@ dependencies = [
 name = "circus-xtask"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "circus-server",
  "clap",
  "color-eyre",
  "openapiv3",
  "regex",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

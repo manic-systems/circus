@@ -1,2 +1,2 @@
 [alias]
-xtask = "run --quiet --package circus-xtask --bin xtask --"
+xtask = "run -p circus-xtask --"

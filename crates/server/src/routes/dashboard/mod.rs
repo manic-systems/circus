@@ -20,6 +20,7 @@ use crate::state::AppState;
 mod admin;
 mod auth;
 mod pages;
+mod preview;
 mod shared;
 mod templates;
 
@@ -61,4 +62,8 @@ pub fn router() -> Router<AppState> {
     .route("/users", get(admin::users_page))
     .route("/starred", get(pages::starred_page))
     .route("/metrics", get(pages::metrics_page))
+}
+
+pub fn preview_router() -> Router {
+  preview::router()
 }
