@@ -1,16 +1,202 @@
-use std::collections::HashMap;
+use std::{
+  collections::{HashMap, HashSet, VecDeque},
+  path::Path,
+};
 
 use circus_common::{
   models::{CreateBuild, JobsetInput},
   repo,
 };
 use sqlx::PgPool;
+use tokio::process::Command;
 use uuid::Uuid;
 
 async fn read_required_features(drv_path: &str) -> Vec<String> {
   circus_nix::derivation::show_required_features(&[drv_path.to_owned()])
     .await
     .unwrap_or_default()
+}
+
+#[derive(Debug, Clone)]
+struct DerivationInfo {
+  system:     Option<String>,
+  outputs:    Option<HashMap<String, String>>,
+  input_drvs: Option<HashMap<String, serde_json::Value>>,
+}
+
+fn parse_derivation_infos(
+  value: &serde_json::Value,
+) -> HashMap<String, DerivationInfo> {
+  let Some(derivations) = value
+    .get("derivations")
+    .and_then(serde_json::Value::as_object)
+    .or_else(|| value.as_object())
+  else {
+    return HashMap::new();
+  };
+
+  derivations
+    .iter()
+    .map(|(drv_path, drv_val)| {
+      let drv_path = if drv_path.starts_with("/nix/store/") {
+        drv_path.clone()
+      } else {
+        format!("/nix/store/{drv_path}")
+      };
+      let system = drv_val
+        .get("system")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+      let outputs = drv_val
+        .get("outputs")
+        .and_then(serde_json::Value::as_object)
+        .map(|map| {
+          map
+            .iter()
+            .filter_map(|(name, output)| {
+              output
+                .get("path")
+                .or_else(|| output.get("outPath"))
+                .and_then(serde_json::Value::as_str)
+                .map(|path| (name.clone(), path.to_string()))
+            })
+            .collect::<HashMap<_, _>>()
+        })
+        .filter(|map| !map.is_empty());
+      let input_drvs = drv_val.get("inputDrvs").and_then(|v| {
+        serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone())
+          .ok()
+      });
+
+      (drv_path, DerivationInfo {
+        system,
+        outputs,
+        input_drvs,
+      })
+    })
+    .collect()
+}
+
+async fn show_recursive_derivations(
+  drv_paths: &[String],
+) -> HashMap<String, DerivationInfo> {
+  if drv_paths.is_empty() {
+    return HashMap::new();
+  }
+  let output = Command::new("nix")
+    .arg("derivation")
+    .arg("show")
+    .arg("--recursive")
+    .args(drv_paths)
+    .kill_on_drop(true)
+    .output()
+    .await;
+  let Ok(output) = output else {
+    return HashMap::new();
+  };
+  if !output.status.success() {
+    tracing::warn!(
+      stderr = %String::from_utf8_lossy(&output.stderr),
+      "nix derivation show --recursive failed"
+    );
+    return HashMap::new();
+  }
+  serde_json::from_slice::<serde_json::Value>(&output.stdout)
+    .map(|value| parse_derivation_infos(&value))
+    .unwrap_or_default()
+}
+
+async fn output_available(path: &str) -> bool {
+  let valid = Command::new("nix-store")
+    .args(["--check-validity", path])
+    .kill_on_drop(true)
+    .status()
+    .await
+    .is_ok_and(|status| status.success());
+  if valid {
+    return true;
+  }
+
+  Command::new("nix")
+    .args(["path-info", "--json", path])
+    .kill_on_drop(true)
+    .status()
+    .await
+    .is_ok_and(|status| status.success())
+}
+
+async fn should_enqueue_derivation(info: &DerivationInfo) -> bool {
+  let Some(outputs) = &info.outputs else {
+    return true;
+  };
+  for output in outputs.values() {
+    if !output_available(output).await {
+      return true;
+    }
+  }
+  false
+}
+
+fn dependency_job_name(drv_path: &str) -> String {
+  let basename = Path::new(drv_path)
+    .file_name()
+    .and_then(|name| name.to_str())
+    .unwrap_or(drv_path)
+    .trim_end_matches(".drv");
+  format!("drv:{basename}")
+}
+
+async fn expand_derivation_graph(
+  jobs: &[crate::nix::NixJob],
+) -> Vec<crate::nix::NixJob> {
+  let top_level_drvs = jobs
+    .iter()
+    .map(|job| job.drv_path.clone())
+    .collect::<Vec<_>>();
+  let derivations = show_recursive_derivations(&top_level_drvs).await;
+  if derivations.is_empty() {
+    return jobs.to_vec();
+  }
+
+  let mut expanded = jobs.to_vec();
+  let mut included = expanded
+    .iter()
+    .map(|job| job.drv_path.clone())
+    .collect::<HashSet<_>>();
+  let mut queued = VecDeque::new();
+  for job in jobs {
+    if let Some(input_drvs) = &job.input_drvs {
+      queued.extend(input_drvs.keys().cloned());
+    }
+  }
+
+  while let Some(drv_path) = queued.pop_front() {
+    if included.contains(&drv_path) {
+      continue;
+    }
+    let Some(info) = derivations.get(&drv_path) else {
+      continue;
+    };
+    if !should_enqueue_derivation(info).await {
+      continue;
+    }
+
+    included.insert(drv_path.clone());
+    if let Some(input_drvs) = &info.input_drvs {
+      queued.extend(input_drvs.keys().cloned());
+    }
+    expanded.push(crate::nix::NixJob {
+      name: dependency_job_name(&drv_path),
+      drv_path,
+      system: info.system.clone(),
+      outputs: info.outputs.clone(),
+      input_drvs: info.input_drvs.clone(),
+      constituents: None,
+      meta: crate::nix::NixMeta::default(),
+    });
+  }
+
+  expanded
 }
 
 /// Detect whether a derivation is a fixed-output derivation by reading the
@@ -48,8 +234,9 @@ pub(crate) async fn create_builds_from_eval(
 ) -> color_eyre::Result<()> {
   let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
   let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
+  let jobs = expand_derivation_graph(&eval_result.jobs).await;
 
-  for job in &eval_result.jobs {
+  for job in &jobs {
     let outputs_json = job
       .outputs
       .as_ref()
@@ -85,7 +272,7 @@ pub(crate) async fn create_builds_from_eval(
   }
 
   // Resolve dependencies
-  for job in &eval_result.jobs {
+  for job in &jobs {
     let build_id = match drv_to_build.get(&job.drv_path) {
       Some(id) => *id,
       None => continue,

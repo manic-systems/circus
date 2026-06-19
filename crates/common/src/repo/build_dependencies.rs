@@ -109,7 +109,7 @@ pub async fn check_deps_for_builds(
   let rows: Vec<(Uuid,)> = sqlx::query_as(
     "SELECT DISTINCT bd.build_id FROM build_dependencies bd JOIN builds b ON \
      bd.dependency_build_id = b.id WHERE bd.build_id = ANY($1) AND b.status \
-     != 'completed'",
+     != 'succeeded'",
   )
   .bind(build_ids)
   .fetch_all(pool)
