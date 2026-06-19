@@ -6,12 +6,14 @@ use color_eyre::{
   Result,
   eyre::{Context, bail},
 };
-use openapiv3::{OpenAPI, Operation};
+use serde_json::{Map, Value};
+use utoipa::openapi::OpenApi;
 
 use crate::openapi_check::{
   display_path,
   method_rank,
   openapi_document,
+  openapi_value,
   workspace_root,
 };
 
@@ -114,10 +116,31 @@ fn generate() -> Result<String> {
   Ok(out)
 }
 
-fn documented_operations(spec: &OpenAPI) -> Vec<DocumentedOperation> {
-  spec
-    .operations()
-    .map(|(path, method, operation)| {
+fn documented_operations(spec: &OpenApi) -> Vec<DocumentedOperation> {
+  let value = openapi_value(spec);
+  let Some(paths) = value.get("paths").and_then(Value::as_object) else {
+    return Vec::new();
+  };
+
+  paths
+    .iter()
+    .flat_map(|(path, item)| documented_path_operations(&value, path, item))
+    .collect()
+}
+
+fn documented_path_operations(
+  spec: &Value,
+  path: &str,
+  item: &Value,
+) -> Vec<DocumentedOperation> {
+  let Some(methods) = item.as_object() else {
+    return Vec::new();
+  };
+
+  methods
+    .iter()
+    .filter(|(method, _)| is_http_method(method))
+    .map(|(method, operation)| {
       DocumentedOperation {
         method:    method.to_uppercase(),
         path:      display_path(spec, path),
@@ -128,30 +151,37 @@ fn documented_operations(spec: &OpenAPI) -> Vec<DocumentedOperation> {
     .collect()
 }
 
-fn operation_summary(operation: &Operation) -> String {
+fn operation_summary(operation: &Value) -> String {
   operation
-    .summary
-    .as_deref()
-    .or(operation.description.as_deref())
+    .get("summary")
+    .or_else(|| operation.get("description"))
+    .and_then(Value::as_str)
     .unwrap_or("Documented endpoint")
     .to_string()
 }
 
-fn operation_responses(operation: &Operation) -> String {
-  let mut responses = operation
-    .responses
-    .responses
-    .keys()
-    .map(std::string::ToString::to_string)
-    .collect::<Vec<_>>();
-  if operation.responses.default.is_some() {
-    responses.push("default".to_string());
-  }
+fn operation_responses(operation: &Value) -> String {
+  let responses = operation
+    .get("responses")
+    .and_then(Value::as_object)
+    .map(response_keys)
+    .unwrap_or_default();
   if responses.is_empty() {
     "-".to_string()
   } else {
     responses.join(", ")
   }
+}
+
+fn response_keys(responses: &Map<String, Value>) -> Vec<String> {
+  responses.keys().map(ToString::to_string).collect()
+}
+
+fn is_http_method(method: &str) -> bool {
+  matches!(
+    method,
+    "get" | "head" | "options" | "post" | "put" | "patch" | "delete"
+  )
 }
 
 fn markdown_escape(input: &str) -> String {

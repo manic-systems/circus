@@ -197,6 +197,7 @@ configuration or the Nix store.
 | `server`             | `allowed_url_schemes`                                  | `[ "https", "git", "ssh" ]`                         | Allowed URL schemes for repository URLs          |
 | `server`             | `config_editor_enabled`                                | `false`                                             | Allow admin config editing through API/dashboard |
 | `server`             | `require_api_key_for_reads`                            | `true`                                              | Require auth for read-only `/api/v1` requests    |
+| `server`             | `openapi_enabled`                                      | `true`                                              | Serve `/api/v1/openapi.json`                     |
 | `server`             | `webhook_secret_encryption_key`                        | none                                                | Encrypt webhook and notification secrets         |
 | `server`             | `webhook_secret_encryption_key_file`                   | none                                                | File containing the encryption key               |
 | `server`             | `ldap.enabled`                                         | `true`                                              | Enable configured LDAP login                     |

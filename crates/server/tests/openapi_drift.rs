@@ -5,10 +5,8 @@
 //! `cargo test` so that CI catches drift without anyone remembering to invoke
 //! xtask explicitly.
 //!
-//! Both this test and the xtask carry their own copy of the scanner
-//! because xtask is a binary-only crate today. If the two diverge, fix
-//! both. The duplication is small and well-contained; a future move to
-//! generated `OpenAPI` (utoipa) deletes both copies.
+//! Both this test and the xtask carry their own copy of the route scanner
+//! because xtask is a binary-only crate today. If the two diverge, fix both.
 
 #![expect(
   clippy::unwrap_used,
@@ -18,6 +16,8 @@
   reason = "Fine in tests"
 )]
 use std::{collections::BTreeSet, fs, path::PathBuf};
+
+use serde_json::Value;
 
 const API_MODULES: &[&str] = &[
   "admin",
@@ -73,79 +73,41 @@ fn scan_routes(module: &str, prefix: &str) -> BTreeSet<String> {
 }
 
 fn parse_documented_paths() -> BTreeSet<String> {
-  let body = fs::read_to_string(routes_dir().join("openapi.rs"))
-    .expect("read openapi.rs");
+  let spec = circus_server::routes::openapi::document();
+  let value = serde_json::to_value(spec).expect("serialize OpenAPI document");
+  let api_root = value
+    .get("servers")
+    .and_then(Value::as_array)
+    .and_then(|servers| servers.first())
+    .and_then(|server| server.get("url"))
+    .and_then(Value::as_str)
+    .map(|url| url.trim_end_matches('/'))
+    .filter(|url| !url.is_empty())
+    .unwrap_or("/api/v1");
 
-  let marker = "\"paths\":";
-  let start = body.find(marker).expect("openapi.rs has paths key");
-  let after = &body[start + marker.len()..];
-  let open = after.find('{').expect("opening brace");
-
-  let mut depth = 0i32;
-  let mut close = None;
-  for (i, b) in after[open..].bytes().enumerate() {
-    match b {
-      b'{' => depth += 1,
-      b'}' => {
-        depth -= 1;
-        if depth == 0 {
-          close = Some(open + i);
-          break;
-        }
-      },
-      _ => {},
-    }
-  }
-  let close = close.expect("matching brace");
-  let block = &after[open + 1..close];
-
-  let bytes = block.as_bytes();
-  let mut depth = 0i32;
-  let mut bracket = 0i32;
-  let mut out = BTreeSet::new();
-  let mut i = 0;
-  while i < bytes.len() {
-    match bytes[i] {
-      b'{' => depth += 1,
-      b'}' => depth -= 1,
-      b'[' => bracket += 1,
-      b']' => bracket -= 1,
-      b'"' if depth == 0 && bracket == 0 => {
-        let key_start = i + 1;
-        let mut j = key_start;
-        while j < bytes.len() {
-          if bytes[j] == b'\\' {
-            j += 2;
-            continue;
-          }
-          if bytes[j] == b'"' {
-            break;
-          }
-          j += 1;
-        }
-        let key = &block[key_start..j];
-        if key.starts_with('/') {
-          let normalized = if key == "/auth/ldap"
-            || key == "/health"
-            || key == "/prometheus"
-            || key.starts_with("/channel/")
-            || key.starts_with("/job/")
-            || key.starts_with("/nix-cache/")
-            || (key.starts_with("/projects/") && key.contains("/nix-cache/"))
-          {
-            normalize_path(key)
-          } else {
-            format!("/api/v1{}", normalize_path(key))
-          };
-          out.insert(normalized);
-        }
-        i = j;
-      },
-      _ => {},
-    }
-    i += 1;
-  }
-  out
+  value
+    .get("paths")
+    .and_then(Value::as_object)
+    .into_iter()
+    .flat_map(|paths| paths.keys())
+    .map(|path| {
+      let normalized = normalize_path(path);
+      if normalized == "/auth/ldap"
+        || normalized == "/health"
+        || normalized == "/prometheus"
+        || normalized.starts_with("/channel/")
+        || normalized.starts_with("/job/")
+        || normalized.starts_with("/nix-cache/")
+        || (normalized.starts_with("/projects/")
+          && normalized.contains("/nix-cache/"))
+        || normalized.starts_with("/api/")
+      {
+        normalized
+      } else {
+        format!("{api_root}{normalized}")
+      }
+    })
+    .collect()
 }
 
 #[test]
@@ -165,7 +127,8 @@ fn openapi_document_covers_every_registered_api_route() {
 
   if !missing.is_empty() || !stale.is_empty() {
     let mut msg = String::from(
-      "OpenAPI drift detected. Update openapi.rs alongside the handler.\n",
+      "OpenAPI drift detected. Update the OpenAPI document alongside the \
+       handler.\n",
     );
     if !missing.is_empty() {
       msg.push_str("\nMissing in openapi.rs:\n");
@@ -185,14 +148,9 @@ fn openapi_document_covers_every_registered_api_route() {
 
 #[test]
 fn openapi_document_parses_as_valid_json() {
-  // We can't execute the json!() macro from a test without compiling the
-  // module, so instead we ensure the routes/openapi.rs file is syntactically
-  // intact by checking it contains the closing markers we expect.
-  let body = fs::read_to_string(routes_dir().join("openapi.rs")).expect("read");
-  assert!(
-    body.contains("\"openapi\": \"3.1.0\""),
-    "openapi version key"
-  );
-  assert!(body.contains("\"paths\":"), "paths key");
-  assert!(body.contains("\"components\":"), "components key");
+  let spec = circus_server::routes::openapi::document();
+  let value = serde_json::to_value(spec).expect("serialize OpenAPI document");
+  assert_eq!(value["openapi"], "3.1.0");
+  assert!(value.get("paths").is_some(), "paths key");
+  assert!(value.get("components").is_some(), "components key");
 }

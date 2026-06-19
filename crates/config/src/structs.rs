@@ -112,6 +112,9 @@ pub struct ServerConfig {
   /// Require a valid API key/session for read-only `/api/v1` requests.
   #[serde(default = "default_true")]
   pub require_api_key_for_reads:          bool,
+  /// Serve the generated OpenAPI document at `/api/v1/openapi.json`.
+  #[serde(default = "default_true")]
+  pub openapi_enabled:                    bool,
   /// Key used to encrypt webhook secrets before database storage.
   pub webhook_secret_encryption_key:      Option<String>,
   /// Path to a file containing the webhook secret encryption key.
@@ -735,6 +738,7 @@ impl Default for ServerConfig {
       page_access:                        PageAccessConfig::default(),
       config_editor_enabled:              false,
       require_api_key_for_reads:          true,
+      openapi_enabled:                    true,
       webhook_secret_encryption_key:      None,
       webhook_secret_encryption_key_file: None,
     }

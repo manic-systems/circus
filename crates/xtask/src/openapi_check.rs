@@ -11,8 +11,9 @@ use color_eyre::{
   Result,
   eyre::{Context, bail},
 };
-use openapiv3::OpenAPI;
 use regex::Regex;
+use serde_json::Value;
+use utoipa::openapi::OpenApi;
 
 /// Modules whose `.route("/...")` calls are mounted under `/api/v1`.
 /// Keep in sync with the `.merge(...)` block inside `routes::router`'s
@@ -91,8 +92,8 @@ pub fn run() -> Result<()> {
       }
     }
     msg.push_str(
-      "\nFix by updating crates/server/src/routes/openapi.rs and the route \
-       module together.\n",
+      "\nFix by updating the utoipa OpenAPI document and the route module \
+       together.\n",
     );
     bail!("{msg}");
   }
@@ -105,22 +106,18 @@ pub fn run() -> Result<()> {
   Ok(())
 }
 
-pub fn openapi_document() -> Result<OpenAPI> {
-  let mut value = circus_server::routes::openapi::document();
-  if let Some(object) = value.as_object_mut() {
-    // `openapiv3` models OpenAPI 3.0 schemas. Circus currently publishes a
-    // 3.1 document whose component schemas use 3.1 JSON Schema features such
-    // as `type: ["string", "null"]`. The route reference needs paths and
-    // operations only, so strip components before typed parsing.
-    object.remove("components");
-  }
-  serde_json::from_value(value).context("parsing server OpenAPI document")
+pub fn openapi_document() -> Result<OpenApi> {
+  Ok(circus_server::routes::openapi::document())
 }
 
-fn documented_paths(spec: &OpenAPI) -> BTreeSet<String> {
-  spec
-    .operations()
-    .map(|(path, ..)| display_path(spec, path))
+fn documented_paths(spec: &OpenApi) -> BTreeSet<String> {
+  let value = openapi_value(spec);
+  value
+    .get("paths")
+    .and_then(Value::as_object)
+    .into_iter()
+    .flat_map(|paths| paths.keys())
+    .map(|path| display_path(&value, path))
     .collect()
 }
 
@@ -141,7 +138,11 @@ fn parse_routes_in_file(path: &Path, prefix: &str) -> Result<BTreeSet<String>> {
   Ok(out)
 }
 
-pub fn display_path(spec: &OpenAPI, path: &str) -> String {
+pub fn openapi_value(spec: &OpenApi) -> Value {
+  serde_json::to_value(spec).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+pub fn display_path(spec: &Value, path: &str) -> String {
   let normalized = normalize_path(path);
   if is_absolute_public_path(&normalized) || normalized.starts_with("/api/") {
     normalized
@@ -150,11 +151,14 @@ pub fn display_path(spec: &OpenAPI, path: &str) -> String {
   }
 }
 
-fn api_root(spec: &OpenAPI) -> &str {
+fn api_root(spec: &Value) -> &str {
   spec
-    .servers
-    .first()
-    .map(|server| server.url.trim_end_matches('/'))
+    .get("servers")
+    .and_then(Value::as_array)
+    .and_then(|servers| servers.first())
+    .and_then(|server| server.get("url"))
+    .and_then(Value::as_str)
+    .map(|url| url.trim_end_matches('/'))
     .filter(|url| !url.is_empty())
     .unwrap_or("/api/v1")
 }

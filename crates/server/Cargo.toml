@@ -34,6 +34,7 @@ reqwest.workspace                        = true
 ring.workspace                           = true
 serde.workspace                          = true
 serde_json.workspace                     = true
+serde_path_to_error.workspace            = true
 sha2.workspace                           = true
 sqlx                                     = { workspace = true, features = [ "sqlite" ] }
 strip-ansi-escapes.workspace             = true
@@ -48,6 +49,7 @@ tower.workspace                          = true
 tower-http.workspace                     = true
 tracing.workspace                        = true
 tracing-subscriber.workspace             = true
+utoipa.workspace                         = true
 uuid.workspace                           = true
 
 # Our crates

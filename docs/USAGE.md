@@ -264,6 +264,8 @@ Machine-readable OpenAPI is available from the running server at:
 GET /api/v1/openapi.json
 ```
 
+Set `server.openapi_enabled = false` to stop serving that endpoint.
+
 ## Administrators
 
 While Circus provides a large API surface for scripted operations,

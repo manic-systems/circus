@@ -186,8 +186,9 @@ Hydra. Worth noting that Hydra has picked up steam again, and evolved since the
 time of writing for this document.
 
 On a running instance, you may find the machine-readable OpenAPI spec document
-at `/api/v1/openapi.json`. The generated REST API endpoint reference is also
-rendered in markdown at [API.md].
+at `/api/v1/openapi.json`, unless `server.openapi_enabled = false` is
+configured. The generated REST API endpoint reference is also rendered in
+markdown at [API.md].
 
 Please create an issue if you notice inaccuracies, or have some questions that
 you think is worth answering in the documentation for future reference.

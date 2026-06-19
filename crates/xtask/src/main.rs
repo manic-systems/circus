@@ -24,7 +24,7 @@ enum Cmd {
     check: bool,
   },
   /// Verify that every API route registered in the server has a matching
-  /// entry in the hand-written `OpenAPI` document.
+  /// entry in the generated `OpenAPI` document.
   OpenapiCheck,
   /// Serve fixture-backed dashboard HTML for local frontend iteration.
   PreviewFrontend {

@@ -1,26 +1,41 @@
 //! `OpenAPI` 3.1 description of the public REST API.
 //!
-//! Hand-written rather than derived from route handlers. The trade-off:
-//! schema drift is possible if a handler changes without touching this
-//! file, so update it alongside any breaking change to a request or
-//! response type. The dependency surface stays small in exchange.
-//!
 //! Coverage policy: every HTTP route registered by `routes::router` has an
 //! entry except dashboard HTML pages and static assets. Binary/streaming
 //! endpoints are documented at the operation level even when they are not JSON.
 
-use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{Json, Router, routing::get};
+use serde::de::IntoDeserializer;
 use serde_json::{Value, json};
+use utoipa::openapi::OpenApi;
 
 use crate::state::AppState;
 
+pub struct CircusApiDoc;
+
+impl utoipa::OpenApi for CircusApiDoc {
+  fn openapi() -> OpenApi {
+    document()
+  }
+}
+
 #[expect(
-  clippy::too_many_lines,
-  reason = "single hand-written OpenAPI document keeps route/schema drift \
-            reviewable"
+  clippy::expect_used,
+  reason = "static OpenAPI document must be valid at startup and in xtask"
 )]
 #[must_use]
-pub fn document() -> Value {
+pub fn document() -> OpenApi {
+  let value = document_value();
+  serde_path_to_error::deserialize(value.into_deserializer())
+    .expect("static OpenAPI document should parse as utoipa OpenApi")
+}
+
+#[expect(
+  clippy::too_many_lines,
+  reason = "single static OpenAPI document keeps route/schema drift reviewable"
+)]
+#[must_use]
+fn document_value() -> Value {
   json!({
     "openapi": "3.1.0",
     "info": {
@@ -230,6 +245,7 @@ pub fn document() -> Value {
         },
         "SystemStatus": {
           "type": "object",
+          "required": [],
           "properties": {
             "queue_depth":   { "type": "integer" },
             "active_builds": { "type": "integer" },
@@ -560,12 +576,12 @@ pub fn document() -> Value {
       },
       "/search": {
         "get": { "summary": "Advanced search",
-          "parameters": [{ "name": "q", "in": "query", "schema": { "type": "string" } }],
+          "parameters": [{ "name": "q", "in": "query", "required": false, "schema": { "type": "string" } }],
           "responses": { "200": { "description": "Search results" } } }
       },
       "/search/quick": {
         "get": { "summary": "Quick search (autocomplete)",
-          "parameters": [{ "name": "q", "in": "query", "schema": { "type": "string" } }],
+          "parameters": [{ "name": "q", "in": "query", "required": false, "schema": { "type": "string" } }],
           "responses": { "200": { "description": "Quick results" } } }
       },
       "/me": {
@@ -676,8 +692,8 @@ pub fn document() -> Value {
       "/admin/audit-log": {
         "get": { "summary": "Paginated audit log (admin only)",
           "parameters": [
-            { "name": "limit",  "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
-            { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0 } }
+            { "name": "limit",  "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
+            { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } }
           ],
           "responses": { "200": { "description": "Audit entries page" } } }
       },
@@ -693,8 +709,8 @@ pub fn document() -> Value {
       "/admin/pinned-build-products": {
         "get": { "summary": "List build products protected by kept builds",
           "parameters": [
-            { "name": "limit",  "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
-            { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0 } }
+            { "name": "limit",  "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
+            { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } }
           ],
           "responses": { "200": { "description": "Pinned build products page" } } }
       },
@@ -757,12 +773,8 @@ pub fn document() -> Value {
   })
 }
 
-async fn openapi_spec() -> impl IntoResponse {
-  (
-    StatusCode::OK,
-    [("content-type", "application/json")],
-    document().to_string(),
-  )
+async fn openapi_spec() -> Json<OpenApi> {
+  Json(<CircusApiDoc as utoipa::OpenApi>::openapi())
 }
 
 pub fn router() -> Router<AppState> {

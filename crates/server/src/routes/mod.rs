@@ -218,19 +218,24 @@ pub fn api_router(state: AppState) -> Router<AppState> {
     .route_layer(middleware::from_fn_with_state(state, require_api_key))
 }
 
-pub fn public_router() -> Router<AppState> {
-  Router::new()
+pub fn public_router(config: &Config) -> Router<AppState> {
+  let mut router = Router::new()
     .merge(health::router())
     .merge(badges::router())
     .merge(cache::router())
     .merge(channel_manifests::router())
-    .merge(openapi::router())
     .merge(metrics::router())
     // Webhooks use their own HMAC auth, outside the API key gate.
     .merge(webhooks::router())
     // OAuth and LDAP routes use their own auth mechanisms.
     .merge(oauth::router())
-    .merge(ldap::router())
+    .merge(ldap::router());
+
+  if config.server.openapi_enabled {
+    router = router.merge(openapi::router());
+  }
+
+  router
 }
 
 pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
@@ -284,7 +289,7 @@ pub fn router(state: AppState, config: &Config) -> Router {
 
   let mut app = Router::new()
     .nest("/api/v1", api_router(state.clone()))
-    .merge(public_router());
+    .merge(public_router(config));
 
   if config.ui.enabled {
     app = app.merge(ui_router(state.clone(), config));
