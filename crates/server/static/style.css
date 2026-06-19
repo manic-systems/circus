@@ -388,7 +388,7 @@ pre {
 
 .command-input,
 .topbar-search input {
-  width: clamp(280px, 28vw, 420px);
+  width: clamp(140px, 24vw, 420px);
   height: 28px;
   padding: 0 10px;
   color: var(--text);
@@ -855,6 +855,7 @@ a.stat-card:hover {
 
 table {
   width: 100%;
+  min-width: 480px;
   border-collapse: collapse;
   table-layout: fixed;
   color: var(--text);
@@ -896,6 +897,13 @@ td {
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid var(--border);
+}
+
+td {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dense-table th,
@@ -1313,6 +1321,11 @@ button:hover,
   border-color: var(--border-strong);
 }
 
+.btn-full {
+  width: 100%;
+  justify-content: center;
+}
+
 .btn-ghost,
 .nav-auth button {
   color: var(--text-muted);
@@ -1654,11 +1667,22 @@ button:disabled {
   }
 }
 
+.page-main:has(.login-container) {
+  display: flex;
+  flex-direction: column;
+}
+
+.page-main:has(.login-container) > .container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
 .login-container {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(100vh - 88px);
   padding: 20px;
 }
 
@@ -1750,6 +1774,25 @@ button:disabled {
 
   .metric-cell:nth-child(3n) {
     border-right: 0;
+  }
+}
+
+@media (max-width: 1060px) {
+  .app-shell {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    width: 200px;
+    min-width: 200px;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+
+  .topbar {
+    gap: 10px;
   }
 }
 
@@ -1884,6 +1927,14 @@ dialog {
 
 dialog::backdrop {
   background: rgba(0, 0, 0, 0.35);
+}
+
+dialog.dialog-sm {
+  width: min(400px, calc(100vw - 32px));
+}
+
+body:has(#login-dialog[open]) .login-container {
+  visibility: hidden;
 }
 
 .dialog-header {

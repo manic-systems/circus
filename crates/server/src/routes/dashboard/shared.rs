@@ -19,7 +19,7 @@ use circus_common::models::{
   EvaluationStatus,
   User,
 };
-use circus_config::{PageAccessLevel, ServerConfig};
+use circus_config::{Config, PageAccessLevel, ServerConfig, UiConfig};
 use circus_proto::nix_log::{self, LogLine};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
@@ -28,6 +28,41 @@ use crate::{
   permissions::{self, Permission, UiPermissions},
   state::{AppState, CsrfToken},
 };
+
+#[derive(Clone)]
+pub(super) struct UiTemplateConfig {
+  pub(super) brand_name:     String,
+  pub(super) brand_subtitle: String,
+  pub(super) logo_url:       String,
+  pub(super) has_logo:       bool,
+  pub(super) favicon_url:    String,
+  pub(super) has_favicon:    bool,
+  pub(super) has_custom_css: bool,
+}
+
+impl UiTemplateConfig {
+  pub(super) fn from_config(config: &UiConfig) -> Self {
+    let logo_url = config.logo_url.clone().unwrap_or_default();
+    let favicon_url = config.favicon_url.clone().unwrap_or_default();
+    Self {
+      brand_name: config.brand_name.clone(),
+      brand_subtitle: config.brand_subtitle.clone(),
+      has_logo: !logo_url.is_empty(),
+      logo_url,
+      has_favicon: !favicon_url.is_empty(),
+      favicon_url,
+      has_custom_css: config.custom_css.is_some(),
+    }
+  }
+}
+
+#[derive(Template)]
+#[template(path = "private.html")]
+pub(super) struct PrivateTemplate {
+  pub(super) ui:        UiTemplateConfig,
+  pub(super) is_admin:  bool,
+  pub(super) auth_name: String,
+}
 
 pub(super) trait RenderExt: Template {
   #[expect(
@@ -288,7 +323,7 @@ impl DashboardPage {
 }
 
 pub(super) fn enforce_page_access(
-  config: &ServerConfig,
+  config: &Config,
   ctx: &DashboardContext,
   page: DashboardPage,
 ) -> Result<(), Response> {
@@ -298,7 +333,7 @@ pub(super) fn enforce_page_access(
               add noise at every call site"
   )]
 
-  let allowed = match page.access(config) {
+  let allowed = match page.access(&config.server) {
     PageAccessLevel::Public => true,
     PageAccessLevel::Authenticated => ctx.is_authenticated,
     PageAccessLevel::Admin => ctx.is_admin,
@@ -307,8 +342,22 @@ pub(super) fn enforce_page_access(
     return Ok(());
   }
 
-  let target = if ctx.is_authenticated { "/" } else { "/login" };
-  Err(Redirect::to(target).into_response())
+  if ctx.is_authenticated {
+    return Err(Redirect::to("/").into_response());
+  }
+  let tmpl = PrivateTemplate {
+    ui:        UiTemplateConfig::from_config(&config.ui),
+    is_admin:  ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+  };
+  Err(
+    tmpl
+      .render()
+      .map(|html| (StatusCode::UNAUTHORIZED, Html(html)).into_response())
+      .unwrap_or_else(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response()
+      }),
+  )
 }
 
 pub(super) struct ProjectSummaryView {

@@ -39,6 +39,7 @@ use super::{
     JobStatusCell,
     JobStatusColumn,
     JobStatusRow,
+    PrivateTemplate,
     ProjectSummaryView,
     QueueBuildView,
     QueueSystemView,
@@ -108,6 +109,7 @@ pub fn router() -> Router {
     .route("/starred", get(starred))
     .route("/metrics", get(metrics))
     .route("/login", get(login))
+    .route("/private", get(private))
 }
 
 fn render<T: Template>(template: T) -> Response {
@@ -624,6 +626,14 @@ async fn login() -> Response {
   render(LoginTemplate {
     ui:        ui(),
     error:     Some("Preview mode accepts no credentials.".into()),
+    is_admin:  false,
+    auth_name: String::new(),
+  })
+}
+
+async fn private() -> Response {
+  render(PrivateTemplate {
+    ui:        ui(),
     is_admin:  false,
     auth_name: String::new(),
   })

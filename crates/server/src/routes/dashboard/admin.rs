@@ -575,7 +575,7 @@ pub(super) async fn news_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::News)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::News)?;
   let items = circus_common::repo::news::list(&state.pool, 50, 0)
     .await
     .unwrap_or_default();

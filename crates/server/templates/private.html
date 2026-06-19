@@ -1,11 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Sign in - {{ ui.brand_name }}{% endblock %}
-{% block auth %}{% endblock %}
+{% block title %}Sign in required - {{ ui.brand_name }}{% endblock %}
 {% block content %}
 <div class="login-container">
   <div style="text-align:center;max-width:320px">
-    <p style="font-size:14px;font-weight:650;color:var(--text);margin-bottom:6px">Sign in to {{ ui.brand_name }}</p>
-    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Authentication required to access this instance.</p>
+    <p style="font-size:14px;font-weight:650;color:var(--text);margin-bottom:6px">This page is private</p>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Sign in to access this content.</p>
     <button class="btn" onclick="document.getElementById('login-dialog').showModal()">Sign in</button>
   </div>
 </div>
@@ -16,11 +15,6 @@
     <button class="btn-ghost dialog-close" onclick="document.getElementById('login-dialog').close()" aria-label="Close">&times;</button>
   </div>
   <div class="dialog-body">
-    {% match error %}
-      {% when Some with (msg) %}
-      <div class="flash-message flash-error">{{ msg }}</div>
-      {% when None %}
-    {% endmatch %}
     <form method="POST" action="/login">
       <div class="form-group">
         <label for="username">Username</label>
@@ -42,6 +36,4 @@
     </form>
   </div>
 </dialog>
-
-<script>document.getElementById('login-dialog').showModal();</script>
 {% endblock %}

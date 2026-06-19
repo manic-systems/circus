@@ -192,7 +192,7 @@ pub(super) async fn home(
   State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Home)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Home)?;
   let include_hidden = ctx.is_admin;
   let overview = operator::overview(&state, include_hidden).await;
   let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
@@ -254,7 +254,7 @@ pub(super) async fn projects_page(
   Query(params): Query<PageParams>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Projects)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Projects)?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
   let items = circus_common::repo::projects::list(&state.pool, limit, offset)
@@ -287,7 +287,7 @@ pub(super) async fn project_page(
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Project)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Project)?;
   let include_hidden = ctx.is_admin;
   let Ok(project) = circus_common::repo::projects::get(&state.pool, id).await
   else {
@@ -334,7 +334,7 @@ pub(super) async fn jobset_page(
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Jobset)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Jobset)?;
   let include_hidden = ctx.is_admin;
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
   else {
@@ -438,7 +438,7 @@ pub(super) async fn jobset_jobs_page(
   Query(params): Query<JobsetJobsParams>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::JobsetJobs)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::JobsetJobs)?;
   let include_hidden = ctx.is_admin;
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
   else {
@@ -554,7 +554,7 @@ pub(super) async fn evaluations_page(
   Query(params): Query<PageParams>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Evaluations)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Evaluations)?;
   let include_hidden = ctx.is_admin;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
@@ -617,7 +617,7 @@ pub(super) async fn evaluation_page(
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Evaluation)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Evaluation)?;
   let include_hidden = ctx.is_admin;
   let Ok(eval) = circus_common::repo::evaluations::get_visible(
     &state.pool,
@@ -708,7 +708,7 @@ pub(super) async fn builds_page(
   Query(params): Query<BuildFilterParams>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Builds)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Builds)?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
   let items = circus_common::repo::builds::list_filtered(
@@ -812,7 +812,7 @@ pub(super) async fn build_page(
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Build)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Build)?;
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
   else {
     return Ok(Html("Build not found".to_string()));
@@ -908,7 +908,7 @@ pub(super) async fn build_log(
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
 ) -> Result<Response, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Build)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Build)?;
 
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
   else {
@@ -964,7 +964,7 @@ pub(super) async fn queue_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Queue)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Queue)?;
   let running = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
@@ -1128,7 +1128,7 @@ pub(super) async fn channels_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Channels)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Channels)?;
   let channels = circus_common::repo::channels::list_all(&state.pool)
     .await
     .unwrap_or_default();
@@ -1174,7 +1174,7 @@ pub(super) async fn channel_page(
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Channel)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Channel)?;
   let Ok(channel) = circus_common::repo::channels::get(&state.pool, id).await
   else {
     return Ok(Html("Channel not found".to_string()));
@@ -1229,7 +1229,7 @@ pub(super) async fn starred_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Starred)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Starred)?;
   // Session login (User) or API-key auth (ApiKey with user_id) both count
   // as logged in. API keys without a bound user_id can't list starred jobs.
   let viewer_user_id = ctx.viewer_user_id;
@@ -1337,7 +1337,7 @@ pub(super) async fn metrics_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config.server, &ctx, DashboardPage::Metrics)?;
+  enforce_page_access(&state.config, &ctx, DashboardPage::Metrics)?;
   let tmpl = MetricsTemplate {
     ui:        ui_config(&state),
     is_admin:  ctx.is_admin,

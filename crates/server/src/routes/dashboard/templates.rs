@@ -17,9 +17,9 @@ use circus_common::models::{
   Project,
   SystemStatus,
 };
-use circus_config::UiConfig;
 use uuid::Uuid;
 
+pub(super) use super::shared::UiTemplateConfig;
 use super::shared::{
   ApiKeyView,
   BuildView,
@@ -35,33 +35,6 @@ use super::shared::{
   WorkerSummaryView,
 };
 use crate::permissions::UiPermissions;
-
-#[derive(Clone)]
-pub(super) struct UiTemplateConfig {
-  pub(super) brand_name:     String,
-  pub(super) brand_subtitle: String,
-  pub(super) logo_url:       String,
-  pub(super) has_logo:       bool,
-  pub(super) favicon_url:    String,
-  pub(super) has_favicon:    bool,
-  pub(super) has_custom_css: bool,
-}
-
-impl UiTemplateConfig {
-  pub(super) fn from_config(config: &UiConfig) -> Self {
-    let logo_url = config.logo_url.clone().unwrap_or_default();
-    let favicon_url = config.favicon_url.clone().unwrap_or_default();
-    Self {
-      brand_name: config.brand_name.clone(),
-      brand_subtitle: config.brand_subtitle.clone(),
-      has_logo: !logo_url.is_empty(),
-      logo_url,
-      has_favicon: !favicon_url.is_empty(),
-      favicon_url,
-      has_custom_css: config.custom_css.is_some(),
-    }
-  }
-}
 
 #[derive(Template)]
 #[template(path = "home.html")]
@@ -333,6 +306,8 @@ pub(super) struct PinnedOutputView {
 
 #[cfg(test)]
 mod tests {
+  use circus_config::UiConfig;
+
   use super::*;
 
   fn build(
