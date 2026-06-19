@@ -68,6 +68,8 @@ async fn test_e2e_project_eval_build_flow() {
     check_interval:    Some(300),
     trigger_mode:      None,
     branch:            None,
+    branch_pattern:    None,
+    tag_pattern:       None,
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,

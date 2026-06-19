@@ -499,6 +499,80 @@ async fn evaluate_jobset(
 
   log_disk_space(&work_dir, &jobset.name);
 
+  if jobset.branch_pattern.is_some() || jobset.tag_pattern.is_some() {
+    let branch_pattern = jobset.branch_pattern.clone();
+    let tag_pattern = jobset.tag_pattern.clone();
+    let discover_url = url.clone();
+    let discover_work_dir = work_dir.clone();
+    let discover_project_name = project_name.clone();
+    let refs = tokio::time::timeout(
+      git_timeout,
+      tokio::task::spawn_blocking(move || {
+        crate::git::list_matching_refs(
+          &discover_url,
+          &discover_work_dir,
+          &discover_project_name,
+          branch_pattern.as_deref(),
+          tag_pattern.as_deref(),
+        )
+      }),
+    )
+    .await
+    .map_err(|_| {
+      color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
+    })???;
+
+    tracing::info!(
+      jobset = %jobset.name,
+      refs = refs.len(),
+      "Discovered matching repository refs"
+    );
+
+    for git_ref in refs {
+      let create_eval = CreateEvaluation {
+        jobset_id:      jobset.id,
+        commit_hash:    git_ref.commit_hash.clone(),
+        pr_number:      None,
+        pr_head_branch: match git_ref.kind {
+          crate::git::RefKind::Branch => Some(git_ref.name.clone()),
+          crate::git::RefKind::Tag => None,
+        },
+        pr_base_branch: None,
+        pr_action:      match git_ref.kind {
+          crate::git::RefKind::Branch => None,
+          crate::git::RefKind::Tag => Some(format!("tag:{}", git_ref.name)),
+        },
+      };
+
+      match repo::evaluations::create(pool, create_eval).await {
+        Ok(eval) => {
+          evaluate_pending_eval(
+            pool,
+            &eval,
+            jobset,
+            config,
+            notifications_config,
+            notification_secret_key,
+            nix_timeout,
+            git_timeout,
+          )
+          .await?;
+        },
+        Err(CiError::Conflict(_)) => {
+          tracing::debug!(
+            jobset = %jobset.name,
+            commit = %git_ref.commit_hash,
+            "Evaluation already exists for matched ref"
+          );
+        },
+        Err(e) => return Err(color_eyre::eyre::eyre!(e)),
+      }
+    }
+
+    repo::jobsets::update_last_checked(pool, jobset.id).await?;
+    return Ok(());
+  }
+
   // Clone/fetch in a blocking task (git2 is sync) with timeout
   let (repo_path, commit_hash) = tokio::time::timeout(
     git_timeout,
@@ -759,6 +833,8 @@ async fn sync_repo_declarative_config(
       check_interval: Some(js.check_interval),
       trigger_mode,
       branch: js.branch.clone(),
+      branch_pattern: js.branch_pattern.clone(),
+      tag_pattern: js.tag_pattern.clone(),
       scheduling_shares: Some(js.scheduling_shares),
       state,
       keep_nr: js.keep_nr,

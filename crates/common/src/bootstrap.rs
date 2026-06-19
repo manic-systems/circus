@@ -128,6 +128,8 @@ pub async fn run(
         check_interval: Some(decl_jobset.check_interval),
         trigger_mode,
         branch: decl_jobset.branch.clone(),
+        branch_pattern: decl_jobset.branch_pattern.clone(),
+        tag_pattern: decl_jobset.tag_pattern.clone(),
         scheduling_shares: Some(decl_jobset.scheduling_shares),
         state,
         keep_nr: decl_jobset.keep_nr,

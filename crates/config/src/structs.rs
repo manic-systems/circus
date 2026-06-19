@@ -613,6 +613,10 @@ pub struct DeclarativeJobset {
   pub state:             Option<String>,
   /// Git branch to track (defaults to repository default branch)
   pub branch:            Option<String>,
+  /// Glob pattern for repository branches to evaluate, for example `*`.
+  pub branch_pattern:    Option<String>,
+  /// Glob pattern for repository tags to evaluate, for example `v*`.
+  pub tag_pattern:       Option<String>,
   /// Scheduling priority shares (default 100, higher = more priority)
   #[serde(default = "default_scheduling_shares")]
   pub scheduling_shares: i32,

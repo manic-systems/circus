@@ -605,6 +605,8 @@ mod tests {
       check_interval:    60,
       trigger_mode:      JobsetTriggerMode::SourceChange,
       branch:            branch.map(str::to_owned),
+      branch_pattern:    None,
+      tag_pattern:       None,
       scheduling_shares: 100,
       created_at:        now,
       updated_at:        now,

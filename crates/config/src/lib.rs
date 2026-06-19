@@ -137,6 +137,8 @@ mod tests {
           trigger_mode:      None,
           state:             None,
           branch:            None,
+          branch_pattern:    None,
+          tag_pattern:       None,
           scheduling_shares: 100,
           keep_nr:           None,
           inputs:            vec![],
