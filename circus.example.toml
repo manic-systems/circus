@@ -16,6 +16,7 @@ port            = 3000
 request_timeout = 30
 
 # Security options
+# openapi_enabled      = false # disable /api/v1/openapi.json
 # force_secure_cookies = true # enable when behind HTTPS reverse proxy (nginx/caddy)
 # rate_limit_rps       = 100  # requests per second per IP (helps prevent DoS attacks)
 # rate_limit_burst     = 20   # burst size before rate limit enforcement
