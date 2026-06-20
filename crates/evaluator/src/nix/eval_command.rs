@@ -1,55 +1,43 @@
-use std::time::Duration;
+use std::{
+  sync::{
+    Arc,
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+  },
+  time::Duration,
+};
 
 use circus_common::{CiError, error::Result};
 use circus_config::EvaluatorConfig;
 use tokio::process::Command;
 
-use super::{EvalResult, parse_eval_output};
+use super::{EvalResult, NixJob, nix_job_from_derivation};
 
-/// Maximum number of stderr bytes to retain in a surfaced evaluation error.
-/// nix prints the actual failure at the tail, so we keep the end of the output.
-const MAX_STDERR_BYTES: usize = 4096;
-/// Maximum number of trailing stderr lines to retain.
-const MAX_STDERR_LINES: usize = 40;
-
-/// Distil nix-eval-jobs stderr into a bounded, human-readable detail string
-/// suitable for storing as an evaluation error and showing on the dashboard.
-///
-/// Keeps the tail of the output (where nix reports the actual error) and caps
-/// both line count and byte length so a runaway trace can't bloat the database
-/// or the rendered page.
-fn summarize_stderr(stderr: &str) -> String {
-  let trimmed = stderr.trim();
-  if trimmed.is_empty() {
-    return String::new();
-  }
-
-  let lines: Vec<&str> = trimmed.lines().collect();
-  let tail = if lines.len() > MAX_STDERR_LINES {
-    &lines[lines.len() - MAX_STDERR_LINES..]
-  } else {
-    &lines[..]
-  };
-  let mut detail = tail.join("\n");
-
-  if detail.len() > MAX_STDERR_BYTES {
-    // Keep the tail; truncate on a char boundary to stay valid UTF-8.
-    let start = detail.len() - MAX_STDERR_BYTES;
-    let start = (start..detail.len())
-      .find(|&i| detail.is_char_boundary(i))
-      .unwrap_or(detail.len());
-    detail = detail[start..].to_string();
-  }
-
-  detail
-}
-
+/// Nix evaluation settings derived from the evaluator configuration, forwarded
+/// to evix as `(key, value)` options (which evix applies via `NIX_CONFIG`).
 pub(super) struct NixEvalPolicy {
   restrict_eval: bool,
   allow_ifd:     bool,
 }
 
 impl NixEvalPolicy {
+  pub(super) fn nix_options(&self) -> Vec<(String, String)> {
+    let mut options = Vec::new();
+    if self.restrict_eval {
+      options.push(("restrict-eval".to_string(), "true".to_string()));
+    }
+    if !self.allow_ifd {
+      options.push((
+        "allow-import-from-derivation".to_string(),
+        "false".to_string(),
+      ));
+    }
+    options
+  }
+
+  /// Apply the policy to a `nix` CLI invocation as `--option KEY VALUE` flags.
+  /// Used for the auxiliary `nix eval` / `nix derivation show` calls that back
+  /// `nixosConfigurations` resolution.
   pub(super) fn apply_to(&self, cmd: &mut Command) {
     if self.restrict_eval {
       cmd.args(["--option", "restrict-eval", "true"]);
@@ -69,78 +57,94 @@ impl From<&EvaluatorConfig> for NixEvalPolicy {
   }
 }
 
-pub(super) struct EvalCommand {
-  cmd:         Command,
-  timeout:     Duration,
+/// Drive an evix evaluation to completion, collecting jobs and per-job errors.
+///
+/// evix exposes a blocking API backed by worker subprocesses, so it runs on a
+/// blocking task. `timeout` is enforced by setting evix's cancellation flag,
+/// which winds the workers down rather than leaking them.
+///
+/// # Returns
+///
+/// The discovered [`NixJob`]s and the count of jobs that failed to evaluate
+/// individually (non-fatal per-attribute errors).
+///
+/// # Errors
+///
+/// [`CiError::Timeout`] if evaluation exceeds `timeout`, or
+/// [`CiError::NixEval`] if the evaluation fails fatally or the blocking task
+/// cannot be joined.
+pub(super) async fn run_eval(
+  config: evix::Config,
+  timeout: Duration,
   description: &'static str,
-}
+) -> Result<EvalResult> {
+  let collected: Arc<Mutex<(Vec<NixJob>, usize)>> =
+    Arc::new(Mutex::new((Vec::new(), 0)));
+  let cancel = Arc::new(AtomicBool::new(false));
 
-impl EvalCommand {
-  pub(super) const fn new(
-    cmd: Command,
-    timeout: Duration,
-    description: &'static str,
-  ) -> Self {
-    Self {
-      cmd,
-      timeout,
-      description,
-    }
-  }
-
-  pub(super) async fn run(mut self) -> Result<EvalResult> {
-    let timeout = self.timeout;
-    let description = self.description;
-
-    tokio::time::timeout(timeout, async move {
-      let output = self.cmd.output().await;
-
-      match output {
-        Ok(out) if out.status.success() || !out.stdout.is_empty() => {
-          let stdout = String::from_utf8_lossy(&out.stdout);
-          let result = parse_eval_output(&stdout);
-
-          if result.error_count > 0 {
-            tracing::warn!(
-              error_count = result.error_count,
-              "{description} nix-eval-jobs reported errors for some jobs"
-            );
-          }
-
-          if result.jobs.is_empty() && result.error_count == 0 {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.trim().is_empty() {
-              tracing::warn!(
-                stderr = %stderr,
-                "{description} nix-eval-jobs returned no jobs, stderr output present"
-              );
-            }
-          }
-
-          Ok(result)
+  let sink_state = Arc::clone(&collected);
+  let cancel_eval = Arc::clone(&cancel);
+  let handle = tokio::task::spawn_blocking(move || {
+    evix::evaluate_cancellable(&config, &cancel_eval, move |event| {
+      match event {
+        evix::Event::Derivation(drv) => {
+          sink_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .0
+            .push(nix_job_from_derivation(drv));
         },
-        Ok(out) => {
-          let stderr = String::from_utf8_lossy(&out.stderr);
-          tracing::warn!(stderr = %stderr, "{description} nix-eval-jobs failed");
-          let detail = summarize_stderr(&stderr);
-          let message = if detail.is_empty() {
-            format!(
-              "nix-eval-jobs exited with {} and produced no output",
-              out.status
-            )
-          } else {
-            format!("nix-eval-jobs failed ({}):\n{detail}", out.status)
-          };
-          Err(CiError::NixEval(message))
+        evix::Event::Error(err) => {
+          tracing::warn!(job = %err.attr, "evix reported error: {}", err.error);
+          sink_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1 += 1;
         },
-        Err(e) => Err(CiError::NixEval(format!(
-          "Failed to run nix-eval-jobs: {e}"
-        ))),
+        evix::Event::AttrSet { .. } => {},
       }
+      Ok(())
     })
-    .await
-    .map_err(|_| {
-      CiError::Timeout(format!("Nix evaluation timed out after {timeout:?}"))
-    })?
+  });
+
+  match tokio::time::timeout(timeout, handle).await {
+    Ok(joined) => {
+      joined
+        .map_err(|e| {
+          CiError::NixEval(format!("evix evaluation task failed to join: {e}"))
+        })?
+        .map_err(|e| {
+          CiError::NixEval(format!(
+            "{description} evix evaluation failed: {e:#}"
+          ))
+        })?;
+
+      let result = {
+        let guard = collected
+          .lock()
+          .unwrap_or_else(std::sync::PoisonError::into_inner);
+        EvalResult {
+          jobs:        guard.0.clone(),
+          error_count: guard.1,
+        }
+      };
+      if result.error_count > 0 {
+        tracing::warn!(
+          error_count = result.error_count,
+          "{description} evix reported errors for some jobs"
+        );
+      }
+      if result.jobs.is_empty() && result.error_count == 0 {
+        tracing::warn!("{description} evix returned no jobs");
+      }
+      Ok(result)
+    },
+    Err(_elapsed) => {
+      // Ask the in-flight evaluation to stop; its workers exit cooperatively.
+      cancel.store(true, Ordering::Relaxed);
+      Err(CiError::Timeout(format!(
+        "Nix evaluation timed out after {timeout:?}"
+      )))
+    },
   }
 }

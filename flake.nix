@@ -50,31 +50,29 @@
           ];
         };
 
+      # circus-evaluator embeds evix, which builds Rust bindings against the
+      # Nix C API (via nix-bindings-sys). Building the workspace dependency
+      # closure therefore needs the Nix C dev libraries, a glibc sysroot, and
+      # libclang for bindgen.
       commonArgs = {
         pname = "circus";
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs; [pkg-config capnproto];
-        buildInputs = with pkgs; [openssl];
+        buildInputs = with pkgs; [openssl nixVersions.nix_2_34.dev glibc.dev];
+        env = {
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
+        };
       };
 
-      # agent doesn't need openssl
-      agentArgs = commonArgs // {buildInputs = [];};
       depsCommonArgs = commonArgs // {src = cargoDepsSrc;};
-      depsAgentArgs = agentArgs // {src = cargoDepsSrc;};
-
       cargoArtifactsFor = name: cargoExtraArgs:
         craneLib.buildDepsOnly (depsCommonArgs
           // {
             pname = name;
             inherit cargoExtraArgs;
           });
-
-      agentArtifacts = craneLib.buildDepsOnly (depsAgentArgs
-        // {
-          pname = "circus-agent";
-          cargoExtraArgs = "--package circus-agent";
-        });
 
       callCratePackage = path: name: cargoExtraArgs:
         pkgs.callPackage path {
@@ -93,6 +91,7 @@
 
       # A statically linked agent
       crossPkgs = pkgs.pkgsCross.${muslCrossAttr.${system} or "musl64"};
+      staticCraneLib = crane.mkLib crossPkgs;
       staticAgentArgs = {
         pname = "circus-agent-static";
         inherit src;
@@ -103,17 +102,13 @@
         CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
         hardeningDisable = ["fortify" "fortify3"];
       };
-      staticCraneLib = crane.mkLib crossPkgs;
     in
       {
         demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
         # circus Packages
         circus-cli = callCratePackage ./nix/packages/circus-cli.nix "circus-cli" "--package circus-cli --bin circusctl";
-        circus-agent = (callCratePackage ./nix/packages/circus-agent.nix "circus-agent" "--package circus-agent").override {
-          commonArgs = agentArgs;
-          cargoArtifacts = agentArtifacts;
-        };
+        circus-agent = callCratePackage ./nix/packages/circus-agent.nix "circus-agent" "--package circus-agent";
         circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix "circus-evaluator" "--package circus-evaluator";
         circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix "circus-queue-runner" "--package circus-queue-runner";
         circus-server = callCratePackage ./nix/packages/circus-server.nix "circus-server" "--package circus-server";
@@ -129,18 +124,6 @@
 
       callTest = path: pkgs.callPackage path {inherit self;};
       nixosModuleAgentPackage = pkgs.callPackage ./nix/package.nix {crate = "circus-agent";};
-
-      formatting = pkgs.runCommand "circus-formatting-check" {nativeBuildInputs = [self.formatter.${system}];} ''
-        cp -r --no-preserve=mode ${self} src
-        cd src
-        export HOME="$TMPDIR" DENO_DIR="$TMPDIR/deno"
-        nix3-fmt-wrapper
-        diff -ru ${self} . || {
-          echo "::error::Tree is not formatted; run 'nix fmt' and commit the result." >&2
-          exit 1
-        }
-        touch "$out"
-      '';
       vmTests = {
         # Split VM integration tests
         service-startup = callTest ./nix/tests/startup.nix;
@@ -162,12 +145,27 @@
     in
       vmTests
       // {
-        inherit formatting;
         nixos-module-agent-package = nixosModuleAgentPackage;
         full = pkgs.symlinkJoin {
           name = "vm-tests-full";
           paths = builtins.attrValues vmTests;
         };
+
+        formatting =
+          pkgs.runCommand "circus-formatting-check" {
+            preferLocal = true;
+            nativeBuildInputs = [self.formatter.${system}];
+          } ''
+            cp -r --no-preserve=mode ${self} src
+            cd src
+            export HOME="$TMPDIR" DENO_DIR="$TMPDIR/deno"
+            nix3-fmt-wrapper
+            diff -ru ${self} . || {
+              echo "::error::Tree is not formatted; run 'nix fmt' and commit the result." >&2
+              exit 1
+            }
+            touch "$out"
+          '';
       });
 
     devShells = forAllSystems (system: let
@@ -183,12 +181,20 @@
           openssl
           postgresql_18
 
+          # circus-evaluator builds evix's Nix C bindings.
+          nixVersions.nix_2_34.dev
+          glibc.dev
+
           taplo
           cargo-nextest
           clippy
           rust-analyzer
           (rustfmt.override {asNightly = true;})
         ];
+
+        # bindgen (via nix-bindings-sys) needs libclang and a glibc sysroot.
+        LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+        BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
       };
     });
 

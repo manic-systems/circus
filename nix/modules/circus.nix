@@ -178,7 +178,7 @@ in {
 
     users.groups.circus = {};
     nix.settings = {
-      # NOTE: needed by nix-eval-jobs to access the Nix daemon.
+      # NOTE: needed by the evaluator (evix) to access the Nix daemon.
       # This is completely undocumented but used by other projects in a similar
       # fashion to solve the same problem without clobbering `allowed-users`.
       extra-allowed-users = ["circus"];
@@ -256,7 +256,6 @@ in {
           path = with pkgs; [
             nix
             git
-            nix-eval-jobs
           ];
 
           serviceConfig = {

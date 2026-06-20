@@ -2,12 +2,16 @@ use std::{collections::HashMap, path::Path, time::Duration};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
-use serde::Deserialize;
 use tokio::process::Command;
 
 mod eval_command;
 
-use eval_command::{EvalCommand, NixEvalPolicy};
+use eval_command::NixEvalPolicy;
+
+/// Number of evix worker processes spawned per evaluation.
+const EVAL_WORKERS: usize = 4;
+/// Per-worker memory ceiling in MB; evix restarts a worker once it is exceeded.
+const EVAL_MAX_MEMORY_MB: usize = 4096;
 
 #[derive(Debug, Clone, Default)]
 pub struct NixMeta {
@@ -28,26 +32,52 @@ pub struct NixJob {
   pub meta:         NixMeta,
 }
 
-/// Raw deserialization target for nix-eval-jobs output.
-/// nix-eval-jobs emits both `attr` (attribute path) and `name` (derivation
-/// name) in the same JSON object. We deserialize them separately and prefer
-/// `attr` as the job identifier.
-#[derive(Deserialize)]
-struct RawNixJob {
-  name:         Option<String>,
-  attr:         Option<String>,
-  #[serde(alias = "drvPath")]
-  drv_path:     Option<String>,
-  system:       Option<String>,
-  outputs:      Option<HashMap<String, String>>,
-  #[serde(alias = "inputDrvs")]
-  input_drvs:   Option<HashMap<String, serde_json::Value>>,
-  constituents: Option<Vec<String>>,
-  /// `meta` is freeform in nixpkgs (description, license, maintainers,
-  /// homepage, ...). nix-eval-jobs forwards it verbatim when
-  /// `--meta` (or the default in newer versions) is set; older
-  /// invocations omit it entirely and this stays `None`.
-  meta:         Option<serde_json::Value>,
+/// Convert an [`evix::Derivation`] event into a [`NixJob`].
+///
+/// evix exposes the attribute path as `attr` and the derivation name as `name`;
+/// we prefer `attr` as the job identifier so to match the previous
+/// nix-eval-jobs behaviour. Empty `outputs`/`input_drvs`/`constituents`
+/// collapse to `None` so ordinary builds are not misclassified as aggregates
+/// and absent data is represented uniformly.
+pub(crate) fn nix_job_from_derivation(drv: &evix::Derivation) -> NixJob {
+  let name = if drv.attr.is_empty() {
+    drv.name.clone()
+  } else {
+    drv.attr.clone()
+  };
+
+  let system = (!drv.system.is_empty()).then(|| drv.system.clone());
+
+  let outputs: HashMap<String, String> = drv
+    .outputs
+    .iter()
+    .filter_map(|(key, path)| path.clone().map(|p| (key.clone(), p)))
+    .collect();
+  let outputs = (!outputs.is_empty()).then_some(outputs);
+
+  let input_drvs = if drv.input_drvs.is_empty() {
+    None
+  } else {
+    Some(
+      drv
+        .input_drvs
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect(),
+    )
+  };
+
+  let constituents = drv.constituents.clone().filter(|c| !c.is_empty());
+
+  NixJob {
+    name,
+    drv_path: drv.drv_path.clone(),
+    system,
+    outputs,
+    input_drvs,
+    constituents,
+    meta: parse_meta(drv.meta.as_ref()),
+  }
 }
 
 /// Flatten a single `meta.license` JSON value to a display string. nixpkgs
@@ -128,82 +158,15 @@ fn parse_meta(v: Option<&serde_json::Value>) -> NixMeta {
   }
 }
 
-/// An error reported by nix-eval-jobs for a single job.
-#[derive(Debug, Clone, Deserialize)]
-struct NixEvalError {
-  attr:  Option<String>,
-  name:  Option<String>,
-  error: String,
-}
-
 /// Result of evaluating nix expressions.
 pub struct EvalResult {
   pub jobs:        Vec<NixJob>,
   pub error_count: usize,
 }
 
-/// Parse nix-eval-jobs output lines into jobs and error counts.
-/// Extracted as a testable function from the inline parsing loops.
-pub fn parse_eval_output(stdout: &str) -> EvalResult {
-  let mut jobs = Vec::new();
-  let mut error_count = 0;
-
-  for line in stdout.lines() {
-    if line.trim().is_empty() {
-      continue;
-    }
-
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
-      && parsed.get("error").is_some()
-    {
-      if let Ok(eval_err) = serde_json::from_str::<NixEvalError>(line) {
-        let name = eval_err
-          .attr
-          .as_deref()
-          .or(eval_err.name.as_deref())
-          .unwrap_or("<unknown>");
-        tracing::warn!(
-          job = name,
-          "nix-eval-jobs reported error: {}",
-          eval_err.error
-        );
-        error_count += 1;
-      }
-      continue;
-    }
-
-    match serde_json::from_str::<RawNixJob>(line) {
-      Ok(raw) => {
-        // drv_path is required for a valid job
-        if let Some(drv_path) = raw.drv_path {
-          let meta = parse_meta(raw.meta.as_ref());
-          jobs.push(NixJob {
-            name: raw.attr.or(raw.name).unwrap_or_default(),
-            drv_path,
-            system: raw.system,
-            outputs: raw.outputs,
-            input_drvs: raw.input_drvs,
-            meta,
-            // nix-eval-jobs emits `"constituents": []` for ordinary jobs; only
-            // a non-empty list denotes an aggregate. Treat empty as None so
-            // ordinary builds are not misclassified as aggregates, which the
-            // queue runner never builds.
-            constituents: raw.constituents.filter(|c| !c.is_empty()),
-          });
-        }
-      },
-      Err(e) => {
-        tracing::warn!("Failed to parse nix-eval-jobs line: {e}");
-      },
-    }
-  }
-
-  EvalResult { jobs, error_count }
-}
-
 /// Evaluate nix expressions and return discovered jobs.
-/// If `flake_mode` is true, uses nix-eval-jobs with --flake flag.
-/// If `flake_mode` is false, evaluates a legacy expression file.
+/// If `flake_mode` is true, evaluates a flake output via evix.
+/// If `flake_mode` is false, evaluates a legacy expression file via evix.
 ///
 /// # Errors
 ///
@@ -241,8 +204,8 @@ pub async fn evaluate(
   }
 }
 
-/// nix-eval-jobs chokes on raw `nixosConfigurations.<name>`, so drill into the
-/// toplevel derivation.
+/// Evaluating a raw `nixosConfigurations.<name>` does not yield a buildable
+/// derivation, so drill into the toplevel derivation.
 fn rewrite_nixos_config_expr(expr: &str) -> Option<String> {
   let parts = expr.split('.').collect::<Vec<&str>>();
   match parts.as_slice() {
@@ -281,16 +244,9 @@ async fn evaluate_flake(
 
   let flake_ref = format!("{}#{effective_expr}", repo_path.display());
 
-  tracing::debug!(flake_ref = %flake_ref, "Running nix-eval-jobs");
+  tracing::debug!(flake_ref = %flake_ref, "Running evix evaluation");
 
-  let mut cmd = Command::new("nix-eval-jobs");
-  cmd.arg("--flake").arg(&flake_ref).arg("--force-recurse");
-  cmd.arg("--meta");
-  cmd.arg("--show-input-drvs");
-  cmd.kill_on_drop(true);
-
-  NixEvalPolicy::from(config).apply_to(&mut cmd);
-
+  let mut override_inputs = Vec::new();
   for input in inputs {
     if input.input_type == InputType::Git {
       circus_nix::validate::validate_jobset_input(
@@ -300,11 +256,24 @@ async fn evaluate_flake(
         input.revision.as_deref(),
       )
       .map_err(|e| CiError::NixEval(format!("Invalid jobset input: {e}")))?;
-      cmd.args(["--override-input", &input.name, &input.value]);
+      override_inputs.push((input.name.clone(), input.value.clone()));
     }
   }
 
-  EvalCommand::new(cmd, timeout, "flake").run().await
+  let evix_config = evix::Config {
+    input: evix::Input::Flake(flake_ref),
+    auto_args: Vec::new(),
+    force_recurse: true,
+    gc_roots_dir: None,
+    workers: EVAL_WORKERS,
+    max_memory_size: EVAL_MAX_MEMORY_MB,
+    meta: true,
+    show_input_drvs: true,
+    override_inputs,
+    nix_options: NixEvalPolicy::from(config).nix_options(),
+  };
+
+  eval_command::run_eval(evix_config, timeout, "flake").await
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -435,14 +404,10 @@ async fn evaluate_legacy(
     ));
   }
 
-  let mut cmd = Command::new("nix-eval-jobs");
-  cmd.arg(&expr_path).arg("--force-recurse");
-  cmd.arg("--meta");
-  cmd.arg("--show-input-drvs");
-  cmd.kill_on_drop(true);
-
-  NixEvalPolicy::from(config).apply_to(&mut cmd);
-
+  // Map jobset inputs to evix auto-args: string inputs become `--argstr`
+  // equivalents (`AutoArg::Str`), boolean/build inputs become `--arg`
+  // equivalents (`AutoArg::Expr`).
+  let mut auto_args = Vec::new();
   for input in inputs {
     circus_nix::validate::validate_jobset_input(
       &input.name,
@@ -453,11 +418,15 @@ async fn evaluate_legacy(
     .map_err(|e| CiError::NixEval(format!("Invalid jobset input: {e}")))?;
     match input.input_type {
       InputType::String | InputType::Git => {
-        cmd.args(["--argstr", &input.name, &input.value]);
+        auto_args
+          .push((input.name.clone(), evix::AutoArg::Str(input.value.clone())));
       },
       InputType::Boolean => {
         if input.value == "true" || input.value == "false" {
-          cmd.args(["--arg", &input.name, &input.value]);
+          auto_args.push((
+            input.name.clone(),
+            evix::AutoArg::Expr(input.value.clone()),
+          ));
         } else {
           return Err(CiError::NixEval(format!(
             "Invalid boolean input '{}': expected true or false",
@@ -466,12 +435,26 @@ async fn evaluate_legacy(
         }
       },
       InputType::Build => {
-        cmd.args(["--arg", &input.name, &input.value]);
+        auto_args
+          .push((input.name.clone(), evix::AutoArg::Expr(input.value.clone())));
       },
     }
   }
 
-  EvalCommand::new(cmd, timeout, "legacy").run().await
+  let evix_config = evix::Config {
+    input: evix::Input::File(expr_path),
+    auto_args,
+    force_recurse: true,
+    gc_roots_dir: None,
+    workers: EVAL_WORKERS,
+    max_memory_size: EVAL_MAX_MEMORY_MB,
+    meta: true,
+    show_input_drvs: true,
+    override_inputs: Vec::new(),
+    nix_options: NixEvalPolicy::from(config).nix_options(),
+  };
+
+  eval_command::run_eval(evix_config, timeout, "legacy").await
 }
 
 /// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)
@@ -587,6 +570,7 @@ fn parse_derivation_show(value: &serde_json::Value) -> Option<ShownDerivation> {
 
 #[cfg(test)]
 mod meta_tests {
+  #![expect(clippy::unwrap_used, reason = "fine in tests")]
   use super::*;
 
   #[test]
@@ -868,5 +852,95 @@ mod meta_tests {
         .map(String::as_str),
       Some("/nix/store/def-hello"),
     );
+  }
+
+  fn derivation(attr: &str, name: &str) -> evix::Derivation {
+    evix::Derivation {
+      attr:          attr.to_string(),
+      attr_path:     attr.split('.').map(str::to_owned).collect(),
+      name:          name.to_string(),
+      system:        "x86_64-linux".to_string(),
+      drv_path:      "/nix/store/abc-hello.drv".to_string(),
+      outputs:       std::collections::BTreeMap::new(),
+      meta:          None,
+      input_drvs:    std::collections::BTreeMap::new(),
+      constituents:  None,
+      gc_root_error: None,
+    }
+  }
+
+  #[test]
+  fn nix_job_prefers_attr_over_name() {
+    let drv = derivation("x86_64-linux.hello", "hello-2.12.3");
+    let job = nix_job_from_derivation(&drv);
+    assert_eq!(job.name, "x86_64-linux.hello");
+    assert_eq!(job.system.as_deref(), Some("x86_64-linux"));
+  }
+
+  #[test]
+  fn nix_job_falls_back_to_name_when_attr_empty() {
+    let drv = derivation("", "hello-2.12.3");
+    assert_eq!(nix_job_from_derivation(&drv).name, "hello-2.12.3");
+  }
+
+  #[test]
+  fn nix_job_maps_outputs_dropping_unresolved() {
+    let mut drv = derivation("hello", "hello");
+    drv
+      .outputs
+      .insert("out".into(), Some("/nix/store/def-hello".into()));
+    drv.outputs.insert("dev".into(), None);
+    let outputs = nix_job_from_derivation(&drv).outputs.unwrap();
+    assert_eq!(
+      outputs.get("out").map(String::as_str),
+      Some("/nix/store/def-hello")
+    );
+    assert!(!outputs.contains_key("dev"));
+  }
+
+  #[test]
+  fn nix_job_empty_outputs_is_none() {
+    assert!(
+      nix_job_from_derivation(&derivation("hello", "hello"))
+        .outputs
+        .is_none()
+    );
+  }
+
+  #[test]
+  fn nix_job_maps_input_drvs() {
+    let mut drv = derivation("hello", "hello");
+    drv
+      .input_drvs
+      .insert("/nix/store/dep.drv".into(), serde_json::json!(["out"]));
+    let input_drvs = nix_job_from_derivation(&drv).input_drvs.unwrap();
+    assert!(input_drvs.contains_key("/nix/store/dep.drv"));
+  }
+
+  #[test]
+  fn nix_job_empty_constituents_is_none() {
+    let mut drv = derivation("agg", "agg");
+    drv.constituents = Some(vec![]);
+    assert!(nix_job_from_derivation(&drv).constituents.is_none());
+  }
+
+  #[test]
+  fn nix_job_nonempty_constituents_marks_aggregate() {
+    let mut drv = derivation("agg", "agg");
+    drv.constituents = Some(vec!["hello".into(), "world".into()]);
+    let constituents = nix_job_from_derivation(&drv).constituents.unwrap();
+    assert_eq!(constituents, vec!["hello".to_string(), "world".to_string()]);
+  }
+
+  #[test]
+  fn nix_job_parses_meta() {
+    let mut drv = derivation("hello", "hello");
+    drv.meta = Some(serde_json::json!({
+      "description": "greeting",
+      "license": { "spdxId": "GPL-3.0-or-later" },
+    }));
+    let meta = nix_job_from_derivation(&drv).meta;
+    assert_eq!(meta.description.as_deref(), Some("greeting"));
+    assert_eq!(meta.license.as_deref(), Some("GPL-3.0-or-later"));
   }
 }

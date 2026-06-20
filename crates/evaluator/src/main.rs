@@ -13,8 +13,19 @@ struct Cli {
   config: Option<PathBuf>,
 }
 
+fn main() -> color_eyre::Result<()> {
+  // evix evaluates Nix in worker subprocesses that re-execute this binary with
+  // `EVIX_WORKER` set. When invoked that way, act purely as an evix worker and
+  // do not start the evaluator service (tokio runtime, database, etc.).
+  if std::env::var_os(evix::WORKER_ENV).is_some() {
+    return evix::run_worker()
+      .map_err(|e| color_eyre::eyre::eyre!("evix worker failed: {e:#}"));
+  }
+  run()
+}
+
 #[tokio::main]
-async fn main() -> color_eyre::Result<()> {
+async fn run() -> color_eyre::Result<()> {
   color_eyre::install()?;
   circus_common::install_crypto_provider()?;
   let cli = Cli::parse();

@@ -132,7 +132,6 @@
       curl
       jq
       btop
-      nix-eval-jobs
       zstd
 
       # Demo VMs should be able to use the admin CLI  and CLI should be

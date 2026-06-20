@@ -12,7 +12,6 @@ in {
 
   environment.systemPackages = with pkgs; [
     nix
-    nix-eval-jobs
     zstd
     curl
     jq
