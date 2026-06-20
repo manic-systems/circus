@@ -19,6 +19,12 @@ impl utoipa::OpenApi for CircusApiDoc {
   }
 }
 
+/// Build the typed `OpenApi` document from the static JSON description.
+///
+/// # Panics
+///
+/// Panics if the static `OpenAPI` document does not deserialize into utoipa's
+/// `OpenApi` type, which would be a build-time authoring error.
 #[expect(
   clippy::expect_used,
   reason = "static OpenAPI document must be valid at startup and in xtask"

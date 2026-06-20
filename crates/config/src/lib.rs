@@ -367,6 +367,8 @@ mod tests {
   #[test]
   fn load_requires_explicit_config_path() {
     let old = std::env::var_os("CIRCUS_CONFIG_FILE");
+    // SAFETY: tests in this module run single-threaded with respect to this
+    // env var; no other thread reads or writes CIRCUS_CONFIG_FILE concurrently.
     unsafe {
       std::env::remove_var("CIRCUS_CONFIG_FILE");
     }
@@ -375,6 +377,7 @@ mod tests {
     assert!(err.contains("configuration file is required"));
 
     if let Some(value) = old {
+      // SAFETY: see above; restoring the original value, still single-threaded.
       unsafe {
         std::env::set_var("CIRCUS_CONFIG_FILE", value);
       }

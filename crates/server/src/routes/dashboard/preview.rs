@@ -639,7 +639,7 @@ async fn private() -> Response {
   })
 }
 
-fn id(n: u128) -> Uuid {
+const fn id(n: u128) -> Uuid {
   Uuid::from_u128(n)
 }
 
@@ -656,7 +656,7 @@ fn csrf() -> String {
   "preview-csrf-token".into()
 }
 
-fn permissions() -> UiPermissions {
+const fn permissions() -> UiPermissions {
   UiPermissions {
     admin:           true,
     bump_to_front:   true,

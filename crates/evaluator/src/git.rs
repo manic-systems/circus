@@ -92,6 +92,13 @@ fn clone_or_open_and_fetch(
   Ok((repo_path, repo, is_fetch))
 }
 
+/// Clone or update the repository and list refs matching the given branch
+/// and/or tag glob patterns.
+///
+/// # Errors
+///
+/// Returns an error if the repository cannot be cloned/fetched or its refs
+/// cannot be enumerated.
 pub fn list_matching_refs(
   url: &str,
   work_dir: &Path,
@@ -205,6 +212,13 @@ pub fn clone_or_fetch(
   Ok((repo_path, hash))
 }
 
+/// Clone or update the repository and check out the named branch or tag,
+/// returning the checkout path and resolved commit hash.
+///
+/// # Errors
+///
+/// Returns an error if the repository cannot be cloned/fetched, the ref does
+/// not resolve, or the checkout fails.
 pub fn checkout_named_ref(
   url: &str,
   work_dir: &Path,

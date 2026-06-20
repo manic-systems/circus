@@ -112,7 +112,7 @@ pub struct ServerConfig {
   /// Require a valid API key/session for read-only `/api/v1` requests.
   #[serde(default = "default_true")]
   pub require_api_key_for_reads:          bool,
-  /// Serve the generated OpenAPI document at `/api/v1/openapi.json`.
+  /// Serve the generated `OpenAPI` document at `/api/v1/openapi.json`.
   #[serde(default = "default_true")]
   pub openapi_enabled:                    bool,
   /// Key used to encrypt webhook secrets before database storage.

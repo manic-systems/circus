@@ -57,10 +57,10 @@ async fn last_applied_migration(pool: &PgPool) -> color_eyre::Result<String> {
   .fetch_one(pool)
   .await?;
 
-  Ok(match version {
-    Some(version) => format!("migration {version}"),
-    None => "no successful migrations".to_string(),
-  })
+  Ok(version.map_or_else(
+    || "no successful migrations".to_string(),
+    |version| format!("migration {version}"),
+  ))
 }
 
 /// Validates that all required tables exist and have the expected structure

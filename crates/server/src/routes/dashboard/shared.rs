@@ -350,14 +350,10 @@ pub(super) fn enforce_page_access(
     is_admin:  ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
   };
-  Err(
-    tmpl
-      .render()
-      .map(|html| (StatusCode::UNAUTHORIZED, Html(html)).into_response())
-      .unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response()
-      }),
-  )
+  Err(tmpl.render().map_or_else(
+    |_| (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response(),
+    |html| (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
+  ))
 }
 
 pub(super) struct ProjectSummaryView {

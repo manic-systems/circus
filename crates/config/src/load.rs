@@ -133,16 +133,17 @@ impl Config {
     let mut table = toml::Value::try_from(Self::default())
       .wrap_err("failed to serialize config defaults")?;
 
-    let config_path = match path {
-      Some(path) => Some(path.to_path_buf()),
-      None => std::env::var_os("CIRCUS_CONFIG_FILE").map(PathBuf::from),
-    }
-    .ok_or_else(|| {
-      eyre::eyre!(
-        "configuration file is required; pass --config or set \
-         CIRCUS_CONFIG_FILE"
+    let config_path = path
+      .map_or_else(
+        || std::env::var_os("CIRCUS_CONFIG_FILE").map(PathBuf::from),
+        |path| Some(path.to_path_buf()),
       )
-    })?;
+      .ok_or_else(|| {
+        eyre::eyre!(
+          "configuration file is required; pass --config or set \
+           CIRCUS_CONFIG_FILE"
+        )
+      })?;
 
     let contents = fs::read_to_string(&config_path).wrap_err_with(|| {
       format!("failed to read config file {}", config_path.display())

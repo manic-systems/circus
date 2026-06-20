@@ -458,8 +458,9 @@ pub(super) async fn admin_page(
   let config_contents = if config_path.is_empty() {
     String::new()
   } else {
-    match fs::read_to_string(&config_path).await {
-      Ok(contents) => {
+    fs::read_to_string(&config_path).await.map_or_else(
+      |_| String::new(),
+      |contents| {
         circus_config::Config::from_toml_with_defaults(&contents)
           .ok()
           .and_then(|config| {
@@ -469,8 +470,7 @@ pub(super) async fn admin_page(
           })
           .unwrap_or(contents)
       },
-      Err(_) => String::new(),
-    }
+    )
   };
   let config_editable =
     state.config.server.config_editor_enabled && !config_path.is_empty();

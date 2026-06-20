@@ -446,7 +446,7 @@ pub async fn process_notification_task(
   ))
 }
 
-fn status_rank(status: BuildStatus) -> u8 {
+const fn status_rank(status: BuildStatus) -> u8 {
   match status {
     BuildStatus::Pending => 0,
     BuildStatus::Running => 1,
