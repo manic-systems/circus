@@ -2,7 +2,9 @@ ALTER TABLE jobsets
 ADD COLUMN branch_pattern TEXT,
 ADD COLUMN tag_pattern TEXT;
 
-CREATE OR REPLACE VIEW active_jobsets AS
+DROP VIEW active_jobsets;
+
+CREATE VIEW active_jobsets AS
 SELECT
   j.id,
   j.project_id,

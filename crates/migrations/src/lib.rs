@@ -26,8 +26,14 @@ pub async fn run_migrations(database_url: &str) -> color_eyre::Result<()> {
       Ok(())
     },
     Err(e) => {
-      error!("Failed to run database migrations: {}", e);
-      Err(color_eyre::eyre::eyre!("Migration failed: {e}"))
+      let last_applied = last_applied_migration(&pool)
+        .await
+        .unwrap_or_else(|lookup_err| format!("unknown ({lookup_err})"));
+
+      error!("Failed to run database migrations after {last_applied}: {e}");
+      Err(color_eyre::eyre::eyre!(
+        "Migration failed after {last_applied}: {e}"
+      ))
     },
   }
 }
@@ -42,6 +48,19 @@ async fn create_connection_pool(
   sqlx::query("SELECT 1").fetch_one(&pool).await?;
 
   Ok(pool)
+}
+
+async fn last_applied_migration(pool: &PgPool) -> color_eyre::Result<String> {
+  let version = sqlx::query_scalar::<_, Option<i64>>(
+    "SELECT MAX(version) FROM _sqlx_migrations WHERE success = true",
+  )
+  .fetch_one(pool)
+  .await?;
+
+  Ok(match version {
+    Some(version) => format!("migration {version}"),
+    None => "no successful migrations".to_string(),
+  })
 }
 
 /// Validates that all required tables exist and have the expected structure

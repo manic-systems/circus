@@ -10,6 +10,11 @@
 //! is suitable for the `nix develop` postgres dev shell.
 #![expect(clippy::expect_used, clippy::print_stderr, reason = "Fine in tests")]
 
+use std::{
+  fs,
+  path::{Path, PathBuf},
+};
+
 use circus_migrations::{
   REQUIRED_TABLES,
   REQUIRED_VIEWS,
@@ -18,6 +23,10 @@ use circus_migrations::{
   validate_schema,
 };
 use sqlx::{PgPool, Postgres, migrate::MigrateDatabase};
+
+fn migrations_dir() -> PathBuf {
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations")
+}
 
 fn test_database_url() -> String {
   std::env::var("CIRCUS_TEST_DATABASE_URL").unwrap_or_else(|_| {
@@ -141,6 +150,78 @@ async fn run_migrations_creates_database_if_missing() {
     Postgres::database_exists(&url).await.expect("exists check"),
     "run_migrations did not create the database"
   );
+}
+
+#[tokio::test]
+async fn can_upgrade_existing_database_from_previous_migration() {
+  let url = test_database_url();
+  let Some(()) = require_postgres(&url).await else {
+    return;
+  };
+
+  reset_database(&url).await;
+  Postgres::create_database(&url)
+    .await
+    .expect("create test database");
+
+  let pool = PgPool::connect(&url).await.expect("connect");
+  let previous_migrations = tempfile::tempdir().expect("temp migrations dir");
+  for entry in fs::read_dir(migrations_dir()).expect("read migrations") {
+    let entry = entry.expect("migration dir entry");
+    let path = entry.path();
+    let file_name = path.file_name().expect("migration filename").to_owned();
+    if !file_name.to_string_lossy().starts_with("0026_") {
+      fs::copy(path, previous_migrations.path().join(file_name))
+        .expect("copy previous migration");
+    }
+  }
+
+  sqlx::migrate::Migrator::new(previous_migrations.path())
+    .await
+    .expect("load previous migrations")
+    .run(&pool)
+    .await
+    .expect("run previous migrations");
+  pool.close().await;
+
+  run_migrations(&url).await.expect("upgrade to latest");
+
+  let pool = PgPool::connect(&url).await.expect("connect after upgrade");
+  validate_schema(&pool)
+    .await
+    .expect("validate upgraded schema");
+
+  let active_jobset_columns: Vec<String> = sqlx::query_scalar(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema = \
+     'public' AND table_name = 'active_jobsets' ORDER BY ordinal_position",
+  )
+  .fetch_all(&pool)
+  .await
+  .expect("active_jobsets columns");
+
+  assert_eq!(active_jobset_columns, [
+    "id",
+    "project_id",
+    "name",
+    "nix_expression",
+    "enabled",
+    "flake_mode",
+    "check_interval",
+    "branch",
+    "branch_pattern",
+    "tag_pattern",
+    "scheduling_shares",
+    "created_at",
+    "updated_at",
+    "state",
+    "last_checked_at",
+    "keep_nr",
+    "project_name",
+    "repository_url",
+    "trigger_mode",
+  ]);
+
+  pool.close().await;
 }
 
 /// Pure tests below: no postgres required, run on every host.
