@@ -88,6 +88,7 @@ async fn build_badge(
         ("nar limit", "#e05d44")
       },
       circus_common::BuildStatus::NonDeterministic => ("non-det", "#e05d44"),
+      circus_common::BuildStatus::OomKilled => ("oom killed", "#e05d44"),
     }
   });
 

@@ -32,6 +32,7 @@ pub enum BuildOutcomeKind {
   Failure { error_message: Option<String> },
   TimedOut,
   Aborted,
+  OomKilled { error_message: Option<String> },
 }
 
 fn result_error_message(
@@ -67,6 +68,11 @@ impl result_sink::Server for ResultSinkImpl {
         },
         BuildOutcome::TimedOut => BuildOutcomeKind::TimedOut,
         BuildOutcome::Aborted => BuildOutcomeKind::Aborted,
+        BuildOutcome::OomKilled => {
+          BuildOutcomeKind::OomKilled {
+            error_message: result_error_message(r),
+          }
+        },
         _ => {
           BuildOutcomeKind::Failure {
             error_message: result_error_message(r),

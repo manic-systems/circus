@@ -1107,6 +1107,9 @@ async fn dispatch_one(
     },
     Ok(BuildOutcomeKind::TimedOut) => DispatchResult::TimedOut,
     Ok(BuildOutcomeKind::Aborted) => DispatchResult::Aborted,
+    Ok(BuildOutcomeKind::OomKilled { error_message }) => {
+      DispatchResult::OomKilled(error_message.unwrap_or_default())
+    },
     Ok(BuildOutcomeKind::Failure { error_message }) => {
       DispatchResult::Failed(error_message.unwrap_or_default())
     },

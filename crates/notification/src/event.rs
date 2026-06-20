@@ -61,7 +61,8 @@ impl BuildEvent {
       | BuildStatus::Timeout
       | BuildStatus::LogLimitExceeded
       | BuildStatus::NarSizeLimitExceeded
-      | BuildStatus::NonDeterministic => "failure",
+      | BuildStatus::NonDeterministic
+      | BuildStatus::OomKilled => "failure",
       BuildStatus::Cancelled => "cancelled",
       BuildStatus::Aborted => "aborted",
       BuildStatus::UnsupportedSystem => "skipped",
@@ -88,6 +89,7 @@ impl BuildEvent {
       BuildStatus::UnsupportedSystem => ("error", "Unsupported system"),
       BuildStatus::LogLimitExceeded => ("error", "Log limit exceeded"),
       BuildStatus::NarSizeLimitExceeded => ("error", "NAR size limit exceeded"),
+      BuildStatus::OomKilled => ("failure", "Build failed (OOM)"),
     }
   }
 
@@ -113,6 +115,7 @@ impl BuildEvent {
       BuildStatus::NarSizeLimitExceeded => {
         ("failed", "NAR size limit exceeded")
       },
+      BuildStatus::OomKilled => ("failed", "Build failed (OOM)"),
     }
   }
 
@@ -127,7 +130,8 @@ impl BuildEvent {
       | BuildStatus::Timeout
       | BuildStatus::LogLimitExceeded
       | BuildStatus::NarSizeLimitExceeded
-      | BuildStatus::NonDeterministic => "FAILURE",
+      | BuildStatus::NonDeterministic
+      | BuildStatus::OomKilled => "FAILURE",
       BuildStatus::Cancelled => "CANCELLED",
       BuildStatus::Aborted => "ABORTED",
       BuildStatus::UnsupportedSystem => "UNSUPPORTED",

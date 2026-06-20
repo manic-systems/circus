@@ -67,6 +67,7 @@ pub enum DispatchResult {
   Failed(String),
   TimedOut,
   Aborted,
+  OomKilled(String),
   /// Agent connection dropped before the result arrived; the caller
   /// should treat this as a transient failure and retry on another
   /// agent.

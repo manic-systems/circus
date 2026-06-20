@@ -3,6 +3,7 @@
 use std::{
   collections::{BTreeMap, VecDeque},
   io,
+  os::unix::process::ExitStatusExt,
   process::{ExitStatus, Stdio},
   time::{Duration, Instant},
 };
@@ -542,11 +543,14 @@ async fn run_command(
   };
 
   let exit_code = status.code().unwrap_or(-1);
+  let oom_killed =
+    !killed && !aborted && !timed_out && matches!(status.signal(), Some(9));
   let success = status.success()
     && !log_size_exceeded
     && !sink_failed
     && !aborted
-    && !timed_out;
+    && !timed_out
+    && !oom_killed;
   if !success && error_message.is_empty() {
     error_message = summarize_failure(&recent_msgs);
   }
@@ -556,6 +560,8 @@ async fn run_command(
     circus_proto::BuildOutcome::TimedOut
   } else if aborted {
     circus_proto::BuildOutcome::Aborted
+  } else if oom_killed {
+    circus_proto::BuildOutcome::OomKilled
   } else {
     circus_proto::BuildOutcome::BuildFailure
   };

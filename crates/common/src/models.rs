@@ -288,6 +288,7 @@ pub enum BuildStatus {
   LogLimitExceeded     = 11,
   NarSizeLimitExceeded = 12,
   NonDeterministic     = 13,
+  OomKilled            = 14,
 }
 
 impl BuildStatus {
@@ -329,13 +330,14 @@ impl BuildStatus {
         | Self::LogLimitExceeded
         | Self::NarSizeLimitExceeded
         | Self::NonDeterministic
+        | Self::OomKilled
     )
   }
 
   /// # Returns
   ///
   /// Returns the database integer representation of this status.
-  /// Note: This uses an internal numbering scheme (0-13), not Hydra exit codes.
+  /// Note: This uses an internal numbering scheme (0-14), not Hydra exit codes.
   #[must_use]
   pub fn as_i32(&self) -> i32 {
     (*self).into()
@@ -364,6 +366,7 @@ impl BuildStatus {
       Self::LogLimitExceeded => "log_limit_exceeded",
       Self::NarSizeLimitExceeded => "nar_size_limit_exceeded",
       Self::NonDeterministic => "non_deterministic",
+      Self::OomKilled => "oom_killed",
     }
   }
 
@@ -383,6 +386,7 @@ impl BuildStatus {
       "log_limit_exceeded" => Some(Self::LogLimitExceeded),
       "nar_size_limit_exceeded" => Some(Self::NarSizeLimitExceeded),
       "non_deterministic" => Some(Self::NonDeterministic),
+      "oom_killed" => Some(Self::OomKilled),
       _ => None,
     }
   }
@@ -404,6 +408,7 @@ impl BuildStatus {
       10 => Self::LogLimitExceeded,
       11 => Self::NarSizeLimitExceeded,
       12 => Self::NonDeterministic,
+      -9 => Self::OomKilled,
       _ => Self::Failed,
     }
   }
@@ -425,6 +430,7 @@ impl BuildStatus {
       Self::LogLimitExceeded => ("Log Limit", "failed"),
       Self::NarSizeLimitExceeded => ("NAR Size Limit", "failed"),
       Self::NonDeterministic => ("Non-deterministic", "failed"),
+      Self::OomKilled => ("OOM Killed", "failed"),
     }
   }
 }
@@ -446,6 +452,7 @@ impl std::fmt::Display for BuildStatus {
       Self::LogLimitExceeded => "log limit exceeded",
       Self::NarSizeLimitExceeded => "nar size limit exceeded",
       Self::NonDeterministic => "non-deterministic",
+      Self::OomKilled => "oom killed",
     };
     write!(f, "{s}")
   }
@@ -507,6 +514,7 @@ mod build_status_tests {
       (11, BuildStatus::LogLimitExceeded),
       (12, BuildStatus::NarSizeLimitExceeded),
       (13, BuildStatus::NonDeterministic),
+      (14, BuildStatus::OomKilled),
     ] {
       assert_eq!(status.as_i32(), code);
       assert_eq!(BuildStatus::from_i32(code), Some(status));
@@ -516,7 +524,7 @@ mod build_status_tests {
   #[test]
   fn build_status_from_i32_preserves_unknown_fallback() {
     assert_eq!(BuildStatus::from_i32(-1), None);
-    assert_eq!(BuildStatus::from_i32(14), None);
+    assert_eq!(BuildStatus::from_i32(15), None);
   }
 }
 

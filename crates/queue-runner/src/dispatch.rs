@@ -530,6 +530,9 @@ pub async fn run_on_agent(
     Ok(DispatchResult::Aborted) => {
       Some(result(false, 130, "build aborted".into(), Vec::new()))
     },
+    Ok(DispatchResult::OomKilled(error_message)) => {
+      Some(result(false, -9, error_message, Vec::new()))
+    },
     Ok(DispatchResult::Disconnected) | Err(_) => {
       tracing::warn!(name = %snap.name, "agent disconnected mid-build; falling back");
       None
