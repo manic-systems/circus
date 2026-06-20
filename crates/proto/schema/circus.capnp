@@ -168,6 +168,7 @@ enum BuildOutcome {
   postProcessFailure @5;
   aborted            @6;
   timedOut           @7;
+  oomKilled          @8;
 }
 
 struct BuildResult {
