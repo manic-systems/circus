@@ -97,6 +97,7 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with crossPkgs.buildPackages; [pkg-config capnproto];
+        buildInputs = [crossPkgs.openssl];
         cargoExtraArgs = "--package circus-agent";
         doCheck = false;
         CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
