@@ -32,7 +32,7 @@ pub fn run(check: bool) -> Result<()> {
   #![expect(clippy::print_stdout, reason = "xtask CLI output is intentional")]
   let root = workspace_root()?;
   let docs_path = root.join("docs/API.md");
-  let generated = generate()?;
+  let generated = generate();
 
   if check {
     let existing = fs::read_to_string(&docs_path)
@@ -53,8 +53,8 @@ pub fn run(check: bool) -> Result<()> {
   Ok(())
 }
 
-fn generate() -> Result<String> {
-  let spec = openapi_document()?;
+fn generate() -> String {
+  let spec = openapi_document();
   let mut operations = documented_operations(&spec);
   operations.sort_by(|a, b| {
     a.path
@@ -113,7 +113,7 @@ fn generate() -> Result<String> {
   }
 
   out.push_str("\n<!-- markdownlint-enable MD013 -->\n");
-  Ok(out)
+  out
 }
 
 fn documented_operations(spec: &OpenApi) -> Vec<DocumentedOperation> {
@@ -200,7 +200,7 @@ mod tests {
   #[test]
   fn generated_api_docs_are_current() {
     let root = workspace_root().expect("workspace root");
-    let expected = generate().expect("generate API docs");
+    let expected = generate();
     let docs_path = root.join("docs/API.md");
     let actual = fs::read_to_string(&docs_path).expect("read docs/API.md");
     assert_eq!(
