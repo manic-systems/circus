@@ -2062,3 +2062,67 @@ body:has(#login-dialog[open]) .login-container {
   line-height: 18px;
   font-weight: 650;
 }
+
+/* Content vertical rhythm.
+
+   The global reset zeroes every margin, which is correct inside panels and
+   cards (they manage their own padding) but leaves bare flow elements placed
+   directly in a page's content area with no spacing, so detail pages collapse
+   into a cramped, inconsistent stack. Restore rhythm for *direct* children of
+   the page container only, so panel/card internals are left untouched. */
+.container > h1 {
+  margin-bottom: 12px;
+}
+
+.container > h2,
+.container > h3 {
+  margin-top: 20px;
+  margin-bottom: 10px;
+}
+
+.container > p,
+.container > dl,
+.container > ul,
+.container > ol,
+.container > pre,
+.container > table {
+  margin-bottom: 12px;
+}
+
+.container > section,
+.container > .panel,
+.container > .table-wrap,
+.container > .stats-grid,
+.container > .build-error,
+.container > .flash-message {
+  margin-bottom: 16px;
+}
+
+/* Tighten the gap between a heading and the block it introduces. */
+.container > h1 + p,
+.container > h2 + p,
+.container > h3 + p,
+.container > h1 + .stats-grid,
+.container > h2 + .stats-grid {
+  margin-top: 0;
+}
+
+/* Never leave a trailing margin pushing against the footer. */
+.container > :last-child {
+  margin-bottom: 0;
+}
+
+/* Flatten nested boxes: an error/code block inside a flash message must not
+   render its own surface and border on top of the flash panel's surface and
+   border (double-boxing). Let the flash message be the single container. */
+.flash-message > pre,
+.flash-message > .error-detail {
+  margin: 8px 0 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.flash-message > strong {
+  display: block;
+}

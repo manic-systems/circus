@@ -138,7 +138,15 @@ async fn serve_style_css() -> Response {
   {
     Response::builder()
       .header(header::CONTENT_TYPE, "text/css")
-      .header(header::CACHE_CONTROL, "no-cache")
+      // The stylesheet is compiled into the binary and cache-busted via the
+      // `?v=` query string on its <link> (bump it when style.css changes), so
+      // it is safe to cache immutably. Serving it `no-cache` forced the
+      // browser to re-download and re-parse this render-blocking asset on
+      // every navigation, which made each page feel a beat slow to load.
+      .header(
+        header::CACHE_CONTROL,
+        "public, max-age=31536000, immutable",
+      )
       .body(Body::from(STYLE_CSS))
       .expect("response builder should not fail")
   }
