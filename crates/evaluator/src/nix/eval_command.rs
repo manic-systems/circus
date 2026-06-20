@@ -6,6 +6,44 @@ use tokio::process::Command;
 
 use super::{EvalResult, parse_eval_output};
 
+/// Maximum number of stderr bytes to retain in a surfaced evaluation error.
+/// nix prints the actual failure at the tail, so we keep the end of the output.
+const MAX_STDERR_BYTES: usize = 4096;
+/// Maximum number of trailing stderr lines to retain.
+const MAX_STDERR_LINES: usize = 40;
+
+/// Distil nix-eval-jobs stderr into a bounded, human-readable detail string
+/// suitable for storing as an evaluation error and showing on the dashboard.
+///
+/// Keeps the tail of the output (where nix reports the actual error) and caps
+/// both line count and byte length so a runaway trace can't bloat the database
+/// or the rendered page.
+fn summarize_stderr(stderr: &str) -> String {
+  let trimmed = stderr.trim();
+  if trimmed.is_empty() {
+    return String::new();
+  }
+
+  let lines: Vec<&str> = trimmed.lines().collect();
+  let tail = if lines.len() > MAX_STDERR_LINES {
+    &lines[lines.len() - MAX_STDERR_LINES..]
+  } else {
+    &lines[..]
+  };
+  let mut detail = tail.join("\n");
+
+  if detail.len() > MAX_STDERR_BYTES {
+    // Keep the tail; truncate on a char boundary to stay valid UTF-8.
+    let start = detail.len() - MAX_STDERR_BYTES;
+    let start = (start..detail.len())
+      .find(|&i| detail.is_char_boundary(i))
+      .unwrap_or(detail.len());
+    detail = detail[start..].to_string();
+  }
+
+  detail
+}
+
 pub(super) struct NixEvalPolicy {
   restrict_eval: bool,
   allow_ifd:     bool,
@@ -84,7 +122,16 @@ impl EvalCommand {
         Ok(out) => {
           let stderr = String::from_utf8_lossy(&out.stderr);
           tracing::warn!(stderr = %stderr, "{description} nix-eval-jobs failed");
-          Err(CiError::NixEval("Nix evaluation failed".to_string()))
+          let detail = summarize_stderr(&stderr);
+          let message = if detail.is_empty() {
+            format!(
+              "nix-eval-jobs exited with {} and produced no output",
+              out.status
+            )
+          } else {
+            format!("nix-eval-jobs failed ({}):\n{detail}", out.status)
+          };
+          Err(CiError::NixEval(message))
         },
         Err(e) => Err(CiError::NixEval(format!(
           "Failed to run nix-eval-jobs: {e}"
