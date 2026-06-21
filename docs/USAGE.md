@@ -62,6 +62,7 @@ Common dashboard pages:
 | `/news`                       | Announcements                                                              |
 | `/starred`                    | Jobs starred by the current user                                           |
 | `/metrics`                    | Human-readable metrics page                                                |
+| `/caches`                     | Admin binary cache list, per-cache storage/traffic, and NAR search         |
 | `/users`                      | Admin user-management page                                                 |
 | `/admin`                      | Admin overview, API keys, config, pinned outputs, builders, notifications  |
 
@@ -310,6 +311,28 @@ GET /api/v1/admin/audit-log
 
 The dashboard admin page at `/admin` summarizes system status, pinned build
 outputs, remote builders, API keys, and notification tasks.
+
+### Binary Cache Observability
+
+The admin Caches page at `/caches` lists the global cache plus every
+cache-enabled project, each with NAR count, compressed size, and trailing-hour
+request volume. A top stat strip totals NARs and storage across all caches.
+
+Selecting a cache opens its detail page (`/caches/{name}`), which shows:
+
+- **Storage**: packages stored, uncompressed and compressed totals, plus a chart
+  of bytes and packages added over time, with a Minutes/Hours/Days/Weeks toggle.
+- **Traffic**: requests and bytes served in the last hour, plus a
+  serving-traffic chart with the same granularity toggle.
+- **How to use this cache**: the substituter URL, the trusted public key derived
+  from the configured signing secret, and a ready-to-paste `nix.conf` snippet,
+  each with a copy button. These are exactly the values described in
+  [INSTALL.md](./INSTALL.md) under "Binary Cache Storage".
+
+The NARs page (`/caches/{name}/nars`) provides a searchable, paginated
+inventory: filter by store-path hash prefix or package name, and inspect each
+NAR's sizes, upload time, and last-fetched time. The matching JSON lives under
+`GET /api/v1/admin/caches/{name}/nars`.
 
 ### API Keys
 

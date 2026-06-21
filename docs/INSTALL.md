@@ -29,6 +29,7 @@ packages. You may also use `nix shell` to acquire the necessary components.
 2. Run migrations from the checkout:
 
    ```bash
+   # Alternatively, use `circusctl` if it's in PATH.
    $ cargo run -p circus-cli -- migrate up postgresql://circus@localhost/circus
    ```
 
@@ -369,6 +370,74 @@ verifies against their `CA:` field and which agents substitute when starting
 dispatched builds. Without a signing key the cache serves nothing beyond drv
 closures.
 
+### Generating a Signing Keypair
+
+A binary cache is only useful once consumers trust its signatures. Generate a
+Nix Ed25519 keypair once, keep the secret on the server, and publish the public
+key to consumers. The key name (here `ci.example.org-1`) is arbitrary but should
+be stable and unique:
+
+```bash
+# Secret key, kept private on the server (mode 0400, owned by the service user)
+nix key generate-secret --key-name ci.example.org-1 \
+  > /var/lib/circus/cache-priv-key.pem
+
+# Public key, distributed to consumers
+nix key convert-secret-to-public \
+  < /var/lib/circus/cache-priv-key.pem \
+  > cache-pub-key.pem
+```
+
+Wire the secret into both signing (so built outputs are signed) and the cache:
+
+```toml
+[signing]
+enabled  = true
+key_file = "/var/lib/circus/cache-priv-key.pem"
+
+[cache]
+enabled   = true
+cache_url = "https://ci.example.org/nix-cache"
+```
+
+The contents of `cache-pub-key.pem` (a single `name:base64` line) are what
+consumers add to `trusted-public-keys`. The dashboard derives this public key
+from the secret automatically and shows it, along with a ready-to-paste
+`nix.conf` snippet, on each cache's detail page (see the admin Caches page in
+[USAGE.md](./USAGE.md)).
+
+### Global Cache Setup
+
+Enable the global cache and, optionally, declare upstreams it may fall through
+to:
+
+```toml
+[cache]
+enabled   = true
+cache_url = "https://ci.example.org/nix-cache"
+
+[[cache.upstreams]]
+url        = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+```
+
+Consumers then add the cache and its public key to `nix.conf`:
+
+```text
+substituters = https://cache.nixos.org https://ci.example.org/nix-cache
+trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ci.example.org-1:<your-public-key>
+```
+
+### Per-Project Cache Setup
+
+Each project with `cache_enabled = true` serves an independent cache at
+`/projects/<project-name>/nix-cache/`. A project may set its own `cache_url`
+override and `cache_upstreams`; when `cache_url` is unset, consumers use the
+`<site>/projects/<name>/nix-cache/` form derived from the global
+`cache.cache_url`. The dashboard's "How to use this cache" panel renders the
+exact substituter URL, public key, and `nix.conf` snippet for each project
+cache, so operators rarely have to assemble these by hand.
+
 Set `[cache_upload].enabled = true` and `store_uri = "s3://bucket[/prefix]"` to
 push completed outputs to S3. SSH/local runner builds use `nix copy --to`; agent
 builds use presigned PUT URLs and persist narinfo rows in the database. When a
@@ -427,6 +496,55 @@ controls. Project builds use the project's cache URL and upstreams; builds
 without project context use the global cache URL and upstreams. Upstreams are
 contacted directly by Nix clients/builders; Circus does not proxy upstream
 narinfos or NARs.
+
+### Declarative NixOS Configuration
+
+The NixOS module exposes typed options for the cache, signing, upload, and
+per-project cache settings (everything also settable imperatively via
+`PUT /api/v1/projects/{id}`). Advanced keys still pass through freeform, so the
+typed options are a discoverability aid, not a restriction:
+
+```nix
+services.circus.settings = {
+  signing = {
+    enabled = true;
+    key_file = "/var/lib/circus/cache-priv-key.pem";
+  };
+
+  cache = {
+    enabled = true;
+    cache_url = "https://ci.example.org/nix-cache";
+    upstreams = [
+      {
+        url = "https://cache.nixos.org";
+        public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+      }
+    ];
+  };
+
+  cache_upload = {
+    enabled = true;
+    store_uri = "s3://my-bucket?region=us-east-1";
+    compression = "zstd";
+    s3.region = "us-east-1";
+  };
+
+  declarative.projects = [
+    {
+      name = "my-project";
+      repository_url = "https://github.com/example/my-project";
+      cache_enabled = true;
+      cache_url = "https://ci.example.org/projects/my-project/nix-cache/";
+      cache_upstreams = [
+        {
+          url = "https://cache.nixos.org";
+          public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+        }
+      ];
+    }
+  ];
+};
+```
 
 ## Dashboard Page Access
 
