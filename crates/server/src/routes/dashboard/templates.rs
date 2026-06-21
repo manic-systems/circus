@@ -391,7 +391,6 @@ mod tests {
       auth_name: "operator".into(),
     }
   }
-
 }
 
 #[derive(Template)]
