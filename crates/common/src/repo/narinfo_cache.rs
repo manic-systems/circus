@@ -15,21 +15,22 @@ use crate::error::{CiError, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NarInfo {
-  pub store_path:  String,
-  pub nar_hash:    String,
-  pub nar_size:    i64,
-  pub file_hash:   Option<String>,
-  pub file_size:   Option<i64>,
-  pub compression: String,
-  pub url:         String,
-  pub deriver:     Option<String>,
-  pub references:  Vec<String>,
-  pub sig:         Option<String>,
-  pub ca:          Option<String>,
-  pub build_id:    Option<Uuid>,
-  pub project_id:  Option<Uuid>,
-  pub created_at:  DateTime<Utc>,
-  pub updated_at:  DateTime<Utc>,
+  pub store_path:      String,
+  pub nar_hash:        String,
+  pub nar_size:        i64,
+  pub file_hash:       Option<String>,
+  pub file_size:       Option<i64>,
+  pub compression:     String,
+  pub url:             String,
+  pub deriver:         Option<String>,
+  pub references:      Vec<String>,
+  pub sig:             Option<String>,
+  pub ca:              Option<String>,
+  pub build_id:        Option<Uuid>,
+  pub project_id:      Option<Uuid>,
+  pub created_at:      DateTime<Utc>,
+  pub updated_at:      DateTime<Utc>,
+  pub last_fetched_at: Option<DateTime<Utc>>,
 }
 
 pub struct UpsertNarInfo<'a> {
@@ -167,4 +168,174 @@ pub async fn count(pool: &PgPool) -> Result<i64> {
     .fetch_one(pool)
     .await?;
   Ok(n)
+}
+
+/// Aggregate storage figures for one cache scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheStorageSummary {
+  /// Number of stored NARs (narinfo rows).
+  pub nar_count:          i64,
+  /// Sum of uncompressed NAR sizes in bytes.
+  pub uncompressed_bytes: i64,
+  /// Sum of on-disk (compressed) file sizes in bytes. NARs without a recorded
+  /// `file_size` contribute nothing.
+  pub compressed_bytes:   i64,
+}
+
+/// Storage totals for a cache scope. `project_id = None` covers the global
+/// cache (rows with no project), a concrete id scopes to one project.
+///
+/// # Errors
+///
+/// Returns the underlying sqlx error.
+pub async fn storage_summary(
+  pool: &PgPool,
+  project_id: Option<Uuid>,
+) -> Result<CacheStorageSummary> {
+  let (nar_count, uncompressed_bytes, compressed_bytes) =
+    sqlx::query_as::<_, (i64, i64, i64)>(
+      // SUM over a BIGINT column yields NUMERIC in Postgres; cast back so the
+      // row decodes into i64.
+      "SELECT COUNT(*), COALESCE(SUM(nar_size), 0)::bigint, \
+       COALESCE(SUM(file_size), 0)::bigint FROM narinfo_cache WHERE ($1::uuid \
+       IS NULL OR project_id = $1)",
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+  Ok(CacheStorageSummary {
+    nar_count,
+    uncompressed_bytes,
+    compressed_bytes,
+  })
+}
+
+/// Newest upload and oldest fetch timestamps for the NARs stat strip.
+/// Both are `None` when the scope holds no rows (or none fetched yet).
+///
+/// # Errors
+///
+/// Returns the underlying sqlx error.
+pub async fn storage_extremes(
+  pool: &PgPool,
+  project_id: Option<Uuid>,
+) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+  let (last_uploaded, oldest_fetched) =
+    sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+      "SELECT MAX(created_at), MIN(last_fetched_at) FROM narinfo_cache WHERE \
+       ($1::uuid IS NULL OR project_id = $1)",
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+  Ok((last_uploaded, oldest_fetched))
+}
+
+/// A single NAR row prepared for the Caches dashboard listing. `package_name`
+/// is the store-path name with the 32-char hash stripped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NarListItem {
+  pub store_path:      String,
+  pub package_name:    String,
+  pub nar_size:        i64,
+  pub file_size:       Option<i64>,
+  pub compression:     String,
+  pub created_at:      DateTime<Utc>,
+  pub last_fetched_at: Option<DateTime<Utc>>,
+}
+
+impl From<NarInfo> for NarListItem {
+  fn from(row: NarInfo) -> Self {
+    let package_name = package_name_from_store_path(&row.store_path);
+    Self {
+      store_path: row.store_path,
+      package_name,
+      nar_size: row.nar_size,
+      file_size: row.file_size,
+      compression: row.compression,
+      created_at: row.created_at,
+      last_fetched_at: row.last_fetched_at,
+    }
+  }
+}
+
+/// Derive the human-facing package name from a `/nix/store/<hash>-<name>`
+/// path: drop the prefix and the 32-char hash, returning `<name>`. Falls back
+/// to the raw path when it does not match the expected shape.
+#[must_use]
+pub fn package_name_from_store_path(store_path: &str) -> String {
+  store_path
+    .strip_prefix("/nix/store/")
+    .and_then(|rest| rest.split_once('-'))
+    .map_or_else(|| store_path.to_owned(), |(_hash, name)| name.to_owned())
+}
+
+/// List NARs for a scope, filtered by store-path hash prefix and/or a
+/// substring of the post-hash package name. Ordered newest-first.
+///
+/// # Errors
+///
+/// Returns the underlying sqlx error.
+pub async fn list_filtered(
+  pool: &PgPool,
+  project_id: Option<Uuid>,
+  hash_prefix: Option<&str>,
+  package_query: Option<&str>,
+  limit: i64,
+  offset: i64,
+) -> Result<Vec<NarListItem>> {
+  let rows = sqlx::query_as::<_, NarInfo>(
+    "SELECT * FROM narinfo_cache WHERE ($1::uuid IS NULL OR project_id = $1) \
+     AND ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') AND \
+     ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%') ORDER BY \
+     created_at DESC LIMIT $4 OFFSET $5",
+  )
+  .bind(project_id)
+  .bind(hash_prefix)
+  .bind(package_query)
+  .bind(limit)
+  .bind(offset)
+  .fetch_all(pool)
+  .await?;
+  Ok(rows.into_iter().map(NarListItem::from).collect())
+}
+
+/// Count NARs matching the same filters as [`list_filtered`].
+///
+/// # Errors
+///
+/// Returns the underlying sqlx error.
+pub async fn count_filtered(
+  pool: &PgPool,
+  project_id: Option<Uuid>,
+  hash_prefix: Option<&str>,
+  package_query: Option<&str>,
+) -> Result<i64> {
+  let (n,) = sqlx::query_as::<_, (i64,)>(
+    "SELECT COUNT(*) FROM narinfo_cache WHERE ($1::uuid IS NULL OR project_id \
+     = $1) AND ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || \
+     '%') AND ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%')",
+  )
+  .bind(project_id)
+  .bind(hash_prefix)
+  .bind(package_query)
+  .fetch_one(pool)
+  .await?;
+  Ok(n)
+}
+
+/// Best-effort stamp of `last_fetched_at` for one served store path. Fired
+/// and forgotten on the serve path, so failures are swallowed by the caller.
+///
+/// # Errors
+///
+/// Returns the underlying sqlx error.
+pub async fn touch_last_fetched(pool: &PgPool, store_path: &str) -> Result<()> {
+  sqlx::query(
+    "UPDATE narinfo_cache SET last_fetched_at = NOW() WHERE store_path = $1",
+  )
+  .bind(store_path)
+  .execute(pool)
+  .await?;
+  Ok(())
 }

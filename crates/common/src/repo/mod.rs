@@ -6,6 +6,7 @@ pub mod build_products;
 pub mod build_steps;
 pub mod builder_sessions;
 pub mod builds;
+pub mod cache_traffic;
 pub mod channels;
 pub mod evaluations;
 pub mod failed_paths_cache;
