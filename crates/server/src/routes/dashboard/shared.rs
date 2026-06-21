@@ -25,6 +25,7 @@ use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::{
+  operator,
   permissions::{self, Permission, UiPermissions},
   state::{AppState, CsrfToken},
 };
@@ -89,6 +90,22 @@ pub(super) struct Pagination {
   pub(super) has_next:    bool,
   pub(super) prev_offset: i64,
   pub(super) next_offset: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct CacheNarsParams {
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  pub(super) hash:    Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  pub(super) package: Option<String>,
+  pub(super) limit:   Option<i64>,
+  pub(super) offset:  Option<i64>,
 }
 
 impl Pagination {
@@ -321,11 +338,9 @@ impl DashboardPage {
       Self::News => pages.news,
       Self::Starred => pages.starred,
       Self::Metrics => pages.metrics,
-      // Cache observability surfaces are admin-only and not configurable via
-      // page_access; there is no first-class cache entity to expose publicly.
-      Self::Caches | Self::CacheDetail | Self::CacheNars => {
-        PageAccessLevel::Admin
-      },
+      Self::Caches => pages.caches,
+      Self::CacheDetail => pages.cache_detail,
+      Self::CacheNars => pages.cache_nars,
     }
   }
 }
@@ -392,6 +407,10 @@ pub(super) fn enforce_page_access(
   ))
 }
 
+pub(super) fn not_found(entity: &str) -> Response {
+  (StatusCode::NOT_FOUND, format!("{entity} not found")).into_response()
+}
+
 pub(super) struct ProjectSummaryView {
   pub(super) id:               Uuid,
   pub(super) name:             String,
@@ -417,6 +436,74 @@ pub(super) struct WorkerSummaryView {
   pub(super) status_class: String,
   pub(super) current_jobs: i32,
   pub(super) max_jobs:     i32,
+}
+
+impl From<&operator::OperatorBuild> for BuildView {
+  fn from(b: &operator::OperatorBuild) -> Self {
+    Self {
+      id:            b.id,
+      job_name:      b.job_name.clone(),
+      project_id:    b.project_id,
+      project_name:  b.project_name.clone(),
+      jobset_id:     b.jobset_id,
+      jobset_name:   b.jobset_name.clone(),
+      status_text:   b.status_text.clone(),
+      status_class:  b.status_class.clone(),
+      system:        b.system.clone(),
+      created_at:    b.created_at.clone(),
+      started_at:    b.started_at.clone(),
+      completed_at:  b.completed_at.clone(),
+      duration:      b.duration.clone(),
+      started_epoch: b.started_epoch,
+      priority:      b.priority,
+      is_aggregate:  b.is_aggregate,
+      signed:        b.signed,
+      drv_path:      b.drv_path.clone(),
+      output_path:   b.output_path.clone(),
+      error_message: b.error_message.clone(),
+      error_lines:   parse_build_error(&b.error_message),
+      has_log:       b.has_log,
+    }
+  }
+}
+
+impl From<&operator::OperatorProject> for ProjectSummaryView {
+  fn from(p: &operator::OperatorProject) -> Self {
+    Self {
+      id:               p.id,
+      name:             p.name.clone(),
+      jobset_count:     p.jobset_count,
+      last_eval_status: p.last_eval_status.clone(),
+      last_eval_class:  p.last_eval_class.clone(),
+      last_eval_time:   p.last_eval_time.clone(),
+      failing_jobs:     p.failing_jobs,
+      queued_jobs:      p.queued_jobs,
+      systems:          p.systems.clone(),
+      updated_at:       p.updated_at.clone(),
+    }
+  }
+}
+
+impl From<&operator::OperatorQueueSystem> for QueueSystemView {
+  fn from(item: &operator::OperatorQueueSystem) -> Self {
+    Self {
+      system: item.system.clone(),
+      count:  item.count,
+    }
+  }
+}
+
+impl From<&operator::OperatorWorker> for WorkerSummaryView {
+  fn from(w: &operator::OperatorWorker) -> Self {
+    Self {
+      name:         w.name.clone(),
+      system:       w.system.clone(),
+      status_text:  w.status_text.clone(),
+      status_class: w.status_class.clone(),
+      current_jobs: w.current_jobs,
+      max_jobs:     w.max_jobs,
+    }
+  }
 }
 
 pub(super) struct ApiKeyView {

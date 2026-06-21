@@ -14,7 +14,7 @@ use std::{
 use axum::{
   extract::{Path, Query, State},
   http::{StatusCode, header},
-  response::{Html, IntoResponse, Redirect, Response},
+  response::{Html, IntoResponse, Response},
 };
 use circus_common::models::{Build, BuildStatus};
 use tokio::fs;
@@ -31,10 +31,8 @@ use super::{
     JobStatusRow,
     Pagination,
     ProjectSummaryView,
-    QueueBuildView,
     QueueSystemView,
     RenderExt,
-    StarredJobView,
     WorkerSummaryView,
     build_view,
     build_view_with_context,
@@ -43,37 +41,36 @@ use super::{
     eval_badge,
     eval_view,
     eval_view_with_context,
-    format_bytes,
-    parse_build_error,
+    not_found,
     status_badge,
-    store_path_hash,
   },
   templates::{
     BuildTemplate,
     BuildsTemplate,
-    CacheDetailTemplate,
-    CacheNarsTemplate,
-    CacheRowView,
-    CachesTemplate,
-    ChannelTemplate,
-    ChannelView,
-    ChannelsTemplate,
     EvaluationTemplate,
     EvaluationsTemplate,
     HomeTemplate,
     JobsetJobsTemplate,
     JobsetTemplate,
-    MetricsTemplate,
-    NarRowView,
-    ProjectSetupTemplate,
     ProjectTemplate,
     ProjectsTemplate,
-    QueueTemplate,
-    StarredTemplate,
     UiTemplateConfig,
   },
 };
 use crate::{operator, state::AppState};
+
+mod caches;
+mod queue;
+mod secondary;
+pub(super) use caches::{cache_detail_page, cache_nars_page, caches_page};
+pub(super) use queue::queue_page;
+pub(super) use secondary::{
+  channel_page,
+  channels_page,
+  metrics_page,
+  project_setup_page,
+  starred_page,
+};
 
 fn ui_config(state: &AppState) -> UiTemplateConfig {
   UiTemplateConfig::from_config(&state.config.ui)
@@ -120,36 +117,6 @@ impl JobsetJobsParams {
   }
 }
 
-/// Map a repo `CiError` to a dashboard `Response` for the `?`-on-`Response`
-/// handler convention.
-fn cache_db_err(error: circus_common::CiError) -> Response {
-  crate::error::ApiError(error).into_response()
-}
-
-/// Format an optional timestamp for the cache NARs stat strip.
-fn fmt_opt_ts(ts: Option<chrono::DateTime<chrono::Utc>>) -> String {
-  ts.map_or_else(
-    || "-".to_owned(),
-    |t| t.format("%Y-%m-%d %H:%M").to_string(),
-  )
-}
-
-#[derive(serde::Deserialize)]
-pub(super) struct CacheNarsParams {
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  hash:    Option<String>,
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  package: Option<String>,
-  limit:   Option<i64>,
-  offset:  Option<i64>,
-}
-
 pub(super) fn format_elapsed(secs: i64) -> String {
   if secs < 60 {
     format!("{secs}s")
@@ -157,68 +124,6 @@ pub(super) fn format_elapsed(secs: i64) -> String {
     format!("{}m {}s", secs / 60, secs % 60)
   } else {
     format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-  }
-}
-
-fn operator_build_view(b: &operator::OperatorBuild) -> BuildView {
-  BuildView {
-    id:            b.id,
-    job_name:      b.job_name.clone(),
-    project_id:    b.project_id,
-    project_name:  b.project_name.clone(),
-    jobset_id:     b.jobset_id,
-    jobset_name:   b.jobset_name.clone(),
-    status_text:   b.status_text.clone(),
-    status_class:  b.status_class.clone(),
-    system:        b.system.clone(),
-    created_at:    b.created_at.clone(),
-    started_at:    b.started_at.clone(),
-    completed_at:  b.completed_at.clone(),
-    duration:      b.duration.clone(),
-    started_epoch: b.started_epoch,
-    priority:      b.priority,
-    is_aggregate:  b.is_aggregate,
-    signed:        b.signed,
-    drv_path:      b.drv_path.clone(),
-    output_path:   b.output_path.clone(),
-    error_message: b.error_message.clone(),
-    error_lines:   parse_build_error(&b.error_message),
-    has_log:       b.has_log,
-  }
-}
-
-fn operator_project_view(p: &operator::OperatorProject) -> ProjectSummaryView {
-  ProjectSummaryView {
-    id:               p.id,
-    name:             p.name.clone(),
-    jobset_count:     p.jobset_count,
-    last_eval_status: p.last_eval_status.clone(),
-    last_eval_class:  p.last_eval_class.clone(),
-    last_eval_time:   p.last_eval_time.clone(),
-    failing_jobs:     p.failing_jobs,
-    queued_jobs:      p.queued_jobs,
-    systems:          p.systems.clone(),
-    updated_at:       p.updated_at.clone(),
-  }
-}
-
-fn operator_queue_system_view(
-  item: &operator::OperatorQueueSystem,
-) -> QueueSystemView {
-  QueueSystemView {
-    system: item.system.clone(),
-    count:  item.count,
-  }
-}
-
-fn operator_worker_view(w: &operator::OperatorWorker) -> WorkerSummaryView {
-  WorkerSummaryView {
-    name:         w.name.clone(),
-    system:       w.system.clone(),
-    status_text:  w.status_text.clone(),
-    status_class: w.status_class.clone(),
-    current_jobs: w.current_jobs,
-    max_jobs:     w.max_jobs,
   }
 }
 
@@ -231,7 +136,9 @@ pub(super) async fn home(
 ) -> Result<Html<String>, Response> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Home)?;
   let include_hidden = ctx.is_admin;
-  let overview = operator::overview(&state, include_hidden).await;
+  let overview = operator::overview(&state, include_hidden)
+    .await
+    .map_err(IntoResponse::into_response)?;
   let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
     &state.pool,
     None,
@@ -253,28 +160,28 @@ pub(super) async fn home(
     failed_builds: overview.failed_builds,
     running_builds: overview.running_builds,
     pending_builds: overview.pending_builds,
-    recent_builds: overview
-      .recent_builds
-      .iter()
-      .map(operator_build_view)
-      .collect(),
+    recent_builds: overview.recent_builds.iter().map(BuildView::from).collect(),
     failed_builds_list: overview
       .failed_builds_list
       .iter()
-      .map(operator_build_view)
+      .map(BuildView::from)
       .collect(),
     recent_evals: evals.iter().map(eval_view).collect(),
     projects: overview
       .projects
       .iter()
-      .map(operator_project_view)
+      .map(ProjectSummaryView::from)
       .collect(),
     queue_by_system: overview
       .queue_by_system
       .iter()
-      .map(operator_queue_system_view)
+      .map(QueueSystemView::from)
       .collect(),
-    workers: overview.workers.iter().map(operator_worker_view).collect(),
+    workers: overview
+      .workers
+      .iter()
+      .map(WorkerSummaryView::from)
+      .collect(),
     worker_online: overview.worker_online,
     worker_total: overview.worker_total,
     refreshed_at: overview.refreshed_at,
@@ -328,7 +235,7 @@ pub(super) async fn project_page(
   let include_hidden = ctx.is_admin;
   let Ok(project) = circus_common::repo::projects::get(&state.pool, id).await
   else {
-    return Ok(Html("Project not found".to_string()));
+    return Err(not_found("Project"));
   };
   let jobsets =
     circus_common::repo::jobsets::list_for_project(&state.pool, id, 100, 0)
@@ -375,12 +282,12 @@ pub(super) async fn jobset_page(
   let include_hidden = ctx.is_admin;
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
   else {
-    return Ok(Html("Jobset not found".to_string()));
+    return Err(not_found("Jobset"));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Ok(Html("Project not found".to_string()));
+    return Err(not_found("Project"));
   };
 
   let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
@@ -479,12 +386,12 @@ pub(super) async fn jobset_jobs_page(
   let include_hidden = ctx.is_admin;
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
   else {
-    return Ok(Html("Jobset not found".to_string()));
+    return Err(not_found("Jobset"));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Ok(Html("Project not found".to_string()));
+    return Err(not_found("Project"));
   };
 
   let evals = circus_common::repo::evaluations::list_filtered_with_visibility(
@@ -663,18 +570,18 @@ pub(super) async fn evaluation_page(
   )
   .await
   else {
-    return Ok(Html("Evaluation not found".to_string()));
+    return Err(not_found("Evaluation"));
   };
 
   let Ok(jobset) =
     circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
   else {
-    return Ok(Html("Jobset not found".to_string()));
+    return Err(not_found("Jobset"));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Ok(Html("Project not found".to_string()));
+    return Err(not_found("Project"));
   };
 
   let builds = circus_common::repo::builds::list_filtered(
@@ -852,24 +759,24 @@ pub(super) async fn build_page(
   enforce_page_access(&state.config, &ctx, DashboardPage::Build)?;
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
   else {
-    return Ok(Html("Build not found".to_string()));
+    return Err(not_found("Build"));
   };
 
   let Ok(eval) =
     circus_common::repo::evaluations::get(&state.pool, build.evaluation_id)
       .await
   else {
-    return Ok(Html("Evaluation not found".to_string()));
+    return Err(not_found("Evaluation"));
   };
   let Ok(jobset) =
     circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
   else {
-    return Ok(Html("Jobset not found".to_string()));
+    return Err(not_found("Jobset"));
   };
   let Ok(project) =
     circus_common::repo::projects::get(&state.pool, jobset.project_id).await
   else {
-    return Ok(Html("Project not found".to_string()));
+    return Err(not_found("Project"));
   };
 
   let eval_commit_short = if eval.commit_hash.len() > 12 {
@@ -991,633 +898,6 @@ pub(super) async fn build_log(
     )
       .into_response(),
   )
-}
-
-/// Render the build queue at `/queue`: running builds with live elapsed
-/// timers, and pending builds in scheduler order. Each row carries its
-/// project and jobset, and pending rows expose a "push forward" form
-/// when the session's [`UiPermissions`] allow it.
-pub(super) async fn queue_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Queue)?;
-  let running = circus_common::repo::builds::list_filtered(
-    &state.pool,
-    None,
-    Some("running"),
-    None,
-    None,
-    100,
-    0,
-  )
-  .await
-  .unwrap_or_default();
-  // Order pending by the same key the queue runner uses (priority DESC,
-  // created_at ASC) so the displayed queue position matches what the
-  // scheduler will pick next, and a "Push forward" bump visibly moves
-  // the build up the list.
-  let pending = circus_common::repo::builds::list_pending_in_scheduler_order(
-    &state.pool,
-    100,
-    0,
-  )
-  .await
-  .unwrap_or_default();
-
-  // Build builder ID -> name map
-  let builders = circus_common::repo::remote_builders::list(&state.pool)
-    .await
-    .unwrap_or_default();
-  let builder_map: HashMap<Uuid, String> =
-    builders.into_iter().map(|b| (b.id, b.name)).collect();
-
-  // Agent machine_id -> name map
-  let agent_map = circus_common::repo::builder_sessions::list(&state.pool)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|s| (s.machine_id, s.name))
-    .collect::<HashMap<Uuid, String>>();
-
-  // Resolve each evaluation_id appearing in either list to its
-  // (project_id, project_name, jobset_id, jobset_name). Cache so each unique
-  // evaluation costs at most one eval + jobset + project lookup, regardless of
-  // how many builds share it.
-  let mut context_by_eval: HashMap<Uuid, (Uuid, String, Uuid, String)> =
-    HashMap::new();
-  for b in running.iter().chain(pending.iter()) {
-    if context_by_eval.contains_key(&b.evaluation_id) {
-      continue;
-    }
-    let Ok(eval) =
-      circus_common::repo::evaluations::get(&state.pool, b.evaluation_id).await
-    else {
-      continue;
-    };
-    let Ok(jobset) =
-      circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
-    else {
-      continue;
-    };
-    let Ok(project) =
-      circus_common::repo::projects::get(&state.pool, jobset.project_id).await
-    else {
-      continue;
-    };
-    context_by_eval.insert(
-      b.evaluation_id,
-      (project.id, project.name, jobset.id, jobset.name),
-    );
-  }
-
-  let context_for = |b: &Build| {
-    context_by_eval.get(&b.evaluation_id).map_or_else(
-      || (None, String::new(), None, String::new()),
-      |(pid, pname, jid, jname)| {
-        (Some(*pid), pname.clone(), Some(*jid), jname.clone())
-      },
-    )
-  };
-
-  let running_count = running.len() as i64;
-  let pending_count = pending.len() as i64;
-
-  // Convert running builds with elapsed time
-  let running_builds: Vec<QueueBuildView> = running
-    .iter()
-    .map(|b| {
-      let elapsed = b.started_at.map_or_else(String::new, |started| {
-        let dur = chrono::Utc::now() - started;
-        format_elapsed(dur.num_seconds())
-      });
-      let builder_name = b
-        .builder_id
-        .and_then(|id| builder_map.get(&id).cloned())
-        .or_else(|| {
-          b.agent_machine_id
-            .and_then(|id| agent_map.get(&id).cloned())
-        });
-      let (project_id, project_name, jobset_id, jobset_name) = context_for(b);
-      QueueBuildView {
-        id: b.id,
-        job_name: b.job_name.clone(),
-        project_id,
-        project_name,
-        jobset_id,
-        jobset_name,
-        system: b.system.clone().unwrap_or_else(|| "unknown".to_string()),
-        created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        started_at: b
-          .started_at
-          .map(|t| t.format("%H:%M:%S").to_string())
-          .unwrap_or_default(),
-        elapsed,
-        started_epoch: b.started_at.map(|t| t.timestamp()),
-        priority: b.priority,
-        builder_name,
-        queue_pos: 0,
-      }
-    })
-    .collect();
-
-  // Convert pending builds with queue position
-  let pending_builds: Vec<QueueBuildView> = pending
-    .iter()
-    .enumerate()
-    .map(|(idx, b)| {
-      let (project_id, project_name, jobset_id, jobset_name) = context_for(b);
-      QueueBuildView {
-        id: b.id,
-        job_name: b.job_name.clone(),
-        project_id,
-        project_name,
-        jobset_id,
-        jobset_name,
-        system: b.system.clone().unwrap_or_else(|| "unknown".to_string()),
-        created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        started_at: String::new(),
-        elapsed: String::new(),
-        started_epoch: None,
-        priority: b.priority,
-        builder_name: None,
-        queue_pos: (idx + 1) as i64,
-      }
-    })
-    .collect();
-
-  let tmpl = QueueTemplate {
-    ui: ui_config(&state),
-    pending_builds,
-    running_builds,
-    pending_count,
-    running_count,
-    permissions: ctx.permissions,
-    csrf_token: ctx.csrf_token.clone(),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
-/// Render the list of all release channels at `/channels`.
-pub(super) async fn channels_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Channels)?;
-  let channels = circus_common::repo::channels::list_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-  let channel_views = channels
-    .into_iter()
-    .map(|channel| {
-      let has_eval = channel.current_evaluation_id.is_some();
-      ChannelView {
-        id:                    channel.id,
-        name:                  channel.name,
-        current_evaluation_id: channel.current_evaluation_id,
-        updated_at:            channel
-          .updated_at
-          .format("%Y-%m-%d %H:%M UTC")
-          .to_string(),
-        status_text:           if has_eval {
-          "Active".into()
-        } else {
-          "Pending".into()
-        },
-        status_class:          if has_eval {
-          "completed".into()
-        } else {
-          "pending".into()
-        },
-        job_count:             0,
-      }
-    })
-    .collect();
-
-  let tmpl = ChannelsTemplate {
-    ui:        ui_config(&state),
-    channels:  channel_views,
-    is_admin:  ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn channel_page(
-  State(state): State<AppState>,
-  Path(id): Path<Uuid>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Channel)?;
-  let Ok(channel) = circus_common::repo::channels::get(&state.pool, id).await
-  else {
-    return Ok(Html("Channel not found".to_string()));
-  };
-
-  let builds = if let Some(eval_id) = channel.current_evaluation_id {
-    circus_common::repo::builds::list_for_evaluation(&state.pool, eval_id)
-      .await
-      .unwrap_or_default()
-  } else {
-    Vec::new()
-  };
-
-  let succeeded_count = builds
-    .iter()
-    .filter(|b| b.status == BuildStatus::Succeeded)
-    .count() as i64;
-  let failed_count = builds
-    .iter()
-    .filter(|b| {
-      matches!(
-        b.status,
-        BuildStatus::Failed
-          | BuildStatus::FailedWithOutput
-          | BuildStatus::Timeout
-          | BuildStatus::DependencyFailed
-          | BuildStatus::Aborted
-      )
-    })
-    .count() as i64;
-  let pending_count = builds
-    .iter()
-    .filter(|b| matches!(b.status, BuildStatus::Pending | BuildStatus::Running))
-    .count() as i64;
-
-  let tmpl = ChannelTemplate {
-    ui: ui_config(&state),
-    channel,
-    builds: builds.iter().map(build_view).collect(),
-    succeeded_count,
-    failed_count,
-    pending_count,
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
-/// Render `/starred`: the signed-in user's starred jobs with the latest
-/// build status for each. Anonymous visitors see an empty page.
-pub(super) async fn starred_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Starred)?;
-  // Session login (User) or API-key auth (ApiKey with user_id) both count
-  // as logged in. API keys without a bound user_id can't list starred jobs.
-  let viewer_user_id = ctx.viewer_user_id;
-  let is_logged_in = viewer_user_id.is_some();
-
-  let starred_jobs = if let Some(uid) = viewer_user_id {
-    let starred = circus_common::repo::starred_jobs::list_for_user(
-      &state.pool,
-      uid,
-      100,
-      0,
-    )
-    .await
-    .unwrap_or_default();
-
-    let mut views = Vec::new();
-    for s in starred {
-      // Get project name
-      let project_name =
-        circus_common::repo::projects::get(&state.pool, s.project_id)
-          .await
-          .map_or_else(|_| "-".to_string(), |p| p.name);
-
-      // Get jobset name
-      let jobset_name = if let Some(js_id) = s.jobset_id {
-        circus_common::repo::jobsets::get(&state.pool, js_id)
-          .await
-          .map_or_else(|_| "-".to_string(), |j| j.name)
-      } else {
-        "-".to_string()
-      };
-
-      // Get latest build for this job, filtered by jobset context
-      let (status_text, status_class, latest_build_id) =
-        if let Some(js_id) = s.jobset_id {
-          // Get latest evaluation for this jobset to find relevant builds
-          let evals =
-            circus_common::repo::evaluations::list_filtered_with_visibility(
-              &state.pool,
-              Some(js_id),
-              None,
-              1,
-              0,
-              ctx.is_admin,
-            )
-            .await
-            .unwrap_or_default();
-
-          let builds = if let Some(eval) = evals.first() {
-            circus_common::repo::builds::list_filtered(
-              &state.pool,
-              Some(eval.id),
-              None,
-              None,
-              Some(&s.job_name),
-              1,
-              0,
-            )
-            .await
-            .unwrap_or_default()
-          } else {
-            Vec::new()
-          };
-
-          builds.first().map_or_else(
-            || ("No builds".to_string(), "pending".to_string(), None),
-            |build| {
-              let (text, class) = status_badge(build.status);
-              (text, class, Some(build.id))
-            },
-          )
-        } else {
-          ("No builds".to_string(), "pending".to_string(), None)
-        };
-
-      views.push(StarredJobView {
-        id: s.id,
-        project_id: s.project_id,
-        project_name,
-        jobset_id: s.jobset_id,
-        jobset_name,
-        job_name: s.job_name,
-        status_text,
-        status_class,
-        latest_build_id,
-      });
-    }
-    views
-  } else {
-    Vec::new()
-  };
-
-  let tmpl = StarredTemplate {
-    ui: ui_config(&state),
-    starred_jobs,
-    is_logged_in,
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn metrics_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Metrics)?;
-  let tmpl = MetricsTemplate {
-    ui:        ui_config(&state),
-    is_admin:  ctx.is_admin,
-    auth_name: ctx.auth_name,
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn caches_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Caches)?;
-  let refs = crate::cache_overview::list_cache_refs(&state)
-    .await
-    .map_err(IntoResponse::into_response)?;
-
-  let mut caches = Vec::with_capacity(refs.len());
-  let mut total_nars = 0i64;
-  let mut total_compressed = 0i64;
-  let mut total_uncompressed = 0i64;
-  for cache in refs {
-    let storage = circus_common::repo::narinfo_cache::storage_summary(
-      &state.pool,
-      cache.scope,
-    )
-    .await
-    .map_err(cache_db_err)?;
-    let (requests_per_hour, _bytes) =
-      circus_common::repo::cache_traffic::traffic_last_hour(
-        &state.pool,
-        &cache.name,
-      )
-      .await
-      .map_err(cache_db_err)?;
-    total_nars += storage.nar_count;
-    total_compressed += storage.compressed_bytes;
-    total_uncompressed += storage.uncompressed_bytes;
-    caches.push(CacheRowView {
-      detail_href: format!("/caches/{}", cache.name),
-      scope_label: cache.scope_label().to_owned(),
-      name: cache.name,
-      active: cache.active,
-      nar_count: storage.nar_count,
-      compressed: format_bytes(storage.compressed_bytes),
-      requests_per_hour,
-    });
-  }
-
-  let tmpl = CachesTemplate {
-    ui: ui_config(&state),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name,
-    total_nars,
-    total_compressed: format_bytes(total_compressed),
-    total_uncompressed: format_bytes(total_uncompressed),
-    caches,
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn cache_detail_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-  Path(name): Path<String>,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::CacheDetail)?;
-  let Some(cache) = crate::cache_overview::resolve_cache_ref(&state, &name)
-    .await
-    .map_err(IntoResponse::into_response)?
-  else {
-    return Err((StatusCode::NOT_FOUND, "Cache not found").into_response());
-  };
-
-  let storage = circus_common::repo::narinfo_cache::storage_summary(
-    &state.pool,
-    cache.scope,
-  )
-  .await
-  .map_err(cache_db_err)?;
-  let (requests_last_hour, bytes_served) =
-    circus_common::repo::cache_traffic::traffic_last_hour(
-      &state.pool,
-      &cache.name,
-    )
-    .await
-    .map_err(cache_db_err)?;
-
-  let substituter =
-    crate::cache_overview::substituter_url(&state.config, &cache);
-  let public_key = crate::cache_overview::public_key(&state.config);
-  let snippet = crate::cache_overview::nix_conf_snippet(
-    substituter.as_deref(),
-    public_key.as_deref(),
-  );
-
-  let tmpl = CacheDetailTemplate {
-    ui: ui_config(&state),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name,
-    storage_timeseries_url: format!(
-      "/api/v1/admin/caches/{}/storage-timeseries",
-      cache.name
-    ),
-    traffic_timeseries_url: format!(
-      "/api/v1/admin/caches/{}/traffic-timeseries",
-      cache.name
-    ),
-    nars_href: format!("/caches/{}/nars", cache.name),
-    scope_label: cache.scope_label().to_owned(),
-    active: cache.active,
-    packages_stored: storage.nar_count,
-    uncompressed: format_bytes(storage.uncompressed_bytes),
-    compressed: format_bytes(storage.compressed_bytes),
-    requests_last_hour,
-    traffic_last_hour: format_bytes(bytes_served),
-    has_substituter: substituter.is_some(),
-    substituter_url: substituter.unwrap_or_default(),
-    has_public_key: public_key.is_some(),
-    public_key: public_key.unwrap_or_default(),
-    has_snippet: snippet.is_some(),
-    nix_conf_snippet: snippet.unwrap_or_default(),
-    name: cache.name,
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn cache_nars_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-  Path(name): Path<String>,
-  Query(params): Query<CacheNarsParams>,
-) -> Result<Html<String>, Response> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::CacheNars)?;
-  let Some(cache) = crate::cache_overview::resolve_cache_ref(&state, &name)
-    .await
-    .map_err(IntoResponse::into_response)?
-  else {
-    return Err((StatusCode::NOT_FOUND, "Cache not found").into_response());
-  };
-
-  let limit = params.limit.unwrap_or(50).clamp(1, 200);
-  let offset = params.offset.unwrap_or(0).max(0);
-  let hash = params.hash.clone();
-  let package = params.package.clone();
-
-  let items = circus_common::repo::narinfo_cache::list_filtered(
-    &state.pool,
-    cache.scope,
-    hash.as_deref(),
-    package.as_deref(),
-    limit,
-    offset,
-  )
-  .await
-  .map_err(cache_db_err)?;
-  let total = circus_common::repo::narinfo_cache::count_filtered(
-    &state.pool,
-    cache.scope,
-    hash.as_deref(),
-    package.as_deref(),
-  )
-  .await
-  .map_err(cache_db_err)?;
-  let summary = circus_common::repo::narinfo_cache::storage_summary(
-    &state.pool,
-    cache.scope,
-  )
-  .await
-  .map_err(cache_db_err)?;
-  let (last_uploaded, oldest_fetched) =
-    circus_common::repo::narinfo_cache::storage_extremes(
-      &state.pool,
-      cache.scope,
-    )
-    .await
-    .map_err(cache_db_err)?;
-
-  let nars = items
-    .into_iter()
-    .map(|it| {
-      NarRowView {
-        hash:         store_path_hash(&it.store_path),
-        package:      it.package_name,
-        nar_size:     format_bytes(it.nar_size),
-        compressed:   it.file_size.map_or_else(|| "-".to_owned(), format_bytes),
-        created_at:   it.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        last_fetched: it.last_fetched_at.map_or_else(
-          || "Never".to_owned(),
-          |t| t.format("%Y-%m-%d %H:%M").to_string(),
-        ),
-        store_path:   it.store_path,
-      }
-    })
-    .collect();
-
-  let pagination = Pagination::new(total, offset, limit);
-  let tmpl = CacheNarsTemplate {
-    ui: ui_config(&state),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name,
-    detail_href: format!("/caches/{}", cache.name),
-    scope_label: cache.scope_label().to_owned(),
-    name: cache.name,
-    filter_hash: params.hash.unwrap_or_default(),
-    filter_package: params.package.unwrap_or_default(),
-    total_nars: summary.nar_count,
-    nar_size: format_bytes(summary.uncompressed_bytes),
-    file_size: format_bytes(summary.compressed_bytes),
-    last_uploaded: fmt_opt_ts(last_uploaded),
-    oldest_fetched: fmt_opt_ts(oldest_fetched),
-    nars,
-    page: pagination.page,
-    total_pages: pagination.total_pages,
-    has_prev: pagination.has_prev,
-    has_next: pagination.has_next,
-    prev_offset: pagination.prev_offset,
-    next_offset: pagination.next_offset,
-    limit,
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn project_setup_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
-  if !ctx.is_admin {
-    let target = if ctx.auth_name.is_empty() {
-      "/login"
-    } else {
-      "/projects"
-    };
-    return Err(Redirect::to(target).into_response());
-  }
-
-  let tmpl = ProjectSetupTemplate {
-    ui:         ui_config(&state),
-    is_admin:   ctx.is_admin,
-    auth_name:  ctx.auth_name,
-    csrf_token: ctx.csrf_token,
-  };
-  tmpl.render_html_or_500()
 }
 
 #[cfg(test)]
