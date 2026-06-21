@@ -1,215 +1,72 @@
-//! Fixture-backed dashboard preview routes for `cargo xtask preview-frontend`.
-
-use std::path::PathBuf;
-
-use askama::Template;
-use axum::{
-  Json,
-  Router,
-  body::Body,
-  http::{StatusCode, header},
-  response::{Html, IntoResponse, Redirect, Response},
-  routing::get,
-};
+use axum::response::Response;
 use chrono::{Duration, Utc};
-use circus_common::models::{
-  BinaryCacheUpstreams,
-  BuildProduct,
-  BuildStep,
-  Channel,
-  Jobset,
-  JobsetState,
-  JobsetTriggerMode,
-  NewsItem,
-  Project,
-  SystemStatus,
-};
-use circus_config::UiConfig;
-use sqlx::types::Json as SqlxJson;
-use tower_http::services::ServeDir;
-use uuid::Uuid;
+use circus_common::models::{BuildProduct, BuildStep, SystemStatus};
 
 use super::{
-  shared::{
-    ApiKeyView,
-    BuildErrorLine,
-    BuildView,
-    EvalSummaryView,
-    EvalView,
-    JobStatusCell,
-    JobStatusColumn,
-    JobStatusRow,
-    PrivateTemplate,
-    ProjectSummaryView,
-    QueueBuildView,
-    QueueSystemView,
-    StarredJobView,
-    UserView,
-    WorkerSummaryView,
-  },
-  templates::{
-    AdminTemplate,
-    AgentView,
-    BuildTemplate,
-    BuilderView,
-    BuildsTemplate,
-    CacheDetailTemplate,
-    CacheNarsTemplate,
-    CacheRowView,
-    CachesTemplate,
-    ChannelTemplate,
-    ChannelView,
-    ChannelsTemplate,
-    EvaluationTemplate,
-    EvaluationsTemplate,
-    HomeTemplate,
-    JobsetJobsTemplate,
-    JobsetTemplate,
-    LoginTemplate,
-    MetricsTemplate,
-    NarRowView,
-    NewsTemplate,
-    NotificationTaskView,
-    PinnedOutputView,
-    ProjectSetupTemplate,
-    ProjectTemplate,
-    ProjectsTemplate,
-    QueueTemplate,
-    SortHeaderView,
-    StarredTemplate,
-    UiTemplateConfig,
-    UsersTemplate,
-  },
-};
-use crate::permissions::UiPermissions;
-
-pub fn router() -> Router {
-  Router::new()
-    .route("/__preview", get(index))
-    .route("/static/theme.css", get(theme_css))
-    .nest_service("/static", ServeDir::new(static_dir()))
-    .route("/api/v1/projects", get(api_projects))
-    .route("/api/v1/metrics/timeseries/builds", get(api_metrics_builds))
-    .route(
-      "/api/v1/metrics/timeseries/duration",
-      get(api_metrics_duration),
-    )
-    .route("/api/v1/metrics/systems", get(api_metrics_systems))
-    .route(
-      "/api/v1/admin/caches/{name}/storage-timeseries",
-      get(api_cache_storage_timeseries),
-    )
-    .route(
-      "/api/v1/admin/caches/{name}/traffic-timeseries",
-      get(api_cache_traffic_timeseries),
-    )
-    .route("/", get(home))
-    .route("/projects", get(projects))
-    .route("/projects/new", get(project_setup))
-    .route("/project/{id}", get(project))
-    .route("/jobset/{id}", get(jobset))
-    .route("/jobset/{id}/jobs", get(jobset_jobs))
-    .route("/evaluations", get(evaluations))
-    .route("/evaluation/{id}", get(evaluation))
-    .route("/builds", get(builds))
-    .route("/build/{id}", get(build))
-    .route("/queue", get(queue))
-    .route("/channels", get(channels))
-    .route("/channel/{id}", get(channel))
-    .route("/news", get(news))
-    .route("/admin", get(admin))
-    .route("/users", get(users))
-    .route("/starred", get(starred))
-    .route("/metrics", get(metrics))
-    .route("/login", get(login))
-    .route("/private", get(private))
-    .route("/caches", get(caches))
-    .route("/caches/{name}", get(cache_detail))
-    .route("/caches/{name}/nars", get(cache_nars))
-}
-
-fn render<T: Template>(template: T) -> Response {
-  match template.render() {
-    Ok(html) => Html(html).into_response(),
-    Err(error) => {
-      (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Template error: {error}"),
-      )
-        .into_response()
+  super::{
+    shared::{
+      ApiKeyView,
+      PrivateTemplate,
+      QueueSystemView,
+      StarredJobView,
+      UserView,
+      WorkerSummaryView,
     },
-  }
-}
+    templates::{
+      AdminTemplate,
+      AgentView,
+      BuildTemplate,
+      BuilderView,
+      BuildsTemplate,
+      CacheDetailTemplate,
+      CacheNarsTemplate,
+      CacheRowView,
+      CachesTemplate,
+      ChannelTemplate,
+      ChannelView,
+      ChannelsTemplate,
+      EvaluationTemplate,
+      EvaluationsTemplate,
+      HomeTemplate,
+      JobsetJobsTemplate,
+      JobsetTemplate,
+      LoginTemplate,
+      MetricsTemplate,
+      NarRowView,
+      NewsTemplate,
+      NotificationTaskView,
+      PinnedOutputView,
+      ProjectSetupTemplate,
+      ProjectTemplate,
+      ProjectsTemplate,
+      QueueTemplate,
+      SortHeaderView,
+      StarredTemplate,
+      UsersTemplate,
+    },
+  },
+  fixtures::{
+    self,
+    builds_fixture,
+    channel_fixture,
+    csrf,
+    eval_summaries,
+    evals_fixture,
+    id,
+    job_columns,
+    job_rows,
+    jobset_fixture,
+    news_items,
+    permissions,
+    project_fixture,
+    project_summaries,
+    queue_build,
+    ui,
+  },
+  render,
+};
 
-async fn index() -> Redirect {
-  Redirect::temporary("/")
-}
-
-async fn theme_css() -> Response {
-  Response::builder()
-    .header(header::CONTENT_TYPE, "text/css")
-    .header(header::CACHE_CONTROL, "no-cache")
-    .body(Body::from(
-      ":root {\n  --accent: #111827;\n  --accent-hover: #000000;\n  \
-       --accent-strong: #374151;\n}\n",
-    ))
-    .unwrap_or_else(|error| {
-      Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::from(format!("response builder failed: {error}")))
-        .unwrap_or_else(|_| Response::new(Body::empty()))
-    })
-}
-
-fn static_dir() -> PathBuf {
-  PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static")
-}
-
-async fn api_projects() -> Json<serde_json::Value> {
-  Json(serde_json::json!({
-    "data": [
-      { "id": "00000000-0000-0000-0000-000000000001", "name": "circus" }
-    ]
-  }))
-}
-
-async fn api_metrics_builds() -> Json<serde_json::Value> {
-  Json(serde_json::json!({
-    "timestamps": [
-      "2026-06-18T08:00:00Z",
-      "2026-06-18T09:00:00Z",
-      "2026-06-18T10:00:00Z",
-      "2026-06-18T11:00:00Z",
-      "2026-06-18T12:00:00Z"
-    ],
-    "total": [12, 18, 14, 22, 16],
-    "failed": [1, 2, 0, 3, 1]
-  }))
-}
-
-async fn api_metrics_duration() -> Json<serde_json::Value> {
-  Json(serde_json::json!({
-    "timestamps": [
-      "2026-06-18T08:00:00Z",
-      "2026-06-18T09:00:00Z",
-      "2026-06-18T10:00:00Z",
-      "2026-06-18T11:00:00Z",
-      "2026-06-18T12:00:00Z"
-    ],
-    "p50": [45, 52, 48, 61, 55],
-    "p95": [180, 210, 195, 240, 220],
-    "p99": [300, 340, 310, 380, 350]
-  }))
-}
-
-async fn api_metrics_systems() -> Json<serde_json::Value> {
-  Json(serde_json::json!({
-    "systems": ["x86_64-linux", "aarch64-linux"],
-    "counts": [42, 18]
-  }))
-}
-
-async fn home() -> Response {
+pub(super) async fn home() -> Response {
   render(HomeTemplate {
     ui:                 ui(),
     total_builds:       1842,
@@ -218,7 +75,7 @@ async fn home() -> Response {
     running_builds:     3,
     pending_builds:     19,
     recent_builds:      builds_fixture(),
-    failed_builds_list: vec![build_view(
+    failed_builds_list: vec![fixtures::build_view(
       5,
       "packages.aarch64-linux.server",
       "Failed",
@@ -263,7 +120,7 @@ async fn home() -> Response {
   })
 }
 
-async fn projects() -> Response {
+pub(super) async fn projects() -> Response {
   render(ProjectsTemplate {
     ui:          ui(),
     projects:    vec![project_fixture()],
@@ -280,7 +137,7 @@ async fn projects() -> Response {
   })
 }
 
-async fn project_setup() -> Response {
+pub(super) async fn project_setup() -> Response {
   render(ProjectSetupTemplate {
     ui:         ui(),
     is_admin:   true,
@@ -289,7 +146,7 @@ async fn project_setup() -> Response {
   })
 }
 
-async fn project() -> Response {
+pub(super) async fn project() -> Response {
   render(ProjectTemplate {
     ui:           ui(),
     project:      project_fixture(),
@@ -301,7 +158,7 @@ async fn project() -> Response {
   })
 }
 
-async fn jobset() -> Response {
+pub(super) async fn jobset() -> Response {
   render(JobsetTemplate {
     ui:             ui(),
     project:        project_fixture(),
@@ -313,7 +170,7 @@ async fn jobset() -> Response {
   })
 }
 
-async fn jobset_jobs() -> Response {
+pub(super) async fn jobset_jobs() -> Response {
   render(JobsetJobsTemplate {
     ui:            ui(),
     project:       project_fixture(),
@@ -326,7 +183,7 @@ async fn jobset_jobs() -> Response {
   })
 }
 
-async fn evaluations() -> Response {
+pub(super) async fn evaluations() -> Response {
   render(EvaluationsTemplate {
     ui:          ui(),
     evals:       evals_fixture(),
@@ -343,10 +200,10 @@ async fn evaluations() -> Response {
   })
 }
 
-async fn evaluation() -> Response {
+pub(super) async fn evaluation() -> Response {
   render(EvaluationTemplate {
     ui:              ui(),
-    eval:            eval_view(3, "Completed", "completed"),
+    eval:            fixtures::eval_view(3, "Completed", "completed"),
     builds:          builds_fixture(),
     project_name:    "circus".into(),
     project_id:      id(1),
@@ -362,7 +219,7 @@ async fn evaluation() -> Response {
   })
 }
 
-async fn builds() -> Response {
+pub(super) async fn builds() -> Response {
   render(BuildsTemplate {
     ui:            ui(),
     builds:        builds_fixture(),
@@ -381,11 +238,11 @@ async fn builds() -> Response {
   })
 }
 
-async fn build() -> Response {
+pub(super) async fn build() -> Response {
   let build_id = id(4);
   render(BuildTemplate {
     ui:                ui(),
-    build:             build_view(
+    build:             fixtures::build_view(
       4,
       "packages.x86_64-linux.circus-server",
       "Succeeded",
@@ -415,7 +272,7 @@ async fn build() -> Response {
       gc_root_path: Some("/nix/var/nix/gcroots/circus/preview".into()),
       created_at: Utc::now() - Duration::minutes(1),
     }],
-    dependencies:      vec![build_view(
+    dependencies:      vec![fixtures::build_view(
       6,
       "checks.x86_64-linux.config",
       "Succeeded",
@@ -433,7 +290,7 @@ async fn build() -> Response {
   })
 }
 
-async fn queue() -> Response {
+pub(super) async fn queue() -> Response {
   render(QueueTemplate {
     ui:             ui(),
     pending_builds: vec![queue_build(
@@ -457,7 +314,7 @@ async fn queue() -> Response {
   })
 }
 
-async fn channels() -> Response {
+pub(super) async fn channels() -> Response {
   render(ChannelsTemplate {
     ui:        ui(),
     channels:  vec![ChannelView {
@@ -474,7 +331,7 @@ async fn channels() -> Response {
   })
 }
 
-async fn channel() -> Response {
+pub(super) async fn channel() -> Response {
   render(ChannelTemplate {
     ui:              ui(),
     channel:         channel_fixture(),
@@ -487,7 +344,7 @@ async fn channel() -> Response {
   })
 }
 
-async fn news() -> Response {
+pub(super) async fn news() -> Response {
   render(NewsTemplate {
     ui:         ui(),
     items:      news_items(),
@@ -497,7 +354,7 @@ async fn news() -> Response {
   })
 }
 
-async fn admin() -> Response {
+pub(super) async fn admin() -> Response {
   render(AdminTemplate {
     ui:                      ui(),
     status:                  SystemStatus {
@@ -584,7 +441,7 @@ async fn admin() -> Response {
   })
 }
 
-async fn users() -> Response {
+pub(super) async fn users() -> Response {
   render(UsersTemplate {
     ui:          ui(),
     users:       vec![UserView {
@@ -609,7 +466,7 @@ async fn users() -> Response {
   })
 }
 
-async fn starred() -> Response {
+pub(super) async fn starred() -> Response {
   render(StarredTemplate {
     ui:           ui(),
     starred_jobs: vec![StarredJobView {
@@ -630,7 +487,7 @@ async fn starred() -> Response {
   })
 }
 
-async fn metrics() -> Response {
+pub(super) async fn metrics() -> Response {
   render(MetricsTemplate {
     ui:        ui(),
     is_admin:  true,
@@ -638,7 +495,7 @@ async fn metrics() -> Response {
   })
 }
 
-async fn login() -> Response {
+pub(super) async fn login() -> Response {
   render(LoginTemplate {
     ui:        ui(),
     error:     Some("Preview mode accepts no credentials.".into()),
@@ -647,7 +504,7 @@ async fn login() -> Response {
   })
 }
 
-async fn private() -> Response {
+pub(super) async fn private() -> Response {
   render(PrivateTemplate {
     ui:        ui(),
     is_admin:  false,
@@ -655,265 +512,7 @@ async fn private() -> Response {
   })
 }
 
-const fn id(n: u128) -> Uuid {
-  Uuid::from_u128(n)
-}
-
-fn ui() -> UiTemplateConfig {
-  let config = UiConfig {
-    brand_name: "Circus Preview".into(),
-    brand_subtitle: "Fixture-backed frontend".into(),
-    ..UiConfig::default()
-  };
-  UiTemplateConfig::from_config(&config)
-}
-
-fn csrf() -> String {
-  "preview-csrf-token".into()
-}
-
-const fn permissions() -> UiPermissions {
-  UiPermissions {
-    admin:           true,
-    bump_to_front:   true,
-    cancel_build:    true,
-    restart_jobs:    true,
-    create_projects: true,
-    eval_jobset:     true,
-  }
-}
-
-fn project_fixture() -> Project {
-  Project {
-    id:              id(1),
-    name:            "circus".into(),
-    description:     Some("Nix-native CI control plane".into()),
-    repository_url:  "https://github.com/manic-systems/circus".into(),
-    cache_enabled:   true,
-    cache_url:       Some("https://cache.example.invalid".into()),
-    cache_upstreams: SqlxJson(BinaryCacheUpstreams::default()),
-    created_at:      Utc::now() - Duration::days(30),
-    updated_at:      Utc::now() - Duration::minutes(5),
-  }
-}
-
-fn jobset_fixture() -> Jobset {
-  Jobset {
-    id:                id(2),
-    project_id:        id(1),
-    name:              "packages".into(),
-    nix_expression:    "packages".into(),
-    enabled:           true,
-    flake_mode:        true,
-    check_interval:    600,
-    trigger_mode:      JobsetTriggerMode::SourceChange,
-    branch:            Some("main".into()),
-    branch_pattern:    None,
-    tag_pattern:       None,
-    scheduling_shares: 100,
-    created_at:        Utc::now() - Duration::days(20),
-    updated_at:        Utc::now() - Duration::minutes(5),
-    state:             JobsetState::Enabled,
-    last_checked_at:   Some(Utc::now() - Duration::minutes(10)),
-    keep_nr:           3,
-  }
-}
-
-fn channel_fixture() -> Channel {
-  Channel {
-    id:                    id(5),
-    project_id:            id(1),
-    name:                  "latest".into(),
-    jobset_id:             id(2),
-    current_evaluation_id: Some(id(3)),
-    created_at:            Utc::now() - Duration::days(7),
-    updated_at:            Utc::now() - Duration::minutes(2),
-  }
-}
-
-fn news_items() -> Vec<NewsItem> {
-  vec![NewsItem {
-    id:         id(21),
-    title:      "Preview fixtures updated".into(),
-    content:    "Frontend previews are served from xtask without a VM.".into(),
-    created_by: Some(id(51)),
-    created_at: Utc::now() - Duration::hours(2),
-  }]
-}
-
-fn build_view(n: u128, job: &str, status: &str, class: &str) -> BuildView {
-  BuildView {
-    id:            id(n),
-    job_name:      job.into(),
-    project_id:    Some(id(1)),
-    project_name:  "circus".into(),
-    jobset_id:     Some(id(2)),
-    jobset_name:   "packages".into(),
-    status_text:   status.into(),
-    status_class:  class.into(),
-    system:        "x86_64-linux".into(),
-    created_at:    "2026-06-18 11:45".into(),
-    started_at:    "2026-06-18 11:46".into(),
-    completed_at:  if class == "running" {
-      String::new()
-    } else {
-      "2026-06-18 11:49".into()
-    },
-    duration:      "3m 12s".into(),
-    started_epoch: if class == "running" {
-      Some(Utc::now().timestamp() - 90)
-    } else {
-      None
-    },
-    priority:      100,
-    is_aggregate:  false,
-    signed:        true,
-    drv_path:      "/nix/store/preview-circus-server.drv".into(),
-    output_path:   "/nix/store/preview-circus-server".into(),
-    error_message: if class == "failed" {
-      "error: builder failed with exit code 1".into()
-    } else {
-      String::new()
-    },
-    error_lines:   if class == "failed" {
-      vec![BuildErrorLine {
-        text:  "builder failed with exit code 1".into(),
-        level: "error",
-      }]
-    } else {
-      Vec::new()
-    },
-    has_log:       true,
-  }
-}
-
-fn builds_fixture() -> Vec<BuildView> {
-  vec![
-    build_view(
-      4,
-      "packages.x86_64-linux.circus-server",
-      "Succeeded",
-      "completed",
-    ),
-    build_view(5, "packages.aarch64-linux.server", "Failed", "failed"),
-    build_view(6, "checks.x86_64-linux.integration", "Running", "running"),
-  ]
-}
-
-fn queue_build(
-  n: u128,
-  job: &str,
-  builder: Option<&str>,
-  pos: i64,
-) -> QueueBuildView {
-  QueueBuildView {
-    id:            id(n),
-    job_name:      job.into(),
-    project_id:    Some(id(1)),
-    project_name:  "circus".into(),
-    jobset_id:     Some(id(2)),
-    jobset_name:   "packages".into(),
-    system:        "x86_64-linux".into(),
-    created_at:    "2026-06-18 11:55".into(),
-    started_at:    if builder.is_some() {
-      "2026-06-18 11:56".into()
-    } else {
-      String::new()
-    },
-    elapsed:       "1m 30s".into(),
-    started_epoch: builder.map(|_| Utc::now().timestamp() - 90),
-    priority:      100,
-    builder_name:  builder.map(str::to_string),
-    queue_pos:     pos,
-  }
-}
-
-fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
-  EvalView {
-    id:            id(n),
-    commit_hash:   "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
-    commit_short:  "9f2c7a113bad".into(),
-    status_text:   status.into(),
-    status_class:  class.into(),
-    time:          "2026-06-18 11:42".into(),
-    error_message: None,
-    hidden:        false,
-    jobset_name:   "packages".into(),
-    project_name:  "circus".into(),
-  }
-}
-
-fn evals_fixture() -> Vec<EvalView> {
-  vec![
-    eval_view(3, "Completed", "completed"),
-    eval_view(13, "Running", "running"),
-  ]
-}
-
-fn eval_summaries() -> Vec<EvalSummaryView> {
-  vec![EvalSummaryView {
-    id:           id(3),
-    commit_short: "9f2c7a113bad".into(),
-    status_text:  "Completed".into(),
-    status_class: "completed".into(),
-    time:         "2026-06-18 11:42".into(),
-    succeeded:    18,
-    failed:       1,
-    pending:      0,
-    hidden:       false,
-  }]
-}
-
-fn project_summaries() -> Vec<ProjectSummaryView> {
-  vec![ProjectSummaryView {
-    id:               id(1),
-    name:             "circus".into(),
-    jobset_count:     2,
-    last_eval_status: "Completed".into(),
-    last_eval_class:  "completed".into(),
-    last_eval_time:   "2026-06-18 11:42".into(),
-    failing_jobs:     1,
-    queued_jobs:      3,
-    systems:          "x86_64-linux, aarch64-linux".into(),
-    updated_at:       "2026-06-18 11:50".into(),
-  }]
-}
-
-fn job_columns() -> Vec<JobStatusColumn> {
-  vec![
-    JobStatusColumn {
-      eval_id: id(3),
-      label:   "9f2c7a".into(),
-      title:   "9f2c7a113bad".into(),
-    },
-    JobStatusColumn {
-      eval_id: id(13),
-      label:   "running".into(),
-      title:   "running evaluation".into(),
-    },
-  ]
-}
-
-fn job_rows() -> Vec<JobStatusRow> {
-  vec![JobStatusRow {
-    job_name:  "packages.x86_64-linux.circus-server".into(),
-    is_active: true,
-    cells:     vec![
-      JobStatusCell {
-        href:         "/build/00000000-0000-0000-0000-000000000004".into(),
-        status_text:  "Succeeded".into(),
-        status_class: "completed".into(),
-      },
-      JobStatusCell {
-        href:         "/build/00000000-0000-0000-0000-000000000006".into(),
-        status_text:  "Running".into(),
-        status_class: "running".into(),
-      },
-    ],
-  }]
-}
-
-async fn caches() -> Response {
+pub(super) async fn caches() -> Response {
   render(CachesTemplate {
     ui:                 ui(),
     is_admin:           true,
@@ -944,7 +543,7 @@ async fn caches() -> Response {
   })
 }
 
-async fn cache_detail() -> Response {
+pub(super) async fn cache_detail() -> Response {
   render(CacheDetailTemplate {
     ui:                     ui(),
     is_admin:               true,
@@ -976,7 +575,7 @@ async fn cache_detail() -> Response {
   })
 }
 
-async fn cache_nars() -> Response {
+pub(super) async fn cache_nars() -> Response {
   render(CacheNarsTemplate {
     ui:             ui(),
     is_admin:       true,
@@ -1019,30 +618,4 @@ async fn cache_nars() -> Response {
     next_offset:    20,
     limit:          20,
   })
-}
-
-async fn api_cache_storage_timeseries() -> Json<serde_json::Value> {
-  Json(serde_json::json!({
-    "timestamps": [
-      "2026-06-16T08:00:00Z",
-      "2026-06-17T08:00:00Z",
-      "2026-06-18T08:00:00Z"
-    ],
-    "bytes_added": [3_500_000, 7_200_000, 10_800_000],
-    "packages_added": [8, 12, 10]
-  }))
-}
-
-async fn api_cache_traffic_timeseries() -> Json<serde_json::Value> {
-  Json(serde_json::json!({
-    "timestamps": [
-      "2026-06-18T08:00:00Z",
-      "2026-06-18T09:00:00Z",
-      "2026-06-18T10:00:00Z",
-      "2026-06-18T11:00:00Z",
-      "2026-06-18T12:00:00Z"
-    ],
-    "bytes": [1_200_000, 2_800_000, 1_500_000, 3_100_000, 900_000],
-    "requests": [42, 95, 53, 108, 31]
-  }))
 }
