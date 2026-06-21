@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use chrono::Utc;
 use circus_common::models::{Build, BuildStatus, Evaluation};
 use serde::Serialize;
+use sqlx::FromRow;
 use uuid::Uuid;
 
-use crate::state::AppState;
+use crate::{error::ApiError, state::AppState};
+
+type Result<T> = std::result::Result<T, ApiError>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OperatorOverview {
@@ -56,12 +59,12 @@ impl OperatorBuild {
     let (project_id, project_name, jobset_id, jobset_name) = context
       .map_or_else(
         || (None, String::new(), None, String::new()),
-        |(project_id, project_name, jobset_id, jobset_name)| {
+        |context| {
           (
-            Some(*project_id),
-            project_name.clone(),
-            Some(*jobset_id),
-            jobset_name.clone(),
+            Some(context.project_id),
+            context.project_name.clone(),
+            Some(context.jobset_id),
+            context.jobset_name.clone(),
           )
         },
       );
@@ -86,10 +89,7 @@ impl OperatorBuild {
         .completed_at
         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default(),
-      duration: Self::format_duration(
-        b.started_at.as_ref(),
-        b.completed_at.as_ref(),
-      ),
+      duration: format_duration(b.started_at.as_ref(), b.completed_at.as_ref()),
       started_epoch: if b.completed_at.is_none() {
         b.started_at.map(|t| t.timestamp())
       } else {
@@ -102,28 +102,6 @@ impl OperatorBuild {
       output_path: b.build_output_path.clone().unwrap_or_default(),
       error_message: b.error_message.clone().unwrap_or_default(),
       has_log: b.log_path.as_deref().is_some_and(|p| !p.is_empty()),
-    }
-  }
-
-  fn format_duration(
-    started: Option<&chrono::DateTime<chrono::Utc>>,
-    completed: Option<&chrono::DateTime<chrono::Utc>>,
-  ) -> String {
-    match (started, completed) {
-      (Some(s), Some(c)) => {
-        let secs = (*c - *s).num_seconds();
-        if secs < 0 {
-          return String::new();
-        }
-        let mins = secs / 60;
-        let rem = secs % 60;
-        if mins > 0 {
-          format!("{mins}m {rem}s")
-        } else {
-          format!("{rem}s")
-        }
-      },
-      _ => String::new(),
     }
   }
 }
@@ -143,16 +121,12 @@ pub struct OperatorProject {
 }
 
 impl OperatorProject {
-  async fn list(state: &AppState, include_hidden: bool) -> Vec<Self> {
+  async fn list(state: &AppState, include_hidden: bool) -> Result<Vec<Self>> {
     let all_projects = circus_common::repo::projects::list(&state.pool, 100, 0)
       .await
-      .unwrap_or_default();
-    let mut project_summaries = Vec::new();
+      .map_err(ApiError)?;
+    let mut project_summaries = Vec::with_capacity(all_projects.len());
     for p in &all_projects {
-      let jobset_count =
-        circus_common::repo::jobsets::count_for_project(&state.pool, p.id)
-          .await
-          .unwrap_or(0);
       let jobsets = circus_common::repo::jobsets::list_for_project(
         &state.pool,
         p.id,
@@ -160,7 +134,7 @@ impl OperatorProject {
         0,
       )
       .await
-      .unwrap_or_default();
+      .map_err(ApiError)?;
       let mut last_eval: Option<Evaluation> = None;
       for js in &jobsets {
         let js_evals =
@@ -173,7 +147,7 @@ impl OperatorProject {
             include_hidden,
           )
           .await
-          .unwrap_or_default();
+          .map_err(ApiError)?;
         if let Some(e) = js_evals.into_iter().next()
           && last_eval
             .as_ref()
@@ -197,7 +171,7 @@ impl OperatorProject {
       let project_builds =
         circus_common::repo::builds::list_for_project(&state.pool, p.id)
           .await
-          .unwrap_or_default();
+          .map_err(ApiError)?;
       let failing_jobs = project_builds
         .iter()
         .filter(|b| is_failed_status(b.status))
@@ -215,7 +189,7 @@ impl OperatorProject {
       project_summaries.push(Self {
         id: p.id,
         name: p.name.clone(),
-        jobset_count,
+        jobset_count: jobsets.len() as i64,
         last_eval_status,
         last_eval_class,
         last_eval_time,
@@ -229,7 +203,7 @@ impl OperatorProject {
         updated_at: p.updated_at.format("%Y-%m-%d %H:%M").to_string(),
       });
     }
-    project_summaries
+    Ok(project_summaries)
   }
 }
 
@@ -291,11 +265,11 @@ pub struct OperatorWorker {
 }
 
 impl OperatorWorker {
-  async fn list(state: &AppState) -> (Vec<Self>, i64, i64) {
+  async fn list(state: &AppState) -> Result<(Vec<Self>, i64, i64)> {
     let worker_sessions =
       circus_common::repo::builder_sessions::list(&state.pool)
         .await
-        .unwrap_or_default();
+        .map_err(ApiError)?;
     let worker_total = worker_sessions.len() as i64;
     let worker_online =
       worker_sessions.iter().filter(|w| w.connected).count() as i64;
@@ -328,20 +302,25 @@ impl OperatorWorker {
         }
       })
       .collect();
-    (workers, worker_online, worker_total)
+    Ok((workers, worker_online, worker_total))
   }
 }
 
+/// Build the operator dashboard overview.
+///
+/// # Errors
+///
+/// Returns an error when the underlying repository queries fail.
 pub async fn overview(
   state: &AppState,
   include_hidden: bool,
-) -> OperatorOverview {
+) -> Result<OperatorOverview> {
   let build_stats = circus_common::repo::builds::get_stats(&state.pool)
     .await
-    .unwrap_or_default();
+    .map_err(ApiError)?;
   let recent_raw = circus_common::repo::builds::list_recent(&state.pool, 40)
     .await
-    .unwrap_or_default();
+    .map_err(ApiError)?;
   let failed_raw = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
@@ -352,7 +331,7 @@ pub async fn overview(
     0,
   )
   .await
-  .unwrap_or_default();
+  .map_err(ApiError)?;
   let pending_raw =
     circus_common::repo::builds::list_pending_in_scheduler_order(
       &state.pool,
@@ -360,10 +339,11 @@ pub async fn overview(
       0,
     )
     .await
-    .unwrap_or_default();
+    .map_err(ApiError)?;
 
   let context_by_eval =
-    context_for_builds(state, recent_raw.iter().chain(failed_raw.iter())).await;
+    context_for_builds(state, recent_raw.iter().chain(failed_raw.iter()))
+      .await?;
   let recent_builds = recent_raw
     .iter()
     .map(|b| {
@@ -377,12 +357,12 @@ pub async fn overview(
     })
     .collect();
 
-  let projects = OperatorProject::list(state, include_hidden).await;
+  let projects = OperatorProject::list(state, include_hidden).await?;
   let queue_by_system = OperatorQueueSystem::from_pending(&pending_raw);
   let (workers, worker_online, worker_total) =
-    OperatorWorker::list(state).await;
+    OperatorWorker::list(state).await?;
 
-  OperatorOverview {
+  Ok(OperatorOverview {
     total_builds: build_stats.total_builds.unwrap_or(0),
     completed_builds: build_stats.completed_builds.unwrap_or(0),
     failed_builds: build_stats.failed_builds.unwrap_or(0),
@@ -396,23 +376,35 @@ pub async fn overview(
     worker_online,
     worker_total,
     refreshed_at: Utc::now().format("%H:%M UTC").to_string(),
-  }
+  })
 }
 
-pub async fn recent_builds(state: &AppState) -> Vec<OperatorBuild> {
+/// Return recent builds for the operator dashboard.
+///
+/// # Errors
+///
+/// Returns an error when build or build-context queries fail.
+pub async fn recent_builds(state: &AppState) -> Result<Vec<OperatorBuild>> {
   let builds = circus_common::repo::builds::list_recent(&state.pool, 40)
     .await
-    .unwrap_or_default();
-  let context_by_eval = context_for_builds(state, builds.iter()).await;
-  builds
-    .iter()
-    .map(|b| {
-      OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
-    })
-    .collect()
+    .map_err(ApiError)?;
+  let context_by_eval = context_for_builds(state, builds.iter()).await?;
+  Ok(
+    builds
+      .iter()
+      .map(|b| {
+        OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
+      })
+      .collect(),
+  )
 }
 
-pub async fn failures(state: &AppState) -> Vec<OperatorBuild> {
+/// Return recent failed builds for the operator dashboard.
+///
+/// # Errors
+///
+/// Returns an error when build or build-context queries fail.
+pub async fn failures(state: &AppState) -> Result<Vec<OperatorBuild>> {
   let builds = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
@@ -423,74 +415,133 @@ pub async fn failures(state: &AppState) -> Vec<OperatorBuild> {
     0,
   )
   .await
-  .unwrap_or_default();
-  let context_by_eval = context_for_builds(state, builds.iter()).await;
-  builds
-    .iter()
-    .map(|b| {
-      OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
-    })
-    .collect()
+  .map_err(ApiError)?;
+  let context_by_eval = context_for_builds(state, builds.iter()).await?;
+  Ok(
+    builds
+      .iter()
+      .map(|b| {
+        OperatorBuild::from_build(b, context_by_eval.get(&b.evaluation_id))
+      })
+      .collect(),
+  )
 }
 
+/// Return project summaries for the operator dashboard.
+///
+/// # Errors
+///
+/// Returns an error when the project query fails.
 pub async fn projects(
   state: &AppState,
   include_hidden: bool,
-) -> Vec<OperatorProject> {
+) -> Result<Vec<OperatorProject>> {
   OperatorProject::list(state, include_hidden).await
 }
 
-pub async fn queue(state: &AppState) -> Vec<OperatorQueueSystem> {
+/// Return pending build counts grouped by target system.
+///
+/// # Errors
+///
+/// Returns an error when the pending-build query fails.
+pub async fn queue(state: &AppState) -> Result<Vec<OperatorQueueSystem>> {
   let pending = circus_common::repo::builds::list_pending_in_scheduler_order(
     &state.pool,
     100,
     0,
   )
   .await
-  .unwrap_or_default();
-  OperatorQueueSystem::from_pending(&pending)
+  .map_err(ApiError)?;
+  Ok(OperatorQueueSystem::from_pending(&pending))
 }
 
-pub async fn worker_summary(state: &AppState) -> Vec<OperatorWorker> {
-  let (workers, ..) = OperatorWorker::list(state).await;
-  workers
+/// Return worker summaries for the operator dashboard.
+///
+/// # Errors
+///
+/// Returns an error when builder or agent session queries fail.
+pub async fn worker_summary(state: &AppState) -> Result<Vec<OperatorWorker>> {
+  let (workers, ..) = OperatorWorker::list(state).await?;
+  Ok(workers)
 }
 
-type BuildContext = (Uuid, String, Uuid, String);
+#[derive(Clone)]
+struct BuildContext {
+  project_id:   Uuid,
+  project_name: String,
+  jobset_id:    Uuid,
+  jobset_name:  String,
+}
+
+#[derive(FromRow)]
+struct BuildContextRow {
+  evaluation_id: Uuid,
+  project_id:    Uuid,
+  project_name:  String,
+  jobset_id:     Uuid,
+  jobset_name:   String,
+}
 
 async fn context_for_builds<'a>(
   state: &AppState,
   builds: impl Iterator<Item = &'a Build>,
-) -> HashMap<Uuid, BuildContext> {
-  let mut context_by_eval = HashMap::new();
+) -> Result<HashMap<Uuid, BuildContext>> {
+  let mut eval_ids = Vec::new();
   for item in builds {
-    if context_by_eval.contains_key(&item.evaluation_id) {
-      continue;
-    }
-    if let Some(context) =
-      context_for_evaluation(state, item.evaluation_id).await
-    {
-      context_by_eval.insert(item.evaluation_id, context);
+    if !eval_ids.contains(&item.evaluation_id) {
+      eval_ids.push(item.evaluation_id);
     }
   }
-  context_by_eval
+  if eval_ids.is_empty() {
+    return Ok(HashMap::new());
+  }
+
+  let rows = sqlx::query_as::<_, BuildContextRow>(
+    "SELECT e.id AS evaluation_id, p.id AS project_id, p.name AS \
+     project_name, j.id AS jobset_id, j.name AS jobset_name FROM evaluations \
+     e JOIN jobsets j ON e.jobset_id = j.id JOIN projects p ON j.project_id = \
+     p.id WHERE e.id = ANY($1)",
+  )
+  .bind(&eval_ids)
+  .fetch_all(&state.pool)
+  .await
+  .map_err(|err| ApiError(circus_common::CiError::Database(err)))?;
+
+  Ok(
+    rows
+      .into_iter()
+      .map(|row| {
+        (row.evaluation_id, BuildContext {
+          project_id:   row.project_id,
+          project_name: row.project_name,
+          jobset_id:    row.jobset_id,
+          jobset_name:  row.jobset_name,
+        })
+      })
+      .collect(),
+  )
 }
 
-async fn context_for_evaluation(
-  state: &AppState,
-  evaluation_id: Uuid,
-) -> Option<BuildContext> {
-  let eval = circus_common::repo::evaluations::get(&state.pool, evaluation_id)
-    .await
-    .ok()?;
-  let jobset = circus_common::repo::jobsets::get(&state.pool, eval.jobset_id)
-    .await
-    .ok()?;
-  let project =
-    circus_common::repo::projects::get(&state.pool, jobset.project_id)
-      .await
-      .ok()?;
-  Some((project.id, project.name, jobset.id, jobset.name))
+fn format_duration(
+  started: Option<&chrono::DateTime<chrono::Utc>>,
+  completed: Option<&chrono::DateTime<chrono::Utc>>,
+) -> String {
+  match (started, completed) {
+    (Some(s), Some(c)) => {
+      let secs = (*c - *s).num_seconds();
+      if secs < 0 {
+        return String::new();
+      }
+      let mins = secs / 60;
+      let rem = secs % 60;
+      if mins > 0 {
+        format!("{mins}m {rem}s")
+      } else {
+        format!("{rem}s")
+      }
+    },
+    _ => String::new(),
+  }
 }
 
 const fn is_failed_status(status: BuildStatus) -> bool {

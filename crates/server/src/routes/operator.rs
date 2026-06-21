@@ -1,55 +1,55 @@
 use axum::{Json, Router, extract::State, http::Extensions, routing::get};
 
-use crate::{operator, permissions, state::AppState};
+use crate::{error::ApiError, operator, permissions, state::AppState};
 
 async fn overview(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Json<operator::OperatorOverview> {
-  Json(
+) -> Result<Json<operator::OperatorOverview>, ApiError> {
+  Ok(Json(
     operator::overview(
       &state,
       permissions::check(&extensions, permissions::Permission::Admin),
     )
-    .await,
-  )
+    .await?,
+  ))
 }
 
 async fn failures(
   State(state): State<AppState>,
-) -> Json<Vec<operator::OperatorBuild>> {
-  Json(operator::failures(&state).await)
+) -> Result<Json<Vec<operator::OperatorBuild>>, ApiError> {
+  Ok(Json(operator::failures(&state).await?))
 }
 
 async fn recent_builds(
   State(state): State<AppState>,
-) -> Json<Vec<operator::OperatorBuild>> {
-  Json(operator::recent_builds(&state).await)
+) -> Result<Json<Vec<operator::OperatorBuild>>, ApiError> {
+  Ok(Json(operator::recent_builds(&state).await?))
 }
 
 async fn projects(
   State(state): State<AppState>,
   extensions: Extensions,
-) -> Json<Vec<operator::OperatorProject>> {
-  Json(
+) -> Result<Json<Vec<operator::OperatorProject>>, ApiError> {
+  Ok(Json(
     operator::projects(
       &state,
       permissions::check(&extensions, permissions::Permission::Admin),
     )
-    .await,
-  )
+    .await?,
+  ))
 }
 
 async fn queue(
   State(state): State<AppState>,
-) -> Json<Vec<operator::OperatorQueueSystem>> {
-  Json(operator::queue(&state).await)
+) -> Result<Json<Vec<operator::OperatorQueueSystem>>, ApiError> {
+  Ok(Json(operator::queue(&state).await?))
 }
 
 async fn workers(
   State(state): State<AppState>,
-) -> Json<Vec<operator::OperatorWorker>> {
-  Json(operator::worker_summary(&state).await)
+) -> Result<Json<Vec<operator::OperatorWorker>>, ApiError> {
+  Ok(Json(operator::worker_summary(&state).await?))
 }
 
 pub fn router() -> Router<AppState> {
