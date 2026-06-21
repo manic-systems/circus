@@ -97,11 +97,11 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with crossPkgs.buildPackages; [pkg-config capnproto];
-        buildInputs = [crossPkgs.openssl];
+        buildInputs = [(crossPkgs.openssl.override {static = true;})];
         cargoExtraArgs = "--package circus-agent";
         doCheck = false;
-        CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
         hardeningDisable = ["fortify" "fortify3"];
+        env.CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
       };
     in
       {
