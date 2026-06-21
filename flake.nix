@@ -142,6 +142,7 @@
         agent-dispatch = callTest ./nix/tests/agent-dispatch.nix;
         capability-scheduling = callTest ./nix/tests/capability-scheduling.nix;
         s3-cache = callTest ./nix/tests/s3-cache.nix;
+        caches = callTest ./nix/tests/caches.nix;
       };
     in
       vmTests
