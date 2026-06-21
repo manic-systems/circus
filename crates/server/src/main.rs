@@ -137,10 +137,13 @@ async fn main() -> color_eyre::Result<()> {
     http_client: reqwest::Client::new(),
     csrf_secret: Arc::new(csrf_secret),
     email_regex,
+    cache_traffic: Arc::new(dashmap::DashMap::new()),
   };
 
   // Start background session cleanup to prevent memory leaks
   state.spawn_session_cleanup();
+  // Drain in-memory cache-serving counters into the cache_traffic table.
+  state.spawn_cache_traffic_flush();
 
   let app = routes::router(state, &config);
 

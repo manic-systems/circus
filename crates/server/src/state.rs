@@ -1,4 +1,11 @@
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+  path::PathBuf,
+  sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+  },
+  time::Instant,
+};
 
 use circus_common::{
   models::{ApiKey, User},
@@ -23,6 +30,31 @@ const NARINFO_CACHE_TTL: std::time::Duration =
 
 /// Hard cap on the number of cached narinfos.
 const NARINFO_CACHE_MAX_ENTRIES: usize = 50_000;
+
+/// How often accumulated cache-serving counters are drained to the
+/// `cache_traffic` table (every 60 seconds).
+const CACHE_TRAFFIC_FLUSH_INTERVAL: std::time::Duration =
+  std::time::Duration::from_mins(1);
+
+/// In-memory serving counters for one cache, accumulated by the cache handlers
+/// and drained to the `cache_traffic` table by the flush worker. Atomic so
+/// hot-path increments never take the `DashMap` write lock beyond entry lookup.
+#[derive(Default)]
+pub struct TrafficCounter {
+  pub requests:     AtomicU64,
+  pub bytes_served: AtomicU64,
+}
+
+impl TrafficCounter {
+  /// Record one served response of `bytes` length.
+  pub fn record(&self, bytes: u64) {
+    self.requests.fetch_add(1, Ordering::Relaxed);
+    self.bytes_served.fetch_add(bytes, Ordering::Relaxed);
+  }
+}
+
+/// Per-cache serving counters keyed by cache name (`global` or project name).
+pub type CacheTrafficCounters = Arc<DashMap<String, TrafficCounter>>;
 
 /// Session data supporting both API key and user authentication
 #[derive(Clone)]
@@ -164,6 +196,9 @@ pub struct AppState {
   /// Compiled email validation regex from `server.email_validation_regex`.
   /// `None` means only structural checks (non-empty, contains `@`).
   pub email_regex:   Option<Arc<Regex>>,
+  /// In-memory cache-serving counters, drained to `cache_traffic` every 60s
+  /// by [`AppState::spawn_cache_traffic_flush`].
+  pub cache_traffic: CacheTrafficCounters,
 }
 
 impl AppState {
@@ -196,6 +231,16 @@ impl AppState {
     mac.update(session_id.as_bytes());
     hex::encode(mac.finalize().into_bytes())
   }
+
+  /// Record one served cache response against the named cache's in-memory
+  /// counter. Cheap and lock-light; the flush worker persists the totals.
+  pub fn record_cache_serve(&self, cache_name: &str, bytes: u64) {
+    self
+      .cache_traffic
+      .entry(cache_name.to_owned())
+      .or_default()
+      .record(bytes);
+  }
 }
 
 /// Marker placed in request extensions so dashboard handlers can render
@@ -224,6 +269,36 @@ impl AppState {
             remaining = sessions.len(),
             "Evicted expired sessions"
           );
+        }
+      }
+    });
+  }
+
+  /// Spawn a background task that drains the in-memory cache-serving counters
+  /// into the `cache_traffic` table once a minute, writing one row per cache
+  /// that saw traffic in the interval.
+  pub fn spawn_cache_traffic_flush(&self) {
+    let counters = Arc::clone(&self.cache_traffic);
+    let pool = self.pool.clone();
+    tokio::spawn(async move {
+      loop {
+        tokio::time::sleep(CACHE_TRAFFIC_FLUSH_INTERVAL).await;
+        let mut rows = Vec::new();
+        for entry in counters.iter() {
+          let requests = entry.requests.swap(0, Ordering::Relaxed);
+          let bytes = entry.bytes_served.swap(0, Ordering::Relaxed);
+          if requests > 0 || bytes > 0 {
+            rows.push((
+              entry.key().clone(),
+              i64::try_from(requests).unwrap_or(i64::MAX),
+              i64::try_from(bytes).unwrap_or(i64::MAX),
+            ));
+          }
+        }
+        if let Err(error) =
+          circus_common::repo::cache_traffic::flush(&pool, &rows).await
+        {
+          tracing::warn!(%error, "Failed to flush cache traffic counters");
         }
       }
     });

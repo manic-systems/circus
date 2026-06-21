@@ -67,15 +67,18 @@ impl CacheScope {
 }
 
 struct CacheSettings {
-  scope:   CacheScope,
-  enabled: bool,
+  scope:      CacheScope,
+  enabled:    bool,
+  /// Cache name for traffic accounting: `global` or the project name.
+  cache_name: String,
 }
 
 impl CacheSettings {
-  const fn global(config: &circus_config::Config) -> Self {
+  fn global(config: &circus_config::Config) -> Self {
     Self {
-      scope:   CacheScope::Global,
-      enabled: config.cache.enabled,
+      scope:      CacheScope::Global,
+      enabled:    config.cache.enabled,
+      cache_name: "global".to_owned(),
     }
   }
 }
@@ -89,8 +92,9 @@ async fn project_cache_settings(
       .await
       .map_err(ApiError)?;
   Ok(CacheSettings {
-    scope:   CacheScope::Project(project.id),
-    enabled: project.cache_enabled,
+    scope:      CacheScope::Project(project.id),
+    enabled:    project.cache_enabled,
+    cache_name: project_name.to_owned(),
   })
 }
 
@@ -366,6 +370,7 @@ async fn narinfo_for_settings(
 
   let cache_key = settings.scope.cache_key(hash);
   if let Some(cached) = state.narinfo_cache.get(&cache_key) {
+    state.record_cache_serve(&settings.cache_name, cached.len() as u64);
     return Ok(
       (
         StatusCode::OK,
@@ -391,6 +396,7 @@ async fn narinfo_for_settings(
   {
     let body = render_narinfo_row(&row);
     state.narinfo_cache.insert(cache_key, body.clone());
+    state.record_cache_serve(&settings.cache_name, body.len() as u64);
     return Ok(
       (
         StatusCode::OK,
@@ -431,6 +437,7 @@ async fn narinfo_for_settings(
   state
     .narinfo_cache
     .insert(settings.scope.cache_key(hash), narinfo_text.clone());
+  state.record_cache_serve(&settings.cache_name, narinfo_text.len() as u64);
 
   Ok(
     (
@@ -494,6 +501,7 @@ fn is_valid_nar_object_name(name: &str) -> bool {
 async fn redirect_uploaded_nar(
   state: &AppState,
   object_name: &str,
+  cache_name: &str,
   scope: CacheScope,
 ) -> Result<Option<Response>, ApiError> {
   if !is_valid_nar_object_name(object_name) {
@@ -525,6 +533,11 @@ async fn redirect_uploaded_nar(
         tracing::warn!(url = %row.url, "failed to construct S3 redirect URL");
         return Ok(Some(StatusCode::NOT_FOUND.into_response()));
       };
+      // Bytes leave via S3, but the request is ours to count; bill the known
+      // compressed size and stamp the served path's last-fetch time.
+      let served = row.file_size.unwrap_or(row.nar_size).max(0);
+      state.record_cache_serve(cache_name, served as u64);
+      spawn_touch_last_fetched(state, row.store_path);
       let mut response = StatusCode::TEMPORARY_REDIRECT.into_response();
       response.headers_mut().insert(header::LOCATION, location);
       Ok(Some(response))
@@ -532,6 +545,20 @@ async fn redirect_uploaded_nar(
     Err(circus_common::CiError::NotFound(_)) => Ok(None),
     Err(e) => Err(ApiError(e)),
   }
+}
+
+/// Fire-and-forget best-effort `last_fetched_at` stamp for a served path. Never
+/// blocks or fails the response; mirrors `touch_api_key_last_used`.
+fn spawn_touch_last_fetched(state: &AppState, store_path: String) {
+  let pool = state.pool.clone();
+  tokio::spawn(async move {
+    if let Err(error) =
+      circus_common::repo::narinfo_cache::touch_last_fetched(&pool, &store_path)
+        .await
+    {
+      tracing::debug!(%error, store_path, "failed to stamp last_fetched_at");
+    }
+  });
 }
 
 /// Serve an uncompressed NAR file. Harmonia narinfos point here as
@@ -566,7 +593,8 @@ async fn serve_nar_for_settings(
   }
 
   if let Some(response) =
-    redirect_uploaded_nar(&state, &hash, settings.scope).await?
+    redirect_uploaded_nar(&state, &hash, &settings.cache_name, settings.scope)
+      .await?
   {
     return Ok(response);
   }
@@ -609,9 +637,13 @@ async fn serve_nar_for_settings(
     }
   }
 
-  let store_path =
-    PathBuf::from(info.info.store_dir.display(&info.path).to_string());
+  let store_path_str = info.info.store_dir.display(&info.path).to_string();
+  let nar_size = info.info.nar_size;
+  let store_path = PathBuf::from(&store_path_str);
   let body = Body::from_stream(NarByteStream::new(store_path));
+
+  state.record_cache_serve(&settings.cache_name, nar_size);
+  spawn_touch_last_fetched(&state, store_path_str);
 
   Ok(
     (
