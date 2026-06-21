@@ -6,7 +6,7 @@
 }: let
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) literalExpression mkEnableOption mkOption;
-  inherit (lib.types) attrsOf bool int listOf nullOr package path port str submodule;
+  inherit (lib.types) bool int listOf nullOr package path str submodule;
   inherit (lib.lists) optional;
 
   cfg = config.services.circus;
@@ -22,11 +22,55 @@
     };
   };
 
+  cacheUpstreamSettings = submodule {
+    freeformType = settingsType;
+    options = {
+      url = mkOption {
+        type = str;
+        description = "Upstream binary cache URL (substituter).";
+        example = "https://cache.nixos.org";
+      };
+
+      public_key = mkOption {
+        type = nullOr str;
+        default = null;
+        description = "Trusted public key for the upstream cache.";
+        example = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+      };
+    };
+  };
+
   projectSettings = submodule {
     freeformType = settingsType;
     options = {
       name = mkOption {type = str;};
       repository_url = mkOption {type = str;};
+      cache_enabled = mkOption {
+        type = bool;
+        default = false;
+        description = ''
+          Whether this project serves a per-project binary cache at
+          `/projects/<name>/nix-cache/`.
+        '';
+      };
+
+      cache_url = mkOption {
+        type = nullOr str;
+        default = null;
+        example = "https://ci.example.org/projects/myproject/nix-cache/";
+        description = ''
+          Public substituter URL advertised for this project's cache. When `null`,
+          consumers use `<site>/projects/<name>/nix-cache/` derived from the
+          global `cache.cache_url`.
+        '';
+      };
+
+      cache_upstreams = mkOption {
+        type = listOf cacheUpstreamSettings;
+        default = [];
+        description = "Upstream caches this project's cache may fall through to.";
+      };
+
       jobsets = mkOption {
         type = listOf jobsetSettings;
         default = [];
@@ -103,10 +147,154 @@
         default = {};
         description = "Declarative bootstrap settings.";
       };
+
+      cache = mkOption {
+        type = submodule {
+          freeformType = settingsType;
+          options = {
+            enabled = mkOption {
+              type = bool;
+              default = false;
+              description = "Serve the global binary cache at `/nix-cache/`.";
+            };
+            secret_key_file = mkOption {
+              type = nullOr path;
+              default = null;
+              description = ''
+                Path to the Nix cache signing secret key.
+
+                Generate with `nix key generate-secret`; distribute the matching
+                public key to consumers as a `trusted-public-keys` entry.
+              '';
+            };
+            cache_url = mkOption {
+              type = nullOr str;
+              default = null;
+              example = "https://ci.example.org/nix-cache";
+              description = "Public substituter URL of the global cache.";
+            };
+
+            upstreams = mkOption {
+              type = listOf cacheUpstreamSettings;
+              default = [];
+              description = "Upstream caches the global cache may fall through to.";
+            };
+          };
+        };
+        default = {};
+        description = "Global binary cache settings.";
+      };
+
+      signing = mkOption {
+        type = submodule {
+          freeformType = settingsType;
+          options = {
+            enabled = mkOption {
+              type = bool;
+              default = false;
+              description = "Sign built store paths so substituters can trust them.";
+            };
+            key_file = mkOption {
+              type = nullOr path;
+              default = null;
+              description = ''
+                Path to the Nix signing secret key file (`<name>:<base64>` form).
+                The server derives the public key from it for the dashboard's
+                "How to use" panel.
+              '';
+            };
+          };
+        };
+        default = {};
+        description = "Build output signing settings.";
+      };
+
+      # Mirrors `circus_config::CacheUploadConfig`.
+      cache_upload = mkOption {
+        type = submodule {
+          freeformType = settingsType;
+          options = {
+            enabled = mkOption {
+              type = bool;
+              default = false;
+              description = "Push built paths to a remote store (e.g., S3).";
+            };
+            store_uri = mkOption {
+              type = nullOr str;
+              default = null;
+              description = "Target store URI for uploads.";
+              example = "s3://my-bucket?region=us-east-1";
+            };
+            upload_concurrency = mkOption {
+              type = int;
+              default = 4;
+              description = "Concurrent upload workers.";
+            };
+            upload_max_retries = mkOption {
+              type = int;
+              default = 3;
+              description = "Max retry attempts per path before giving up.";
+            };
+            fail_build_on_upload_error = mkOption {
+              type = bool;
+              default = false;
+              description = "Fail the build when cache upload exhausts its retries.";
+            };
+            compression = mkOption {
+              type = str;
+              default = "zstd";
+              description = "Wire compression for uploads: zstd, xz, gzip, or none.";
+            };
+            s3 = mkOption {
+              type = nullOr (submodule {
+                freeformType = settingsType;
+                options = {
+                  region = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "AWS region (e.g. us-east-1).";
+                  };
+                  prefix = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Path prefix within the bucket.";
+                  };
+                  access_key_id = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "AWS access key ID for presigned uploads.";
+                  };
+                  secret_access_key_file = mkOption {
+                    type = nullOr path;
+                    default = null;
+                    description = "Path to a file holding the AWS secret access key.";
+                  };
+                };
+              });
+              default = null;
+              description = "S3-specific upload settings (used when store_uri is s3://).";
+            };
+          };
+        };
+        default = {};
+        description = "Build output cache upload settings.";
+      };
     };
   };
 
-  settingsFile = settingsFormat.generate "circus.toml" cfg.settings;
+  # Typed options default optional fields to null so they are discoverable, but
+  # TOML has no null: drop null leaves (at any depth, including inside list
+  # elements) before generating. An absent key is read back as `None` by serde,
+  # which is the intended meaning.
+  # FIXME: this sucks
+  stripNulls = value:
+    if lib.isAttrs value && !(lib.isDerivation value)
+    then lib.mapAttrs (_: stripNulls) (lib.filterAttrs (_: v: v != null) value)
+    else if lib.isList value
+    then map stripNulls value
+    else value;
+
+  settingsFile = settingsFormat.generate "circus.toml" (stripNulls cfg.settings);
 in {
   options.services.circus = {
     enable = mkEnableOption "circus system";
@@ -119,14 +307,14 @@ in {
     evaluatorPackage = mkOption {
       type = package;
       default = cfg.package;
-      defaultText = "cfg.package";
+      defaultText = literalExpression "cfg.package";
       description = "The circus evaluator package.";
     };
 
     queueRunnerPackage = mkOption {
       type = package;
       default = cfg.package;
-      defaultText = "cfg.package";
+      defaultText = literalExpression "cfg.package";
       description = "The circus queue runner package.";
     };
 
@@ -143,18 +331,21 @@ in {
         to TOML and written to {file}`circus.toml`; option names match the TOML
         schema.
       '';
-      example = literalExpression ''
-        {
-          server.port = 3000;
-          declarative.projects = [
-            {
-              name = "my-project";
-              repository_url = "https://github.com/user/repo";
-              jobsets = [{ name = "packages"; nix_expression = "packages"; }];
-            }
-          ];
-        }
-      '';
+      example = {
+        server.port = 3000;
+        declarative.projects = [
+          {
+            name = "my-project";
+            repository_url = "https://github.com/user/repo";
+            jobsets = [
+              {
+                name = "packages";
+                nix_expression = "packages";
+              }
+            ];
+          }
+        ];
+      };
     };
 
     database.createLocally = mkOption {
