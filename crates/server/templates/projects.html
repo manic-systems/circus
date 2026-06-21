@@ -104,16 +104,18 @@
 </div>
 {% else %}
 <div class="table-wrap">
-<table>
+<table class="data-table">
   <thead>
-    <tr><th>Name</th><th>Repository</th><th>Created</th></tr>
+    <tr><th>Name</th><th>Description</th><th>Repository</th><th>Created</th><th>Updated</th></tr>
   </thead>
   <tbody>
     {% for p in projects %}
     <tr>
-      <td><a href="/project/{{ p.id }}">{{ p.name }}</a></td>
-      <td>{{ p.repository_url }}</td>
-      <td>{{ p.created_at.format("%Y-%m-%d %H:%M") }}</td>
+      <td class="truncate" title="{{ p.name }}"><a href="/project/{{ p.id }}">{{ p.name }}</a></td>
+      <td class="truncate text-muted" title="{% match p.description %}{% when Some with (d) %}{{ d }}{% when None %}{% endmatch %}">{% match p.description %}{% when Some with (d) %}{{ d }}{% when None %}-{% endmatch %}</td>
+      <td class="mono truncate" title="{{ p.repository_url }}">{{ p.repository_url }}</td>
+      <td class="mono nowrap">{{ p.created_at.format("%Y-%m-%d %H:%M") }}</td>
+      <td class="mono nowrap">{{ p.updated_at.format("%Y-%m-%d %H:%M") }}</td>
     </tr>
     {% endfor %}
   </tbody>

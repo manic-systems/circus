@@ -52,7 +52,7 @@
       {% else %}
       <div class="table-wrap compact-table-wrap">
         <table class="data-table dense-table">
-          <thead><tr><th>Project</th><th>Jobsets</th><th>Last eval</th><th>Eval status</th><th>Failing jobs</th><th>Queued</th><th>Systems</th><th>Updated</th></tr></thead>
+          <thead><tr><th>Project</th><th class="numeric" style="width:5rem">Jobsets</th><th>Last eval</th><th>Eval status</th><th class="numeric" style="width:6rem">Failing jobs</th><th class="numeric" style="width:5rem">Queued</th><th>Systems</th><th>Updated</th></tr></thead>
           <tbody>
             {% for p in projects %}
             <tr>
@@ -120,11 +120,11 @@
       {% else %}
       <div class="table-wrap compact-table-wrap">
         <table class="data-table dense-table">
-          <thead><tr><th>Name</th><th>System</th><th>Status</th><th>Load</th></tr></thead>
+          <thead><tr><th>Agent</th><th>System</th><th>Status</th><th>Load</th></tr></thead>
           <tbody>
             {% for w in workers %}
             <tr>
-              <td class="truncate" title="{{ w.name }}"><strong>{{ w.name }}</strong></td>
+              <td class="truncate">{% if !auth_name.is_empty() %}<strong title="{{ w.name }}">{{ w.name }}</strong>{% else %}<strong>Agent #{{ loop.index }}</strong>{% endif %}</td>
               <td class="mono nowrap">{{ w.system }}</td>
               <td><span class="status status-{{ w.status_class }}">{{ w.status_text }}</span></td>
               <td class="mono nowrap">{{ w.current_jobs }}/{{ w.max_jobs }}</td>
