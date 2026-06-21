@@ -647,6 +647,47 @@ fn document_value() -> Value {
           "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
           "responses": { "204": { "description": "Revoked" } } }
       },
+      "/admin/caches": {
+        "get": { "summary": "List binary caches (global + per-project) with storage and last-hour request counts",
+          "responses": { "200": { "description": "Array of cache summaries" } } }
+      },
+      "/admin/caches/{name}": {
+        "get": { "summary": "Binary cache detail: substituter URL, public key, nix.conf snippet, storage, last-hour traffic",
+          "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Cache name: 'global' or a project name" }],
+          "responses": {
+            "200": { "description": "Cache detail" },
+            "404": { "description": "No cache with that name" }
+          } }
+      },
+      "/admin/caches/{name}/storage-timeseries": {
+        "get": { "summary": "Storage-added time series (packages and bytes) for a cache",
+          "parameters": [
+            { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+            { "name": "granularity", "in": "query", "required": false, "schema": { "type": "string", "enum": ["minutes", "hours", "days", "weeks"] } },
+            { "name": "points", "in": "query", "required": false, "schema": { "type": "integer" } }
+          ],
+          "responses": { "200": { "description": "Storage series" } } }
+      },
+      "/admin/caches/{name}/traffic-timeseries": {
+        "get": { "summary": "Serving traffic time series (requests and bytes) for a cache",
+          "parameters": [
+            { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+            { "name": "granularity", "in": "query", "required": false, "schema": { "type": "string", "enum": ["minutes", "hours", "days", "weeks"] } },
+            { "name": "points", "in": "query", "required": false, "schema": { "type": "integer" } }
+          ],
+          "responses": { "200": { "description": "Traffic series" } } }
+      },
+      "/admin/caches/{name}/nars": {
+        "get": { "summary": "Filtered, paginated NAR inventory for a cache",
+          "parameters": [
+            { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+            { "name": "hash", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Store-path hash prefix" },
+            { "name": "package", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Package-name substring" },
+            { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer" } },
+            { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } }
+          ],
+          "responses": { "200": { "description": "NAR list with totals, summary, and extremes" } } }
+      },
       "/admin/system": {
         "get": { "summary": "System status",
           "responses": { "200": { "description": "Status",

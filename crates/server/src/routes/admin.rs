@@ -20,7 +20,12 @@ use circus_common::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{auth_middleware::RequireAdmin, error::ApiError, state::AppState};
+use crate::{
+  auth_middleware::RequireAdmin,
+  cache_overview,
+  error::ApiError,
+  state::AppState,
+};
 
 fn config_file_path() -> Option<std::path::PathBuf> {
   std::env::var_os("CIRCUS_CONFIG_FILE").map(std::path::PathBuf::from)
@@ -464,8 +469,296 @@ async fn list_audit_log(
   }))
 }
 
+#[derive(Debug, Serialize)]
+struct CacheSummaryItem {
+  name:               String,
+  scope:              &'static str,
+  active:             bool,
+  nar_count:          i64,
+  compressed_bytes:   i64,
+  uncompressed_bytes: i64,
+  requests_last_hour: i64,
+}
+
+/// List the global cache plus every cache-enabled project with storage and
+/// trailing-hour request counts.
+async fn list_caches(
+  _auth: RequireAdmin,
+  State(state): State<AppState>,
+) -> Result<Json<Vec<CacheSummaryItem>>, ApiError> {
+  let refs = cache_overview::list_cache_refs(&state).await?;
+  let mut items = Vec::with_capacity(refs.len());
+  for cache in refs {
+    let storage = circus_common::repo::narinfo_cache::storage_summary(
+      &state.pool,
+      cache.scope,
+    )
+    .await?;
+    let (requests_last_hour, _bytes) =
+      circus_common::repo::cache_traffic::traffic_last_hour(
+        &state.pool,
+        &cache.name,
+      )
+      .await?;
+    items.push(CacheSummaryItem {
+      scope: cache.scope_kind(),
+      name: cache.name,
+      active: cache.active,
+      nar_count: storage.nar_count,
+      compressed_bytes: storage.compressed_bytes,
+      uncompressed_bytes: storage.uncompressed_bytes,
+      requests_last_hour,
+    });
+  }
+  Ok(Json(items))
+}
+
+#[derive(Debug, Serialize)]
+struct TrafficLastHour {
+  requests:     i64,
+  bytes_served: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct CacheDetailResponse {
+  name:              String,
+  scope:             &'static str,
+  active:            bool,
+  substituter_url:   Option<String>,
+  public_key:        Option<String>,
+  nix_conf_snippet:  Option<String>,
+  storage:           circus_common::repo::narinfo_cache::CacheStorageSummary,
+  traffic_last_hour: TrafficLastHour,
+}
+
+fn cache_not_found(name: &str) -> ApiError {
+  ApiError(circus_common::CiError::NotFound(format!("cache {name}")))
+}
+
+/// Detail for one cache: substituter URL, public key, ready-to-paste nix.conf
+/// snippet, storage totals, and trailing-hour traffic.
+async fn get_cache(
+  _auth: RequireAdmin,
+  State(state): State<AppState>,
+  Path(name): Path<String>,
+) -> Result<Json<CacheDetailResponse>, ApiError> {
+  let Some(cache) = cache_overview::resolve_cache_ref(&state, &name).await?
+  else {
+    return Err(cache_not_found(&name));
+  };
+  let storage = circus_common::repo::narinfo_cache::storage_summary(
+    &state.pool,
+    cache.scope,
+  )
+  .await?;
+  let (requests, bytes_served) =
+    circus_common::repo::cache_traffic::traffic_last_hour(
+      &state.pool,
+      &cache.name,
+    )
+    .await?;
+  let substituter = cache_overview::substituter_url(&state.config, &cache);
+  let public_key = cache_overview::public_key(&state.config);
+  let nix_conf_snippet = cache_overview::nix_conf_snippet(
+    substituter.as_deref(),
+    public_key.as_deref(),
+  );
+  Ok(Json(CacheDetailResponse {
+    scope: cache.scope_kind(),
+    name: cache.name,
+    active: cache.active,
+    substituter_url: substituter,
+    public_key,
+    nix_conf_snippet,
+    storage,
+    traffic_last_hour: TrafficLastHour {
+      requests,
+      bytes_served,
+    },
+  }))
+}
+
+#[derive(Debug, Deserialize)]
+struct TimeseriesQuery {
+  #[serde(default)]
+  granularity: Option<String>,
+  #[serde(default)]
+  points:      Option<i64>,
+}
+
+impl TimeseriesQuery {
+  fn resolved(&self) -> (circus_common::repo::cache_traffic::Granularity, i64) {
+    let granularity =
+      circus_common::repo::cache_traffic::Granularity::from_param(
+        self.granularity.as_deref().unwrap_or("hours"),
+      );
+    let points = self.points.unwrap_or(48).clamp(1, 500);
+    (granularity, points)
+  }
+}
+
+#[derive(Debug, Serialize)]
+struct StorageSeries {
+  timestamps:     Vec<String>,
+  packages_added: Vec<i64>,
+  bytes_added:    Vec<i64>,
+}
+
+async fn cache_storage_timeseries(
+  _auth: RequireAdmin,
+  State(state): State<AppState>,
+  Path(name): Path<String>,
+  Query(query): Query<TimeseriesQuery>,
+) -> Result<Json<StorageSeries>, ApiError> {
+  let Some(cache) = cache_overview::resolve_cache_ref(&state, &name).await?
+  else {
+    return Err(cache_not_found(&name));
+  };
+  let (granularity, points) = query.resolved();
+  let series = circus_common::repo::cache_traffic::storage_timeseries(
+    &state.pool,
+    cache.scope,
+    granularity,
+    points,
+  )
+  .await?;
+  Ok(Json(StorageSeries {
+    timestamps:     series.iter().map(|p| p.bucket_time.to_rfc3339()).collect(),
+    packages_added: series.iter().map(|p| p.packages_added).collect(),
+    bytes_added:    series.iter().map(|p| p.bytes_added).collect(),
+  }))
+}
+
+#[derive(Debug, Serialize)]
+struct TrafficSeries {
+  timestamps: Vec<String>,
+  requests:   Vec<i64>,
+  bytes:      Vec<i64>,
+}
+
+async fn cache_traffic_timeseries(
+  _auth: RequireAdmin,
+  State(state): State<AppState>,
+  Path(name): Path<String>,
+  Query(query): Query<TimeseriesQuery>,
+) -> Result<Json<TrafficSeries>, ApiError> {
+  let Some(cache) = cache_overview::resolve_cache_ref(&state, &name).await?
+  else {
+    return Err(cache_not_found(&name));
+  };
+  let (granularity, points) = query.resolved();
+  let series = circus_common::repo::cache_traffic::traffic_timeseries(
+    &state.pool,
+    &cache.name,
+    granularity,
+    points,
+  )
+  .await?;
+  Ok(Json(TrafficSeries {
+    timestamps: series.iter().map(|p| p.bucket_time.to_rfc3339()).collect(),
+    requests:   series.iter().map(|p| p.requests).collect(),
+    bytes:      series.iter().map(|p| p.bytes).collect(),
+  }))
+}
+
+#[derive(Debug, Deserialize)]
+struct NarsQuery {
+  #[serde(default)]
+  hash:    Option<String>,
+  #[serde(default)]
+  package: Option<String>,
+  #[serde(default)]
+  offset:  Option<i64>,
+  #[serde(default)]
+  limit:   Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct NarExtremes {
+  last_uploaded:  Option<chrono::DateTime<chrono::Utc>>,
+  oldest_fetched: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+struct NarsResponse {
+  items:    Vec<circus_common::repo::narinfo_cache::NarListItem>,
+  total:    i64,
+  summary:  circus_common::repo::narinfo_cache::CacheStorageSummary,
+  extremes: NarExtremes,
+}
+
+/// Filtered, paginated NAR inventory for one cache. `hash` matches a store-path
+/// hash prefix; `package` matches the post-hash name substring.
+async fn list_cache_nars(
+  _auth: RequireAdmin,
+  State(state): State<AppState>,
+  Path(name): Path<String>,
+  Query(query): Query<NarsQuery>,
+) -> Result<Json<NarsResponse>, ApiError> {
+  let Some(cache) = cache_overview::resolve_cache_ref(&state, &name).await?
+  else {
+    return Err(cache_not_found(&name));
+  };
+  let normalize = |value: Option<String>| {
+    value.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+  };
+  let hash = normalize(query.hash);
+  let package = normalize(query.package);
+  let limit = query.limit.unwrap_or(50).clamp(1, 500);
+  let offset = query.offset.unwrap_or(0).max(0);
+
+  let items = circus_common::repo::narinfo_cache::list_filtered(
+    &state.pool,
+    cache.scope,
+    hash.as_deref(),
+    package.as_deref(),
+    limit,
+    offset,
+  )
+  .await?;
+  let total = circus_common::repo::narinfo_cache::count_filtered(
+    &state.pool,
+    cache.scope,
+    hash.as_deref(),
+    package.as_deref(),
+  )
+  .await?;
+  let summary = circus_common::repo::narinfo_cache::storage_summary(
+    &state.pool,
+    cache.scope,
+  )
+  .await?;
+  let (last_uploaded, oldest_fetched) =
+    circus_common::repo::narinfo_cache::storage_extremes(
+      &state.pool,
+      cache.scope,
+    )
+    .await?;
+
+  Ok(Json(NarsResponse {
+    items,
+    total,
+    summary,
+    extremes: NarExtremes {
+      last_uploaded,
+      oldest_fetched,
+    },
+  }))
+}
+
 pub fn router() -> Router<AppState> {
   Router::new()
+    .route("/admin/caches", get(list_caches))
+    .route("/admin/caches/{name}", get(get_cache))
+    .route(
+      "/admin/caches/{name}/storage-timeseries",
+      get(cache_storage_timeseries),
+    )
+    .route(
+      "/admin/caches/{name}/traffic-timeseries",
+      get(cache_traffic_timeseries),
+    )
+    .route("/admin/caches/{name}/nars", get(list_cache_nars))
     .route("/admin/builders", get(list_builders).post(create_builder))
     .route(
       "/admin/builders/{id}",
