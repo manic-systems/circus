@@ -32,6 +32,11 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/admin/builders/{id}` | Get a builder | 200 |
 | PUT | `/api/v1/admin/builders/{id}` | Update a builder | 200 |
 | DELETE | `/api/v1/admin/builders/{id}` | Remove a builder | 204 |
+| GET | `/api/v1/admin/caches` | List binary caches (global + per-project) with storage and last-hour request counts | 200 |
+| GET | `/api/v1/admin/caches/{name}` | Binary cache detail: substituter URL, public key, nix.conf snippet, storage, last-hour traffic | 200, 404 |
+| GET | `/api/v1/admin/caches/{name}/nars` | Filtered, paginated NAR inventory for a cache | 200 |
+| GET | `/api/v1/admin/caches/{name}/storage-timeseries` | Storage-added time series (packages and bytes) for a cache | 200 |
+| GET | `/api/v1/admin/caches/{name}/traffic-timeseries` | Serving traffic time series (requests and bytes) for a cache | 200 |
 | GET | `/api/v1/admin/config` | Read the server config file | 200 |
 | PUT | `/api/v1/admin/config` | Replace the server config file | 200 |
 | GET | `/api/v1/admin/notification-tasks` | List pending notification delivery tasks | 200 |
