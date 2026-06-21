@@ -227,6 +227,11 @@ pub struct EvaluatorConfig {
   pub work_dir:             PathBuf,
   pub restrict_eval:        bool,
   pub allow_ifd:            bool,
+  /// URIs that Nix is allowed to fetch even under `restrict_eval`. Space- or
+  /// newline-separated prefixes passed as `allowed-uris` to Nix. Useful for
+  /// permitting locked tarball inputs (e.g. `https://releases.nixos.org`)
+  /// without disabling `restrict_eval` entirely.
+  pub allowed_uris:         Vec<String>,
 
   /// Whether to abort on the first evaluation cycle error instead of logging
   /// and retrying.
@@ -772,6 +777,7 @@ impl Default for EvaluatorConfig {
       work_dir:             PathBuf::from("/tmp/circus-evaluator"),
       restrict_eval:        true,
       allow_ifd:            false,
+      allowed_uris:         Vec::new(),
       strict_errors:        false,
     }
   }

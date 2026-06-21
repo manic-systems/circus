@@ -18,6 +18,7 @@ use super::{EvalResult, NixJob, nix_job_from_derivation};
 pub(super) struct NixEvalPolicy {
   restrict_eval: bool,
   allow_ifd:     bool,
+  allowed_uris:  Vec<String>,
 }
 
 impl NixEvalPolicy {
@@ -32,6 +33,9 @@ impl NixEvalPolicy {
         "false".to_string(),
       ));
     }
+    if !self.allowed_uris.is_empty() {
+      options.push(("allowed-uris".to_string(), self.allowed_uris.join(" ")));
+    }
     options
   }
 
@@ -45,6 +49,9 @@ impl NixEvalPolicy {
     if !self.allow_ifd {
       cmd.args(["--option", "allow-import-from-derivation", "false"]);
     }
+    if !self.allowed_uris.is_empty() {
+      cmd.args(["--option", "allowed-uris", &self.allowed_uris.join(" ")]);
+    }
   }
 }
 
@@ -53,6 +60,7 @@ impl From<&EvaluatorConfig> for NixEvalPolicy {
     Self {
       restrict_eval: config.restrict_eval,
       allow_ifd:     config.allow_ifd,
+      allowed_uris:  config.allowed_uris.clone(),
     }
   }
 }
@@ -157,12 +165,37 @@ mod policy_tests {
     NixEvalPolicy {
       restrict_eval,
       allow_ifd,
+      allowed_uris: Vec::new(),
     }
   }
 
   #[test]
   fn no_options_when_permissive() {
     assert!(policy(false, true).nix_options().is_empty());
+  }
+
+  #[test]
+  fn allowed_uris_joined_with_space() {
+    let p = NixEvalPolicy {
+      restrict_eval: true,
+      allow_ifd:     false,
+      allowed_uris:  vec![
+        "https://releases.nixos.org".to_string(),
+        "https://github.com".to_string(),
+      ],
+    };
+    let opts = p.nix_options();
+    let (_, v) = opts
+      .iter()
+      .find(|(k, _)| k == "allowed-uris")
+      .expect("allowed-uris option must be present");
+    assert_eq!(v, "https://releases.nixos.org https://github.com");
+  }
+
+  #[test]
+  fn empty_allowed_uris_emits_no_option() {
+    let opts = policy(true, false).nix_options();
+    assert!(!opts.iter().any(|(k, _)| k == "allowed-uris"));
   }
 
   #[test]
