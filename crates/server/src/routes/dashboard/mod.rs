@@ -62,6 +62,9 @@ pub fn router() -> Router<AppState> {
     .route("/users", get(admin::users_page))
     .route("/starred", get(pages::starred_page))
     .route("/metrics", get(pages::metrics_page))
+    .route("/caches", get(pages::caches_page))
+    .route("/caches/{name}", get(pages::cache_detail_page))
+    .route("/caches/{name}/nars", get(pages::cache_nars_page))
 }
 
 pub fn preview_router() -> Router {

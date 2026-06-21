@@ -53,6 +53,10 @@ use super::{
     BuildTemplate,
     BuilderView,
     BuildsTemplate,
+    CacheDetailTemplate,
+    CacheNarsTemplate,
+    CacheRowView,
+    CachesTemplate,
     ChannelTemplate,
     ChannelView,
     ChannelsTemplate,
@@ -63,6 +67,7 @@ use super::{
     JobsetTemplate,
     LoginTemplate,
     MetricsTemplate,
+    NarRowView,
     NewsTemplate,
     NotificationTaskView,
     PinnedOutputView,
@@ -90,6 +95,14 @@ pub fn router() -> Router {
       get(api_metrics_duration),
     )
     .route("/api/v1/metrics/systems", get(api_metrics_systems))
+    .route(
+      "/api/v1/admin/caches/{name}/storage-timeseries",
+      get(api_cache_storage_timeseries),
+    )
+    .route(
+      "/api/v1/admin/caches/{name}/traffic-timeseries",
+      get(api_cache_traffic_timeseries),
+    )
     .route("/", get(home))
     .route("/projects", get(projects))
     .route("/projects/new", get(project_setup))
@@ -110,6 +123,9 @@ pub fn router() -> Router {
     .route("/metrics", get(metrics))
     .route("/login", get(login))
     .route("/private", get(private))
+    .route("/caches", get(caches))
+    .route("/caches/{name}", get(cache_detail))
+    .route("/caches/{name}/nars", get(cache_nars))
 }
 
 fn render<T: Template>(template: T) -> Response {
@@ -895,4 +911,138 @@ fn job_rows() -> Vec<JobStatusRow> {
       },
     ],
   }]
+}
+
+async fn caches() -> Response {
+  render(CachesTemplate {
+    ui:                 ui(),
+    is_admin:           true,
+    auth_name:          "operator".into(),
+    total_nars:         42,
+    total_compressed:   "12.3 MiB".into(),
+    total_uncompressed: "45.6 MiB".into(),
+    caches:             vec![
+      CacheRowView {
+        name:              "global".into(),
+        scope_label:       "Global".into(),
+        active:            true,
+        nar_count:         30,
+        compressed:        "8.1 MiB".into(),
+        requests_per_hour: 142,
+        detail_href:       "/caches/global".into(),
+      },
+      CacheRowView {
+        name:              "circus".into(),
+        scope_label:       "Project".into(),
+        active:            true,
+        nar_count:         12,
+        compressed:        "4.2 MiB".into(),
+        requests_per_hour: 37,
+        detail_href:       "/caches/circus".into(),
+      },
+    ],
+  })
+}
+
+async fn cache_detail() -> Response {
+  render(CacheDetailTemplate {
+    ui:                     ui(),
+    is_admin:               true,
+    auth_name:              "operator".into(),
+    name:                   "global".into(),
+    scope_label:            "Global".into(),
+    active:                 true,
+    nars_href:              "/caches/global/nars".into(),
+    storage_timeseries_url: "/api/v1/admin/caches/global/storage-timeseries"
+      .into(),
+    traffic_timeseries_url: "/api/v1/admin/caches/global/traffic-timeseries"
+      .into(),
+    packages_stored:        30,
+    uncompressed:           "45.6 MiB".into(),
+    compressed:             "8.1 MiB".into(),
+    requests_last_hour:     142,
+    traffic_last_hour:      "3.2 MiB".into(),
+    has_substituter:        true,
+    substituter_url:        "https://cache.example.invalid".into(),
+    has_public_key:         true,
+    public_key:             "cache.example.invalid-1:\
+                             AbCdEfGhIjKlMnOpQrStUvWxYz1234567890+ab="
+      .into(),
+    has_snippet:            true,
+    nix_conf_snippet:
+      "substituters = https://cache.example.invalid\ntrusted-public-keys = \
+       cache.example.invalid-1:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890+ab="
+        .into(),
+  })
+}
+
+async fn cache_nars() -> Response {
+  render(CacheNarsTemplate {
+    ui:             ui(),
+    is_admin:       true,
+    auth_name:      "operator".into(),
+    name:           "global".into(),
+    scope_label:    "Global".into(),
+    detail_href:    "/caches/global".into(),
+    filter_hash:    String::new(),
+    filter_package: String::new(),
+    total_nars:     30,
+    nar_size:       "45.6 MiB".into(),
+    file_size:      "8.1 MiB".into(),
+    last_uploaded:  "2026-06-18 12:00 UTC".into(),
+    oldest_fetched: "2026-06-18 11:30 UTC".into(),
+    nars:           vec![
+      NarRowView {
+        hash:         "9f2c7a113badf00d7e57c".into(),
+        package:      "circus-server".into(),
+        store_path:   "/nix/store/9f2c7a113badf00d7e57c-circus-server".into(),
+        nar_size:     "1.5 MiB".into(),
+        compressed:   "420 KiB".into(),
+        created_at:   "2026-06-18 11:45".into(),
+        last_fetched: "2026-06-18 11:50".into(),
+      },
+      NarRowView {
+        hash:         "a1b2c3d4e5f6a7b8c9d0".into(),
+        package:      "circus-agent".into(),
+        store_path:   "/nix/store/a1b2c3d4e5f6a7b8c9d0-circus-agent".into(),
+        nar_size:     "2.1 MiB".into(),
+        compressed:   "680 KiB".into(),
+        created_at:   "2026-06-18 11:30".into(),
+        last_fetched: "2026-06-18 11:45".into(),
+      },
+    ],
+    page:           1,
+    total_pages:    2,
+    has_prev:       false,
+    has_next:       true,
+    prev_offset:    0,
+    next_offset:    20,
+    limit:          20,
+  })
+}
+
+async fn api_cache_storage_timeseries() -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "timestamps": [
+      "2026-06-16T08:00:00Z",
+      "2026-06-17T08:00:00Z",
+      "2026-06-18T08:00:00Z"
+    ],
+    "bytes_added": [3_500_000, 7_200_000, 10_800_000],
+    "packages_added": [8, 12, 10]
+  }))
+}
+
+async fn api_cache_traffic_timeseries() -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "timestamps": [
+      "2026-06-18T08:00:00Z",
+      "2026-06-18T09:00:00Z",
+      "2026-06-18T10:00:00Z",
+      "2026-06-18T11:00:00Z",
+      "2026-06-18T12:00:00Z"
+    ],
+    "bytes": [1_200_000, 2_800_000, 1_500_000, 3_100_000, 900_000],
+    "requests": [42, 95, 53, 108, 31]
+  }))
 }

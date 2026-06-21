@@ -528,3 +528,92 @@ pub(super) struct NotificationsTemplate {
   pub(super) auth_name:  String,
   pub(super) csrf_token: String,
 }
+
+/// One row in the unified Caches listing.
+pub(super) struct CacheRowView {
+  pub(super) name:              String,
+  pub(super) scope_label:       String,
+  pub(super) active:            bool,
+  pub(super) nar_count:         i64,
+  pub(super) compressed:        String,
+  pub(super) requests_per_hour: i64,
+  pub(super) detail_href:       String,
+}
+
+#[derive(Template)]
+#[template(path = "caches.html")]
+pub(super) struct CachesTemplate {
+  pub(super) ui:                 UiTemplateConfig,
+  pub(super) is_admin:           bool,
+  pub(super) auth_name:          String,
+  pub(super) total_nars:         i64,
+  pub(super) total_compressed:   String,
+  pub(super) total_uncompressed: String,
+  pub(super) caches:             Vec<CacheRowView>,
+}
+
+#[derive(Template)]
+#[template(path = "cache_detail.html")]
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "template render flags for optional how-to-use fields; not state"
+)]
+pub(super) struct CacheDetailTemplate {
+  pub(super) ui:                     UiTemplateConfig,
+  pub(super) is_admin:               bool,
+  pub(super) auth_name:              String,
+  pub(super) name:                   String,
+  pub(super) scope_label:            String,
+  pub(super) active:                 bool,
+  pub(super) nars_href:              String,
+  pub(super) storage_timeseries_url: String,
+  pub(super) traffic_timeseries_url: String,
+  pub(super) packages_stored:        i64,
+  pub(super) uncompressed:           String,
+  pub(super) compressed:             String,
+  pub(super) requests_last_hour:     i64,
+  pub(super) traffic_last_hour:      String,
+  pub(super) has_substituter:        bool,
+  pub(super) substituter_url:        String,
+  pub(super) has_public_key:         bool,
+  pub(super) public_key:             String,
+  pub(super) has_snippet:            bool,
+  pub(super) nix_conf_snippet:       String,
+}
+
+/// One row in the per-cache NAR inventory.
+pub(super) struct NarRowView {
+  pub(super) hash:         String,
+  pub(super) package:      String,
+  pub(super) store_path:   String,
+  pub(super) nar_size:     String,
+  pub(super) compressed:   String,
+  pub(super) created_at:   String,
+  pub(super) last_fetched: String,
+}
+
+#[derive(Template)]
+#[template(path = "cache_nars.html")]
+pub(super) struct CacheNarsTemplate {
+  pub(super) ui:             UiTemplateConfig,
+  pub(super) is_admin:       bool,
+  pub(super) auth_name:      String,
+  pub(super) name:           String,
+  pub(super) scope_label:    String,
+  pub(super) detail_href:    String,
+  pub(super) filter_hash:    String,
+  pub(super) filter_package: String,
+  pub(super) total_nars:     i64,
+  pub(super) nar_size:       String,
+  pub(super) file_size:      String,
+  pub(super) last_uploaded:  String,
+  pub(super) oldest_fetched: String,
+  pub(super) nars:           Vec<NarRowView>,
+  pub(super) page:           i64,
+  pub(super) total_pages:    i64,
+  pub(super) has_prev:       bool,
+  pub(super) has_next:       bool,
+  pub(super) prev_offset:    i64,
+  pub(super) next_offset:    i64,
+  pub(super) limit:          i64,
+}

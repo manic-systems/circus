@@ -215,6 +215,9 @@ pub(super) enum DashboardPage {
   News,
   Starred,
   Metrics,
+  Caches,
+  CacheDetail,
+  CacheNars,
 }
 
 pub(super) struct DashboardContext {
@@ -318,8 +321,41 @@ impl DashboardPage {
       Self::News => pages.news,
       Self::Starred => pages.starred,
       Self::Metrics => pages.metrics,
+      // Cache observability surfaces are admin-only and not configurable via
+      // page_access; there is no first-class cache entity to expose publicly.
+      Self::Caches | Self::CacheDetail | Self::CacheNars => {
+        PageAccessLevel::Admin
+      },
     }
   }
+}
+
+/// Format a byte count as a human-readable binary-unit string (e.g. `1.4 GiB`).
+/// Negative inputs are clamped to zero.
+#[must_use]
+pub(super) fn format_bytes(bytes: i64) -> String {
+  const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+  let mut value = bytes.max(0) as f64;
+  let mut unit = 0;
+  while value >= 1024.0 && unit < UNITS.len() - 1 {
+    value /= 1024.0;
+    unit += 1;
+  }
+  if unit == 0 {
+    format!("{} {}", value as i64, UNITS[unit])
+  } else {
+    format!("{value:.1} {}", UNITS[unit])
+  }
+}
+
+/// The 32-character store-path hash from a `/nix/store/<hash>-<name>` path, or
+/// the whole path when it does not match that shape.
+#[must_use]
+pub(super) fn store_path_hash(store_path: &str) -> String {
+  store_path
+    .strip_prefix("/nix/store/")
+    .and_then(|rest| rest.split_once('-'))
+    .map_or_else(|| store_path.to_owned(), |(hash, _name)| hash.to_owned())
 }
 
 pub(super) fn enforce_page_access(

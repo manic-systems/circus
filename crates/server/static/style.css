@@ -2126,3 +2126,149 @@ body:has(#login-dialog[open]) .login-container {
 .flash-message > strong {
   display: block;
 }
+
+/* --- Binary cache observability (Caches dashboard) ----------------------- */
+
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.badge-neutral {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.cache-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.cache-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cache-header-title h1 {
+  margin: 0;
+}
+
+.cache-section {
+  margin-bottom: 20px;
+}
+
+.cache-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.cache-chart-body {
+  position: relative;
+  height: 280px;
+}
+
+.cache-chart-body canvas {
+  max-height: 280px;
+}
+
+/* Segmented granularity switch */
+.granularity-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+.granularity-toggle button {
+  appearance: none;
+  border: none;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+}
+
+.granularity-toggle button:last-child {
+  border-right: none;
+}
+
+.granularity-toggle button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.granularity-toggle button.active {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+/* Copyable mono fields in the "How to use" panel */
+.copy-label {
+  display: block;
+  margin: 14px 0 4px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.copy-label:first-child {
+  margin-top: 0;
+}
+
+.copy-field {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.copy-field input,
+.copy-field textarea {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  resize: vertical;
+}
+
+.copy-field-block {
+  align-items: flex-start;
+}
+
+/* NAR inventory table cells */
+.mono-trunc {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.nar-detail summary {
+  cursor: pointer;
+}
+
+.nar-store-path {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
