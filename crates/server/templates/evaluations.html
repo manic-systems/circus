@@ -1,87 +1,114 @@
 {% extends "base.html" %}
 {% block title %}Evaluations - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
-  <span class="current">Evaluations</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <span class="current">Evaluations</span>
+    </nav>
 {% endblock %}
 {% block content %}
-<h1>Evaluations</h1>
+    <h1>Evaluations</h1>
 
-<form method="get" action="/evaluations" class="filter-form">
-  <label>Project: <input type="text" name="project" placeholder="project name"></label>
-  <label>Jobset: <input type="text" name="jobset" placeholder="jobset name"></label>
-  <label>Commit: <input type="text" name="commit" placeholder="commit hash"></label>
-  <label>Status: <select name="status">
-    <option value="">All</option>
-    <option value="running">Running</option>
-    <option value="completed">Completed</option>
-    <option value="failed">Failed</option>
-  </select></label>
-  <button type="submit" class="btn btn-secondary">Filter</button>
-</form>
+    <form method="get" action="/evaluations" class="filter-form">
+        <label>
+            Project: <input type="text" name="project" placeholder="project name">
+        </label>
+        <label>
+            Jobset: <input type="text" name="jobset" placeholder="jobset name">
+        </label>
+        <label>
+            Commit: <input type="text" name="commit" placeholder="commit hash">
+        </label>
+        <label>
+            Status:
+            <select name="status">
+                <option value="">All</option>
+                <option value="running">Running</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+            </select>
+        </label>
+        <button type="submit" class="btn btn-secondary">Filter</button>
+    </form>
 
-{% if evals.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No evaluations yet</div>
-  <div class="empty-hint">Evaluations will appear here once a jobset is evaluated.</div>
-</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>Commit</th><th>Project</th><th>Jobset</th><th>Status</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
-  </thead>
-  <tbody>
-    {% for e in evals %}
-    <tr>
-      <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
-      <td>{{ e.project_name }}</td>
-      <td>{{ e.jobset_name }}</td>
-      <td>
-        <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
-        {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
-      </td>
-      <td>{{ e.time }}</td>
-      {% if is_admin %}
-      <td class="row-actions">
-        <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="return_to" value="/evaluations">
-          {% if e.hidden %}
-          <input type="hidden" name="hidden" value="false">
-          <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
-          {% else %}
-          <input type="hidden" name="hidden" value="true">
-          <button class="btn btn-small btn-secondary" type="submit">Hide</button>
-          {% endif %}
-        </form>
-      </td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% if total_pages > 1 %}
-<nav class="pagination">
-  {% if has_prev %}
-  <a href="/evaluations?offset={{ prev_offset }}&limit={{ limit }}" class="btn btn-small btn-secondary">&laquo; Previous</a>
-  {% endif %}
-  <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
-  {% if has_next %}
-  <a href="/evaluations?offset={{ next_offset }}&limit={{ limit }}" class="btn btn-small btn-secondary">Next &raquo;</a>
-  {% endif %}
-</nav>
-{% endif %}
-{% endif %}
+    {% if evals.is_empty() %}
+        <div class="empty">
+            <div class="empty-title">No evaluations yet</div>
+            <div class="empty-hint">Evaluations will appear here once a jobset is evaluated.</div>
+        </div>
+    {% else %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Commit</th>
+                        <th>Project</th>
+                        <th>Jobset</th>
+                        <th>Status</th>
+                        <th>Time</th>
+                        {% if is_admin %}<th>Actions</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in evals %}
+                        <tr>
+                            <td>
+                                <a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a>
+                            </td>
+                            <td>{{ e.project_name }}</td>
+                            <td>{{ e.jobset_name }}</td>
+                            <td>
+                                <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
+                                {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+                            </td>
+                            <td>{{ e.time }}</td>
+                            {% if is_admin %}
+                                <td class="row-actions">
+                                    <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <input type="hidden" name="return_to" value="/evaluations">
+                                        {% if e.hidden %}
+                                            <input type="hidden" name="hidden" value="false">
+                                            <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
+                                        {% else %}
+                                            <input type="hidden" name="hidden" value="true">
+                                            <button class="btn btn-small btn-secondary" type="submit">Hide</button>
+                                        {% endif %}
+                                    </form>
+                                </td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if total_pages > 1 %}
+            <nav class="pagination">
+                {% if has_prev %}
+                    <a href="/evaluations?offset={{ prev_offset }}&limit={{ limit }}"
+                       class="btn btn-small btn-secondary">
+                        &laquo; Previous
+                    </a>
+                {% endif %}
+                <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
+                {% if has_next %}
+                    <a href="/evaluations?offset={{ next_offset }}&limit={{ limit }}"
+                       class="btn btn-small btn-secondary">
+                        Next &raquo;
+                    </a>
+                {% endif %}
+            </nav>
+        {% endif %}
+    {% endif %}
 {% endblock %}

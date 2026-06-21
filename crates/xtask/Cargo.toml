@@ -11,6 +11,7 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
+askama_fmt.workspace    = true
 axum.workspace          = true
 circus-server.workspace = true
 clap.workspace          = true

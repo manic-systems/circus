@@ -1,246 +1,264 @@
 {% extends "base.html" %}
 {% block title %}{{ name }} cache - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
-  <a href="/caches">Caches</a> <span class="sep">/</span>
-  <span class="current">{{ name }}</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <a href="/caches">Caches</a>
+        <span class="sep">/</span>
+        <span class="current">{{ name }}</span>
+    </nav>
 {% endblock %}
 
 {% block content %}
-<div class="cache-header">
-  <div class="cache-header-title">
-    <h1>{{ name }}</h1>
-    <span class="badge badge-neutral">{{ scope_label }}</span>
-    {% if active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-pending">Inactive</span>{% endif %}
-  </div>
-  <a class="btn btn-secondary" href="{{ nars_href }}">Browse NARs &raquo;</a>
-</div>
+    <div class="cache-header">
+        <div class="cache-header-title">
+            <h1>{{ name }}</h1>
+            <span class="badge badge-neutral">{{ scope_label }}</span>
+            {% if active %}
+                <span class="badge badge-success">Active</span>
+            {% else %}
+                <span class="badge badge-pending">Inactive</span>
+            {% endif %}
+        </div>
+        <a class="btn btn-secondary" href="{{ nars_href }}">Browse NARs &raquo;</a>
+    </div>
 
-<section class="panel cache-section">
-  <div class="panel-header"><h2>Storage</h2>
-    <div class="panel-actions">
-      <div class="granularity-toggle" data-target="storage">
-        <button type="button" data-granularity="minutes">Minutes</button>
-        <button type="button" data-granularity="hours" class="active">Hours</button>
-        <button type="button" data-granularity="days">Days</button>
-        <button type="button" data-granularity="weeks">Weeks</button>
-      </div>
-    </div>
-  </div>
-  <div class="panel-body">
-    <div class="cache-stat-row">
-      <div class="metric-card">
-        <div class="stat-label">Packages Stored</div>
-        <div class="stat-value">{{ packages_stored }}</div>
-      </div>
-      <div class="metric-card">
-        <div class="stat-label">Uncompressed</div>
-        <div class="stat-value">{{ uncompressed }}</div>
-      </div>
-      <div class="metric-card">
-        <div class="stat-label">Compressed</div>
-        <div class="stat-value">{{ compressed }}</div>
-      </div>
-    </div>
-    <div class="cache-chart-body">
-      <canvas id="storage-chart" data-url="{{ storage_timeseries_url }}"></canvas>
-      <p class="empty-hint chart-empty" id="storage-chart-empty" hidden>No storage data yet</p>
-    </div>
-  </div>
-</section>
+    <section class="panel cache-section">
+        <div class="panel-header">
+            <h2>Storage</h2>
+            <div class="panel-actions">
+                <div class="granularity-toggle" data-target="storage">
+                    <button type="button" data-granularity="minutes">Minutes</button>
+                    <button type="button" data-granularity="hours" class="active">Hours</button>
+                    <button type="button" data-granularity="days">Days</button>
+                    <button type="button" data-granularity="weeks">Weeks</button>
+                </div>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="cache-stat-row">
+                <div class="metric-card">
+                    <div class="stat-label">Packages Stored</div>
+                    <div class="stat-value">{{ packages_stored }}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="stat-label">Uncompressed</div>
+                    <div class="stat-value">{{ uncompressed }}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="stat-label">Compressed</div>
+                    <div class="stat-value">{{ compressed }}</div>
+                </div>
+            </div>
+            <div class="cache-chart-body">
+                <canvas id="storage-chart" data-url="{{ storage_timeseries_url }}">
+                </canvas>
+                <p class="empty-hint chart-empty" id="storage-chart-empty" hidden>No storage data yet</p>
+            </div>
+        </div>
+    </section>
 
-<section class="panel cache-section">
-  <div class="panel-header"><h2>Traffic</h2>
-    <div class="panel-actions">
-      <div class="granularity-toggle" data-target="traffic">
-        <button type="button" data-granularity="minutes">Minutes</button>
-        <button type="button" data-granularity="hours" class="active">Hours</button>
-        <button type="button" data-granularity="days">Days</button>
-        <button type="button" data-granularity="weeks">Weeks</button>
-      </div>
-    </div>
-  </div>
-  <div class="panel-body">
-    <div class="cache-stat-row">
-      <div class="metric-card">
-        <div class="stat-label">Requests (last hour)</div>
-        <div class="stat-value">{{ requests_last_hour }}</div>
-      </div>
-      <div class="metric-card">
-        <div class="stat-label">Traffic (last hour)</div>
-        <div class="stat-value">{{ traffic_last_hour }}</div>
-      </div>
-    </div>
-    <div class="cache-chart-body">
-      <canvas id="traffic-chart" data-url="{{ traffic_timeseries_url }}"></canvas>
-      <p class="empty-hint chart-empty" id="traffic-chart-empty" hidden>No traffic data yet</p>
-    </div>
-  </div>
-</section>
+    <section class="panel cache-section">
+        <div class="panel-header">
+            <h2>Traffic</h2>
+            <div class="panel-actions">
+                <div class="granularity-toggle" data-target="traffic">
+                    <button type="button" data-granularity="minutes">Minutes</button>
+                    <button type="button" data-granularity="hours" class="active">Hours</button>
+                    <button type="button" data-granularity="days">Days</button>
+                    <button type="button" data-granularity="weeks">Weeks</button>
+                </div>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="cache-stat-row">
+                <div class="metric-card">
+                    <div class="stat-label">Requests (last hour)</div>
+                    <div class="stat-value">{{ requests_last_hour }}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="stat-label">Traffic (last hour)</div>
+                    <div class="stat-value">{{ traffic_last_hour }}</div>
+                </div>
+            </div>
+            <div class="cache-chart-body">
+                <canvas id="traffic-chart" data-url="{{ traffic_timeseries_url }}">
+                </canvas>
+                <p class="empty-hint chart-empty" id="traffic-chart-empty" hidden>No traffic data yet</p>
+            </div>
+        </div>
+    </section>
 
-<section class="panel cache-section">
-  <div class="panel-header"><h2>How to use this cache</h2></div>
-  <div class="panel-body">
-    {% if has_substituter %}
-    <label class="copy-label">Substituter URL</label>
-    <div class="copy-field">
-      <input type="text" readonly value="{{ substituter_url }}">
-      <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
-    </div>
-    {% else %}
-    <p class="empty-hint">No <code>cache.cache_url</code> is configured, so a substituter URL cannot be shown.</p>
-    {% endif %}
+    <section class="panel cache-section">
+        <div class="panel-header">
+            <h2>How to use this cache</h2>
+        </div>
+        <div class="panel-body">
+            {% if has_substituter %}
+                <label class="copy-label">Substituter URL</label>
+                <div class="copy-field">
+                    <input type="text" readonly value="{{ substituter_url }}">
+                    <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
+                </div>
+            {% else %}
+                <p class="empty-hint">
+                    No <code>cache.cache_url</code> is configured, so a substituter URL cannot be shown.
+                </p>
+            {% endif %}
 
-    {% if has_public_key %}
-    <label class="copy-label">Trusted public key</label>
-    <div class="copy-field">
-      <input type="text" readonly value="{{ public_key }}">
-      <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
-    </div>
-    {% else %}
-    <p class="empty-hint">Signing is disabled, so there is no public key to publish.</p>
-    {% endif %}
+            {% if has_public_key %}
+                <label class="copy-label">Trusted public key</label>
+                <div class="copy-field">
+                    <input type="text" readonly value="{{ public_key }}">
+                    <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
+                </div>
+            {% else %}
+                <p class="empty-hint">Signing is disabled, so there is no public key to publish.</p>
+            {% endif %}
 
-    {% if has_snippet %}
-    <label class="copy-label">nix.conf snippet</label>
-    <div class="copy-field copy-field-block">
-      <textarea readonly rows="2">{{ nix_conf_snippet }}</textarea>
-      <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
-    </div>
-    {% endif %}
-  </div>
-</section>
+            {% if has_snippet %}
+                <label class="copy-label">nix.conf snippet</label>
+                <div class="copy-field copy-field-block">
+                    <textarea readonly rows="2">
+                        {{ nix_conf_snippet }}
+                    </textarea>
+                    <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
+                </div>
+            {% endif %}
+        </div>
+    </section>
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script>
 (function() {
-  function cssVar(name, fallback) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
-  }
-  function hexToRgba(hex, alpha) {
-    let c = hex.replace('#', '');
-    if (c.length === 3) c = c.split('').map(ch => ch + ch).join('');
-    const r = parseInt(c.substring(0, 2), 16);
-    const g = parseInt(c.substring(2, 4), 16);
-    const b = parseInt(c.substring(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
+function cssVar(name, fallback) {
+return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+function hexToRgba(hex, alpha) {
+let c = hex.replace('#', '');
+if (c.length === 3) c = c.split('').map(ch => ch + ch).join('');
+const r = parseInt(c.substring(0, 2), 16);
+const g = parseInt(c.substring(2, 4), 16);
+const b = parseInt(c.substring(4, 6), 16);
+return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
-  const colors = {
-    accent: cssVar('--accent', '#111827'),
-    running: cssVar('--status-running', '#007481'),
-    muted: cssVar('--text-muted', '#52606d'),
-    border: cssVar('--border', '#d3d9df')
-  };
+const colors = {
+accent: cssVar('--accent', '#111827'),
+running: cssVar('--status-running', '#007481'),
+muted: cssVar('--text-muted', '#52606d'),
+border: cssVar('--border', '#d3d9df')
+};
 
-  function fmtLabel(t, granularity) {
-    const d = new Date(t);
-    if (granularity === 'days' || granularity === 'weeks') {
-      return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
+function fmtLabel(t, granularity) {
+const d = new Date(t);
+if (granularity === 'days' || granularity === 'weeks') {
+return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
-  function dualAxisChart(ctx, leftLabel, rightLabel) {
-    return new Chart(ctx, {
-      type: 'line',
-      data: { labels: [], datasets: [
-        { label: leftLabel, data: [], yAxisID: 'yLeft', borderColor: colors.accent,
-          backgroundColor: hexToRgba(colors.accent, 0.08), fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4 },
-        { label: rightLabel, data: [], yAxisID: 'yRight', borderColor: colors.running,
-          backgroundColor: hexToRgba(colors.running, 0.08), fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4 }
-      ]},
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        scales: {
-          x: { grid: { display: false }, ticks: { color: colors.muted, maxRotation: 0 } },
-          yLeft: { type: 'linear', position: 'left', beginAtZero: true,
-            grid: { color: colors.border }, ticks: { color: colors.muted } },
-          yRight: { type: 'linear', position: 'right', beginAtZero: true,
-            grid: { display: false }, ticks: { color: colors.muted } }
-        },
-        plugins: { legend: { position: 'top', labels: { color: colors.muted, usePointStyle: true, boxWidth: 6, padding: 14 } } }
-      }
-    });
-  }
+function dualAxisChart(ctx, leftLabel, rightLabel) {
+return new Chart(ctx, {
+type: 'line',
+data: { labels: [], datasets: [
+{ label: leftLabel, data: [], yAxisID: 'yLeft', borderColor: colors.accent,
+backgroundColor: hexToRgba(colors.accent, 0.08), fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4 },
+{ label: rightLabel, data: [], yAxisID: 'yRight', borderColor: colors.running,
+backgroundColor: hexToRgba(colors.running, 0.08), fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4 }
+]},
+options: {
+responsive: true, maintainAspectRatio: false,
+scales: {
+x: { grid: { display: false }, ticks: { color: colors.muted, maxRotation: 0 } },
+yLeft: { type: 'linear', position: 'left', beginAtZero: true,
+grid: { color: colors.border }, ticks: { color: colors.muted } },
+yRight: { type: 'linear', position: 'right', beginAtZero: true,
+grid: { display: false }, ticks: { color: colors.muted } }
+},
+plugins: { legend: { position: 'top', labels: { color: colors.muted, usePointStyle: true, boxWidth: 6, padding: 14 } } }
+}
+});
+}
 
-  function setEmpty(chartId, emptyId, isEmpty) {
-    const canvas = document.getElementById(chartId);
-    const empty = document.getElementById(emptyId);
-    if (canvas) canvas.hidden = isEmpty;
-    if (empty) empty.hidden = !isEmpty;
-  }
+function setEmpty(chartId, emptyId, isEmpty) {
+const canvas = document.getElementById(chartId);
+const empty = document.getElementById(emptyId);
+if (canvas) canvas.hidden = isEmpty;
+if (empty) empty.hidden = !isEmpty;
+}
 
-  if (typeof Chart === 'undefined') {
-    document.querySelectorAll('.chart-empty').forEach(el => { el.textContent = 'Chart library unavailable'; el.hidden = false; });
-    return;
-  }
-  Chart.defaults.font.family = cssVar('--font-sans', 'Inter, system-ui, sans-serif');
-  Chart.defaults.font.size = 11;
-  Chart.defaults.color = colors.muted;
+if (typeof Chart === 'undefined') {
+document.querySelectorAll('.chart-empty').forEach(el => { el.textContent = 'Chart library unavailable'; el.hidden = false; });
+return;
+}
+Chart.defaults.font.family = cssVar('--font-sans', 'Inter, system-ui, sans-serif');
+Chart.defaults.font.size = 11;
+Chart.defaults.color = colors.muted;
 
-  const storageChart = dualAxisChart(document.getElementById('storage-chart').getContext('2d'), 'Bytes added', 'Packages added');
-  const trafficChart = dualAxisChart(document.getElementById('traffic-chart').getContext('2d'), 'Bytes served', 'Requests');
+const storageChart = dualAxisChart(document.getElementById('storage-chart').getContext('2d'), 'Bytes added', 'Packages added');
+const trafficChart = dualAxisChart(document.getElementById('traffic-chart').getContext('2d'), 'Bytes served', 'Requests');
 
-  async function load(kind, granularity) {
-    const cfg = kind === 'storage'
-      ? { chart: storageChart, canvas: 'storage-chart', empty: 'storage-chart-empty', url: 'storage-chart', left: 'bytes_added', right: 'packages_added' }
-      : { chart: trafficChart, canvas: 'traffic-chart', empty: 'traffic-chart-empty', url: 'traffic-chart', left: 'bytes', right: 'requests' };
-    const base = document.getElementById(cfg.canvas).dataset.url;
-    try {
-      const resp = await fetch(`${base}?granularity=${granularity}`);
-      const data = await resp.json();
-      const empty = !data.timestamps || data.timestamps.length === 0;
-      setEmpty(cfg.canvas, cfg.empty, empty);
-      if (empty) return;
-      cfg.chart.data.labels = data.timestamps.map(t => fmtLabel(t, granularity));
-      cfg.chart.data.datasets[0].data = data[cfg.left];
-      cfg.chart.data.datasets[1].data = data[cfg.right];
-      cfg.chart.update();
-    } catch (e) {
-      console.error('Failed to load cache series:', e);
-    }
-  }
+async function load(kind, granularity) {
+const cfg = kind === 'storage'
+? { chart: storageChart, canvas: 'storage-chart', empty: 'storage-chart-empty', url: 'storage-chart', left: 'bytes_added', right: 'packages_added' }
+: { chart: trafficChart, canvas: 'traffic-chart', empty: 'traffic-chart-empty', url: 'traffic-chart', left: 'bytes', right: 'requests' };
+const base = document.getElementById(cfg.canvas).dataset.url;
+try {
+const resp = await fetch(`${base}?granularity=${granularity}`);
+const data = await resp.json();
+const empty = !data.timestamps || data.timestamps.length === 0;
+setEmpty(cfg.canvas, cfg.empty, empty);
+if (empty) return;
+cfg.chart.data.labels = data.timestamps.map(t => fmtLabel(t, granularity));
+cfg.chart.data.datasets[0].data = data[cfg.left];
+cfg.chart.data.datasets[1].data = data[cfg.right];
+cfg.chart.update();
+} catch (e) {
+console.error('Failed to load cache series:', e);
+}
+}
 
-  document.querySelectorAll('.granularity-toggle').forEach(group => {
-    const kind = group.dataset.target;
-    group.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        load(kind, btn.dataset.granularity);
-      });
-    });
-  });
+document.querySelectorAll('.granularity-toggle').forEach(group => {
+const kind = group.dataset.target;
+group.querySelectorAll('button').forEach(btn => {
+btn.addEventListener('click', () => {
+group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+btn.classList.add('active');
+load(kind, btn.dataset.granularity);
+});
+});
+});
 
-  load('storage', 'hours');
-  load('traffic', 'hours');
+load('storage', 'hours');
+load('traffic', 'hours');
 
-  document.querySelectorAll('[data-copy]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const field = btn.closest('.copy-field').querySelector('input, textarea');
-      if (!field) return;
-      field.select();
-      navigator.clipboard.writeText(field.value).then(() => {
-        const prev = btn.textContent;
-        btn.textContent = 'Copied';
-        setTimeout(() => { btn.textContent = prev; }, 1200);
-      }).catch(() => {});
-    });
-  });
+document.querySelectorAll('[data-copy]').forEach(btn => {
+btn.addEventListener('click', () => {
+const field = btn.closest('.copy-field').querySelector('input, textarea');
+if (!field) return;
+field.select();
+navigator.clipboard.writeText(field.value).then(() => {
+const prev = btn.textContent;
+btn.textContent = 'Copied';
+setTimeout(() => { btn.textContent = prev; }, 1200);
+}).catch(() => {});
+});
+});
 })();
-</script>
+    </script>
 {% endblock %}

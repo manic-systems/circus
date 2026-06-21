@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod api_docs;
+mod fmt_templates;
 mod openapi_check;
 mod preview_frontend;
 
@@ -20,6 +21,12 @@ enum Cmd {
   /// Generate docs/API.md from the registered server routes.
   ApiDocs {
     /// Verify docs/API.md is current without rewriting it.
+    #[arg(long)]
+    check: bool,
+  },
+  /// Format Askama HTML templates in crates/server/templates/.
+  FmtTemplates {
+    /// Check formatting without writing files (exits non-zero if any need changes).
     #[arg(long)]
     check: bool,
   },
@@ -47,6 +54,7 @@ async fn main() -> ExitCode {
   let cli = Cli::parse();
   let result = match cli.command {
     Cmd::ApiDocs { check } => api_docs::run(check),
+    Cmd::FmtTemplates { check } => fmt_templates::run(check),
     Cmd::OpenapiCheck => openapi_check::run(),
     Cmd::PreviewFrontend { host, port } => {
       preview_frontend::run(host, port).await

@@ -1,56 +1,74 @@
 {% extends "base.html" %}
 {% block title %}Channels - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
-  <span class="current">Channels</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <span class="current">Channels</span>
+    </nav>
 {% endblock %}
 {% block content %}
-<h1>Channels</h1>
+    <h1>Channels</h1>
 
-{% if channels.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No channels configured</div>
-  <div class="empty-hint">Channels track successful evaluations for stable release tracking.</div>
-</div>
-{% else %}
-<section class="panel">
-  <div class="panel-header"><h2>Channels</h2></div>
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Status</th><th>Jobs</th><th>Current Evaluation</th><th>Updated</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for c in channels %}
-      <tr>
-        <td><a href="/channel/{{ c.id }}">{{ c.name }}</a></td>
-        <td><span class="badge badge-{{ c.status_class }}">{{ c.status_text }}</span></td>
-        <td class="numeric">{{ c.job_count }}</td>
-        <td>
-          {% match c.current_evaluation_id %}
-            {% when Some with (eval_id) %}
-            <a href="/evaluation/{{ eval_id }}">{{ eval_id }}</a>
-            {% when None %}
-            -
-          {% endmatch %}
-        </td>
-        <td>{{ c.updated_at }}</td>
-        <td class="row-actions"><a class="btn btn-small btn-secondary" href="/channel/{{ c.id }}">Browse</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-</section>
-{% endif %}
+    {% if channels.is_empty() %}
+        <div class="empty">
+            <div class="empty-title">No channels configured</div>
+            <div class="empty-hint">Channels track successful evaluations for stable release tracking.</div>
+        </div>
+    {% else %}
+        <section class="panel">
+            <div class="panel-header">
+                <h2>Channels</h2>
+            </div>
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Jobs</th>
+                            <th>Current Evaluation</th>
+                            <th>Updated</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in channels %}
+                            <tr>
+                                <td>
+                                    <a href="/channel/{{ c.id }}">{{ c.name }}</a>
+                                </td>
+                                <td>
+                                    <span class="badge badge-{{ c.status_class }}">{{ c.status_text }}</span>
+                                </td>
+                                <td class="numeric">{{ c.job_count }}</td>
+                                <td>
+                                    {% match c.current_evaluation_id %}
+                                        {% when Some with (eval_id) %}
+                                            <a href="/evaluation/{{ eval_id }}">{{ eval_id }}</a>
+                                        {% when None %}
+                                            -
+                                    {% endmatch %}
+                                </td>
+                                <td>{{ c.updated_at }}</td>
+                                <td class="row-actions">
+                                    <a class="btn btn-small btn-secondary" href="/channel/{{ c.id }}">Browse</a>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    {% endif %}
 {% endblock %}

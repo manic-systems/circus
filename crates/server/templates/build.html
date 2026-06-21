@@ -1,245 +1,385 @@
 {% extends "base.html" %}
 {% block title %}Build {{ build.job_name }} - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/projects">Projects</a> <span class="sep">/</span>
-  <a href="/project/{{ project_id }}">{{ project_name }}</a> <span class="sep">/</span>
-  <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a> <span class="sep">/</span>
-  <a href="/evaluation/{{ eval_id }}">{{ eval_commit_short }}</a> <span class="sep">/</span>
-  <span class="current">{{ build.job_name }}</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/projects">Projects</a>
+        <span class="sep">/</span>
+        <a href="/project/{{ project_id }}">{{ project_name }}</a>
+        <span class="sep">/</span>
+        <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a>
+        <span class="sep">/</span>
+        <a href="/evaluation/{{ eval_id }}">{{ eval_commit_short }}</a>
+        <span class="sep">/</span>
+        <span class="current">{{ build.job_name }}</span>
+    </nav>
 {% endblock %}
 {% block content %}
-<h1>Build: {{ build.job_name }}</h1>
+    <h1>Build: {{ build.job_name }}</h1>
 
-<section class="panel build-detail-section">
-  <div class="panel-header"><h2>Overview</h2></div>
-  <div class="panel-body">
-    <div class="build-meta">
-      <div class="build-meta-item">
-        <span class="build-meta-label">Status</span>
-        <span class="build-meta-value"><span class="badge badge-{{ build.status_class }}">{{ build.status_text }}</span></span>
-      </div>
-      <div class="build-meta-item">
-        <span class="build-meta-label">System</span>
-        <span class="build-meta-value">{{ build.system }}</span>
-      </div>
-      <div class="build-meta-item">
-        <span class="build-meta-label">Builder</span>
-        <span class="build-meta-value">{{ builder_label }}</span>
-      </div>
-      <div class="build-meta-item">
-        <span class="build-meta-label">Created</span>
-        <span class="build-meta-value">{{ build.created_at }}</span>
-      </div>
-      {% if !build.started_at.is_empty() %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Started</span>
-        <span class="build-meta-value">{{ build.started_at }}</span>
-      </div>
-      {% endif %}
-      {% if !build.completed_at.is_empty() %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Completed</span>
-        <span class="build-meta-value">{{ build.completed_at }}</span>
-      </div>
-      {% endif %}
-      {% if !build.duration.is_empty() %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Duration</span>
-        <span class="build-meta-value"{% if let Some(ts) = build.started_epoch %} data-live-elapsed="{{ ts }}"{% endif %}>{{ build.duration }}</span>
-      </div>
-      {% elif let Some(ts) = build.started_epoch %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Elapsed</span>
-        <span class="build-meta-value" data-live-elapsed="{{ ts }}">-</span>
-      </div>
-      {% endif %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Priority</span>
-        <span class="build-meta-value">{{ build.priority }}</span>
-      </div>
-      <div class="build-meta-item">
-        <span class="build-meta-label">Signed</span>
-        <span class="build-meta-value">{% if build.signed %}Yes{% else %}No{% endif %}</span>
-      </div>
-      {% if build.is_aggregate %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Aggregate</span>
-        <span class="build-meta-value">Yes</span>
-      </div>
-      {% endif %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Derivation</span>
-        <span class="build-meta-value"><code>{{ build.drv_path }}</code></span>
-      </div>
-      {% if !build.output_path.is_empty() %}
-      <div class="build-meta-item">
-        <span class="build-meta-label">Output</span>
-        <span class="build-meta-value"><code>{{ build.output_path }}</code></span>
-      </div>
-      {% endif %}
-    </div>
-
-    {% if !build.error_lines.is_empty() %}
-    <section class="build-error">
-      <h2 class="section-title">Errors</h2>
-      <ul class="error-log">
-        {% for line in build.error_lines %}
-        <li class="error-log-line error-log-{{ line.level }}">{{ line.text }}</li>
-        {% endfor %}
-      </ul>
-    </section>
-    {% elif !build.error_message.is_empty() %}
-    <section class="build-error">
-      <h2 class="section-title">Errors</h2>
-      <pre class="error-log-raw">{{ build.error_message }}</pre>
-    </section>
-    {% endif %}
-    {% if build.has_log %}
-    <p><a class="btn btn-small btn-secondary" href="/build/{{ build.id }}/log">View full log</a></p>
-    {% endif %}
-  </div>
-</section>
-
-<section class="panel build-detail-section">
-  <div class="panel-header"><h2>Reproduce This Build</h2></div>
-  <div class="panel-body">
-    <p class="text-muted">To reproduce this build locally, run one of the following commands:</p>
-    <div class="code-block">
-      <strong>Using Nix (flakes):</strong>
-      <pre><code>nix build {{ build.drv_path }}^*</code></pre>
-    </div>
-    <div class="code-block">
-      <strong>Using legacy nix-build:</strong>
-      <pre><code>nix-build {{ build.drv_path }}</code></pre>
-    </div>
-    <p class="text-muted">Note: You may need to add this server as a substituter to avoid rebuilding dependencies.</p>
-  </div>
-</section>
-
-<section class="panel build-detail-section">
-  <div class="panel-header"><h2>Build Steps</h2></div>
-  {% if steps.is_empty() %}
-  <div class="empty compact-empty"><div class="empty-title">No steps recorded.</div></div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>#</th><th>Command</th><th>Exit</th><th>Started</th><th>Completed</th></tr>
-    </thead>
-    <tbody>
-      {% for s in steps %}
-      <tr>
-        <td>{{ s.step_number }}</td>
-        <td><code>{{ s.command }}</code></td>
-        <td>{% match s.exit_code %}{% when Some with (0) %}<span class="step-success">0</span>{% when Some with (code) %}<span class="step-failure">{{ code }}</span>{% when None %}-{% endmatch %}</td>
-        <td>{{ s.started_at.format("%H:%M:%S") }}</td>
-        <td>{% match s.completed_at %}{% when Some with (t) %}{{ t.format("%H:%M:%S") }}{% when None %}-{% endmatch %}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
-
-<section class="panel build-detail-section">
-  <div class="panel-header"><h2>Dependencies</h2></div>
-  {% if dependencies.is_empty() && dependents.is_empty() %}
-  <div class="empty compact-empty"><div class="empty-title">No build dependency relationships recorded.</div></div>
-  {% else %}
-  <div class="panel-body">
-    <div class="split-grid">
-      <section>
-        <h3 class="section-title">Required Builds</h3>
-        {% if dependencies.is_empty() %}
-        <div class="empty compact-empty"><div class="empty-title">No dependencies.</div></div>
-        {% else %}
-        <div class="table-wrap compact-table-wrap">
-        <table>
-          <thead><tr><th>Job</th><th>Status</th><th>System</th><th>Output</th></tr></thead>
-          <tbody>
-            {% for dep in dependencies %}
-            <tr>
-              <td><a href="/build/{{ dep.id }}">{{ dep.job_name }}</a></td>
-              <td><span class="badge badge-{{ dep.status_class }}">{{ dep.status_text }}</span></td>
-              <td>{{ dep.system }}</td>
-              <td>{% if !dep.output_path.is_empty() %}<code>{{ dep.output_path }}</code>{% else %}-{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+    <section class="panel build-detail-section">
+        <div class="panel-header">
+            <h2>Overview</h2>
         </div>
-        {% endif %}
-      </section>
-      <section>
-        <h3 class="section-title">Dependent Builds</h3>
-        {% if dependents.is_empty() %}
-        <div class="empty compact-empty"><div class="empty-title">No dependents.</div></div>
-        {% else %}
-        <div class="table-wrap compact-table-wrap">
-        <table>
-          <thead><tr><th>Job</th><th>Status</th><th>System</th><th>Output</th></tr></thead>
-          <tbody>
-            {% for dep in dependents %}
-            <tr>
-              <td><a href="/build/{{ dep.id }}">{{ dep.job_name }}</a></td>
-              <td><span class="badge badge-{{ dep.status_class }}">{{ dep.status_text }}</span></td>
-              <td>{{ dep.system }}</td>
-              <td>{% if !dep.output_path.is_empty() %}<code>{{ dep.output_path }}</code>{% else %}-{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        </div>
-        {% endif %}
-      </section>
-    </div>
-  </div>
-  {% endif %}
-</section>
+        <div class="panel-body">
+            <div class="build-meta">
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Status</span>
+                    <span class="build-meta-value">
+                        <span class="badge badge-{{ build.status_class }}">{{ build.status_text }}</span>
+                    </span>
+                </div>
+                <div class="build-meta-item">
+                    <span class="build-meta-label">System</span>
+                    <span class="build-meta-value">{{ build.system }}</span>
+                </div>
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Builder</span>
+                    <span class="build-meta-value">{{ builder_label }}</span>
+                </div>
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Created</span>
+                    <span class="build-meta-value">{{ build.created_at }}</span>
+                </div>
+                {% if !build.started_at.is_empty() %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Started</span>
+                        <span class="build-meta-value">{{ build.started_at }}</span>
+                    </div>
+                {% endif %}
+                {% if !build.completed_at.is_empty() %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Completed</span>
+                        <span class="build-meta-value">{{ build.completed_at }}</span>
+                    </div>
+                {% endif %}
+                {% if !build.duration.is_empty() %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Duration</span>
+                        <span class="build-meta-value"{% if let Some(ts) = build.started_epoch %}
+                              data-live-elapsed="{{ ts }}"{% endif %}>
+                            {{ build.duration }}
+                        </span>
+                    </div>
+                    {% elif let Some(ts) = build.started_epoch %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Elapsed</span>
+                        <span class="build-meta-value" data-live-elapsed="{{ ts }}">-</span>
+                    </div>
+                {% endif %}
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Priority</span>
+                    <span class="build-meta-value">{{ build.priority }}</span>
+                </div>
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Signed</span>
+                    <span class="build-meta-value">
+                        {% if build.signed %}
+                            Yes
+                        {% else %}
+                            No
+                        {% endif %}
+                    </span>
+                </div>
+                {% if build.is_aggregate %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Aggregate</span>
+                        <span class="build-meta-value">Yes</span>
+                    </div>
+                {% endif %}
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Derivation</span>
+                    <span class="build-meta-value">
+                        <code>{{ build.drv_path }}</code>
+                    </span>
+                </div>
+                {% if !build.output_path.is_empty() %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Output</span>
+                        <span class="build-meta-value">
+                            <code>{{ build.output_path }}</code>
+                        </span>
+                    </div>
+                {% endif %}
+            </div>
 
-<section class="panel build-detail-section">
-  <div class="panel-header"><h2>Build Products</h2></div>
-  {% if products.is_empty() %}
-  <div class="empty compact-empty"><div class="empty-title">No products recorded.</div></div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Path</th><th>Type</th><th>Size</th><th>SHA-256</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for p in products %}
-      <tr>
-        <td>
-          {{ p.name }}
-          {% if p.is_directory %}<span class="badge badge-pending">dir</span>{% endif %}
-        </td>
-        <td><code>{{ p.path }}</code></td>
-        <td>{% match p.content_type %}{% when Some with (ct) %}{{ ct }}{% when None %}-{% endmatch %}</td>
-        <td>{% match p.file_size %}{% when Some with (sz) %}{{ sz }} B{% when None %}-{% endmatch %}</td>
-        <td>
-          {% match p.sha256_hash %}
-            {% when Some with (h) %}<code class="hash-short">{{ h }}</code>
-            {% when None %}-
-          {% endmatch %}
-        </td>
-        <td><a href="/api/v1/builds/{{ build.id }}/products/{{ p.id }}/download" class="btn btn-small btn-secondary">Download</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+            {% if !build.error_lines.is_empty() %}
+                <section class="build-error">
+                    <h2 class="section-title">Errors</h2>
+                    <ul class="error-log">
+                        {% for line in build.error_lines %}
+                            <li class="error-log-line error-log-{{ line.level }}">{{ line.text }}</li>
+                        {% endfor %}
+                    </ul>
+                </section>
+                {% elif !build.error_message.is_empty() %}
+                <section class="build-error">
+                    <h2 class="section-title">Errors</h2>
+                    <pre class="error-log-raw">
+{{ build.error_message }}</pre>
+                </section>
+            {% endif %}
+            {% if build.has_log %}
+                <p>
+                    <a class="btn btn-small btn-secondary" href="/build/{{ build.id }}/log">View full log</a>
+                </p>
+            {% endif %}
+        </div>
+    </section>
+
+    <section class="panel build-detail-section">
+        <div class="panel-header">
+            <h2>Reproduce This Build</h2>
+        </div>
+        <div class="panel-body">
+            <p class="text-muted">To reproduce this build locally, run one of the following commands:</p>
+            <div class="code-block">
+                <strong>Using Nix (flakes):</strong>
+                <pre>
+<code>nix build {{ build.drv_path }}^*</code></pre>
+            </div>
+            <div class="code-block">
+                <strong>Using legacy nix-build:</strong>
+                <pre>
+<code>nix-build {{ build.drv_path }}</code></pre>
+            </div>
+            <p class="text-muted">
+                Note: You may need to add this server as a substituter to avoid rebuilding dependencies.
+            </p>
+        </div>
+    </section>
+
+    <section class="panel build-detail-section">
+        <div class="panel-header">
+            <h2>Build Steps</h2>
+        </div>
+        {% if steps.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No steps recorded.</div>
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Command</th>
+                            <th>Exit</th>
+                            <th>Started</th>
+                            <th>Completed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in steps %}
+                            <tr>
+                                <td>{{ s.step_number }}</td>
+                                <td>
+                                    <code>{{ s.command }}</code>
+                                </td>
+                                <td>
+                                    {% match s.exit_code %}
+                                        {% when Some with (0) %}
+                                            <span class="step-success">0</span>
+                                        {% when Some with (code) %}
+                                            <span class="step-failure">{{ code }}</span>
+                                        {% when None %}
+                                            -
+                                    {% endmatch %}
+                                </td>
+                                <td>{{ s.started_at.format("%H:%M:%S") }}</td>
+                                <td>
+                                    {% match s.completed_at %}
+                                        {% when Some with (t) %}
+                                            {{ t.format("%H:%M:%S") }}
+                                        {% when None %}
+                                            -
+                                    {% endmatch %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </section>
+
+    <section class="panel build-detail-section">
+        <div class="panel-header">
+            <h2>Dependencies</h2>
+        </div>
+        {% if dependencies.is_empty() && dependents.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No build dependency relationships recorded.</div>
+            </div>
+        {% else %}
+            <div class="panel-body">
+                <div class="split-grid">
+                    <section>
+                        <h3 class="section-title">Required Builds</h3>
+                        {% if dependencies.is_empty() %}
+                            <div class="empty compact-empty">
+                                <div class="empty-title">No dependencies.</div>
+                            </div>
+                        {% else %}
+                            <div class="table-wrap compact-table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Job</th>
+                                            <th>Status</th>
+                                            <th>System</th>
+                                            <th>Output</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for dep in dependencies %}
+                                            <tr>
+                                                <td>
+                                                    <a href="/build/{{ dep.id }}">{{ dep.job_name }}</a>
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-{{ dep.status_class }}">
+                                                        {{ dep.status_text }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ dep.system }}</td>
+                                                <td>
+                                                    {% if !dep.output_path.is_empty() %}
+                                                        <code>{{ dep.output_path }}</code>
+                                                    {% else %}
+                                                        -
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% endif %}
+                    </section>
+                    <section>
+                        <h3 class="section-title">Dependent Builds</h3>
+                        {% if dependents.is_empty() %}
+                            <div class="empty compact-empty">
+                                <div class="empty-title">No dependents.</div>
+                            </div>
+                        {% else %}
+                            <div class="table-wrap compact-table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Job</th>
+                                            <th>Status</th>
+                                            <th>System</th>
+                                            <th>Output</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for dep in dependents %}
+                                            <tr>
+                                                <td>
+                                                    <a href="/build/{{ dep.id }}">{{ dep.job_name }}</a>
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-{{ dep.status_class }}">
+                                                        {{ dep.status_text }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ dep.system }}</td>
+                                                <td>
+                                                    {% if !dep.output_path.is_empty() %}
+                                                        <code>{{ dep.output_path }}</code>
+                                                    {% else %}
+                                                        -
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% endif %}
+                    </section>
+                </div>
+            </div>
+        {% endif %}
+    </section>
+
+    <section class="panel build-detail-section">
+        <div class="panel-header">
+            <h2>Build Products</h2>
+        </div>
+        {% if products.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No products recorded.</div>
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Path</th>
+                            <th>Type</th>
+                            <th>Size</th>
+                            <th>SHA-256</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in products %}
+                            <tr>
+                                <td>
+                                    {{ p.name }}
+                                    {% if p.is_directory %}<span class="badge badge-pending">dir</span>{% endif %}
+                                </td>
+                                <td>
+                                    <code>{{ p.path }}</code>
+                                </td>
+                                <td>
+                                    {% match p.content_type %}
+                                        {% when Some with (ct) %}
+                                            {{ ct }}
+                                        {% when None %}
+                                            -
+                                    {% endmatch %}
+                                </td>
+                                <td>
+                                    {% match p.file_size %}
+                                        {% when Some with (sz) %}
+                                            {{ sz }} B
+                                        {% when None %}
+                                            -
+                                    {% endmatch %}
+                                </td>
+                                <td>
+                                    {% match p.sha256_hash %}
+                                        {% when Some with (h) %}
+                                            <code class="hash-short">{{ h }}</code>
+                                        {% when None %}
+                                            -
+                                    {% endmatch %}
+                                </td>
+                                <td>
+                                    <a href="/api/v1/builds/{{ build.id }}/products/{{ p.id }}/download"
+                                       class="btn btn-small btn-secondary">
+                                        Download
+                                    </a>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </section>
 {% endblock %}

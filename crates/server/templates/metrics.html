@@ -3,80 +3,95 @@
 {% block title %}Metrics - circus{% endblock %}
 
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
-  <span class="current">Metrics</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <span class="current">Metrics</span>
+    </nav>
 {% endblock %}
 
 {% block content %}
-<h1>Build Metrics Dashboard</h1>
+    <h1>Build Metrics Dashboard</h1>
 
-{% if is_admin %}
-<p class="admin-notice">Showing system-wide metrics. Filter by project below to view specific metrics.</p>
-{% endif %}
+    {% if is_admin %}
+        <p class="admin-notice">Showing system-wide metrics. Filter by project below to view specific metrics.</p>
+    {% endif %}
 
-<div class="metrics-controls">
-  <label for="time-range">Time Range:</label>
-  <select id="time-range">
-    <option value="24">Last 24 hours</option>
-    <option value="48">Last 48 hours</option>
-    <option value="168">Last 7 days</option>
-  </select>
+    <div class="metrics-controls">
+        <label for="time-range">Time Range:</label>
+        <select id="time-range">
+            <option value="24">Last 24 hours</option>
+            <option value="48">Last 48 hours</option>
+            <option value="168">Last 7 days</option>
+        </select>
 
-  <label for="project-filter">Project:</label>
-  <select id="project-filter">
-    <option value="">All Projects</option>
-  </select>
-</div>
-
-<div class="metrics-grid">
-  <section class="panel metric-panel">
-    <div class="panel-header"><h2>Build Counts Over Time</h2></div>
-    <div class="metric-chart-body">
-      <canvas id="builds-chart"></canvas>
-      <p class="empty-hint chart-empty" id="builds-chart-empty" hidden>No data available</p>
+        <label for="project-filter">Project:</label>
+        <select id="project-filter">
+            <option value="">All Projects</option>
+        </select>
     </div>
-  </section>
 
-  <section class="panel metric-panel">
-    <div class="panel-header"><h2>Build Duration Percentiles</h2></div>
-    <div class="metric-chart-body">
-      <canvas id="duration-chart"></canvas>
-      <p class="empty-hint chart-empty" id="duration-chart-empty" hidden>No data available</p>
-    </div>
-  </section>
+    <div class="metrics-grid">
+        <section class="panel metric-panel">
+            <div class="panel-header">
+                <h2>Build Counts Over Time</h2>
+            </div>
+            <div class="metric-chart-body">
+                <canvas id="builds-chart">
+                </canvas>
+                <p class="empty-hint chart-empty" id="builds-chart-empty" hidden>No data available</p>
+            </div>
+        </section>
 
-  <section class="panel metric-panel">
-    <div class="panel-header"><h2>Builds by System</h2></div>
-    <div class="metric-chart-body">
-      <canvas id="systems-chart"></canvas>
-      <p class="empty-hint chart-empty" id="systems-chart-empty" hidden>No data available</p>
-    </div>
-  </section>
+        <section class="panel metric-panel">
+            <div class="panel-header">
+                <h2>Build Duration Percentiles</h2>
+            </div>
+            <div class="metric-chart-body">
+                <canvas id="duration-chart">
+                </canvas>
+                <p class="empty-hint chart-empty" id="duration-chart-empty" hidden>No data available</p>
+            </div>
+        </section>
 
-  <section class="panel metric-panel">
-    <div class="panel-header"><h2>Success Rate Trend</h2></div>
-    <div class="metric-chart-body">
-      <canvas id="success-rate-chart"></canvas>
-      <p class="empty-hint chart-empty" id="success-rate-chart-empty" hidden>No data available</p>
+        <section class="panel metric-panel">
+            <div class="panel-header">
+                <h2>Builds by System</h2>
+            </div>
+            <div class="metric-chart-body">
+                <canvas id="systems-chart">
+                </canvas>
+                <p class="empty-hint chart-empty" id="systems-chart-empty" hidden>No data available</p>
+            </div>
+        </section>
+
+        <section class="panel metric-panel">
+            <div class="panel-header">
+                <h2>Success Rate Trend</h2>
+            </div>
+            <div class="metric-chart-body">
+                <canvas id="success-rate-chart">
+                </canvas>
+                <p class="empty-hint chart-empty" id="success-rate-chart-empty" hidden>No data available</p>
+            </div>
+        </section>
     </div>
-  </section>
-</div>
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script>
 // Configuration
 const API_BASE = '/api/v1/metrics';
 let currentHours = 24;
@@ -86,380 +101,380 @@ let currentProjectId = null;
 let buildsChart, durationChart, systemsChart, successRateChart;
 
 function cssVar(name, fallback) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
 function hexToRgba(hex, alpha) {
-  let c = hex.replace('#', '');
-  if (c.length === 3) {
-    c = c.split('').map(ch => ch + ch).join('');
-  }
-  const r = parseInt(c.substring(0, 2), 16);
-  const g = parseInt(c.substring(2, 4), 16);
-  const b = parseInt(c.substring(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+let c = hex.replace('#', '');
+if (c.length === 3) {
+c = c.split('').map(ch => ch + ch).join('');
+}
+const r = parseInt(c.substring(0, 2), 16);
+const g = parseInt(c.substring(2, 4), 16);
+const b = parseInt(c.substring(4, 6), 16);
+return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 // Initialize charts on page load
 document.addEventListener('DOMContentLoaded', function() {
-  initCharts();
-  loadData();
-  setupEventListeners();
-  loadProjects();
+initCharts();
+loadData();
+setupEventListeners();
+loadProjects();
 });
 
 function setupEventListeners() {
-  document.getElementById('time-range').addEventListener('change', function(e) {
-    currentHours = parseInt(e.target.value);
-    loadData();
-  });
+document.getElementById('time-range').addEventListener('change', function(e) {
+currentHours = parseInt(e.target.value);
+loadData();
+});
 
-  document.getElementById('project-filter').addEventListener('change', function(e) {
-    currentProjectId = e.target.value || null;
-    loadData();
-  });
+document.getElementById('project-filter').addEventListener('change', function(e) {
+currentProjectId = e.target.value || null;
+loadData();
+});
 }
 
 async function loadProjects() {
-  try {
-    const response = await fetch('/api/v1/projects');
-    const data = await response.json();
-    const select = document.getElementById('project-filter');
+try {
+const response = await fetch('/api/v1/projects');
+const data = await response.json();
+const select = document.getElementById('project-filter');
 
-    data.data.forEach(project => {
-      const option = document.createElement('option');
-      option.value = project.id;
-      option.textContent = project.name;
-      select.appendChild(option);
-    });
-  } catch (error) {
-    console.error('Failed to load projects:', error);
-  }
+data.data.forEach(project => {
+const option = document.createElement('option');
+option.value = project.id;
+option.textContent = project.name;
+select.appendChild(option);
+});
+} catch (error) {
+console.error('Failed to load projects:', error);
+}
 }
 
 function setChartEmpty(chartId, emptyId, isEmpty) {
-  const canvas = document.getElementById(chartId);
-  const empty = document.getElementById(emptyId);
-  if (canvas && empty) {
-    canvas.hidden = isEmpty;
-    empty.hidden = !isEmpty;
-  }
+const canvas = document.getElementById(chartId);
+const empty = document.getElementById(emptyId);
+if (canvas && empty) {
+canvas.hidden = isEmpty;
+empty.hidden = !isEmpty;
+}
 }
 
 async function loadData() {
-  if (typeof Chart === 'undefined' || !buildsChart) {
-    return;
-  }
-  const params = new URLSearchParams();
-  params.set('hours', currentHours);
-  params.set('bucket', 60);
-  if (currentProjectId) {
-    params.set('project_id', currentProjectId);
-  }
+if (typeof Chart === 'undefined' || !buildsChart) {
+return;
+}
+const params = new URLSearchParams();
+params.set('hours', currentHours);
+params.set('bucket', 60);
+if (currentProjectId) {
+params.set('project_id', currentProjectId);
+}
 
-  try {
-    // Load build stats
-    const buildsResponse = await fetch(`${API_BASE}/timeseries/builds?${params}`);
-    const buildsData = await buildsResponse.json();
-    const buildsEmpty = !buildsData.timestamps || buildsData.timestamps.length === 0;
-    setChartEmpty('builds-chart', 'builds-chart-empty', buildsEmpty);
-    if (!buildsEmpty) {
-      updateBuildsChart(buildsData);
-      updateSuccessRateChart(buildsData);
-    }
+try {
+// Load build stats
+const buildsResponse = await fetch(`${API_BASE}/timeseries/builds?${params}`);
+const buildsData = await buildsResponse.json();
+const buildsEmpty = !buildsData.timestamps || buildsData.timestamps.length === 0;
+setChartEmpty('builds-chart', 'builds-chart-empty', buildsEmpty);
+if (!buildsEmpty) {
+updateBuildsChart(buildsData);
+updateSuccessRateChart(buildsData);
+}
 
-    // Load duration percentiles
-    const durationResponse = await fetch(`${API_BASE}/timeseries/duration?${params}`);
-    const durationData = await durationResponse.json();
-    const durationEmpty = !durationData.timestamps || durationData.timestamps.length === 0;
-    setChartEmpty('duration-chart', 'duration-chart-empty', durationEmpty);
-    if (!durationEmpty) {
-      updateDurationChart(durationData);
-    }
+// Load duration percentiles
+const durationResponse = await fetch(`${API_BASE}/timeseries/duration?${params}`);
+const durationData = await durationResponse.json();
+const durationEmpty = !durationData.timestamps || durationData.timestamps.length === 0;
+setChartEmpty('duration-chart', 'duration-chart-empty', durationEmpty);
+if (!durationEmpty) {
+updateDurationChart(durationData);
+}
 
-    // Load system distribution
-    const systemsResponse = await fetch(`${API_BASE}/systems?${params}`);
-    const systemsData = await systemsResponse.json();
-    const systemsEmpty = !systemsData.systems || systemsData.systems.length === 0;
-    setChartEmpty('systems-chart', 'systems-chart-empty', systemsEmpty);
-    if (!systemsEmpty) {
-      updateSystemsChart(systemsData);
-    }
+// Load system distribution
+const systemsResponse = await fetch(`${API_BASE}/systems?${params}`);
+const systemsData = await systemsResponse.json();
+const systemsEmpty = !systemsData.systems || systemsData.systems.length === 0;
+setChartEmpty('systems-chart', 'systems-chart-empty', systemsEmpty);
+if (!systemsEmpty) {
+updateSystemsChart(systemsData);
+}
 
-    // Success rate uses the same data as builds; mirror its empty state
-    setChartEmpty('success-rate-chart', 'success-rate-chart-empty', buildsEmpty);
-  } catch (error) {
-    console.error('Failed to load metrics data:', error);
-    showError(document.querySelector('.metrics-grid'), 'Failed to load metrics data. Please try again later.');
-  }
+// Success rate uses the same data as builds; mirror its empty state
+setChartEmpty('success-rate-chart', 'success-rate-chart-empty', buildsEmpty);
+} catch (error) {
+console.error('Failed to load metrics data:', error);
+showError(document.querySelector('.metrics-grid'), 'Failed to load metrics data. Please try again later.');
+}
 }
 
 function initCharts() {
-  if (typeof Chart === 'undefined') {
-    console.error('Chart.js library failed to load');
-    ['builds-chart', 'duration-chart', 'systems-chart', 'success-rate-chart'].forEach(id => {
-      const canvas = document.getElementById(id);
-      if (canvas) canvas.hidden = true;
-    });
-    document.querySelectorAll('.chart-empty').forEach(el => {
-      el.textContent = 'Chart library unavailable';
-      el.hidden = false;
-    });
-    return;
-  }
-  Chart.defaults.font.family = cssVar('--font-sans', 'Inter, system-ui, sans-serif');
-  Chart.defaults.font.size = 11;
+if (typeof Chart === 'undefined') {
+console.error('Chart.js library failed to load');
+['builds-chart', 'duration-chart', 'systems-chart', 'success-rate-chart'].forEach(id => {
+const canvas = document.getElementById(id);
+if (canvas) canvas.hidden = true;
+});
+document.querySelectorAll('.chart-empty').forEach(el => {
+el.textContent = 'Chart library unavailable';
+el.hidden = false;
+});
+return;
+}
+Chart.defaults.font.family = cssVar('--font-sans', 'Inter, system-ui, sans-serif');
+Chart.defaults.font.size = 11;
 
-  const colors = {
-    success: cssVar('--status-success', '#0f7a3b'),
-    failed: cssVar('--status-failed', '#b91c1c'),
-    running: cssVar('--status-running', '#007481'),
-    accent: cssVar('--accent', '#111827'),
-    muted: cssVar('--text-muted', '#52606d'),
-    border: cssVar('--border', '#d3d9df'),
-    subtle: cssVar('--text-subtle', '#7a8793')
-  };
-  Chart.defaults.color = colors.muted;
+const colors = {
+success: cssVar('--status-success', '#0f7a3b'),
+failed: cssVar('--status-failed', '#b91c1c'),
+running: cssVar('--status-running', '#007481'),
+accent: cssVar('--accent', '#111827'),
+muted: cssVar('--text-muted', '#52606d'),
+border: cssVar('--border', '#d3d9df'),
+subtle: cssVar('--text-subtle', '#7a8793')
+};
+Chart.defaults.color = colors.muted;
 
-  const commonScales = {
-    x: {
-      grid: { color: colors.border, tickColor: 'transparent', drawBorder: false },
-      ticks: { color: colors.muted, maxRotation: 0 }
-    },
-    y: {
-      beginAtZero: true,
-      grid: { color: colors.border, tickColor: 'transparent', drawBorder: false },
-      ticks: { color: colors.muted }
-    }
-  };
-  const commonPlugins = {
-    legend: {
-      position: 'top',
-      labels: { color: colors.muted, usePointStyle: true, boxWidth: 6, padding: 14 }
-    }
-  };
+const commonScales = {
+x: {
+grid: { color: colors.border, tickColor: 'transparent', drawBorder: false },
+ticks: { color: colors.muted, maxRotation: 0 }
+},
+y: {
+beginAtZero: true,
+grid: { color: colors.border, tickColor: 'transparent', drawBorder: false },
+ticks: { color: colors.muted }
+}
+};
+const commonPlugins = {
+legend: {
+position: 'top',
+labels: { color: colors.muted, usePointStyle: true, boxWidth: 6, padding: 14 }
+}
+};
 
-  // Build counts chart
-  const buildsCtx = document.getElementById('builds-chart').getContext('2d');
-  buildsChart = new Chart(buildsCtx, {
-    type: 'bar',
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: 'Successful',
-          data: [],
-          backgroundColor: hexToRgba(colors.success, 0.75),
-          borderColor: colors.success,
-          borderWidth: 1,
-          borderRadius: 2
-        },
-        {
-          label: 'Failed',
-          data: [],
-          backgroundColor: hexToRgba(colors.failed, 0.75),
-          borderColor: colors.failed,
-          borderWidth: 1,
-          borderRadius: 2
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: {
-          stacked: true,
-          grid: { display: false },
-          ticks: { color: colors.muted, maxRotation: 0 }
-        },
-        y: {
-          stacked: true,
-          beginAtZero: true,
-          ticks: { stepSize: 1, color: colors.muted },
-          grid: { color: colors.border, tickColor: 'transparent', drawBorder: false }
-        }
-      },
-      plugins: commonPlugins
-    }
-  });
+// Build counts chart
+const buildsCtx = document.getElementById('builds-chart').getContext('2d');
+buildsChart = new Chart(buildsCtx, {
+type: 'bar',
+data: {
+labels: [],
+datasets: [
+{
+label: 'Successful',
+data: [],
+backgroundColor: hexToRgba(colors.success, 0.75),
+borderColor: colors.success,
+borderWidth: 1,
+borderRadius: 2
+},
+{
+label: 'Failed',
+data: [],
+backgroundColor: hexToRgba(colors.failed, 0.75),
+borderColor: colors.failed,
+borderWidth: 1,
+borderRadius: 2
+}
+]
+},
+options: {
+responsive: true,
+maintainAspectRatio: false,
+scales: {
+x: {
+stacked: true,
+grid: { display: false },
+ticks: { color: colors.muted, maxRotation: 0 }
+},
+y: {
+stacked: true,
+beginAtZero: true,
+ticks: { stepSize: 1, color: colors.muted },
+grid: { color: colors.border, tickColor: 'transparent', drawBorder: false }
+}
+},
+plugins: commonPlugins
+}
+});
 
-  // Duration percentiles chart
-  const durationCtx = document.getElementById('duration-chart').getContext('2d');
-  durationChart = new Chart(durationCtx, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: 'P50 (Median)',
-          data: [],
-          borderColor: colors.accent,
-          backgroundColor: hexToRgba(colors.accent, 0.08),
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHoverRadius: 4
-        },
-        {
-          label: 'P95',
-          data: [],
-          borderColor: colors.running,
-          backgroundColor: hexToRgba(colors.running, 0.08),
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHoverRadius: 4
-        },
-        {
-          label: 'P99',
-          data: [],
-          borderColor: colors.failed,
-          backgroundColor: hexToRgba(colors.failed, 0.08),
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHoverRadius: 4
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        ...commonScales,
-        y: {
-          ...commonScales.y,
-          title: {
-            display: true,
-            text: 'Duration (seconds)',
-            color: colors.subtle,
-            font: { size: 11, weight: 600 }
-          }
-        }
-      },
-      plugins: commonPlugins
-    }
-  });
+// Duration percentiles chart
+const durationCtx = document.getElementById('duration-chart').getContext('2d');
+durationChart = new Chart(durationCtx, {
+type: 'line',
+data: {
+labels: [],
+datasets: [
+{
+label: 'P50 (Median)',
+data: [],
+borderColor: colors.accent,
+backgroundColor: hexToRgba(colors.accent, 0.08),
+fill: true,
+tension: 0.3,
+pointRadius: 0,
+pointHoverRadius: 4
+},
+{
+label: 'P95',
+data: [],
+borderColor: colors.running,
+backgroundColor: hexToRgba(colors.running, 0.08),
+fill: true,
+tension: 0.3,
+pointRadius: 0,
+pointHoverRadius: 4
+},
+{
+label: 'P99',
+data: [],
+borderColor: colors.failed,
+backgroundColor: hexToRgba(colors.failed, 0.08),
+fill: true,
+tension: 0.3,
+pointRadius: 0,
+pointHoverRadius: 4
+}
+]
+},
+options: {
+responsive: true,
+maintainAspectRatio: false,
+scales: {
+...commonScales,
+y: {
+...commonScales.y,
+title: {
+display: true,
+text: 'Duration (seconds)',
+color: colors.subtle,
+font: { size: 11, weight: 600 }
+}
+}
+},
+plugins: commonPlugins
+}
+});
 
-  // Systems chart
-  const systemsCtx = document.getElementById('systems-chart').getContext('2d');
-  systemsChart = new Chart(systemsCtx, {
-    type: 'doughnut',
-    data: {
-      labels: [],
-      datasets: [{
-        data: [],
-        backgroundColor: [
-          colors.success,
-          colors.running,
-          colors.accent,
-          colors.muted,
-          colors.border,
-          colors.failed,
-          colors.subtle
-        ],
-        borderColor: cssVar('--surface', '#ffffff'),
-        borderWidth: 2
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'right',
-          labels: { color: colors.muted, usePointStyle: true, boxWidth: 8 }
-        }
-      }
-    }
-  });
+// Systems chart
+const systemsCtx = document.getElementById('systems-chart').getContext('2d');
+systemsChart = new Chart(systemsCtx, {
+type: 'doughnut',
+data: {
+labels: [],
+datasets: [{
+data: [],
+backgroundColor: [
+colors.success,
+colors.running,
+colors.accent,
+colors.muted,
+colors.border,
+colors.failed,
+colors.subtle
+],
+borderColor: cssVar('--surface', '#ffffff'),
+borderWidth: 2
+}]
+},
+options: {
+responsive: true,
+maintainAspectRatio: false,
+plugins: {
+legend: {
+position: 'right',
+labels: { color: colors.muted, usePointStyle: true, boxWidth: 8 }
+}
+}
+}
+});
 
-  // Success rate chart
-  const successCtx = document.getElementById('success-rate-chart').getContext('2d');
-  successRateChart = new Chart(successCtx, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [{
-        label: 'Success Rate (%)',
-        data: [],
-        borderColor: colors.success,
-        backgroundColor: hexToRgba(colors.success, 0.08),
-        fill: true,
-        tension: 0.3,
-        pointRadius: 0,
-        pointHoverRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        ...commonScales,
-        y: {
-          ...commonScales.y,
-          max: 100,
-          ticks: {
-            color: colors.muted,
-            callback: function(value) {
-              return value + '%';
-            }
-          }
-        }
-      },
-      plugins: commonPlugins
-    }
-  });
+// Success rate chart
+const successCtx = document.getElementById('success-rate-chart').getContext('2d');
+successRateChart = new Chart(successCtx, {
+type: 'line',
+data: {
+labels: [],
+datasets: [{
+label: 'Success Rate (%)',
+data: [],
+borderColor: colors.success,
+backgroundColor: hexToRgba(colors.success, 0.08),
+fill: true,
+tension: 0.3,
+pointRadius: 0,
+pointHoverRadius: 4
+}]
+},
+options: {
+responsive: true,
+maintainAspectRatio: false,
+scales: {
+...commonScales,
+y: {
+...commonScales.y,
+max: 100,
+ticks: {
+color: colors.muted,
+callback: function(value) {
+return value + '%';
+}
+}
+}
+},
+plugins: commonPlugins
+}
+});
 }
 
 function updateBuildsChart(data) {
-  const labels = data.timestamps.map(t => {
-    const date = new Date(t);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  });
+const labels = data.timestamps.map(t => {
+const date = new Date(t);
+return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+});
 
-  const successful = data.total.map((total, i) => total - data.failed[i]);
+const successful = data.total.map((total, i) => total - data.failed[i]);
 
-  buildsChart.data.labels = labels;
-  buildsChart.data.datasets[0].data = successful;
-  buildsChart.data.datasets[1].data = data.failed;
-  buildsChart.update();
+buildsChart.data.labels = labels;
+buildsChart.data.datasets[0].data = successful;
+buildsChart.data.datasets[1].data = data.failed;
+buildsChart.update();
 }
 
 function updateDurationChart(data) {
-  const labels = data.timestamps.map(t => {
-    const date = new Date(t);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  });
+const labels = data.timestamps.map(t => {
+const date = new Date(t);
+return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+});
 
-  durationChart.data.labels = labels;
-  durationChart.data.datasets[0].data = data.p50;
-  durationChart.data.datasets[1].data = data.p95;
-  durationChart.data.datasets[2].data = data.p99;
-  durationChart.update();
+durationChart.data.labels = labels;
+durationChart.data.datasets[0].data = data.p50;
+durationChart.data.datasets[1].data = data.p95;
+durationChart.data.datasets[2].data = data.p99;
+durationChart.update();
 }
 
 function updateSystemsChart(data) {
-  systemsChart.data.labels = data.systems;
-  systemsChart.data.datasets[0].data = data.counts;
-  systemsChart.update();
+systemsChart.data.labels = data.systems;
+systemsChart.data.datasets[0].data = data.counts;
+systemsChart.update();
 }
 
 function updateSuccessRateChart(data) {
-  const labels = data.timestamps.map(t => {
-    const date = new Date(t);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  });
+const labels = data.timestamps.map(t => {
+const date = new Date(t);
+return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+});
 
-  const successRates = data.total.map((total, i) => {
-    if (total === 0) return 0;
-    return ((total - data.failed[i]) / total * 100).toFixed(1);
-  });
+const successRates = data.total.map((total, i) => {
+if (total === 0) return 0;
+return ((total - data.failed[i]) / total * 100).toFixed(1);
+});
 
-  successRateChart.data.labels = labels;
-  successRateChart.data.datasets[0].data = successRates;
-  successRateChart.update();
+successRateChart.data.labels = labels;
+successRateChart.data.datasets[0].data = successRates;
+successRateChart.update();
 }
-</script>
+    </script>
 {% endblock %}

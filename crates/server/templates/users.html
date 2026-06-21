@@ -1,154 +1,186 @@
 {% extends "base.html" %}
 {% block title %}Users - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block content %}
-<h1>User Management</h1>
+    <h1>User Management</h1>
 
-{% if is_admin %}
-<section class="panel">
-  <div class="panel-header"><h2>Create user</h2></div>
-  <div class="panel-body">
-    <form id="create-user-form" class="filter-form">
-      <label>Username: <input type="text" id="user-username" required pattern="[a-zA-Z0-9_-]+" minlength="3" maxlength="50"></label>
-      <label>Email: <input type="email" id="user-email" required></label>
-      <label>Full Name: <input type="text" id="user-fullname"></label>
-      <label>Password: <input type="password" id="user-password" required minlength="8"></label>
-      <label>Role: <select id="user-role">
-        <option value="read-only" selected>read-only</option>
-        <option value="admin">admin</option>
-        <option value="create-projects">create-projects</option>
-        <option value="eval-jobset">eval-jobset</option>
-        <option value="cancel-build">cancel-build</option>
-        <option value="restart-jobs">restart-jobs</option>
-        <option value="bump-to-front">bump-to-front</option>
-      </select></label>
-      <button type="submit" class="btn">Create User</button>
-    </form>
-    <div id="user-msg"></div>
-  </div>
-</section>
-{% endif %}
+    {% if is_admin %}
+        <section class="panel">
+            <div class="panel-header">
+                <h2>Create user</h2>
+            </div>
+            <div class="panel-body">
+                <form id="create-user-form" class="filter-form">
+                    <label>
+                        Username: <input type="text" id="user-username" required pattern="[a-zA-Z0-9_-]+" minlength="3" maxlength="50">
+                    </label>
+                    <label>
+                        Email: <input type="email" id="user-email" required>
+                    </label>
+                    <label>
+                        Full Name: <input type="text" id="user-fullname">
+                    </label>
+                    <label>
+                        Password: <input type="password" id="user-password" required minlength="8">
+                    </label>
+                    <label>
+                        Role:
+                        <select id="user-role">
+                            <option value="read-only" selected>read-only</option>
+                            <option value="admin">admin</option>
+                            <option value="create-projects">create-projects</option>
+                            <option value="eval-jobset">eval-jobset</option>
+                            <option value="cancel-build">cancel-build</option>
+                            <option value="restart-jobs">restart-jobs</option>
+                            <option value="bump-to-front">bump-to-front</option>
+                        </select>
+                    </label>
+                    <button type="submit" class="btn">Create User</button>
+                </form>
+                <div id="user-msg"></div>
+            </div>
+        </section>
+    {% endif %}
 
-{% if users.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No users</div>
-  <div class="empty-hint">Create a user above to enable user authentication.</div>
-</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th>Username</th>
-      <th>Email</th>
-      <th>Role</th>
-      <th>Type</th>
-      <th>Enabled</th>
-      <th>Last Login</th>
-      {% if is_admin %}<th class="row-actions">Actions</th>{% endif %}
-    </tr>
-  </thead>
-  <tbody>
-    {% for u in users %}
-    <tr>
-      <td>{{ u.username }}</td>
-      <td>{{ u.email }}</td>
-      <td><span class="badge badge-pending">{{ u.role }}</span></td>
-      <td>{{ u.user_type }}</td>
-      <td>{% if u.enabled %}Yes{% else %}No{% endif %}</td>
-      <td>{{ u.last_login_at }}</td>
-      {% if is_admin %}
-      <td class="row-actions">
-        <button class="btn btn-small btn-secondary" onclick="toggleUser('{{ u.id }}', {{ !u.enabled }})">
-          {% if u.enabled %}Disable{% else %}Enable{% endif %}
-        </button>
-        <button class="btn btn-small btn-danger" onclick="deleteUser('{{ u.id }}')">Delete</button>
-      </td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
+    {% if users.is_empty() %}
+        <div class="empty">
+            <div class="empty-title">No users</div>
+            <div class="empty-hint">Create a user above to enable user authentication.</div>
+        </div>
+    {% else %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Type</th>
+                        <th>Enabled</th>
+                        <th>Last Login</th>
+                        {% if is_admin %}<th class="row-actions">Actions</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                        <tr>
+                            <td>{{ u.username }}</td>
+                            <td>{{ u.email }}</td>
+                            <td>
+                                <span class="badge badge-pending">{{ u.role }}</span>
+                            </td>
+                            <td>{{ u.user_type }}</td>
+                            <td>
+                                {% if u.enabled %}
+                                    Yes
+                                {% else %}
+                                    No
+                                {% endif %}
+                            </td>
+                            <td>{{ u.last_login_at }}</td>
+                            {% if is_admin %}
+                                <td class="row-actions">
+                                    <button class="btn btn-small btn-secondary"
+                                            onclick="toggleUser('{{ u.id }}', {{ !u.enabled }})">
+                                        {% if u.enabled %}
+                                            Disable
+                                        {% else %}
+                                            Enable
+                                        {% endif %}
+                                    </button>
+                                    <button class="btn btn-small btn-danger" onclick="deleteUser('{{ u.id }}')">
+                                        Delete
+                                    </button>
+                                </td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
 
-<nav class="pagination">
-  {% if has_prev %}
-  <a href="/users?limit={{ limit }}&offset={{ prev_offset }}" class="btn btn-small btn-secondary">Previous</a>
-  {% endif %}
-  <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
-  {% if has_next %}
-  <a href="/users?limit={{ limit }}&offset={{ next_offset }}" class="btn btn-small btn-secondary">Next</a>
-  {% endif %}
-</nav>
-{% endif %}
+        <nav class="pagination">
+            {% if has_prev %}
+                <a href="/users?limit={{ limit }}&offset={{ prev_offset }}" class="btn btn-small btn-secondary">
+                    Previous
+                </a>
+            {% endif %}
+            <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
+            {% if has_next %}
+                <a href="/users?limit={{ limit }}&offset={{ next_offset }}" class="btn btn-small btn-secondary">Next</a>
+            {% endif %}
+        </nav>
+    {% endif %}
 {% endblock %}
 {% block scripts %}
-{% if is_admin %}
-<script>
+    {% if is_admin %}
+        <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 document.getElementById('create-user-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const msg = document.getElementById('user-msg');
-  try {
-    const fullName = document.getElementById('user-fullname').value;
-    const res = await fetch('/api/v1/users', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({
-        username: document.getElementById('user-username').value,
-        email: document.getElementById('user-email').value,
-        full_name: fullName || null,
-        password: document.getElementById('user-password').value,
-        role: document.getElementById('user-role').value,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.innerHTML = '<div class="flash-message flash-success">User created successfully!</div>';
-      setTimeout(() => window.location.reload(), 1500);
-    } else {
-      throw new Error(data.error || data.message || 'Unknown error');
-    }
-  } catch(err) {
-    showError(msg, err.message);
-  }
+e.preventDefault();
+const msg = document.getElementById('user-msg');
+try {
+const fullName = document.getElementById('user-fullname').value;
+const res = await fetch('/api/v1/users', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({
+username: document.getElementById('user-username').value,
+email: document.getElementById('user-email').value,
+full_name: fullName || null,
+password: document.getElementById('user-password').value,
+role: document.getElementById('user-role').value,
+}),
+});
+const data = await res.json().catch(() => ({}));
+if (res.ok) {
+msg.innerHTML = '<div class="flash-message flash-success">User created successfully!</div>';
+setTimeout(() => window.location.reload(), 1500);
+} else {
+throw new Error(data.error || data.message || 'Unknown error');
+}
+} catch(err) {
+showError(msg, err.message);
+}
 });
 async function toggleUser(id, enable) {
-  try {
-    const res = await fetch('/api/v1/users/' + id, {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({ enabled: enable }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to update user');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+try {
+const res = await fetch('/api/v1/users/' + id, {
+method: 'PUT',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({ enabled: enable }),
+});
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to update user');
+}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
 }
 async function deleteUser(id) {
-  if (!confirm('Delete this user? This action cannot be undone.')) return;
-  try {
-    const res = await fetch('/api/v1/users/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to delete user');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+if (!confirm('Delete this user? This action cannot be undone.')) return;
+try {
+const res = await fetch('/api/v1/users/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to delete user');
 }
-</script>
-{% endif %}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
+}
+        </script>
+    {% endif %}
 {% endblock %}

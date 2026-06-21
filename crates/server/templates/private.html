@@ -1,39 +1,53 @@
 {% extends "base.html" %}
 {% block title %}Sign in required - {{ ui.brand_name }}{% endblock %}
 {% block content %}
-<div class="login-container">
-  <div style="text-align:center;max-width:320px">
-    <p style="font-size:14px;font-weight:650;color:var(--text);margin-bottom:6px">This page is private</p>
-    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Sign in to access this content.</p>
-    <button class="btn" onclick="document.getElementById('login-dialog').showModal()">Sign in</button>
-  </div>
-</div>
+    <div class="login-container">
+        <div style="text-align:center;max-width:320px">
+            <p style="font-size:14px;font-weight:650;color:var(--text);margin-bottom:6px">This page is private</p>
+            <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Sign in to access this content.</p>
+            <button class="btn" onclick="document.getElementById('login-dialog').showModal()">Sign in</button>
+        </div>
+    </div>
 
-<dialog id="login-dialog" class="dialog-sm">
-  <div class="dialog-header">
-    <h2>Sign in</h2>
-    <button class="btn-ghost dialog-close" onclick="document.getElementById('login-dialog').close()" aria-label="Close">&times;</button>
-  </div>
-  <div class="dialog-body">
-    <form method="POST" action="/login">
-      <div class="form-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" placeholder="username" autocomplete="username">
-      </div>
-      <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" placeholder="password" autocomplete="current-password">
-      </div>
-      <button type="submit" class="btn btn-full">Sign in</button>
-    </form>
-    <div class="login-divider"><span>or</span></div>
-    <form method="POST" action="/login">
-      <div class="form-group">
-        <label for="api_key">API Key</label>
-        <input type="password" id="api_key" name="api_key" placeholder="circus_..." autocomplete="current-password">
-      </div>
-      <button type="submit" class="btn btn-secondary btn-full">Sign in with API key</button>
-    </form>
-  </div>
-</dialog>
+    <dialog id="login-dialog" class="dialog-sm">
+        <div class="dialog-header">
+            <h2>Sign in</h2>
+            <button class="btn-ghost dialog-close"
+                    onclick="document.getElementById('login-dialog').close()"
+                    aria-label="Close">
+                &times;
+            </button>
+        </div>
+        <div class="dialog-body">
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="username" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password"
+                           id="password"
+                           name="password"
+                           placeholder="password"
+                           autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-full">Sign in</button>
+            </form>
+            <div class="login-divider">
+                <span>or</span>
+            </div>
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <label for="api_key">API Key</label>
+                    <input type="password"
+                           id="api_key"
+                           name="api_key"
+                           placeholder="circus_..."
+                           autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-secondary btn-full">Sign in with API key</button>
+            </form>
+        </div>
+    </dialog>
 {% endblock %}

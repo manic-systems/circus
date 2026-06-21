@@ -1,359 +1,383 @@
 {% extends "base.html" %}
 {% block title %}Projects - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
-  <span class="current">Projects</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <span class="current">Projects</span>
+    </nav>
 {% endblock %}
 {% block content %}
-<h1>Projects</h1>
+    <h1>Projects</h1>
 
-{% if is_admin %}
-<div class="page-actions">
-  <button type="button" class="btn" onclick="document.getElementById('probe-dialog').showModal()">Probe repository</button>
-  <button type="button" class="btn btn-secondary" onclick="document.getElementById('quick-create-dialog').showModal()">Quick create</button>
-</div>
+    {% if is_admin %}
+        <div class="page-actions">
+            <button type="button" class="btn" onclick="document.getElementById('probe-dialog').showModal()">
+                Probe repository
+            </button>
+            <button type="button"
+                    class="btn btn-secondary"
+                    onclick="document.getElementById('quick-create-dialog').showModal()">
+                Quick create
+            </button>
+        </div>
 
-<dialog id="quick-create-dialog">
-  <div class="dialog-header">
-    <h2>Quick create</h2>
-    <button type="button" class="btn-ghost dialog-close" onclick="document.getElementById('quick-create-dialog').close()" aria-label="Close">&times;</button>
-  </div>
-  <div class="dialog-body">
-    <form id="create-project-form">
-      <div class="form-group">
-        <label for="project-name">Name</label>
-        <input type="text" id="project-name" required>
-      </div>
-      <div class="form-group">
-        <label for="project-repo">Repository URL</label>
-        <input type="url" id="project-repo" required>
-      </div>
-      <div class="form-group">
-        <label for="project-desc">Description</label>
-        <textarea id="project-desc" rows="3"></textarea>
-      </div>
-    </form>
-    <div id="project-msg"></div>
-  </div>
-  <div class="dialog-footer">
-    <button type="button" class="btn btn-secondary" onclick="document.getElementById('quick-create-dialog').close()">Cancel</button>
-    <button type="submit" class="btn" form="create-project-form">Create Project</button>
-  </div>
-</dialog>
+        <dialog id="quick-create-dialog">
+            <div class="dialog-header">
+                <h2>Quick create</h2>
+                <button type="button"
+                        class="btn-ghost dialog-close"
+                        onclick="document.getElementById('quick-create-dialog').close()"
+                        aria-label="Close">
+                    &times;
+                </button>
+            </div>
+            <div class="dialog-body">
+                <form id="create-project-form">
+                    <div class="form-group">
+                        <label for="project-name">Name</label>
+                        <input type="text" id="project-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="project-repo">Repository URL</label>
+                        <input type="url" id="project-repo" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="project-desc">Description</label>
+                        <textarea id="project-desc" rows="3">
+                        </textarea>
+                    </div>
+                </form>
+                <div id="project-msg"></div>
+            </div>
+            <div class="dialog-footer">
+                <button type="button"
+                        class="btn btn-secondary"
+                        onclick="document.getElementById('quick-create-dialog').close()">
+                    Cancel
+                </button>
+                <button type="submit" class="btn" form="create-project-form">Create Project</button>
+            </div>
+        </dialog>
 
-<dialog id="probe-dialog">
-  <div class="dialog-header">
-    <h2>Probe repository</h2>
-    <button type="button" class="btn-ghost dialog-close" onclick="document.getElementById('probe-dialog').close()" aria-label="Close">&times;</button>
-  </div>
-  <div class="dialog-body">
-    <div id="probe-step-1" class="wizard-step">
-      <div class="form-group">
-        <label for="probe-url">Flake repository URL</label>
-        <input type="url" id="probe-url" placeholder="https://github.com/user/repo" required>
-      </div>
-      <div id="probe-status" class="form-status"></div>
-    </div>
-    <div id="probe-step-2" class="wizard-step" hidden>
-      <p class="wizard-hint">Select which outputs to build. You can customise the Nix expression for each.</p>
-      <div id="outputs-list"></div>
-    </div>
-    <div id="probe-step-3" class="wizard-step" hidden>
-      <div class="form-group">
-        <label for="probe-project-name">Project Name</label>
-        <input type="text" id="probe-project-name" required>
-      </div>
-      <div class="form-group">
-        <label for="probe-project-desc">Description</label>
-        <textarea id="probe-project-desc" rows="3"></textarea>
-      </div>
-    </div>
-    <div id="probe-step-4" class="wizard-step" hidden>
-      <dl class="detail-grid" id="summary-grid"></dl>
-      <h3 class="section-title">Selected Jobsets</h3>
-      <div id="summary-jobsets"></div>
-      <div id="create-status" class="form-status"></div>
-    </div>
-  </div>
-  <div class="dialog-footer">
-    <button type="button" class="btn btn-secondary" id="probe-back-btn" onclick="probePrevStep()" hidden>Back</button>
-    <button type="button" class="btn btn-secondary" onclick="document.getElementById('probe-dialog').close()">Cancel</button>
-    <button type="button" class="btn" id="probe-next-btn" onclick="probeNextStep()">Probe Repository</button>
-  </div>
-</dialog>
-{% endif %}
+        <dialog id="probe-dialog">
+            <div class="dialog-header">
+                <h2>Probe repository</h2>
+                <button type="button"
+                        class="btn-ghost dialog-close"
+                        onclick="document.getElementById('probe-dialog').close()"
+                        aria-label="Close">
+                    &times;
+                </button>
+            </div>
+            <div class="dialog-body">
+                <div id="probe-step-1" class="wizard-step">
+                    <div class="form-group">
+                        <label for="probe-url">Flake repository URL</label>
+                        <input type="url" id="probe-url" placeholder="https://github.com/user/repo" required>
+                    </div>
+                    <div id="probe-status" class="form-status"></div>
+                </div>
+                <div id="probe-step-2" class="wizard-step" hidden>
+                    <p class="wizard-hint">
+                        Select which outputs to build. You can customise the Nix expression for each.
+                    </p>
+                    <div id="outputs-list"></div>
+                </div>
+                <div id="probe-step-3" class="wizard-step" hidden>
+                    <div class="form-group">
+                        <label for="probe-project-name">Project Name</label>
+                        <input type="text" id="probe-project-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="probe-project-desc">Description</label>
+                        <textarea id="probe-project-desc" rows="3">
+                        </textarea>
+                    </div>
+                </div>
+                <div id="probe-step-4" class="wizard-step" hidden>
+                    <dl class="detail-grid" id="summary-grid">
+                    </dl>
+                    <h3 class="section-title">Selected Jobsets</h3>
+                    <div id="summary-jobsets"></div>
+                    <div id="create-status" class="form-status"></div>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button type="button" class="btn btn-secondary" id="probe-back-btn" onclick="probePrevStep()" hidden>
+                    Back
+                </button>
+                <button type="button"
+                        class="btn btn-secondary"
+                        onclick="document.getElementById('probe-dialog').close()">
+                    Cancel
+                </button>
+                <button type="button" class="btn" id="probe-next-btn" onclick="probeNextStep()">
+                    Probe Repository
+                </button>
+            </div>
+        </dialog>
+    {% endif %}
 
-{% if projects.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No projects yet</div>
-  {% if is_admin %}
-  <div class="empty-hint">Create a project using the buttons above to get started.</div>
-  {% else %}
-  <div class="empty-hint">Projects will appear here once an administrator creates them.</div>
-  {% endif %}
-</div>
-{% else %}
-<div class="table-wrap">
-<table class="data-table">
-  <thead>
-    <tr><th>Name</th><th>Description</th><th>Repository</th><th>Created</th><th>Updated</th></tr>
-  </thead>
-  <tbody>
-    {% for p in projects %}
-    <tr>
-      <td class="truncate" title="{{ p.name }}"><a href="/project/{{ p.id }}">{{ p.name }}</a></td>
-      <td class="truncate text-muted" title="{% match p.description %}{% when Some with (d) %}{{ d }}{% when None %}{% endmatch %}">{% match p.description %}{% when Some with (d) %}{{ d }}{% when None %}-{% endmatch %}</td>
-      <td class="mono truncate" title="{{ p.repository_url }}">{{ p.repository_url }}</td>
-      <td class="mono nowrap">{{ p.created_at.format("%Y-%m-%d %H:%M") }}</td>
-      <td class="mono nowrap">{{ p.updated_at.format("%Y-%m-%d %H:%M") }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% if total_pages > 1 %}
-<nav class="pagination">
-  {% if has_prev %}
-  <a href="/projects?offset={{ prev_offset }}&limit={{ limit }}" class="btn btn-small btn-secondary">&laquo; Previous</a>
-  {% endif %}
-  <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
-  {% if has_next %}
-  <a href="/projects?offset={{ next_offset }}&limit={{ limit }}" class="btn btn-small btn-secondary">Next &raquo;</a>
-  {% endif %}
-</nav>
-{% endif %}
-{% endif %}
+    {% if projects.is_empty() %}
+        <div class="empty">
+            <div class="empty-title">No projects yet</div>
+            {% if is_admin %}
+                <div class="empty-hint">Create a project using the buttons above to get started.</div>
+            {% else %}
+                <div class="empty-hint">Projects will appear here once an administrator creates them.</div>
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Repository</th>
+                        <th>Created</th>
+                        <th>Updated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in projects %}
+                        <tr>
+                            <td class="truncate" title="{{ p.name }}">
+                                <a href="/project/{{ p.id }}">{{ p.name }}</a>
+                            </td>
+                            <td class="truncate text-muted"
+                                title="{% match p.description %}{% when Some with (d) %}{{ d }}{% when None %}{% endmatch %}">
+                                {% match p.description %}
+                                    {% when Some with (d) %}
+                                        {{ d }}
+                                    {% when None %}
+                                        -
+                                {% endmatch %}
+                            </td>
+                            <td class="mono truncate" title="{{ p.repository_url }}">{{ p.repository_url }}</td>
+                            <td class="mono nowrap">{{ p.created_at.format("%Y-%m-%d %H:%M") }}</td>
+                            <td class="mono nowrap">{{ p.updated_at.format("%Y-%m-%d %H:%M") }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if total_pages > 1 %}
+            <nav class="pagination">
+                {% if has_prev %}
+                    <a href="/projects?offset={{ prev_offset }}&limit={{ limit }}" class="btn btn-small btn-secondary">
+                        &laquo; Previous
+                    </a>
+                {% endif %}
+                <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
+                {% if has_next %}
+                    <a href="/projects?offset={{ next_offset }}&limit={{ limit }}" class="btn btn-small btn-secondary">
+                        Next &raquo;
+                    </a>
+                {% endif %}
+            </nav>
+        {% endif %}
+    {% endif %}
 {% endblock %}
 {% block scripts %}
-{% if is_admin %}
-<script>
+    {% if is_admin %}
+        <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 
 document.getElementById('create-project-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const msg = document.getElementById('project-msg');
-  try {
-    const res = await fetch('/api/v1/projects', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({
-        name: document.getElementById('project-name').value,
-        repository_url: document.getElementById('project-repo').value,
-        description: document.getElementById('project-desc').value || null,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Unknown error');
-    }
-    window.location.reload();
-  } catch(err) {
-    showError(msg, err.message);
-  }
+e.preventDefault();
+const msg = document.getElementById('project-msg');
+try {
+const res = await fetch('/api/v1/projects', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({
+name: document.getElementById('project-name').value,
+repository_url: document.getElementById('project-repo').value,
+description: document.getElementById('project-desc').value || null,
+}),
+});
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Unknown error');
+}
+window.location.reload();
+} catch(err) {
+showError(msg, err.message);
+}
 });
 
 let probeResult = null;
 let probeStep = 1;
 
 function showProbeStep(n) {
-  for (let i = 1; i <= 4; i++) {
-    document.getElementById('probe-step-' + i).hidden = i !== n;
-  }
-  probeStep = n;
-  const nextBtn = document.getElementById('probe-next-btn');
-  const backBtn = document.getElementById('probe-back-btn');
-  backBtn.hidden = n === 1;
-  if (n === 1) {
-    nextBtn.textContent = 'Probe Repository';
-  } else if (n === 4) {
-    nextBtn.textContent = 'Create Project';
-    buildProbeSummary();
-  } else {
-    nextBtn.textContent = 'Continue';
-  }
-}
-
-function probeNextStep() {
-  if (probeStep === 1) {
-    probeRepo();
-  } else if (probeStep === 4) {
-    createProbedProject();
-  } else {
-    showProbeStep(probeStep + 1);
-  }
-}
-
-function probePrevStep() {
-  showProbeStep(probeStep - 1);
-}
-
-function showSpinner(el, msg) {
-  el.innerHTML = '<span class="spinner"></span><span class="text-muted">' + escapeHtml(msg) + '</span>';
+for (let i = 1; i <= 4; i++) { document.getElementById('probe-step-' + i).hidden = i !== n; } probeStep = n; const nextBtn = document.getElementById('probe-next-btn'); const backBtn = document.getElementById('probe-back-btn'); backBtn.hidden = n === 1; if (n === 1) { nextBtn.textContent = 'Probe Repository'; } else if (n === 4) { nextBtn.textContent = 'Create Project'; buildProbeSummary(); } else { nextBtn.textContent = 'Continue'; } } function probeNextStep() { if (probeStep === 1) { probeRepo(); } else if (probeStep === 4) { createProbedProject(); } else { showProbeStep(probeStep + 1); } } function probePrevStep() { showProbeStep(probeStep - 1); } function showSpinner(el, msg) { el.innerHTML = '<span class="spinner"></span><span class="text-muted">' + escapeHtml(msg) + '</span>';
 }
 
 async function probeRepo() {
-  const url = document.getElementById('probe-url').value.trim();
-  if (!url) return;
-  const status = document.getElementById('probe-status');
-  const btn = document.getElementById('probe-next-btn');
-  btn.disabled = true;
-  showSpinner(status, 'Probing repository… This may take a moment.');
+const url = document.getElementById('probe-url').value.trim();
+if (!url) return;
+const status = document.getElementById('probe-status');
+const btn = document.getElementById('probe-next-btn');
+btn.disabled = true;
+showSpinner(status, 'Probing repository… This may take a moment.');
 
-  try {
-    const resp = await fetch('/api/v1/projects/probe', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({ repository_url: url }),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(err.error || err.message || 'Probe failed');
-    }
-    probeResult = await resp.json();
+try {
+const resp = await fetch('/api/v1/projects/probe', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({ repository_url: url }),
+});
+if (!resp.ok) {
+const err = await resp.json().catch(() => ({ error: resp.statusText }));
+throw new Error(err.error || err.message || 'Probe failed');
+}
+probeResult = await resp.json();
 
-    if (!probeResult.is_flake) {
-      showError(status, probeResult.error || 'Not a flake repository');
-      btn.disabled = false;
-      return;
-    }
+if (!probeResult.is_flake) {
+showError(status, probeResult.error || 'Not a flake repository');
+btn.disabled = false;
+return;
+}
 
-    renderProbeOutputs();
+renderProbeOutputs();
 
-    const parts = url.replace(/\.git$/, '').split('/');
-    document.getElementById('probe-project-name').value = parts[parts.length - 1] || '';
-    if (probeResult.metadata && probeResult.metadata.description) {
-      document.getElementById('probe-project-desc').value = probeResult.metadata.description;
-    }
+const parts = url.replace(/\.git$/, '').split('/');
+document.getElementById('probe-project-name').value = parts[parts.length - 1] || '';
+if (probeResult.metadata && probeResult.metadata.description) {
+document.getElementById('probe-project-desc').value = probeResult.metadata.description;
+}
 
-    showProbeStep(2);
-  } catch (e) {
-    showError(status, e.message);
-  } finally {
-    btn.disabled = false;
-  }
+showProbeStep(2);
+} catch (e) {
+showError(status, e.message);
+} finally {
+btn.disabled = false;
+}
 }
 
 function renderProbeOutputs() {
-  const list = document.getElementById('outputs-list');
-  if (!probeResult || !probeResult.suggested_jobsets.length) {
-    list.innerHTML = '<div class="empty">No buildable outputs detected.</div>';
-    return;
-  }
+const list = document.getElementById('outputs-list');
+if (!probeResult || !probeResult.suggested_jobsets.length) {
+list.innerHTML = '<div class="empty">No buildable outputs detected.</div>';
+return;
+}
 
-  let html = '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Expression</th><th>Description</th><th>Priority</th></tr></thead><tbody>';
-  probeResult.suggested_jobsets.forEach((js, i) => {
-    const checked = js.priority >= 6 ? 'checked' : '';
-    html += '<tr>'
-      + '<td><input type="checkbox" class="js-check" data-idx="' + i + '" ' + checked + '></td>'
-      + '<td>' + escapeHtml(js.name) + '</td>'
-      + '<td><input type="text" class="js-expr inline-input" data-idx="' + i + '" value="' + escapeHtml(js.nix_expression) + '"></td>'
-      + '<td class="text-muted text-sm">' + escapeHtml(js.description) + '</td>'
-      + '<td class="text-center">' + js.priority + '</td>'
-      + '</tr>';
-  });
-  html += '</tbody></table></div>';
+let html = '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Expression</th><th>Description</th><th>Priority</th></tr></thead><tbody>';
+probeResult.suggested_jobsets.forEach((js, i) => {
+const checked = js.priority >= 6 ? 'checked' : '';
+html += '<tr>'
++ '<td><input type="checkbox" class="js-check" data-idx="' + i + '" ' + checked + '></td>'
++ '<td>' + escapeHtml(js.name) + '</td>'
++ '<td><input type="text" class="js-expr inline-input" data-idx="' + i + '" value="' + escapeHtml(js.nix_expression) + '"></td>'
++ '<td class="text-muted text-sm">' + escapeHtml(js.description) + '</td>'
++ '<td class="text-center">' + js.priority + '</td>'
++ '</tr>';
+});
+html += '</tbody></table></div>';
 
-  if (probeResult.outputs.length) {
-    html += '<details class="outputs-detail"><summary>All detected outputs (' + probeResult.outputs.length + ')</summary><ul class="outputs-list">';
-    probeResult.outputs.forEach(o => {
-      html += '<li><strong>' + escapeHtml(o.path) + '</strong> (' + escapeHtml(o.output_type) + ')';
-      if (o.systems.length) html += ' — ' + o.systems.map(escapeHtml).join(', ');
-      html += '</li>';
-    });
-    html += '</ul></details>';
-  }
+if (probeResult.outputs.length) {
+html += '<details class="outputs-detail"><summary>All detected outputs (' + probeResult.outputs.length + ')</summary><ul class="outputs-list">';
+probeResult.outputs.forEach(o => {
+html += '<li><strong>' + escapeHtml(o.path) + '</strong> (' + escapeHtml(o.output_type) + ')';
+if (o.systems.length) html += ' — ' + o.systems.map(escapeHtml).join(', ');
+html += '</li>';
+});
+html += '</ul></details>';
+}
 
-  list.innerHTML = html;
+list.innerHTML = html;
 }
 
 function getSelectedJobsets() {
-  const jobsets = [];
-  document.querySelectorAll('.js-check:checked').forEach(cb => {
-    const idx = parseInt(cb.dataset.idx);
-    const js = probeResult.suggested_jobsets[idx];
-    const exprInput = document.querySelector('.js-expr[data-idx="' + idx + '"]');
-    jobsets.push({
-      name: js.name,
-      nix_expression: exprInput ? exprInput.value : js.nix_expression,
-      description: js.description,
-    });
-  });
-  return jobsets;
+const jobsets = [];
+document.querySelectorAll('.js-check:checked').forEach(cb => {
+const idx = parseInt(cb.dataset.idx);
+const js = probeResult.suggested_jobsets[idx];
+const exprInput = document.querySelector('.js-expr[data-idx="' + idx + '"]');
+jobsets.push({
+name: js.name,
+nix_expression: exprInput ? exprInput.value : js.nix_expression,
+description: js.description,
+});
+});
+return jobsets;
 }
 
 function buildProbeSummary() {
-  const name = document.getElementById('probe-project-name').value;
-  const desc = document.getElementById('probe-project-desc').value;
-  const url = document.getElementById('probe-url').value;
-  const grid = document.getElementById('summary-grid');
-  grid.innerHTML = '<dt>Name</dt><dd>' + escapeHtml(name) + '</dd>'
-    + '<dt>Repository</dt><dd>' + escapeHtml(url) + '</dd>'
-    + '<dt>Description</dt><dd>' + escapeHtml(desc || '(none)') + '</dd>';
+const name = document.getElementById('probe-project-name').value;
+const desc = document.getElementById('probe-project-desc').value;
+const url = document.getElementById('probe-url').value;
+const grid = document.getElementById('summary-grid');
+grid.innerHTML = '<dt>Name</dt><dd>' + escapeHtml(name) + '</dd>'
++ '<dt>Repository</dt><dd>' + escapeHtml(url) + '</dd>'
++ '<dt>Description</dt><dd>' + escapeHtml(desc || '(none)') + '</dd>';
 
-  const jobsets = getSelectedJobsets();
-  const jsList = document.getElementById('summary-jobsets');
-  if (!jobsets.length) {
-    jsList.innerHTML = '<div class="empty">No jobsets selected.</div>';
-  } else {
-    let html = '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Expression</th></tr></thead><tbody>';
-    jobsets.forEach(js => {
-      html += '<tr><td>' + escapeHtml(js.name) + '</td><td><code>' + escapeHtml(js.nix_expression) + '</code></td></tr>';
-    });
-    html += '</tbody></table></div>';
-    jsList.innerHTML = html;
-  }
+const jobsets = getSelectedJobsets();
+const jsList = document.getElementById('summary-jobsets');
+if (!jobsets.length) {
+jsList.innerHTML = '<div class="empty">No jobsets selected.</div>';
+} else {
+let html = '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Expression</th></tr></thead><tbody>';
+jobsets.forEach(js => {
+html += '<tr><td>' + escapeHtml(js.name) + '</td><td><code>' + escapeHtml(js.nix_expression) + '</code></td></tr>';
+});
+html += '</tbody></table></div>';
+jsList.innerHTML = html;
+}
 }
 
 async function createProbedProject() {
-  const status = document.getElementById('create-status');
-  const btn = document.getElementById('probe-next-btn');
-  btn.disabled = true;
-  showSpinner(status, 'Creating project…');
+const status = document.getElementById('create-status');
+const btn = document.getElementById('probe-next-btn');
+btn.disabled = true;
+showSpinner(status, 'Creating project…');
 
-  const name = document.getElementById('probe-project-name').value.trim();
-  const desc = document.getElementById('probe-project-desc').value.trim();
-  const url = document.getElementById('probe-url').value.trim();
-  const jobsets = getSelectedJobsets();
+const name = document.getElementById('probe-project-name').value.trim();
+const desc = document.getElementById('probe-project-desc').value.trim();
+const url = document.getElementById('probe-url').value.trim();
+const jobsets = getSelectedJobsets();
 
-  if (!name) {
-    showError(status, 'Project name is required');
-    btn.disabled = false;
-    return;
-  }
-
-  try {
-    const resp = await fetch('/api/v1/projects/setup', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({
-        repository_url: url,
-        name: name,
-        description: desc || null,
-        jobsets: jobsets,
-      }),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(err.error || err.message || 'Failed to create project');
-    }
-    const data = await resp.json();
-    status.innerHTML = '<div class="flash-message flash-success">Project created successfully!</div>';
-    setTimeout(() => { window.location.href = '/project/' + data.project.id; }, 1000);
-  } catch (e) {
-    showError(status, e.message);
-    btn.disabled = false;
-  }
+if (!name) {
+showError(status, 'Project name is required');
+btn.disabled = false;
+return;
 }
-</script>
-{% endif %}
+
+try {
+const resp = await fetch('/api/v1/projects/setup', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({
+repository_url: url,
+name: name,
+description: desc || null,
+jobsets: jobsets,
+}),
+});
+if (!resp.ok) {
+const err = await resp.json().catch(() => ({ error: resp.statusText }));
+throw new Error(err.error || err.message || 'Failed to create project');
+}
+const data = await resp.json();
+status.innerHTML = '<div class="flash-message flash-success">Project created successfully!</div>';
+setTimeout(() => { window.location.href = '/project/' + data.project.id; }, 1000);
+} catch (e) {
+showError(status, e.message);
+btn.disabled = false;
+}
+}
+        </script>
+    {% endif %}
 {% endblock %}

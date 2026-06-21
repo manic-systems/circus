@@ -1,570 +1,706 @@
 {% extends "base.html" %}
 {% block title %}Admin - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block content %}
-<h1>Administration</h1>
+    <h1>Administration</h1>
 
-<section class="panel">
-  <div class="panel-header"><h2>System Status</h2></div>
-  <div class="panel-body">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-value">{{ status.projects_count }}</div><div class="stat-label">Projects</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.jobsets_count }}</div><div class="stat-label">Jobsets</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.evaluations_count }}</div><div class="stat-label">Evaluations</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.builds_pending }}</div><div class="stat-label">Pending</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.builds_running }}</div><div class="stat-label">Running</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.builds_completed }}</div><div class="stat-label">Completed</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.builds_failed }}</div><div class="stat-label">Failed</div></div>
-      <div class="stat-card"><div class="stat-value">{{ status.channels_count }}</div><div class="stat-label">Channels</div></div>
-    </div>
-  </div>
-</section>
+    <section class="panel">
+        <div class="panel-header">
+            <h2>System Status</h2>
+        </div>
+        <div class="panel-body">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.projects_count }}</div>
+                    <div class="stat-label">Projects</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.jobsets_count }}</div>
+                    <div class="stat-label">Jobsets</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.evaluations_count }}</div>
+                    <div class="stat-label">Evaluations</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.builds_pending }}</div>
+                    <div class="stat-label">Pending</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.builds_running }}</div>
+                    <div class="stat-label">Running</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.builds_completed }}</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.builds_failed }}</div>
+                    <div class="stat-label">Failed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ status.channels_count }}</div>
+                    <div class="stat-label">Channels</div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-{% if is_admin %}
-<section class="panel">
-  <div class="panel-header"><h2>Pinned Build Outputs</h2></div>
-  {% if pinned_outputs.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No pinned build outputs</div>
-    <div class="empty-hint">Builds marked keep=true will appear here with their recorded GC roots.</div>
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Build</th><th>Output</th><th>System</th><th>Status</th><th>Store Path</th><th>GC Root</th><th>Recorded</th><th class="row-actions">Actions</th></tr>
-    </thead>
-    <tbody>
-      {% for output in pinned_outputs %}
-      <tr>
-        <td><a href="/build/{{ output.build_id }}">{{ output.job_name }}</a></td>
-        <td>{{ output.product_name }}</td>
-        <td>{{ output.system }}</td>
-        <td>{{ output.status }}</td>
-        <td><code class="path-short">{{ output.path }}</code></td>
-        <td>{% if !output.gc_root_path.is_empty() %}<code class="path-short">{{ output.gc_root_path }}</code>{% else %}-{% endif %}</td>
-        <td>{{ output.product_created_at }}</td>
-        <td class="row-actions"><button class="btn btn-small btn-danger" onclick="unpinBuild('{{ output.build_id }}')">Unpin Build</button></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+    {% if is_admin %}
+        <section class="panel">
+            <div class="panel-header">
+                <h2>Pinned Build Outputs</h2>
+            </div>
+            {% if pinned_outputs.is_empty() %}
+                <div class="empty compact-empty">
+                    <div class="empty-title">No pinned build outputs</div>
+                    <div class="empty-hint">Builds marked keep=true will appear here with their recorded GC roots.</div>
+                </div>
+            {% else %}
+                <div class="table-wrap compact-table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Build</th>
+                                <th>Output</th>
+                                <th>System</th>
+                                <th>Status</th>
+                                <th>Store Path</th>
+                                <th>GC Root</th>
+                                <th>Recorded</th>
+                                <th class="row-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for output in pinned_outputs %}
+                                <tr>
+                                    <td>
+                                        <a href="/build/{{ output.build_id }}">{{ output.job_name }}</a>
+                                    </td>
+                                    <td>{{ output.product_name }}</td>
+                                    <td>{{ output.system }}</td>
+                                    <td>{{ output.status }}</td>
+                                    <td>
+                                        <code class="path-short">{{ output.path }}</code>
+                                    </td>
+                                    <td>
+                                        {% if !output.gc_root_path.is_empty() %}
+                                            <code class="path-short">{{ output.gc_root_path }}</code>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ output.product_created_at }}</td>
+                                    <td class="row-actions">
+                                        <button class="btn btn-small btn-danger"
+                                                onclick="unpinBuild('{{ output.build_id }}')">
+                                            Unpin Build
+                                        </button>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </section>
 
-<section class="panel">
-  <div class="panel-header"><h2>API Keys</h2></div>
-  <div class="panel-body">
-    <form id="create-key-form" class="filter-form">
-      <label>Name: <input type="text" id="key-name" required></label>
-      <label>Role: <select id="key-role">
-        <option value="admin">admin</option>
-        <option value="read-only" selected>read-only</option>
-        <option value="create-projects">create-projects</option>
-        <option value="eval-jobset">eval-jobset</option>
-        <option value="cancel-build">cancel-build</option>
-        <option value="restart-jobs">restart-jobs</option>
-        <option value="bump-to-front">bump-to-front</option>
-      </select></label>
-      <button type="submit" class="btn">Create Key</button>
-    </form>
-    <div id="key-msg"></div>
-  </div>
-  {% if api_keys.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No API keys</div>
-    <div class="empty-hint">Create an API key above to enable API access.</div>
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Role</th><th>Created</th><th>Last Used</th>{% if is_admin %}<th class="row-actions">Actions</th>{% endif %}</tr>
-    </thead>
-    <tbody>
-      {% for k in api_keys %}
-      <tr>
-        <td>{{ k.name }}</td>
-        <td><span class="badge badge-pending">{{ k.role }}</span></td>
-        <td>{{ k.created_at }}</td>
-        <td>{{ k.last_used_at }}</td>
-        {% if is_admin %}
-        <td class="row-actions"><button class="btn btn-small btn-danger" onclick="deleteKey('{{ k.id }}')">Delete</button></td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+        <section class="panel">
+            <div class="panel-header">
+                <h2>API Keys</h2>
+            </div>
+            <div class="panel-body">
+                <form id="create-key-form" class="filter-form">
+                    <label>
+                        Name: <input type="text" id="key-name" required>
+                    </label>
+                    <label>
+                        Role:
+                        <select id="key-role">
+                            <option value="admin">admin</option>
+                            <option value="read-only" selected>read-only</option>
+                            <option value="create-projects">create-projects</option>
+                            <option value="eval-jobset">eval-jobset</option>
+                            <option value="cancel-build">cancel-build</option>
+                            <option value="restart-jobs">restart-jobs</option>
+                            <option value="bump-to-front">bump-to-front</option>
+                        </select>
+                    </label>
+                    <button type="submit" class="btn">Create Key</button>
+                </form>
+                <div id="key-msg"></div>
+            </div>
+            {% if api_keys.is_empty() %}
+                <div class="empty compact-empty">
+                    <div class="empty-title">No API keys</div>
+                    <div class="empty-hint">Create an API key above to enable API access.</div>
+                </div>
+            {% else %}
+                <div class="table-wrap compact-table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Role</th>
+                                <th>Created</th>
+                                <th>Last Used</th>
+                                {% if is_admin %}<th class="row-actions">Actions</th>{% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for k in api_keys %}
+                                <tr>
+                                    <td>{{ k.name }}</td>
+                                    <td>
+                                        <span class="badge badge-pending">{{ k.role }}</span>
+                                    </td>
+                                    <td>{{ k.created_at }}</td>
+                                    <td>{{ k.last_used_at }}</td>
+                                    {% if is_admin %}
+                                        <td class="row-actions">
+                                            <button class="btn btn-small btn-danger" onclick="deleteKey('{{ k.id }}')">
+                                                Delete
+                                            </button>
+                                        </td>
+                                    {% endif %}
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </section>
 
-<section class="panel">
-  <div class="panel-header"><h2>Configuration</h2></div>
-  <div class="panel-body">
-    {% if !config_editable %}
-    <div class="flash-message flash-error">{{ config_read_only_reason }}</div>
+        <section class="panel">
+            <div class="panel-header">
+                <h2>Configuration</h2>
+            </div>
+            <div class="panel-body">
+                {% if !config_editable %}
+                    <div class="flash-message flash-error">{{ config_read_only_reason }}</div>
+                {% endif %}
+                <form id="config-form">
+                    <div class="form-group">
+                        <label for="config-contents">TOML</label>
+                        <textarea id="config-contents"
+                                  rows="18"
+                                  spellcheck="false"{% if !config_editable %}
+                                  readonly{% endif %}>
+                            {{ config_contents }}
+                        </textarea>
+                    </div>
+                    {% if config_editable %}<button type="submit" class="btn">Save Configuration</button>{% endif %}
+                </form>
+                <div id="config-msg"></div>
+            </div>
+        </section>
     {% endif %}
-    <form id="config-form">
-      <div class="form-group">
-        <label for="config-contents">TOML</label>
-        <textarea id="config-contents" rows="18" spellcheck="false"{% if !config_editable %} readonly{% endif %}>{{ config_contents }}</textarea>
-      </div>
-      {% if config_editable %}
-      <button type="submit" class="btn">Save Configuration</button>
-      {% endif %}
-    </form>
-    <div id="config-msg"></div>
-  </div>
-</section>
-{% endif %}
 
-<section class="panel">
-  <div class="panel-header"><h2>Notification Retry Tasks</h2></div>
-  {% if notification_tasks.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No notification tasks</div>
-    <div class="empty-hint">Queued notification deliveries and retries will appear here.</div>
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Type</th><th>Status</th><th>Attempts</th><th>Next Retry</th><th>Created</th><th>Error</th>{% if is_admin %}<th class="row-actions">Actions</th>{% endif %}</tr>
-    </thead>
-    <tbody>
-      {% for task in notification_tasks %}
-      <tr>
-        <td>{{ task.notification_type }}</td>
-        <td><span class="badge badge-{{ task.status }}">{{ task.status }}</span></td>
-        <td>{{ task.attempts }}/{{ task.max_attempts }}</td>
-        <td>{{ task.next_retry_at }}</td>
-        <td>{{ task.created_at }}</td>
-        <td>{% if !task.last_error.is_empty() %}{{ task.last_error }}{% else %}-{% endif %}</td>
-        {% if is_admin %}
-        <td class="row-actions">
-          {% if task.status == "failed" %}
-          <button class="btn btn-small btn-secondary" onclick="retryNotificationTask('{{ task.id }}')">Retry</button>
-          {% else %}
-          -
-          {% endif %}
-        </td>
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Notification Retry Tasks</h2>
+        </div>
+        {% if notification_tasks.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No notification tasks</div>
+                <div class="empty-hint">Queued notification deliveries and retries will appear here.</div>
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Attempts</th>
+                            <th>Next Retry</th>
+                            <th>Created</th>
+                            <th>Error</th>
+                            {% if is_admin %}<th class="row-actions">Actions</th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in notification_tasks %}
+                            <tr>
+                                <td>{{ task.notification_type }}</td>
+                                <td>
+                                    <span class="badge badge-{{ task.status }}">{{ task.status }}</span>
+                                </td>
+                                <td>{{ task.attempts }}/{{ task.max_attempts }}</td>
+                                <td>{{ task.next_retry_at }}</td>
+                                <td>{{ task.created_at }}</td>
+                                <td>
+                                    {% if !task.last_error.is_empty() %}
+                                        {{ task.last_error }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                {% if is_admin %}
+                                    <td class="row-actions">
+                                        {% if task.status == "failed" %}
+                                            <button class="btn btn-small btn-secondary"
+                                                    onclick="retryNotificationTask('{{ task.id }}')">
+                                                Retry
+                                            </button>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                {% endif %}
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+    </section>
 
-<section class="panel" id="agents">
-  <div class="panel-header"><h2>Agents</h2></div>
-  {% if agents.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No agents registered</div>
-    <div class="empty-hint">Agents connect and register themselves. They will appear here once connected.</div>
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table
-    class="agents-table"
-    data-agent-sort="{{ agent_sort_key }}"
-    data-agent-sort-dir="{{ agent_sort_dir }}"
-  >
-    <colgroup>
-      <col class="agents-col-name">
-      <col class="agents-col-host">
-      <col class="agents-col-systems">
-      <col class="agents-col-jobs">
-      <col class="agents-col-status">
-      <col class="agents-col-succeeded">
-      <col class="agents-col-failed">
-      <col class="agents-col-last-seen">
-    </colgroup>
-    <thead>
-      <tr>
-        {% for header in agent_sort_headers %}
-        <th aria-sort="{{ header.aria_sort }}">
-          <a
-            class="sort-link{% if header.active %} is-active{% endif %}"
-            href="{{ header.href }}"
-            data-agent-sort="{{ header.key }}"
-            data-agent-default-dir="{{ header.default_dir }}"
-          >
-            <span>{{ header.label }}</span>
-            <span
-              class="sort-indicator{% if header.active %} sort-{{ header.indicator }}{% endif %}"
-              aria-hidden="true"
-            ></span>
-          </a>
-        </th>
-        {% endfor %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for a in agents %}
-      <tr
-        data-agent-id="{{ a.machine_id }}"
-        data-agent-name="{{ a.name }}"
-        data-agent-host="{{ a.hostname }}"
-        data-agent-systems="{{ a.systems }}"
-        data-agent-jobs-current="{{ a.current_jobs }}"
-        data-agent-jobs-max="{{ a.max_jobs }}"
-        data-agent-status="{% if a.connected %}1{% else %}0{% endif %}"
-        data-agent-succeeded="{{ a.builds_succeeded }}"
-        data-agent-failed="{{ a.builds_failed }}"
-        data-agent-last-seen="{{ a.last_seen_sort }}"
-      >
-        <td>{{ a.name }}</td>
-        <td>{{ a.hostname }}</td>
-        <td>{{ a.systems }}</td>
-        <td>
-          {{ a.current_jobs }}/{{ a.max_jobs }}
-        </td>
-        <td>{% if a.connected %}<span class="badge badge-completed">Connected</span>{% else %}<span class="badge badge-failed">Disconnected</span>{% endif %}</td>
-        <td>{{ a.builds_succeeded }}</td>
-        <td>{{ a.builds_failed }}</td>
-        <td>{{ a.last_seen }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
-
-<section class="panel">
-  <div class="panel-header"><h2>Remote Builders</h2></div>
-  {% if is_admin %}
-  <div class="panel-body">
-    <form id="create-builder-form" class="filter-form">
-      <label>Name: <input type="text" id="builder-name" required></label>
-      <label>SSH URI: <input type="text" id="builder-ssh" placeholder="ssh://builder@host" required></label>
-      <label>Systems: <input type="text" id="builder-systems" value="x86_64-linux" required></label>
-      <label>Max Jobs: <input type="number" id="builder-maxjobs" value="4"></label>
-      <button type="submit" class="btn">Add Builder</button>
-    </form>
-    <div id="builder-msg"></div>
-  </div>
-  {% endif %}
-  {% if builders.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No remote builders configured</div>
-    <div class="empty-hint">Remote builders distribute builds across multiple machines.</div>
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Name</th><th>SSH URI</th><th>Systems</th><th>Load</th><th>Enabled</th>{% if is_admin %}<th class="row-actions">Actions</th>{% endif %}</tr>
-    </thead>
-    <tbody>
-      {% for b in builders %}
-      <tr>
-        <td>{{ b.name }}</td>
-        <td>{{ b.ssh_uri }}</td>
-        <td>{{ b.systems }}</td>
-        <td>
-          <span class="load-bar" style="--load-percent: {{ b.load_percent }}%">
-            <span></span>
-            <span class="load-bar-text">{{ b.current_builds }}/{{ b.max_jobs }}</span>
-          </span>
-          <small>({{ b.load_percent }}%)</small>
-        </td>
-        <td>{% if b.enabled %}<span class="badge badge-completed">Yes</span>{% else %}<span class="badge badge-failed">No</span>{% endif %}</td>
-        {% if is_admin %}
-        <td class="row-actions">
-          <button class="btn btn-small btn-secondary" onclick="toggleBuilder('{{ b.id }}', {{ !b.enabled }})">{% if b.enabled %}Disable{% else %}Enable{% endif %}</button>
-          <button class="btn btn-small btn-danger" onclick="deleteBuilder('{{ b.id }}')">Delete</button>
-        </td>
+    <section class="panel" id="agents">
+        <div class="panel-header">
+            <h2>Agents</h2>
+        </div>
+        {% if agents.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No agents registered</div>
+                <div class="empty-hint">
+                    Agents connect and register themselves. They will appear here once connected.
+                </div>
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table class="agents-table"
+                       data-agent-sort="{{ agent_sort_key }}"
+                       data-agent-sort-dir="{{ agent_sort_dir }}">
+                    <colgroup>
+                        <col class="agents-col-name">
+                        <col class="agents-col-host">
+                        <col class="agents-col-systems">
+                        <col class="agents-col-jobs">
+                        <col class="agents-col-status">
+                        <col class="agents-col-succeeded">
+                        <col class="agents-col-failed">
+                        <col class="agents-col-last-seen">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            {% for header in agent_sort_headers %}
+                                <th aria-sort="{{ header.aria_sort }}">
+                                    <a
+                                       class="sort-link{% if header.active %} is-active{% endif %}"
+                                       href="{{ header.href }}"
+                                       data-agent-sort="{{ header.key }}"
+                                       data-agent-default-dir="{{ header.default_dir }}"
+                                       >
+                                        <span>{{ header.label }}</span>
+                                        <span
+                                              class="sort-indicator{% if header.active %} sort-{{ header.indicator }}{% endif %}"
+                                              aria-hidden="true"
+                                              >
+                                        </span>
+                                    </a>
+                                </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for a in agents %}
+                            <tr
+                                data-agent-id="{{ a.machine_id }}"
+                                data-agent-name="{{ a.name }}"
+                                data-agent-host="{{ a.hostname }}"
+                                data-agent-systems="{{ a.systems }}"
+                                data-agent-jobs-current="{{ a.current_jobs }}"
+                                data-agent-jobs-max="{{ a.max_jobs }}"
+                                data-agent-status="{% if a.connected %}1{% else %}0{% endif %}"
+                                data-agent-succeeded="{{ a.builds_succeeded }}"
+                                data-agent-failed="{{ a.builds_failed }}"
+                                data-agent-last-seen="{{ a.last_seen_sort }}"
+                                >
+                                <td>{{ a.name }}</td>
+                                <td>{{ a.hostname }}</td>
+                                <td>{{ a.systems }}</td>
+                                <td>{{ a.current_jobs }}/{{ a.max_jobs }}</td>
+                                <td>
+                                    {% if a.connected %}
+                                        <span class="badge badge-completed">Connected</span>
+                                    {% else %}
+                                        <span class="badge badge-failed">Disconnected</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ a.builds_succeeded }}</td>
+                                <td>{{ a.builds_failed }}</td>
+                                <td>{{ a.last_seen }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Remote Builders</h2>
+        </div>
+        {% if is_admin %}
+            <div class="panel-body">
+                <form id="create-builder-form" class="filter-form">
+                    <label>
+                        Name: <input type="text" id="builder-name" required>
+                    </label>
+                    <label>
+                        SSH URI: <input type="text" id="builder-ssh" placeholder="ssh://builder@host" required>
+                    </label>
+                    <label>
+                        Systems: <input type="text" id="builder-systems" value="x86_64-linux" required>
+                    </label>
+                    <label>
+                        Max Jobs: <input type="number" id="builder-maxjobs" value="4">
+                    </label>
+                    <button type="submit" class="btn">Add Builder</button>
+                </form>
+                <div id="builder-msg"></div>
+            </div>
+        {% endif %}
+        {% if builders.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No remote builders configured</div>
+                <div class="empty-hint">Remote builders distribute builds across multiple machines.</div>
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>SSH URI</th>
+                            <th>Systems</th>
+                            <th>Load</th>
+                            <th>Enabled</th>
+                            {% if is_admin %}<th class="row-actions">Actions</th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in builders %}
+                            <tr>
+                                <td>{{ b.name }}</td>
+                                <td>{{ b.ssh_uri }}</td>
+                                <td>{{ b.systems }}</td>
+                                <td>
+                                    <span class="load-bar" style="--load-percent: {{ b.load_percent }}%">
+                                        <span></span>
+                                        <span class="load-bar-text">{{ b.current_builds }}/{{ b.max_jobs }}</span>
+                                    </span>
+                                    <small>({{ b.load_percent }}%)</small>
+                                </td>
+                                <td>
+                                    {% if b.enabled %}
+                                        <span class="badge badge-completed">Yes</span>
+                                    {% else %}
+                                        <span class="badge badge-failed">No</span>
+                                    {% endif %}
+                                </td>
+                                {% if is_admin %}
+                                    <td class="row-actions">
+                                        <button class="btn btn-small btn-secondary"
+                                                onclick="toggleBuilder('{{ b.id }}', {{ !b.enabled }})">
+                                            {% if b.enabled %}
+                                                Disable
+                                            {% else %}
+                                                Enable
+                                            {% endif %}
+                                        </button>
+                                        <button class="btn btn-small btn-danger" onclick="deleteBuilder('{{ b.id }}')">
+                                            Delete
+                                        </button>
+                                    </td>
+                                {% endif %}
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </section>
 {% endblock %}
 {% block scripts %}
-{% if is_admin %}
-<script>
+    {% if is_admin %}
+        <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 initAgentTableSort();
 
 function initAgentTableSort() {
-  const table = document.querySelector('.agents-table');
-  if (!table || !table.tBodies.length) return;
+const table = document.querySelector('.agents-table');
+if (!table || !table.tBodies.length) return;
 
-  const tbody = table.tBodies[0];
-  const links = Array.from(table.querySelectorAll('[data-agent-sort]'));
-  const collator = new Intl.Collator(undefined, {
-    numeric: true,
-    sensitivity: 'base',
-  });
+const tbody = table.tBodies[0];
+const links = Array.from(table.querySelectorAll('[data-agent-sort]'));
+const collator = new Intl.Collator(undefined, {
+numeric: true,
+sensitivity: 'base',
+});
 
-  links.forEach((link) => {
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-      const key = link.dataset.agentSort;
-      const currentKey = table.dataset.agentSort || 'name';
-      const currentDir = table.dataset.agentSortDir || 'asc';
-      const dir = currentKey === key
-        ? (currentDir === 'asc' ? 'desc' : 'asc')
-        : (link.dataset.agentDefaultDir || 'asc');
+links.forEach((link) => {
+link.addEventListener('click', (event) => {
+event.preventDefault();
+const key = link.dataset.agentSort;
+const currentKey = table.dataset.agentSort || 'name';
+const currentDir = table.dataset.agentSortDir || 'asc';
+const dir = currentKey === key
+? (currentDir === 'asc' ? 'desc' : 'asc')
+: (link.dataset.agentDefaultDir || 'asc');
 
-      sortAgentRows(table, tbody, links, collator, key, dir);
-    });
-  });
+sortAgentRows(table, tbody, links, collator, key, dir);
+});
+});
 }
 
 function sortAgentRows(table, tbody, links, collator, key, dir) {
-  const rows = Array.from(tbody.rows);
-  rows.sort((a, b) => compareAgentRows(a, b, key, dir, collator));
-  tbody.append(...rows);
-  table.dataset.agentSort = key;
-  table.dataset.agentSortDir = dir;
-  updateAgentSortHeaders(links, key, dir);
+const rows = Array.from(tbody.rows);
+rows.sort((a, b) => compareAgentRows(a, b, key, dir, collator));
+tbody.append(...rows);
+table.dataset.agentSort = key;
+table.dataset.agentSortDir = dir;
+updateAgentSortHeaders(links, key, dir);
 }
 
 function updateAgentSortHeaders(links, key, dir) {
-  links.forEach((link) => {
-    const active = link.dataset.agentSort === key;
-    const nextDir = active
-      ? (dir === 'asc' ? 'desc' : 'asc')
-      : (link.dataset.agentDefaultDir || 'asc');
-    link.classList.toggle('is-active', active);
-    link.setAttribute('href', agentSortHref(link.dataset.agentSort, nextDir));
+links.forEach((link) => {
+const active = link.dataset.agentSort === key;
+const nextDir = active
+? (dir === 'asc' ? 'desc' : 'asc')
+: (link.dataset.agentDefaultDir || 'asc');
+link.classList.toggle('is-active', active);
+link.setAttribute('href', agentSortHref(link.dataset.agentSort, nextDir));
 
-    const indicator = link.querySelector('.sort-indicator');
-    indicator?.classList.remove('sort-asc', 'sort-desc');
-    if (active) indicator?.classList.add('sort-' + dir);
+const indicator = link.querySelector('.sort-indicator');
+indicator?.classList.remove('sort-asc', 'sort-desc');
+if (active) indicator?.classList.add('sort-' + dir);
 
-    const header = link.closest('th');
-    if (header) {
-      header.setAttribute(
-        'aria-sort',
-        active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none',
-      );
-    }
-  });
+const header = link.closest('th');
+if (header) {
+header.setAttribute(
+'aria-sort',
+active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none',
+);
+}
+});
 }
 
 function agentSortHref(key, dir) {
-  return '/admin?agent_sort='
-    + encodeURIComponent(key)
-    + '&agent_dir='
-    + dir
-    + '#agents';
+return '/admin?agent_sort='
++ encodeURIComponent(key)
++ '&agent_dir='
++ dir
++ '#agents';
 }
 
 function compareAgentRows(a, b, key, dir, collator) {
-  let order = compareAgentPrimary(a, b, key, collator);
-  if (dir === 'desc') order *= -1;
-  if (order !== 0) return order;
+let order = compareAgentPrimary(a, b, key, collator);
+if (dir === 'desc') order *= -1;
+if (order !== 0) return order;
 
-  if (key === 'status') {
-    const lastSeen = compareNumber(
-      agentNumber(a, 'agentLastSeen'),
-      agentNumber(b, 'agentLastSeen'),
-    );
-    if (lastSeen !== 0) return -lastSeen;
-  }
+if (key === 'status') {
+const lastSeen = compareNumber(
+agentNumber(a, 'agentLastSeen'),
+agentNumber(b, 'agentLastSeen'),
+);
+if (lastSeen !== 0) return -lastSeen;
+}
 
-  return compareAgentIdentity(a, b, collator);
+return compareAgentIdentity(a, b, collator);
 }
 
 function compareAgentPrimary(a, b, key, collator) {
-  switch (key) {
-    case 'name':
-      return compareText(a.dataset.agentName, b.dataset.agentName, collator);
-    case 'host':
-      return compareText(a.dataset.agentHost, b.dataset.agentHost, collator);
-    case 'systems':
-      return compareText(a.dataset.agentSystems, b.dataset.agentSystems, collator);
-    case 'jobs':
-      return compareNumber(
-        agentNumber(a, 'agentJobsCurrent'),
-        agentNumber(b, 'agentJobsCurrent'),
-      ) || compareNumber(
-        agentNumber(a, 'agentJobsMax'),
-        agentNumber(b, 'agentJobsMax'),
-      );
-    case 'status':
-      return compareNumber(agentNumber(a, 'agentStatus'), agentNumber(b, 'agentStatus'));
-    case 'succeeded':
-      return compareNumber(agentNumber(a, 'agentSucceeded'), agentNumber(b, 'agentSucceeded'));
-    case 'failed':
-      return compareNumber(agentNumber(a, 'agentFailed'), agentNumber(b, 'agentFailed'));
-    case 'last_seen':
-      return compareNumber(agentNumber(a, 'agentLastSeen'), agentNumber(b, 'agentLastSeen'));
-    default:
-      return 0;
-  }
+switch (key) {
+case 'name':
+return compareText(a.dataset.agentName, b.dataset.agentName, collator);
+case 'host':
+return compareText(a.dataset.agentHost, b.dataset.agentHost, collator);
+case 'systems':
+return compareText(a.dataset.agentSystems, b.dataset.agentSystems, collator);
+case 'jobs':
+return compareNumber(
+agentNumber(a, 'agentJobsCurrent'),
+agentNumber(b, 'agentJobsCurrent'),
+) || compareNumber(
+agentNumber(a, 'agentJobsMax'),
+agentNumber(b, 'agentJobsMax'),
+);
+case 'status':
+return compareNumber(agentNumber(a, 'agentStatus'), agentNumber(b, 'agentStatus'));
+case 'succeeded':
+return compareNumber(agentNumber(a, 'agentSucceeded'), agentNumber(b, 'agentSucceeded'));
+case 'failed':
+return compareNumber(agentNumber(a, 'agentFailed'), agentNumber(b, 'agentFailed'));
+case 'last_seen':
+return compareNumber(agentNumber(a, 'agentLastSeen'), agentNumber(b, 'agentLastSeen'));
+default:
+return 0;
+}
 }
 
 function compareAgentIdentity(a, b, collator) {
-  return compareText(a.dataset.agentName, b.dataset.agentName, collator)
-    || compareText(a.dataset.agentHost, b.dataset.agentHost, collator)
-    || compareText(a.dataset.agentId, b.dataset.agentId, collator);
+return compareText(a.dataset.agentName, b.dataset.agentName, collator)
+|| compareText(a.dataset.agentHost, b.dataset.agentHost, collator)
+|| compareText(a.dataset.agentId, b.dataset.agentId, collator);
 }
 
 function compareText(a, b, collator) {
-  return collator.compare(a || '', b || '') || String(a || '').localeCompare(String(b || ''));
+return collator.compare(a || '', b || '') || String(a || '').localeCompare(String(b || ''));
 }
 
 function compareNumber(a, b) {
-  return a === b ? 0 : (a < b ? -1 : 1);
+return a === b ? 0 : (a < b ? -1 : 1);
 }
 
 function agentNumber(row, key) {
-  const value = Number(row.dataset[key]);
-  return Number.isFinite(value) ? value : 0;
+const value = Number(row.dataset[key]);
+return Number.isFinite(value) ? value : 0;
 }
 
 document.getElementById('create-key-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const msg = document.getElementById('key-msg');
-  try {
-    const res = await fetch('/api/v1/api-keys', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({
-        name: document.getElementById('key-name').value,
-        role: document.getElementById('key-role').value,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.innerHTML = '<div class="flash-message flash-success">Key created: <code>' + escapeHtml(data.key || '') + '</code><br>Copy this now, it will not be shown again.</div>';
-      setTimeout(() => window.location.reload(), 5000);
-    } else {
-      throw new Error(data.error || data.message || 'Unknown error');
-    }
-  } catch(err) {
-    showError(msg, err.message);
-  }
+e.preventDefault();
+const msg = document.getElementById('key-msg');
+try {
+const res = await fetch('/api/v1/api-keys', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({
+name: document.getElementById('key-name').value,
+role: document.getElementById('key-role').value,
+}),
+});
+const data = await res.json().catch(() => ({}));
+if (res.ok) {
+msg.innerHTML = '<div class="flash-message flash-success">Key created: <code>' + escapeHtml(data.key || '') + '</code><br>Copy this now, it will not be shown again.</div>';
+setTimeout(() => window.location.reload(), 5000);
+} else {
+throw new Error(data.error || data.message || 'Unknown error');
+}
+} catch(err) {
+showError(msg, err.message);
+}
 });
 async function deleteKey(id) {
-  if (!confirm('Delete this API key?')) return;
-  try {
-    const res = await fetch('/api/v1/api-keys/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to delete key');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+if (!confirm('Delete this API key?')) return;
+try {
+const res = await fetch('/api/v1/api-keys/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to delete key');
+}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
 }
 async function retryNotificationTask(id) {
-  try {
-    const res = await fetch('/api/v1/admin/notification-tasks/' + id + '/retry', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to retry notification task');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+try {
+const res = await fetch('/api/v1/admin/notification-tasks/' + id + '/retry', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to retry notification task');
+}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
 }
 async function unpinBuild(id) {
-  if (!confirm('Unpin this build? All of its outputs become eligible for GC once their roots age out.')) return;
-  try {
-    const res = await fetch('/api/v1/admin/pinned-builds/' + id + '/unpin', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to unpin build');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+if (!confirm('Unpin this build? All of its outputs become eligible for GC once their roots age out.')) return;
+try {
+const res = await fetch('/api/v1/admin/pinned-builds/' + id + '/unpin', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to unpin build');
+}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
 }
 document.getElementById('config-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  {% if !config_editable %}
-  return;
-  {% endif %}
-  const msg = document.getElementById('config-msg');
-  try {
-    const res = await fetch('/api/v1/admin/config', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({ contents: document.getElementById('config-contents').value }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.error || data.message || 'Failed to save configuration');
-    }
-    msg.innerHTML = '<div class="flash-message flash-success">Configuration saved. Restart daemons to apply runtime changes.</div>';
-  } catch(err) {
-    showError(msg, err.message);
-  }
+e.preventDefault();
+{% if !config_editable %}return;{% endif %}
+const msg = document.getElementById('config-msg');
+try {
+const res = await fetch('/api/v1/admin/config', {
+method: 'PUT',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({ contents: document.getElementById('config-contents').value }),
+});
+const data = await res.json().catch(() => ({}));
+if (!res.ok) {
+throw new Error(data.error || data.message || 'Failed to save configuration');
+}
+msg.innerHTML = '<div class="flash-message flash-success">Configuration saved. Restart daemons to apply runtime changes.</div>';
+} catch(err) {
+showError(msg, err.message);
+}
 });
 document.getElementById('create-builder-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const msg = document.getElementById('builder-msg');
-  try {
-    const res = await fetch('/api/v1/admin/builders', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({
-        name: document.getElementById('builder-name').value,
-        ssh_uri: document.getElementById('builder-ssh').value,
-        systems: document.getElementById('builder-systems').value.split(',').map(s => s.trim()),
-        max_jobs: parseInt(document.getElementById('builder-maxjobs').value) || 4,
-      }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(data.error || data.message || 'Unknown error');
-    }
-    window.location.reload();
-  } catch(err) {
-    showError(msg, err.message);
-  }
+e.preventDefault();
+const msg = document.getElementById('builder-msg');
+try {
+const res = await fetch('/api/v1/admin/builders', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({
+name: document.getElementById('builder-name').value,
+ssh_uri: document.getElementById('builder-ssh').value,
+systems: document.getElementById('builder-systems').value.split(',').map(s => s.trim()),
+max_jobs: parseInt(document.getElementById('builder-maxjobs').value) || 4,
+}),
+});
+if (!res.ok) {
+const data = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(data.error || data.message || 'Unknown error');
+}
+window.location.reload();
+} catch(err) {
+showError(msg, err.message);
+}
 });
 async function toggleBuilder(id, enable) {
-  try {
-    const res = await fetch('/api/v1/admin/builders/' + id, {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({ enabled: enable }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to update builder');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+try {
+const res = await fetch('/api/v1/admin/builders/' + id, {
+method: 'PUT',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({ enabled: enable }),
+});
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to update builder');
+}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
 }
 async function deleteBuilder(id) {
-  if (!confirm('Delete this builder?')) return;
-  try {
-    const res = await fetch('/api/v1/admin/builders/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to delete builder');
-    }
-    window.location.reload();
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+if (!confirm('Delete this builder?')) return;
+try {
+const res = await fetch('/api/v1/admin/builders/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to delete builder');
 }
-</script>
-{% endif %}
+window.location.reload();
+} catch(err) {
+alert(escapeHtml(err.message));
+}
+}
+        </script>
+    {% endif %}
 {% endblock %}

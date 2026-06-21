@@ -1,203 +1,265 @@
 {% extends "base.html" %}
 {% block title %}{{ project.name }} - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/projects">Projects</a> <span class="sep">/</span>
-  <span class="current">{{ project.name }}</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/projects">Projects</a>
+        <span class="sep">/</span>
+        <span class="current">{{ project.name }}</span>
+    </nav>
 {% endblock %}
 {% block content %}
-<h1>{{ project.name }}</h1>
-{% match project.description %}
-  {% when Some with (desc) %}
-<p>{{ desc }}</p>
-  {% when None %}
-{% endmatch %}
-<p><strong>Repository:</strong> {{ project.repository_url }}</p>
-<p><strong>Created:</strong> {{ project.created_at.format("%Y-%m-%d %H:%M") }}</p>
+    <h1>{{ project.name }}</h1>
+    {% match project.description %}
+        {% when Some with (desc) %}
+            <p>{{ desc }}</p>
+        {% when None %}
+    {% endmatch %}
+    <p>
+        <strong>Repository:</strong> {{ project.repository_url }}
+    </p>
+    <p>
+        <strong>Created:</strong> {{ project.created_at.format("%Y-%m-%d %H:%M") }}
+    </p>
 
-{% if is_admin %}
-<div class="page-actions">
-  <button type="button" class="btn btn-small btn-secondary" onclick="document.getElementById('add-jobset-dialog').showModal()">Add Jobset</button>
-  <a class="btn btn-small btn-secondary" href="/project/{{ project.id }}/notifications">Notifications</a>
-  <button class="btn btn-small btn-danger" onclick="deleteProject()">Delete Project</button>
-</div>
-
-<dialog id="add-jobset-dialog">
-  <div class="dialog-header">
-    <h2>Add Jobset</h2>
-    <button type="button" class="btn-ghost dialog-close" onclick="document.getElementById('add-jobset-dialog').close()" aria-label="Close">&times;</button>
-  </div>
-  <div class="dialog-body">
-    <form id="create-jobset-form">
-      <div class="form-group">
-        <label for="js-name">Name</label>
-        <input type="text" id="js-name" required>
-      </div>
-      <div class="form-group">
-        <label for="js-expr">Nix Expression</label>
-        <input type="text" id="js-expr" value="." required>
-      </div>
-      <div class="form-group">
-        <label><input type="checkbox" id="js-flake" checked> Flake mode</label>
-      </div>
-      <div class="form-group">
-        <label for="js-trigger-mode">Trigger Mode</label>
-        <select id="js-trigger-mode">
-          <option value="source_change" selected>Source change</option>
-          <option value="interval">Interval rebuild</option>
-        </select>
-      </div>
-    </form>
-    <div id="jobset-msg"></div>
-  </div>
-  <div class="dialog-footer">
-    <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-jobset-dialog').close()">Cancel</button>
-    <button type="submit" class="btn" form="create-jobset-form">Add Jobset</button>
-  </div>
-</dialog>
-{% endif %}
-
-<section class="panel">
-  <div class="panel-header"><h2 id="jobsets">Jobsets</h2></div>
-  {% if jobsets.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No jobsets configured</div>
     {% if is_admin %}
-    <div class="empty-hint">Add a jobset above to start evaluating this project.</div>
-    {% endif %}
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Expression</th><th>Flake</th><th>Enabled</th><th>Trigger</th><th>Interval</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
-    </thead>
-    <tbody>
-      {% for j in jobsets %}
-      <tr>
-        <td><a href="/jobset/{{ j.id }}">{{ j.name }}</a></td>
-        <td><code>{{ j.nix_expression }}</code></td>
-        <td>{% if j.flake_mode %}Yes{% else %}No{% endif %}</td>
-        <td>{% if j.enabled %}Yes{% else %}No{% endif %}</td>
-        <td>
-          {% match j.trigger_mode %}
-            {% when circus_common::models::JobsetTriggerMode::SourceChange %}
-              Source change
-            {% when circus_common::models::JobsetTriggerMode::Interval %}
-              Interval rebuild
-          {% endmatch %}
-        </td>
-        <td>{{ j.check_interval }}s</td>
-        {% if is_admin %}
-        <td>
-          <form class="inline" method="POST" action="/jobset/{{ j.id }}/delete" onsubmit="return confirm('Delete this jobset and all of its evaluations/builds?')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button class="btn btn-danger btn-small" type="submit">Delete</button>
-          </form>
-        </td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+        <div class="page-actions">
+            <button type="button"
+                    class="btn btn-small btn-secondary"
+                    onclick="document.getElementById('add-jobset-dialog').showModal()">
+                Add Jobset
+            </button>
+            <a class="btn btn-small btn-secondary" href="/project/{{ project.id }}/notifications">Notifications</a>
+            <button class="btn btn-small btn-danger" onclick="deleteProject()">Delete Project</button>
+        </div>
 
-<section class="panel" style="margin-top: 14px">
-  <div class="panel-header"><h2 id="evaluations">Recent Evaluations</h2></div>
-  {% if recent_evals.is_empty() %}
-  <div class="empty compact-empty">
-    <div class="empty-title">No evaluations yet</div>
-    <div class="empty-hint">Evaluations appear once a jobset runs.</div>
-  </div>
-  {% else %}
-  <div class="table-wrap compact-table-wrap">
-  <table>
-    <thead>
-      <tr><th>Commit</th><th>Status</th><th>Time</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr>
-    </thead>
-    <tbody>
-      {% for e in recent_evals %}
-      <tr>
-        <td><a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a></td>
-        <td>
-          <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
-          {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
-        </td>
-        <td>{{ e.time }}</td>
-        {% if is_admin %}
-        <td>
-          <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="return_to" value="/project/{{ project.id }}">
-            {% if e.hidden %}
-            <input type="hidden" name="hidden" value="false">
-            <button class="btn btn-small btn-secondary" type="submit">Unhide</button>
-            {% else %}
-            <input type="hidden" name="hidden" value="true">
-            <button class="btn btn-small btn-secondary" type="submit">Hide</button>
-            {% endif %}
-          </form>
-        </td>
+        <dialog id="add-jobset-dialog">
+            <div class="dialog-header">
+                <h2>Add Jobset</h2>
+                <button type="button"
+                        class="btn-ghost dialog-close"
+                        onclick="document.getElementById('add-jobset-dialog').close()"
+                        aria-label="Close">
+                    &times;
+                </button>
+            </div>
+            <div class="dialog-body">
+                <form id="create-jobset-form">
+                    <div class="form-group">
+                        <label for="js-name">Name</label>
+                        <input type="text" id="js-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="js-expr">Nix Expression</label>
+                        <input type="text" id="js-expr" value="." required>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="js-flake" checked> Flake mode
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="js-trigger-mode">Trigger Mode</label>
+                        <select id="js-trigger-mode">
+                            <option value="source_change" selected>Source change</option>
+                            <option value="interval">Interval rebuild</option>
+                        </select>
+                    </div>
+                </form>
+                <div id="jobset-msg"></div>
+            </div>
+            <div class="dialog-footer">
+                <button type="button"
+                        class="btn btn-secondary"
+                        onclick="document.getElementById('add-jobset-dialog').close()">
+                    Cancel
+                </button>
+                <button type="submit" class="btn" form="create-jobset-form">Add Jobset</button>
+            </div>
+        </dialog>
+    {% endif %}
+
+    <section class="panel">
+        <div class="panel-header">
+            <h2 id="jobsets">Jobsets</h2>
+        </div>
+        {% if jobsets.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No jobsets configured</div>
+                {% if is_admin %}
+                    <div class="empty-hint">Add a jobset above to start evaluating this project.</div>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Expression</th>
+                            <th>Flake</th>
+                            <th>Enabled</th>
+                            <th>Trigger</th>
+                            <th>Interval</th>
+                            {% if is_admin %}<th>Actions</th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for j in jobsets %}
+                            <tr>
+                                <td>
+                                    <a href="/jobset/{{ j.id }}">{{ j.name }}</a>
+                                </td>
+                                <td>
+                                    <code>{{ j.nix_expression }}</code>
+                                </td>
+                                <td>
+                                    {% if j.flake_mode %}
+                                        Yes
+                                    {% else %}
+                                        No
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if j.enabled %}
+                                        Yes
+                                    {% else %}
+                                        No
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% match j.trigger_mode %}
+                                        {% when circus_common::models::JobsetTriggerMode::SourceChange %}
+                                            Source change
+                                        {% when circus_common::models::JobsetTriggerMode::Interval %}
+                                            Interval rebuild
+                                    {% endmatch %}
+                                </td>
+                                <td>{{ j.check_interval }}s</td>
+                                {% if is_admin %}
+                                    <td>
+                                        <form class="inline"
+                                              method="POST"
+                                              action="/jobset/{{ j.id }}/delete"
+                                              onsubmit="return confirm('Delete this jobset and all of its evaluations/builds?')">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <button class="btn btn-danger btn-small" type="submit">Delete</button>
+                                        </form>
+                                    </td>
+                                {% endif %}
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-</section>
+    </section>
+
+    <section class="panel" style="margin-top: 14px">
+        <div class="panel-header">
+            <h2 id="evaluations">Recent Evaluations</h2>
+        </div>
+        {% if recent_evals.is_empty() %}
+            <div class="empty compact-empty">
+                <div class="empty-title">No evaluations yet</div>
+                <div class="empty-hint">Evaluations appear once a jobset runs.</div>
+            </div>
+        {% else %}
+            <div class="table-wrap compact-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Commit</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                            {% if is_admin %}<th>Actions</th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for e in recent_evals %}
+                            <tr>
+                                <td>
+                                    <a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a>
+                                </td>
+                                <td>
+                                    <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
+                                    {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+                                </td>
+                                <td>{{ e.time }}</td>
+                                {% if is_admin %}
+                                    <td>
+                                        <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <input type="hidden" name="return_to" value="/project/{{ project.id }}">
+                                            {% if e.hidden %}
+                                                <input type="hidden" name="hidden" value="false">
+                                                <button class="btn btn-small btn-secondary" type="submit">
+                                                    Unhide
+                                                </button>
+                                            {% else %}
+                                                <input type="hidden" name="hidden" value="true">
+                                                <button class="btn btn-small btn-secondary" type="submit">Hide</button>
+                                            {% endif %}
+                                        </form>
+                                    </td>
+                                {% endif %}
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </section>
 {% endblock %}
 {% block scripts %}
-{% if is_admin %}
-<script>
+    {% if is_admin %}
+        <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 document.getElementById('create-jobset-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const msg = document.getElementById('jobset-msg');
-  try {
-    const res = await fetch('/api/v1/projects/{{ project.id }}/jobsets', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
-      body: JSON.stringify({
-        name: document.getElementById('js-name').value,
-        nix_expression: document.getElementById('js-expr').value,
-        flake_mode: document.getElementById('js-flake').checked,
-        trigger_mode: document.getElementById('js-trigger-mode').value,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Unknown error');
-    }
-    window.location.reload();
-  } catch(err) {
-    showError(msg, err.message);
-  }
+e.preventDefault();
+const msg = document.getElementById('jobset-msg');
+try {
+const res = await fetch('/api/v1/projects/{{ project.id }}/jobsets', {
+method: 'POST',
+headers: {'Content-Type': 'application/json', 'x-csrf-token': CSRF_TOKEN},
+body: JSON.stringify({
+name: document.getElementById('js-name').value,
+nix_expression: document.getElementById('js-expr').value,
+flake_mode: document.getElementById('js-flake').checked,
+trigger_mode: document.getElementById('js-trigger-mode').value,
+}),
+});
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Unknown error');
+}
+window.location.reload();
+} catch(err) {
+showError(msg, err.message);
+}
 });
 async function deleteProject() {
-  if (!confirm('Delete this project and all its data?')) return;
-  try {
-    const res = await fetch('/api/v1/projects/{{ project.id }}', { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || err.message || 'Failed to delete project');
-    }
-    window.location.href = '/projects';
-  } catch(err) {
-    alert(escapeHtml(err.message));
-  }
+if (!confirm('Delete this project and all its data?')) return;
+try {
+const res = await fetch('/api/v1/projects/{{ project.id }}', { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
+if (!res.ok) {
+const err = await res.json().catch(() => ({ error: res.statusText }));
+throw new Error(err.error || err.message || 'Failed to delete project');
 }
-</script>
-{% endif %}
+window.location.href = '/projects';
+} catch(err) {
+alert(escapeHtml(err.message));
+}
+}
+        </script>
+    {% endif %}
 {% endblock %}

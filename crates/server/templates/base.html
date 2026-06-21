@@ -1,144 +1,158 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="light dark">
-  <title>{% block title %}{{ ui.brand_name }}{% endblock %}</title>
-  {% if ui.has_favicon %}<link rel="icon" href="{{ ui.favicon_url }}">{% endif %}
-  <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v7">
-  <link rel="stylesheet" href="/static/theme.css">
-  {% if ui.has_custom_css %}<link rel="stylesheet" href="/static/custom.css">{% endif %}
-</head>
-<body>
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="Primary navigation">
-      <div class="sidebar-brand">
-        <a href="/">
-          {% if ui.has_logo %}<img class="brand-logo" src="{{ ui.logo_url }}" alt="" aria-hidden="true">{% endif %}
-          <span class="brand-copy">
-            <span class="brand-name">{{ ui.brand_name }}</span>
-            <span class="brand-subtitle">{{ ui.brand_subtitle }}</span>
-          </span>
-        </a>
-      </div>
-      {% block sidebar %}
-      <div class="nav-group">
-        <div class="nav-label">Operate</div>
-        <div class="nav-links">
-          <a href="/builds">Builds</a>
-          <a href="/queue">Queue</a>
-          <a href="/evaluations">Evaluations</a>
-          <a href="/projects">Projects</a>
-          <a href="/channels">Channels</a>
-          <a href="/starred">Starred</a>
-          <a href="/metrics">Metrics</a>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="color-scheme" content="light dark">
+        <title>{% block title %}{{ ui.brand_name }}{% endblock %}</title>
+        {% if ui.has_favicon %}<link rel="icon" href="{{ ui.favicon_url }}">{% endif %}
+        <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v7">
+        <link rel="stylesheet" href="/static/theme.css">
+        {% if ui.has_custom_css %}
+            <link rel="stylesheet" href="/static/custom.css">{% endif %}</head>
+    <body>
+        <div class="app-shell">
+            <aside class="sidebar" aria-label="Primary navigation">
+                <div class="sidebar-brand">
+                    <a href="/">
+                        {% if ui.has_logo %}
+                            <img class="brand-logo" src="{{ ui.logo_url }}" alt="" aria-hidden="true">
+                        {% endif %}
+                        <span class="brand-copy">
+                            <span class="brand-name">{{ ui.brand_name }}</span>
+                            <span class="brand-subtitle">{{ ui.brand_subtitle }}</span>
+                        </span>
+                    </a>
+                </div>
+                {% block sidebar %}
+                    <div class="nav-group">
+                        <div class="nav-label">Operate</div>
+                        <div class="nav-links">
+                            <a href="/builds">Builds</a>
+                            <a href="/queue">Queue</a>
+                            <a href="/evaluations">Evaluations</a>
+                            <a href="/projects">Projects</a>
+                            <a href="/channels">Channels</a>
+                            <a href="/starred">Starred</a>
+                            <a href="/metrics">Metrics</a>
+                        </div>
+                    </div>
+                    <div class="nav-group">
+                        <div class="nav-label">System</div>
+                        <div class="nav-links">
+                            <a href="/news">News</a>
+                            {% if is_admin %}
+                                <a href="/caches">Caches</a>
+                                <a href="/users">Users</a>
+                                <a href="/admin">Admin</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endblock %}
+            </aside>
+            <div class="shell-main">
+                {% block topbar %}
+                    <header class="topbar">
+                        <div class="topbar-title">
+                            <strong>
+                            {% block topbar_title %}Operations{% endblock %}
+                            </strong>
+                            <span>
+                                {% block topbar_context %}Nix CI{% endblock %}
+                            </span>
+                        </div>
+                        <div class="topbar-search">
+                            <input class="command-input"
+                                   type="search"
+                                   placeholder="Search projects, builds, derivations"
+                                   aria-label="Search">
+                        </div>
+                        <div class="topbar-actions nav-auth">
+                            {% block auth %}
+                                {% if !auth_name.is_empty() %}
+                                    <span class="auth-user">{{ auth_name }}</span>
+                                    <form method="POST" action="/logout">
+                                        <button class="btn-ghost" type="submit">Logout</button>
+                                    </form>
+                                {% else %}
+                                    <a class="btn btn-secondary" href="/login">Login</a>
+                                {% endif %}
+                            {% endblock %}
+                        </div>
+                    </header>
+                {% endblock %}
+                <main class="page-main">
+                    <div class="container">
+                        {% block breadcrumbs %}
+                        {% endblock %}
+                        {% block content %}
+                        {% endblock %}
+                    </div>
+                </main>
+                <footer class="footer">
+                    <p>{{ ui.brand_name }} &mdash; {{ ui.brand_subtitle }}</p>
+                </footer>
+            </div>
         </div>
-      </div>
-      <div class="nav-group">
-        <div class="nav-label">System</div>
-        <div class="nav-links">
-          <a href="/news">News</a>
-          {% if is_admin %}
-          <a href="/caches">Caches</a>
-          <a href="/users">Users</a>
-          <a href="/admin">Admin</a>
-          {% endif %}
-        </div>
-      </div>
-      {% endblock %}
-    </aside>
-    <div class="shell-main">
-      {% block topbar %}
-      <header class="topbar">
-        <div class="topbar-title">
-          <strong>{% block topbar_title %}Operations{% endblock %}</strong>
-          <span>{% block topbar_context %}Nix CI{% endblock %}</span>
-        </div>
-        <div class="topbar-search">
-          <input class="command-input" type="search" placeholder="Search projects, builds, derivations" aria-label="Search">
-        </div>
-        <div class="topbar-actions nav-auth">
-          {% block auth %}
-          {% if !auth_name.is_empty() %}
-          <span class="auth-user">{{ auth_name }}</span>
-          <form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-          {% else %}
-          <a class="btn btn-secondary" href="/login">Login</a>
-          {% endif %}
-          {% endblock %}
-        </div>
-      </header>
-      {% endblock %}
-      <main class="page-main">
-        <div class="container">
-          {% block breadcrumbs %}{% endblock %}
-          {% block content %}{% endblock %}
-        </div>
-      </main>
-      <footer class="footer">
-        <p>{{ ui.brand_name }} &mdash; {{ ui.brand_subtitle }}</p>
-      </footer>
-    </div>
-  </div>
-  <script>
-  function escapeHtml(s) {
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-  }
-  function showError(el, msg) {
-    el.innerHTML = '<div class="flash-message flash-error">' + escapeHtml(msg) + '</div>';
-  }
-  </script>
-  <script>
-  (function() {
-    var path = window.location.pathname;
-    var parentMap = {
-      '/build/': '/builds',
-      '/project/': '/projects',
-      '/jobset/': '/projects',
-      '/evaluation/': '/evaluations',
-      '/channel/': '/channels',
-    };
-    var effectivePath = path;
-    for (var prefix in parentMap) {
-      if (path.startsWith(prefix)) {
-        effectivePath = parentMap[prefix];
-        break;
-      }
-    }
-    var links = document.querySelectorAll('.nav-links a');
-    for (var i = 0; i < links.length; i++) {
-      var href = links[i].getAttribute('href');
-      if (href === '/' ? path === '/' : effectivePath === href || path === href || path.startsWith(href + '/')) {
-        links[i].classList.add('active');
-      }
-    }
-  })();
-  </script>
-  <script>
-  // Tick any element carrying data-live-elapsed="<unix-epoch-seconds>" once
-  // per second so running build timers advance without a page refresh.
-  (function() {
-    function fmt(secs) {
-      if (secs < 0) secs = 0;
-      var m = Math.floor(secs / 60);
-      var s = secs % 60;
-      return m > 0 ? m + 'm ' + s + 's' : s + 's';
-    }
-    function tick() {
-      var now = Math.floor(Date.now() / 1000);
-      var nodes = document.querySelectorAll('[data-live-elapsed]');
-      for (var i = 0; i < nodes.length; i++) {
-        var start = parseInt(nodes[i].getAttribute('data-live-elapsed'), 10);
-        if (!isNaN(start)) nodes[i].textContent = fmt(now - start);
-      }
-    }
-    tick();
-    setInterval(tick, 1000);
-  })();
-  </script>
-  {% block scripts %}{% endblock %}
-</body>
+        <script>
+function escapeHtml(s) {
+var d = document.createElement('div');
+d.textContent = s;
+return d.innerHTML;
+}
+function showError(el, msg) {
+el.innerHTML = '<div class="flash-message flash-error">' + escapeHtml(msg) + '</div>';
+}
+        </script>
+        <script>
+(function() {
+var path = window.location.pathname;
+var parentMap = {
+'/build/': '/builds',
+'/project/': '/projects',
+'/jobset/': '/projects',
+'/evaluation/': '/evaluations',
+'/channel/': '/channels',
+};
+var effectivePath = path;
+for (var prefix in parentMap) {
+if (path.startsWith(prefix)) {
+effectivePath = parentMap[prefix];
+break;
+}
+}
+var links = document.querySelectorAll('.nav-links a');
+for (var i = 0; i < links.length; i++) {
+var href = links[i].getAttribute('href');
+if (href === '/' ? path === '/' : effectivePath === href || path === href || path.startsWith(href + '/')) {
+links[i].classList.add('active');
+}
+}
+})();
+        </script>
+        <script>
+// Tick any element carrying data-live-elapsed="<unix-epoch-seconds>" once
+// per second so running build timers advance without a page refresh.
+(function() {
+function fmt(secs) {
+if (secs < 0) secs = 0;
+var m = Math.floor(secs / 60);
+var s = secs % 60;
+return m > 0 ? m + 'm ' + s + 's' : s + 's';
+}
+function tick() {
+var now = Math.floor(Date.now() / 1000);
+var nodes = document.querySelectorAll('[data-live-elapsed]');
+for (var i = 0; i < nodes.length; i++) {
+var start = parseInt(nodes[i].getAttribute('data-live-elapsed'), 10);
+if (!isNaN(start)) nodes[i].textContent = fmt(now - start);
+}
+}
+tick();
+setInterval(tick, 1000);
+})();
+        </script>
+        {% block scripts %}
+        {% endblock %}
+    </body>
 </html>

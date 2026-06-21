@@ -1,71 +1,91 @@
 {% extends "base.html" %}
 {% block title %}Caches - circus{% endblock %}
 {% block auth %}
-{% if !auth_name.is_empty() %}
-<span class="auth-user">{{ auth_name }}</span>
-<form method="POST" action="/logout"><button class="btn-ghost" type="submit">Logout</button></form>
-{% else %}
-<a class="btn btn-secondary" href="/login">Login</a>
-{% endif %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
 {% endblock %}
 
 {% block breadcrumbs %}
-<nav class="breadcrumbs">
-  <a href="/">Home</a> <span class="sep">/</span>
-  <span class="current">Caches</span>
-</nav>
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <span class="current">Caches</span>
+    </nav>
 {% endblock %}
 
 {% block content %}
-<h1>Binary Caches</h1>
+    <h1>Binary Caches</h1>
 
-<div class="stat-strip">
-  <div class="stat-card">
-    <div class="stat-label">Total NARs</div>
-    <div class="stat-value">{{ total_nars }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Compressed</div>
-    <div class="stat-value">{{ total_compressed }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Uncompressed</div>
-    <div class="stat-value">{{ total_uncompressed }}</div>
-  </div>
-</div>
+    <div class="stat-strip">
+        <div class="stat-card">
+            <div class="stat-label">Total NARs</div>
+            <div class="stat-value">{{ total_nars }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Compressed</div>
+            <div class="stat-value">{{ total_compressed }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Uncompressed</div>
+            <div class="stat-value">{{ total_uncompressed }}</div>
+        </div>
+    </div>
 
-{% if caches.is_empty() %}
-<div class="empty">
-  <div class="empty-title">No caches configured</div>
-  <div class="empty-hint">Enable the global cache in config or enable a project's cache to see it here.</div>
-</div>
-{% else %}
-<div class="table-wrap">
-<table>
-  <colgroup>
-    <col style="width:30%">
-    <col style="width:12%">
-    <col style="width:12%">
-    <col style="width:14%">
-    <col style="width:16%">
-    <col style="width:16%">
-  </colgroup>
-  <thead>
-    <tr><th>Name</th><th>Scope</th><th>Status</th><th>NARs</th><th>Compressed</th><th>Requests/hr</th></tr>
-  </thead>
-  <tbody>
-    {% for c in caches %}
-    <tr>
-      <td><a href="{{ c.detail_href }}">{{ c.name }}</a></td>
-      <td><span class="badge badge-neutral">{{ c.scope_label }}</span></td>
-      <td>{% if c.active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-pending">Inactive</span>{% endif %}</td>
-      <td>{{ c.nar_count }}</td>
-      <td>{{ c.compressed }}</td>
-      <td>{{ c.requests_per_hour }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% endif %}
+    {% if caches.is_empty() %}
+        <div class="empty">
+            <div class="empty-title">No caches configured</div>
+            <div class="empty-hint">Enable the global cache in config or enable a project's cache to see it here.</div>
+        </div>
+    {% else %}
+        <div class="table-wrap">
+            <table>
+                <colgroup>
+                    <col style="width:30%">
+                    <col style="width:12%">
+                    <col style="width:12%">
+                    <col style="width:14%">
+                    <col style="width:16%">
+                    <col style="width:16%">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Scope</th>
+                        <th>Status</th>
+                        <th>NARs</th>
+                        <th>Compressed</th>
+                        <th>Requests/hr</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in caches %}
+                        <tr>
+                            <td>
+                                <a href="{{ c.detail_href }}">{{ c.name }}</a>
+                            </td>
+                            <td>
+                                <span class="badge badge-neutral">{{ c.scope_label }}</span>
+                            </td>
+                            <td>
+                                {% if c.active %}
+                                    <span class="badge badge-success">Active</span>
+                                {% else %}
+                                    <span class="badge badge-pending">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ c.nar_count }}</td>
+                            <td>{{ c.compressed }}</td>
+                            <td>{{ c.requests_per_hour }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
 {% endblock %}
