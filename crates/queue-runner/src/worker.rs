@@ -891,9 +891,9 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     return Ok(());
   };
 
-  // Normalize drv_path: nix-eval-jobs always emits absolute store paths,
-  // but manually-inserted or migrated rows may have bare filenames. Without
-  // the leading slash nix resolves the path relative to work_dir and fails.
+  // Normalize drv_path to an absolute store path: rows inserted manually or
+  // via migration may have bare filenames. Without the leading slash nix
+  // resolves the path relative to work_dir and fails.
   let normalized_drv_path;
   let drv_path: &str = if build.drv_path.starts_with('/') {
     &build.drv_path

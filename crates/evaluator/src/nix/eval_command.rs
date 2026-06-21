@@ -148,3 +148,83 @@ pub(super) async fn run_eval(
     },
   }
 }
+
+#[cfg(test)]
+mod policy_tests {
+  use super::*;
+
+  fn policy(restrict_eval: bool, allow_ifd: bool) -> NixEvalPolicy {
+    NixEvalPolicy {
+      restrict_eval,
+      allow_ifd,
+    }
+  }
+
+  #[test]
+  fn no_options_when_permissive() {
+    assert!(policy(false, true).nix_options().is_empty());
+  }
+
+  #[test]
+  fn restrict_eval_emits_option() {
+    let opts = policy(true, true).nix_options();
+    assert!(
+      opts
+        .iter()
+        .any(|(k, v)| k == "restrict-eval" && v == "true")
+    );
+    assert!(
+      !opts
+        .iter()
+        .any(|(k, _)| k == "allow-import-from-derivation")
+    );
+  }
+
+  #[test]
+  fn no_ifd_emits_option() {
+    let opts = policy(false, false).nix_options();
+    assert!(
+      opts
+        .iter()
+        .any(|(k, v)| k == "allow-import-from-derivation" && v == "false")
+    );
+    assert!(!opts.iter().any(|(k, _)| k == "restrict-eval"));
+  }
+
+  #[test]
+  fn both_flags_emit_both_options() {
+    let opts = policy(true, false).nix_options();
+    assert_eq!(opts.len(), 2);
+    assert!(
+      opts
+        .iter()
+        .any(|(k, v)| k == "restrict-eval" && v == "true")
+    );
+    assert!(
+      opts
+        .iter()
+        .any(|(k, v)| k == "allow-import-from-derivation" && v == "false")
+    );
+  }
+
+  #[test]
+  fn from_evaluator_config() {
+    let config = EvaluatorConfig {
+      restrict_eval: true,
+      allow_ifd: false,
+      ..EvaluatorConfig::default()
+    };
+    let policy = NixEvalPolicy::from(&config);
+    let opts = policy.nix_options();
+    assert!(
+      opts
+        .iter()
+        .any(|(k, v)| k == "restrict-eval" && v == "true")
+    );
+    assert!(
+      opts
+        .iter()
+        .any(|(k, v)| k == "allow-import-from-derivation" && v == "false")
+    );
+  }
+}

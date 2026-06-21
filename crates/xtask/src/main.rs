@@ -26,7 +26,8 @@ enum Cmd {
   },
   /// Format Askama HTML templates in crates/server/templates/.
   FmtTemplates {
-    /// Check formatting without writing files (exits non-zero if any need changes).
+    /// Check formatting without writing files (exits non-zero if any need
+    /// changes).
     #[arg(long)]
     check: bool,
   },

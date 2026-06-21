@@ -35,10 +35,9 @@ pub struct NixJob {
 /// Convert an [`evix::Derivation`] event into a [`NixJob`].
 ///
 /// evix exposes the attribute path as `attr` and the derivation name as `name`;
-/// we prefer `attr` as the job identifier so to match the previous
-/// nix-eval-jobs behaviour. Empty `outputs`/`input_drvs`/`constituents`
-/// collapse to `None` so ordinary builds are not misclassified as aggregates
-/// and absent data is represented uniformly.
+/// `attr` is preferred as the job identifier. Empty `outputs`/`input_drvs`/
+/// `constituents` collapse to `None` so ordinary builds are not misclassified
+/// as aggregates and absent data is represented uniformly.
 pub(crate) fn nix_job_from_derivation(drv: &evix::Derivation) -> NixJob {
   let name = if drv.attr.is_empty() {
     drv.name.clone()
@@ -159,6 +158,7 @@ fn parse_meta(v: Option<&serde_json::Value>) -> NixMeta {
 }
 
 /// Result of evaluating nix expressions.
+#[derive(Debug)]
 pub struct EvalResult {
   pub jobs:        Vec<NixJob>,
   pub error_count: usize,

@@ -137,10 +137,11 @@ evaluations, and the queue-runner dispatches builds to workers. See the
 [design document] for architectural details, data flow, and how the pieces fit
 together.
 
+[evix]: https://github.com/manic-systems/evix
+
 - **server** (`circus-server`): REST API, dashboard, binary cache, metrics,
   webhooks
-- **evaluator** (`circus-evaluator`): Git polling and Nix evaluation via
-  `nix-eval-jobs`
+- **evaluator** (`circus-evaluator`): Git polling and Nix evaluation via [evix]
 - **queue-runner** (`circus-queue-runner`): Build dispatch with semaphore-based
   worker pool
 - **agent** (`circus-agent`): Persistent build host that receives work over RPC

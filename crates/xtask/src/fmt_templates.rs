@@ -5,11 +5,17 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use color_eyre::Result;
-use color_eyre::eyre::{bail, eyre};
+use color_eyre::{
+  Result,
+  eyre::{bail, eyre},
+};
 
-pub(crate) fn run(check: bool) -> Result<()> {
-  #![expect(clippy::print_stdout, reason = "xtask progress output")]
+pub fn run(check: bool) -> Result<()> {
+  #![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "xtask progress output"
+  )]
   let workspace_root = workspace_root()?;
   let templates_dir = workspace_root.join("crates/server/templates");
 
@@ -62,14 +68,18 @@ pub(crate) fn run(check: bool) -> Result<()> {
         );
       }
       bail!(
-        "{} template(s) need formatting (run `cargo xtask fmt-templates` to fix)",
+        "{} template(s) need formatting (run `cargo xtask fmt-templates` to \
+         fix)",
         needs_fmt.len()
       );
     }
   } else {
     let n = files.len();
     let already_ok = n - reformatted;
-    println!("{n} templates checked, {reformatted} reformatted, {already_ok} already up-to-date");
+    println!(
+      "{n} templates checked, {reformatted} reformatted, {already_ok} already \
+       up-to-date"
+    );
   }
 
   Ok(())
@@ -78,7 +88,8 @@ pub(crate) fn run(check: bool) -> Result<()> {
 fn workspace_root() -> Result<PathBuf> {
   let manifest = std::env::var("CARGO_MANIFEST_DIR")
     .map_err(|_| eyre!("CARGO_MANIFEST_DIR not set"))?;
-  // xtask manifest lives at crates/xtask; go up two levels to the workspace root
+  // xtask manifest lives at crates/xtask; go up two levels to the workspace
+  // root
   Path::new(&manifest)
     .parent()
     .and_then(|p| p.parent())

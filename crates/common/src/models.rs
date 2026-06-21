@@ -934,8 +934,8 @@ pub struct CreateBuild {
   pub fod_hash:          Option<String>,
   /// Free-form `meta.description` from the nix expression.
   pub meta_description:  Option<String>,
-  /// `meta.license`, rendered to a string. nix-eval-jobs surfaces this as
-  /// an object; we flatten to its `fullName` (or `spdxId`) when present.
+  /// `meta.license`, rendered to a string. evix surfaces this as an object;
+  /// we flatten to its `fullName` (or `spdxId`) when present.
   pub meta_license:      Option<String>,
   /// `meta.homepage` URL.
   pub meta_homepage:     Option<String>,
