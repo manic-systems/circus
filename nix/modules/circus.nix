@@ -7,7 +7,8 @@
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) literalExpression mkEnableOption mkOption;
   inherit (lib.types) bool int listOf nullOr package path str submodule;
-  inherit (lib.lists) optional;
+  inherit (lib.lists) concatMap optional;
+  inherit (lib.meta) getExe';
 
   cfg = config.services.circus;
 
@@ -34,8 +35,8 @@
       public_key = mkOption {
         type = nullOr str;
         default = null;
-        description = "Trusted public key for the upstream cache.";
         example = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+        description = "Trusted public key for the upstream cache.";
       };
     };
   };
@@ -368,6 +369,39 @@ in {
     };
 
     users.groups.circus = {};
+
+    warnings = let
+      declarative = cfg.settings.declarative or {};
+
+      userWarnings = concatMap (
+        user:
+          optional (user ? password && user.password != null)
+          "services.circus.settings.declarative.users.\"${user.username}\": "
+          + "'password' is set inline - his places the secret in the world-readable Nix store. "
+          + "Use 'password_file' with a path to a file containing the password instead."
+      ) (declarative.users or []);
+
+      apiKeyWarnings = concatMap (
+        ak:
+          optional (ak ? key && ak.key != null)
+          "services.circus.settings.declarative.api_keys.\"${ak.name}\": "
+          + "'key' is set inline - this places the secret in the world-readable Nix store. "
+          + "Use 'key_file' with a path to a file containing the API key instead."
+      ) (declarative.api_keys or []);
+
+      webhookWarnings = concatMap (
+        project:
+          concatMap (
+            webhook:
+              optional (webhook ? secret && webhook.secret != null)
+              "services.circus.settings.declarative.projects.\"${project.name}\".webhooks: "
+              + "'secret' is set inline - this places the secret in the world-readable Nix store. "
+              + "Use 'secret_file' with a path to a file containing the webhook secret instead."
+          ) (project.webhooks or [])
+      ) (declarative.projects or []);
+    in
+      userWarnings ++ apiKeyWarnings ++ webhookWarnings;
+
     nix.settings = {
       # NOTE: needed by the evaluator (evix) to access the Nix daemon.
       # This is completely undocumented but used by other projects in a similar
@@ -413,8 +447,8 @@ in {
           path = with pkgs; [nix zstd];
 
           serviceConfig = {
-            ExecStartPre = "${cfg.migratePackage}/bin/circusctl migrate up ${cfg.settings.database.url}";
-            ExecStart = "${cfg.package}/bin/circus-server";
+            ExecStartPre = "${getExe' cfg.migratePackage "circusctl"} migrate up ${cfg.settings.database.url}";
+            ExecStart = getExe' cfg.package "circus-server";
             Restart = "on-failure";
             RestartSec = 5;
             User = "circus";
@@ -450,7 +484,7 @@ in {
           ];
 
           serviceConfig = {
-            ExecStart = "${cfg.evaluatorPackage}/bin/circus-evaluator";
+            ExecStart = getExe' cfg.evaluatorPackage "circus-evaluator";
             Restart = "on-failure";
             RestartSec = 10;
             User = "circus";
@@ -485,7 +519,7 @@ in {
           ];
 
           serviceConfig = {
-            ExecStart = "${cfg.queueRunnerPackage}/bin/circus-queue-runner";
+            ExecStart = getExe' cfg.queueRunnerPackage "circus-queue-runner";
             Restart = "on-failure";
             RestartSec = 10;
             User = "circus";
