@@ -46,6 +46,7 @@ fn build_app(pool: sqlx::PgPool) -> axum::Router {
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
+    cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
   };
   circus_server::routes::router(state, &config)
 }
@@ -69,6 +70,7 @@ async fn test_router_no_duplicate_routes() {
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
+    cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
   };
 
   let _app = circus_server::routes::router(state, &config);
@@ -90,6 +92,7 @@ fn build_app_with_config(
     http_client: reqwest::Client::new(),
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
+    cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
   };
   circus_server::routes::router(state, config)
 }
@@ -1729,4 +1732,180 @@ async fn test_static_css_served() {
     css.contains("prefers-color-scheme: dark"),
     "CSS should have dark mode"
   );
+}
+
+/// Seed one narinfo row scoped to a project with explicit sizes and a known
+/// package-name suffix so the admin cache surfaces can be asserted exactly.
+async fn seed_project_narinfo(
+  pool: &sqlx::PgPool,
+  project_id: uuid::Uuid,
+  hash: &str,
+  package: &str,
+  nar_size: i64,
+  file_size: i64,
+) {
+  let store_path = format!("/nix/store/{hash}-{package}");
+  circus_common::repo::narinfo_cache::upsert(
+    pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path: &store_path,
+      nar_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      nar_size,
+      file_hash: None,
+      file_size: Some(file_size),
+      compression: "zstd",
+      url: &format!("nar/{hash}.nar.zst"),
+      deriver: None,
+      references: &[],
+      sig: Some("circus:test-signature"),
+      ca: None,
+      build_id: None,
+      project_id: Some(project_id),
+    },
+  )
+  .await
+  .unwrap();
+}
+
+#[tokio::test]
+async fn test_admin_cache_storage_summary() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let name = format!("cachesum-{}", uuid::Uuid::new_v4().simple());
+  let project = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            name.clone(),
+      repository_url:  "https://github.com/test/cachesum".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let hash = uuid::Uuid::new_v4().simple().to_string();
+  seed_project_narinfo(&pool, project.id, &hash, "summary-pkg", 200, 100).await;
+
+  let app = build_app_with_admin_key(pool).await;
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/api/v1/admin/caches/{name}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["scope"], "project");
+  assert_eq!(json["storage"]["nar_count"], 1);
+  assert_eq!(json["storage"]["uncompressed_bytes"], 200);
+  assert_eq!(json["storage"]["compressed_bytes"], 100);
+}
+
+#[tokio::test]
+async fn test_admin_cache_nars_filter_by_hash_and_package() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let name = format!("cachenars-{}", uuid::Uuid::new_v4().simple());
+  let project = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            name.clone(),
+      repository_url:  "https://github.com/test/cachenars".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+
+  // Two distinct hash prefixes and package names within this project's scope.
+  let hash_foo = format!("aaaa{}", uuid::Uuid::new_v4().simple());
+  let hash_bar = format!("bbbb{}", uuid::Uuid::new_v4().simple());
+  seed_project_narinfo(&pool, project.id, &hash_foo, "foopkg", 10, 5).await;
+  seed_project_narinfo(&pool, project.id, &hash_bar, "barpkg", 20, 7).await;
+
+  let app = build_app_with_admin_key(pool).await;
+
+  // Filter by package name: only the foo row matches.
+  let by_pkg = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri(format!("/api/v1/admin/caches/{name}/nars?package=foopkg"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(by_pkg.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(by_pkg.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["total"], 1);
+  assert_eq!(json["items"][0]["package_name"], "foopkg");
+
+  // Filter by hash prefix: only the bar row matches.
+  let by_hash = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/api/v1/admin/caches/{name}/nars?hash=bbbb"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(by_hash.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(by_hash.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["total"], 1);
+  assert_eq!(json["items"][0]["package_name"], "barpkg");
+}
+
+#[tokio::test]
+async fn test_admin_caches_forbidden_for_non_admin() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  ensure_api_key(
+    &pool,
+    READ_TOKEN,
+    circus_common::roles::GlobalRole::ReadOnly,
+  )
+  .await;
+  let app = build_app(pool);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/admin/caches")
+        .header("authorization", format!("Bearer {READ_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
