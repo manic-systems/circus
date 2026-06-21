@@ -365,6 +365,26 @@ mod tests {
   }
 
   #[test]
+  fn evaluator_allowed_uris_load_from_toml() {
+    let toml_str = r#"
+      [evaluator]
+      restrict_eval = true
+      allowed_uris = ["https://releases.nixos.org", "https://github.com"]
+    "#;
+
+    let mut table = toml::Value::try_from(Config::default()).unwrap();
+    let file_table: toml::Value = toml::from_str(toml_str).unwrap();
+    deep_merge(&mut table, file_table);
+
+    let config: Config = table.try_into().unwrap();
+    assert!(config.evaluator.restrict_eval);
+    assert_eq!(config.evaluator.allowed_uris, vec![
+      "https://releases.nixos.org",
+      "https://github.com"
+    ]);
+  }
+
+  #[test]
   fn load_requires_explicit_config_path() {
     let old = std::env::var_os("CIRCUS_CONFIG_FILE");
     // SAFETY: tests in this module run single-threaded with respect to this

@@ -14,7 +14,7 @@ use tokio::process::Command;
 use super::{EvalResult, NixJob, nix_job_from_derivation};
 
 /// Nix evaluation settings derived from the evaluator configuration, forwarded
-/// to evix as `(key, value)` options (which evix applies via `NIX_CONFIG`).
+/// to evix as `(key, value)` options.
 pub(super) struct NixEvalPolicy {
   restrict_eval: bool,
   allow_ifd:     bool,
@@ -86,6 +86,12 @@ pub(super) async fn run_eval(
   timeout: Duration,
   description: &'static str,
 ) -> Result<EvalResult> {
+  tracing::info!(
+    evaluation = description,
+    nix_options = ?config.nix_options,
+    "Starting evix evaluation with Nix options"
+  );
+
   let collected: Arc<Mutex<(Vec<NixJob>, usize)>> =
     Arc::new(Mutex::new((Vec::new(), 0)));
   let cancel = Arc::new(AtomicBool::new(false));
@@ -245,6 +251,10 @@ mod policy_tests {
     let config = EvaluatorConfig {
       restrict_eval: true,
       allow_ifd: false,
+      allowed_uris: vec![
+        "https://releases.nixos.org".to_string(),
+        "https://github.com".to_string(),
+      ],
       ..EvaluatorConfig::default()
     };
     let policy = NixEvalPolicy::from(&config);
@@ -259,5 +269,47 @@ mod policy_tests {
         .iter()
         .any(|(k, v)| k == "allow-import-from-derivation" && v == "false")
     );
+    assert!(opts.iter().any(|(k, v)| {
+      k == "allowed-uris"
+        && v == "https://releases.nixos.org https://github.com"
+    }));
+  }
+
+  #[test]
+  fn evix_config_receives_allowed_uris_policy() {
+    let config = EvaluatorConfig {
+      restrict_eval: true,
+      allow_ifd: false,
+      allowed_uris: vec![
+        "https://releases.nixos.org".to_string(),
+        "https://github.com".to_string(),
+      ],
+      ..EvaluatorConfig::default()
+    };
+
+    let evix_config = evix::Config {
+      input:           evix::Input::Expr("{}".to_string()),
+      auto_args:       Vec::new(),
+      force_recurse:   true,
+      gc_roots_dir:    None,
+      workers:         1,
+      max_memory_size: 512,
+      meta:            false,
+      show_input_drvs: false,
+      override_inputs: Vec::new(),
+      nix_options:     NixEvalPolicy::from(&config).nix_options(),
+    };
+
+    assert_eq!(evix_config.nix_options, vec![
+      ("restrict-eval".to_string(), "true".to_string()),
+      (
+        "allow-import-from-derivation".to_string(),
+        "false".to_string()
+      ),
+      (
+        "allowed-uris".to_string(),
+        "https://releases.nixos.org https://github.com".to_string()
+      ),
+    ]);
   }
 }
