@@ -140,7 +140,7 @@ harmonia-store-path-info       = { git = "https://github.com/nix-community/harmo
 harmonia-utils-hash            = { git = "https://github.com/nix-community/harmonia.git", rev = "12c6742560dd1ba1e66f5cc2f04cabd4e99ae754" }
 
 # evix, in-process Nix evaluator (nix-eval-jobs replacement) driven as a library.
-evix = { version = "0.3.0", features = [ "flake" ] }
+evix = { version = "0.3.2", features = [ "flake" ] }
 
 # Workspace Clippy lints. All workspace crates must inherit them in individual
 # manifests for subcrates. The below list is a rather pedantic list of lints
