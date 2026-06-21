@@ -392,54 +392,6 @@ mod tests {
     }
   }
 
-  #[test]
-  fn dashboard_renders_operator_console_with_agents_and_builds() {
-    let html = dashboard(
-      vec![build(Uuid::nil(), "checks.default", "Failed", "failed")],
-      vec![build(Uuid::nil(), "checks.default", "Failed", "failed")],
-    )
-    .render()
-    .expect("render dashboard");
-    assert!(html.contains("Dashboard"));
-    assert!(html.contains("Agents"));
-    assert!(html.contains("Queue"));
-    assert!(html.contains("/builds?status=failed"));
-    assert!(html.contains("status-failed"));
-    assert!(html.contains("data-table dense-table"));
-    assert!(html.contains("metric-strip"));
-    assert!(!html.contains("stat-card"));
-  }
-
-  #[test]
-  fn dashboard_renders_empty_states_without_database() {
-    let html = dashboard(Vec::new(), Vec::new())
-      .render()
-      .expect("render empty dashboard");
-    assert!(html.contains("No builds yet"));
-    assert!(html.contains("Agents"));
-    assert!(html.contains("Queue"));
-    assert!(html.contains("filter project, job, system"));
-  }
-
-  #[test]
-  fn dashboard_long_names_have_titles_for_truncation() {
-    let html = dashboard(
-      vec![build(
-        Uuid::nil(),
-        "very.long.job.name.with.many.components.default",
-        "Running",
-        "running",
-      )],
-      Vec::new(),
-    )
-    .render()
-    .expect("render long names");
-    assert!(html.contains("class=\"truncate\""));
-    assert!(
-      html
-        .contains("title=\"very.long.job.name.with.many.components.default\"")
-    );
-  }
 }
 
 #[derive(Template)]

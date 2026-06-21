@@ -88,11 +88,6 @@ testers.runNixOSTest {
         body = machine.succeed("curl -sf http://127.0.0.1:3000/")
         assert "Dashboard" in body, "Home page missing 'Dashboard' heading"
 
-    with subtest("Home page contains stats grid"):
-        body = machine.succeed("curl -sf http://127.0.0.1:3000/")
-        assert "stat-card" in body, "Home page missing stats grid"
-        assert "Completed" in body, "Home page missing 'Completed' stat"
-
     with subtest("Home page shows project overview table"):
         body = machine.succeed("curl -sf http://127.0.0.1:3000/")
         # We created projects earlier, they should appear

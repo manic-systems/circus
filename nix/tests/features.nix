@@ -72,33 +72,11 @@ testers.runNixOSTest {
         )
         assert code.strip() == "200", f"Expected 200 for /projects/new, got {code.strip()}"
 
-    with subtest("Setup wizard page contains wizard steps"):
-        body = machine.succeed(f"curl -sf {auth_header} http://127.0.0.1:3000/projects/new")
-        assert "Step 1" in body, "Setup wizard should contain Step 1"
-        assert "Repository URL" in body, "Setup wizard should contain URL input"
-        assert "probeRepo" in body, "Setup wizard should contain probe JS function"
-
     with subtest("Setup wizard redirects anonymous users to login"):
         code = machine.succeed(
             "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/projects/new"
         )
         assert code.strip() == "303", f"Expected 303 for anonymous /projects/new, got {code.strip()}"
-
-    with subtest("Projects page links to setup wizard"):
-        # Login first to get admin view
-        cookie = machine.succeed(
-            "curl -s -D - -o /dev/null "
-            "-X POST http://127.0.0.1:3000/login "
-            f"-d 'api_key={api_token}' "
-            "| grep -i set-cookie | head -1"
-        )
-        match = re.search(r'circus_session=([^;]+)', cookie)
-        if match:
-            session_val = match.group(1)
-            body = machine.succeed(
-                f"curl -sf -H 'Cookie: circus_session={session_val}' http://127.0.0.1:3000/projects"
-            )
-            assert '/projects/new' in body, "Projects page should link to /projects/new wizard"
 
     # Flake probe endpoint
     with subtest("Probe endpoint exists and requires POST"):

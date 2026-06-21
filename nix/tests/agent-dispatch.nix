@@ -6,7 +6,7 @@
   pkgs,
   self,
 }: let
-  # Trivial buildable flake: a FOD fetch of an inline file.
+  # Trivial buildable flake: a FOD fetch of a file served by the runner VM.
   testFlake = pkgs.writeText "flake.nix" ''
     {
       outputs = { self, ... }: {
@@ -14,7 +14,7 @@
           name = "circus-test-hello";
           system = "x86_64-linux";
           builder = "builtin:fetchurl";
-          url = "file://''${builtins.toFile "hello.txt" "hello\n"}";
+          url = "http://runner:8000/hello.txt";
           outputHashMode = "flat";
           outputHashAlgo = "sha256";
           outputHash = "sha256-WJG1tSLV3whtD/CxEPvZ0hu0/HFjrzTQgoai6Eb2vgM=";
@@ -34,6 +34,8 @@ in
           memorySize = 2048;
           cores = 2;
         };
+        environment.systemPackages = [pkgs.python3];
+        networking.firewall.allowedTCPPorts = [8000];
       };
 
       agent = {
@@ -74,6 +76,9 @@ in
 
         with subtest("Publish flake, create jobset"):
             runner.succeed(
+                "mkdir -p /var/lib/circus/test-fixtures",
+                "printf 'hello\\n' > /var/lib/circus/test-fixtures/hello.txt",
+                "python3 -m http.server 8000 --bind 0.0.0.0 --directory /var/lib/circus/test-fixtures >/tmp/circus-test-fixtures.log 2>&1 &",
                 "mkdir -p /var/lib/circus/test-repos",
                 "git init --bare -q /var/lib/circus/test-repos/test-flake.git",
                 "git config --global --add safe.directory '*'",
@@ -84,6 +89,8 @@ in
                 "git -C /tmp/wc push -q /var/lib/circus/test-repos/test-flake.git HEAD:refs/heads/master",
                 "chown -R circus:circus /var/lib/circus/test-repos",
             )
+            runner.wait_for_open_port(8000)
+            runner.succeed("curl -sf http://127.0.0.1:8000/hello.txt")
             project = runner.succeed(
                 f"""curl -sf -X POST {api}/projects {auth} -H 'Content-Type: application/json' """
                 """-d '{"name":"t","repository_url":"file:///var/lib/circus/test-repos/test-flake.git"}' | jq -r .id"""
@@ -94,7 +101,6 @@ in
             )
 
         with subtest("Build dispatches to and succeeds on the agent"):
-            # builds_succeeded only rises when the agent realises the drv via the cache, otherwise it would time out.
             wait_row("builder_sessions WHERE name='agent-01' AND builds_succeeded >= 1")
             assert runner.succeed(psql("SELECT builds_failed FROM builder_sessions WHERE name='agent-01'")).strip() == "0"
 

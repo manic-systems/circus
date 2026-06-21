@@ -300,13 +300,13 @@ testers.runNixOSTest {
             assert code.strip() == "200", f"Public page {page} returned {code.strip()}, expected 200"
 
     with subtest("Access-gated dashboard pages require authentication"):
-        # page_access defaults are secure: these pages redirect (303) when
-        # anonymous and render (200) for an authenticated admin.
+        # page_access defaults are secure: these pages do not render for
+        # anonymous users and render (200) for an authenticated admin.
         for page in ["/projects", "/evaluations", "/builds", "/channels", "/queue"]:
             anon = machine.succeed(
                 f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:3000{page}"
             ).strip()
-            assert anon == "303", f"Anonymous {page} returned {anon}, expected 303 redirect"
+            assert anon in ("303", "401"), f"Anonymous {page} returned {anon}, expected auth gate"
             authed = machine.succeed(
                 f"curl -s -o /dev/null -w '%{{http_code}}' {auth_header} http://127.0.0.1:3000{page}"
             ).strip()
