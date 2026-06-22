@@ -4,7 +4,7 @@
   lib,
   ...
 }: let
-  inherit (lib.modules) mkDefault mkIf;
+  inherit (lib.modules) mkIf mkDefault mkMerge;
   inherit (lib.options) literalExpression mkEnableOption mkOption;
   inherit (lib.types) bool int listOf nullOr package path str submodule;
   inherit (lib.lists) concatMap optional;
@@ -432,9 +432,22 @@ in {
     };
 
     systemd = {
-      tmpfiles.rules = [
-        (mkIf cfg.server.enable "d /var/lib/circus/logs 0750 circus circus -")
-        (mkIf cfg.queueRunner.enable "d /nix/var/nix/gcroots/per-user/circus 0755 circus circus -")
+      tmpfiles.settings."10-circus" = mkMerge [
+        (mkIf cfg.server.enable {
+          "/var/lib/circus/logs".d = {
+            user = "circus";
+            group = "circus";
+            mode = "0750";
+          };
+        })
+
+        (mkIf cfg.queueRunner.enable {
+          "/nix/var/nix/gcroots/per-user/circus".d = {
+            user = "circus";
+            group = "circus";
+            mode = "0755";
+          };
+        })
       ];
 
       services = {
