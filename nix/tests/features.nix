@@ -151,7 +151,7 @@ testers.runNixOSTest {
 
     # Metrics reflect actual data
     with subtest("Metrics circus_projects_total reflects created projects"):
-        result = machine.succeed("curl -sf http://127.0.0.1:3000/metrics")
+        result = machine.succeed("curl -sf http://127.0.0.1:3000/prometheus")
         for line in result.split("\n"):
             if line.startswith("circus_projects_total"):
                 val = int(line.split()[-1])
@@ -159,7 +159,7 @@ testers.runNixOSTest {
                 break
 
     with subtest("Metrics circus_evaluations_total reflects triggered evaluation"):
-        result = machine.succeed("curl -sf http://127.0.0.1:3000/metrics")
+        result = machine.succeed("curl -sf http://127.0.0.1:3000/prometheus")
         for line in result.split("\n"):
             if line.startswith("circus_evaluations_total"):
                 val = int(line.split()[-1])
