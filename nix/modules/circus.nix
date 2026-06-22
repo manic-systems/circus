@@ -376,17 +376,17 @@ in {
       userWarnings = concatMap (
         user:
           optional (user ? password && user.password != null)
-          "services.circus.settings.declarative.users.\"${user.username}\": "
-          + "'password' is set inline - his places the secret in the world-readable Nix store. "
-          + "Use 'password_file' with a path to a file containing the password instead."
+          ("services.circus.settings.declarative.users.\"${user.username}\": "
+            + "'password' is set inline - this places the secret in the world-readable Nix store. "
+            + "Use 'password_file' with a path to a file containing the password instead.")
       ) (declarative.users or []);
 
       apiKeyWarnings = concatMap (
         ak:
           optional (ak ? key && ak.key != null)
-          "services.circus.settings.declarative.api_keys.\"${ak.name}\": "
-          + "'key' is set inline - this places the secret in the world-readable Nix store. "
-          + "Use 'key_file' with a path to a file containing the API key instead."
+          ("services.circus.settings.declarative.api_keys.\"${ak.name}\": "
+            + "'key' is set inline - this places the secret in the world-readable Nix store. "
+            + "Use 'key_file' with a path to a file containing the API key instead.")
       ) (declarative.api_keys or []);
 
       webhookWarnings = concatMap (
@@ -394,9 +394,9 @@ in {
           concatMap (
             webhook:
               optional (webhook ? secret && webhook.secret != null)
-              "services.circus.settings.declarative.projects.\"${project.name}\".webhooks: "
-              + "'secret' is set inline - this places the secret in the world-readable Nix store. "
-              + "Use 'secret_file' with a path to a file containing the webhook secret instead."
+              ("services.circus.settings.declarative.projects.\"${project.name}\".webhooks: "
+                + "'secret' is set inline - this places the secret in the world-readable Nix store. "
+                + "Use 'secret_file' with a path to a file containing the webhook secret instead.")
           ) (project.webhooks or [])
       ) (declarative.projects or []);
     in
