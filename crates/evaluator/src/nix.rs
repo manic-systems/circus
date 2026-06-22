@@ -5,6 +5,7 @@ use circus_config::EvaluatorConfig;
 use tokio::process::Command;
 
 mod eval_command;
+mod flake_lock;
 
 use eval_command::NixEvalPolicy;
 
@@ -218,6 +219,50 @@ fn rewrite_nixos_config_expr(expr: &str) -> Option<String> {
   }
 }
 
+/// Derive `allowed-uris` from the project's `flake.lock`.
+fn lock_derived_allowed_uris(
+  repo_path: &Path,
+  config: &EvaluatorConfig,
+) -> Result<Vec<String>> {
+  if !config.restrict_eval || !config.auto_allowed_uris {
+    return Ok(Vec::new());
+  }
+
+  let lock_path = repo_path.join("flake.lock");
+  match std::fs::read_to_string(&lock_path) {
+    Ok(contents) => {
+      let uris = flake_lock::allowed_uris_from_lock(&contents);
+      tracing::info!(
+        count = uris.len(),
+        "Derived allowed-uris from flake.lock"
+      );
+      Ok(uris)
+    },
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+      if config.require_locked_flake {
+        Err(CiError::NixEval(format!(
+          "No flake.lock at {} but require_locked_flake is enabled. Commit a \
+           lock file or disable require_locked_flake",
+          lock_path.display()
+        )))
+      } else {
+        tracing::warn!(
+          path = %lock_path.display(),
+          "No flake.lock found, deriving no allowed-uris (set \
+           evaluator.allowed_uris or restrict_eval = false if inputs are blocked)"
+        );
+        Ok(Vec::new())
+      }
+    },
+    Err(e) => {
+      Err(CiError::NixEval(format!(
+        "Failed to read {}: {e}",
+        lock_path.display()
+      )))
+    },
+  }
+}
+
 #[tracing::instrument(skip(config, inputs))]
 async fn evaluate_flake(
   repo_path: &Path,
@@ -260,6 +305,10 @@ async fn evaluate_flake(
     }
   }
 
+  let derived_uris = lock_derived_allowed_uris(repo_path, config)?;
+  let policy =
+    NixEvalPolicy::from(config).with_extra_allowed_uris(derived_uris);
+
   let evix_config = evix::Config {
     input: evix::Input::Flake(flake_ref),
     auto_args: Vec::new(),
@@ -270,7 +319,7 @@ async fn evaluate_flake(
     meta: true,
     show_input_drvs: true,
     override_inputs,
-    nix_options: NixEvalPolicy::from(config).nix_options(),
+    nix_options: policy.nix_options(),
   };
 
   eval_command::run_eval(evix_config, timeout, "flake").await
@@ -297,7 +346,10 @@ async fn evaluate_all_nixos_configs(
       "--no-write-lock-file",
     ])
     .kill_on_drop(true);
-  NixEvalPolicy::from(config).apply_to(&mut cmd);
+  let derived_uris = lock_derived_allowed_uris(repo_path, config)?;
+  NixEvalPolicy::from(config)
+    .with_extra_allowed_uris(derived_uris)
+    .apply_to(&mut cmd);
   let output = cmd.output().await.map_err(|e| {
     CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
   })?;
