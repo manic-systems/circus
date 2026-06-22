@@ -306,9 +306,20 @@ async fn is_servable_harmonia_path(
   // (integrity) but not confidential, so it is no license to serve; the
   // boundary is provenance.
   let store_path = info.info.store_dir.display(&info.path).to_string();
+  // A dispatched build's own .drv: agents substitute it from this cache to
+  // start the build. Derivations are content-addressed, so this must be
+  // checked before the generic CA branch below, which only covers build
+  // outputs and their direct inputs, never the derivation file itself.
+  if PathBuf::from(&store_path)
+    .extension()
+    .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
+    && has_circus_derivation_path(pool, &store_path, scope.project_id()).await?
+  {
+    return Ok(true);
+  }
   if info.info.ca.is_some() {
-    // Self-verifying: serve when Circus built it or when it is a direct input
-    // of an evaluated derivation Circus may dispatch to an agent.
+    // Serve when Circus built it or when it is a direct input of an evaluated
+    // derivation Circus may dispatch to an agent.
     return Ok(
       has_circus_build_product(pool, &store_path, scope.project_id()).await?
         || has_circus_derivation_direct_reference(
@@ -319,13 +330,6 @@ async fn is_servable_harmonia_path(
         )
         .await?,
     );
-  }
-  if PathBuf::from(&store_path)
-    .extension()
-    .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
-    && has_circus_derivation_path(pool, &store_path, scope.project_id()).await?
-  {
-    return Ok(true);
   }
   // Non-CA paths are useless to clients without our signature.
   if info.info.signatures.is_empty() {

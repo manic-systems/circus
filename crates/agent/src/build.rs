@@ -112,25 +112,33 @@ async fn fetch_drv_from_cache(opts: &BuildOptions<'_>) {
   else {
     return;
   };
-  let status = cmd
-    .args([
-      "--extra-experimental-features",
-      "nix-command",
-      "copy",
-      "--no-check-sigs",
-      "--derivation",
-      "--from",
-      opts.cache_substituter.as_str(),
-      opts.drv_path,
-    ])
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .status()
-    .await;
-  if let Ok(s) = status
-    && !s.success()
-  {
-    tracing::warn!(drv = %opts.drv_path, "drv pre-fetch from cache failed (exit {})", s.code().unwrap_or(-1));
+  cmd.args([
+    "--extra-experimental-features",
+    "nix-command",
+    "copy",
+    "--no-check-sigs",
+    "--derivation",
+    "--from",
+    opts.cache_substituter.as_str(),
+    opts.drv_path,
+  ]);
+  let Ok(mut cmd) = crate::sandbox::wrap_command(opts.rootless, cmd) else {
+    return;
+  };
+  let output = cmd.stdin(Stdio::null()).output().await;
+  match output {
+    Ok(o) if o.status.success() => {},
+    Ok(o) => {
+      tracing::warn!(
+        drv = %opts.drv_path,
+        exit = o.status.code().unwrap_or(-1),
+        stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+        "drv pre-fetch from cache failed"
+      );
+    },
+    Err(e) => {
+      tracing::warn!(drv = %opts.drv_path, "drv pre-fetch from cache failed to spawn: {e}");
+    },
   }
 }
 
