@@ -4,13 +4,14 @@ use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
 mod eval_command;
 mod flake_lock;
+mod flake_ref;
 
 use eval_command::NixEvalPolicy;
 pub use eval_command::error_chain;
+use flake_ref::SourceFlakeRef;
 
 #[derive(Debug, Clone, Default)]
 pub struct NixMeta {
@@ -169,12 +170,20 @@ pub struct EvalResult {
 /// If `flake_mode` is true, evaluates a flake output via evix.
 /// If `flake_mode` is false, evaluates a legacy expression file via evix.
 ///
+/// `repository_url` and `commit_hash` identify the canonical flake source: in
+/// flake mode the evaluator fetches the repository through the same fetcher the
+/// user builds with (`github:`/`gitlab:`/`sourcehut:` shorthand or a
+/// `git+<scheme>` ref), so produced derivations hash-match `nix build
+/// <ref>` instead of baking in the local checkout (including its `.git`). Both
+/// are ignored in legacy mode, which imports a path from `repo_path`.
+///
 /// # Errors
 ///
 /// Returns error if nix evaluation command fails or times out.
 #[tracing::instrument(skip(config, inputs), fields(flake_mode, nix_expression))]
 pub async fn evaluate(
   repo_path: &Path,
+  repository_url: &str,
   commit_hash: &str,
   nix_expression: &str,
   flake_mode: bool,
@@ -194,9 +203,14 @@ pub async fn evaluate(
   let nix_expression = normalize_flake_expression(nix_expression);
 
   if flake_mode {
+    let source = flake_ref::source_flake_ref(repository_url, commit_hash);
+    tracing::debug!(
+      flake_ref = %source.flake_ref,
+      "Resolved canonical flake source"
+    );
     evaluate_flake(
       repo_path,
-      commit_hash,
+      &source,
       nix_expression,
       timeout,
       config,
@@ -299,10 +313,27 @@ fn parse_lockfile(path: &Path, contents: &str) -> Vec<String> {
   }
 }
 
-#[tracing::instrument(skip(config, inputs))]
+/// Merge `flake.lock`-derived `allowed-uris` with the root source URIs.
+///
+/// The root URIs are only meaningful under `restrict-eval`, where the source
+/// fetch itself is subject to `checkURI`; without them the canonical
+/// `github:`/`git+*` source would be blocked.
+fn eval_allowed_uris(
+  repo_path: &Path,
+  source: &SourceFlakeRef,
+  config: &EvaluatorConfig,
+) -> Result<Vec<String>> {
+  let mut uris = lock_derived_allowed_uris(repo_path, config)?;
+  if config.restrict_eval {
+    uris.extend(source.allowed_uris.iter().cloned());
+  }
+  Ok(uris)
+}
+
+#[tracing::instrument(skip(config, inputs, source))]
 async fn evaluate_flake(
   repo_path: &Path,
-  commit_hash: &str,
+  source: &SourceFlakeRef,
   nix_expression: &str,
   timeout: Duration,
   config: &EvaluatorConfig,
@@ -312,7 +343,7 @@ async fn evaluate_flake(
 ) -> Result<EvalResult> {
   if nix_expression == "nixosConfigurations" {
     return evaluate_all_nixos_configs(
-      repo_path, timeout, config, inputs, cancel,
+      repo_path, source, timeout, config, inputs, cancel,
     )
     .await;
   }
@@ -328,7 +359,11 @@ async fn evaluate_flake(
     );
   }
 
-  let flake_ref = git_flake_ref(repo_path, commit_hash, &effective_expr)?;
+  let flake_ref = if effective_expr.is_empty() {
+    source.flake_ref.clone()
+  } else {
+    format!("{}#{effective_expr}", source.flake_ref)
+  };
 
   tracing::debug!(flake_ref = %flake_ref, "Running evix evaluation");
 
@@ -346,7 +381,7 @@ async fn evaluate_flake(
     }
   }
 
-  let derived_uris = lock_derived_allowed_uris(repo_path, config)?;
+  let derived_uris = eval_allowed_uris(repo_path, source, config)?;
   let policy =
     NixEvalPolicy::from(config).with_extra_allowed_uris(derived_uris);
 
@@ -372,35 +407,16 @@ async fn evaluate_flake(
   eval_command::run_eval(evix_config, timeout, "flake", cancel).await
 }
 
-fn git_flake_ref(
-  repo_path: &Path,
-  commit_hash: &str,
-  expression: &str,
-) -> Result<String> {
-  let mut url = Url::from_file_path(repo_path).map_err(|()| {
-    CiError::NixEval(format!(
-      "Failed to convert repository path to a file URL: {}",
-      repo_path.display()
-    ))
-  })?;
-  url.query_pairs_mut().append_pair("rev", commit_hash);
-  let mut reference = format!("git+{url}");
-  if !expression.is_empty() {
-    reference.push('#');
-    reference.push_str(expression);
-  }
-  Ok(reference)
-}
-
 /// Resolve all toplevels in one nix eval.
 async fn evaluate_all_nixos_configs(
   repo_path: &Path,
+  source: &SourceFlakeRef,
   _timeout: Duration,
   config: &EvaluatorConfig,
   _inputs: &[JobsetInput],
   cancel: &CancellationToken,
 ) -> Result<EvalResult> {
-  let flake_ref = format!("{}#nixosConfigurations", repo_path.display());
+  let flake_ref = format!("{}#nixosConfigurations", source.flake_ref);
 
   let expr = "builtins.mapAttrs (_: v: v.config.system.build.toplevel)";
   let mut cmd = Command::new("nix");
@@ -414,7 +430,7 @@ async fn evaluate_all_nixos_configs(
       "--no-write-lock-file",
     ])
     .kill_on_drop(true);
-  let derived_uris = lock_derived_allowed_uris(repo_path, config)?;
+  let derived_uris = eval_allowed_uris(repo_path, source, config)?;
   NixEvalPolicy::from(config)
     .with_extra_allowed_uris(derived_uris)
     .apply_to(&mut cmd);
@@ -455,7 +471,7 @@ async fn evaluate_all_nixos_configs(
   for (name, eval_path) in entries {
     let drv_ref = format!(
       "{}#nixosConfigurations.{name}.config.system.build.toplevel",
-      repo_path.display()
+      source.flake_ref
     );
     let shown = resolve_drv(&drv_ref, config).await;
 
@@ -964,27 +980,6 @@ mod meta_tests {
       .is_none()
     );
     assert!(rewrite_nixos_config_expr("packages").is_none());
-  }
-
-  #[test]
-  fn git_flake_ref_pins_the_checked_out_commit() {
-    assert_eq!(
-      git_flake_ref(
-        Path::new("/tmp/circus fixture"),
-        "0123456789abcdef",
-        "packages",
-      )
-      .unwrap(),
-      "git+file:///tmp/circus%20fixture?rev=0123456789abcdef#packages",
-    );
-  }
-
-  #[test]
-  fn git_flake_ref_omits_an_empty_root_fragment() {
-    assert_eq!(
-      git_flake_ref(Path::new("/tmp/circus"), "0123456789abcdef", "").unwrap(),
-      "git+file:///tmp/circus?rev=0123456789abcdef",
-    );
   }
 
   #[test]

@@ -79,6 +79,7 @@ async fn eval_minimal_flake_returns_one_job() {
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    dir.path().to_str().unwrap(),
     &commit,
     ".",
     true,
@@ -125,6 +126,7 @@ async fn eval_captures_per_attribute_errors_without_failing_fatally() {
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    dir.path().to_str().unwrap(),
     &commit,
     "packages",
     true,
@@ -158,6 +160,7 @@ async fn eval_fatal_parse_error_returns_cierror_nixeval() {
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    dir.path().to_str().unwrap(),
     &commit,
     "packages",
     true,
@@ -203,6 +206,7 @@ async fn eval_zero_timeout_returns_cierror_timeout() {
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    dir.path().to_str().unwrap(),
     &commit,
     "packages",
     true,
