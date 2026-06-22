@@ -22,6 +22,14 @@ pub(super) struct NixEvalPolicy {
 }
 
 impl NixEvalPolicy {
+  /// Merge extra `allowed-uris`, sorted and deduped.
+  pub(super) fn with_extra_allowed_uris(mut self, extra: Vec<String>) -> Self {
+    self.allowed_uris.extend(extra);
+    self.allowed_uris.sort();
+    self.allowed_uris.dedup();
+    self
+  }
+
   pub(super) fn nix_options(&self) -> Vec<(String, String)> {
     let mut options = Vec::new();
     if self.restrict_eval {
@@ -229,6 +237,25 @@ mod policy_tests {
   fn empty_allowed_uris_emits_no_option() {
     let opts = policy(true, false).nix_options();
     assert!(!opts.iter().any(|(k, _)| k == "allowed-uris"));
+  }
+
+  #[test]
+  fn with_extra_allowed_uris_merges_sorts_and_dedups() {
+    let p = NixEvalPolicy {
+      restrict_eval: true,
+      allow_ifd:     false,
+      allowed_uris:  vec!["https://github.com".to_string()],
+    }
+    .with_extra_allowed_uris(vec![
+      "github:NixOS/nixpkgs".to_string(),
+      "https://github.com".to_string(),
+    ]);
+    let opts = p.nix_options();
+    let (_, v) = opts
+      .iter()
+      .find(|(k, _)| k == "allowed-uris")
+      .expect("allowed-uris option must be present");
+    assert_eq!(v, "github:NixOS/nixpkgs https://github.com");
   }
 
   #[test]

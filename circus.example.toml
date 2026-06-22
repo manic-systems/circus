@@ -38,12 +38,14 @@ enabled        = true
 # text   = "#0f172a"
 
 [evaluator]
-allow_ifd     = false
-git_timeout   = 600
-nix_timeout   = 1800
-poll_interval = 60
-restrict_eval = true
-work_dir      = "/tmp/circus-evaluator"
+allow_ifd            = false
+auto_allowed_uris    = true
+git_timeout          = 600
+nix_timeout          = 1800
+poll_interval        = 60
+require_locked_flake = false
+restrict_eval        = true
+work_dir             = "/tmp/circus-evaluator"
 
 [queue_runner]
 build_timeout = 3600

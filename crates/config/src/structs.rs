@@ -224,6 +224,10 @@ impl Default for PageAccessConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "EvaluatorConfig mirrors independent TOML switches"
+)]
 #[serde(default)]
 pub struct EvaluatorConfig {
   pub poll_interval:        u64,
@@ -233,11 +237,15 @@ pub struct EvaluatorConfig {
   pub work_dir:             PathBuf,
   pub restrict_eval:        bool,
   pub allow_ifd:            bool,
-  /// URIs that Nix is allowed to fetch even under `restrict_eval`. Space- or
-  /// newline-separated prefixes passed as `allowed-uris` to Nix. Useful for
-  /// permitting locked tarball inputs (e.g. `https://releases.nixos.org`)
-  /// without disabling `restrict_eval` entirely.
+  /// Extra `allowed-uris` prefixes honored under `restrict_eval`, merged with
+  /// the lock-derived set when `auto_allowed_uris` is on.
   pub allowed_uris:         Vec<String>,
+
+  /// Derive `allowed-uris` from the flake jobset's `flake.lock`.
+  pub auto_allowed_uris: bool,
+
+  /// Refuse a flake jobset that has no committed `flake.lock`.
+  pub require_locked_flake: bool,
 
   /// Whether to abort on the first evaluation cycle error instead of logging
   /// and retrying.
@@ -784,6 +792,8 @@ impl Default for EvaluatorConfig {
       restrict_eval:        true,
       allow_ifd:            false,
       allowed_uris:         Vec::new(),
+      auto_allowed_uris:    true,
+      require_locked_flake: false,
       strict_errors:        false,
     }
   }

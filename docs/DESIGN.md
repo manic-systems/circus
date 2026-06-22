@@ -296,6 +296,13 @@ The server enforces several security measures:
 - LDAP DN injection prevention (metacharacter escaping)
 - Audit logging for all mutations
 
+Evaluation is sandboxed independently. The evaluator runs Nix with
+`restrict-eval`, so a jobset can only fetch URIs on an allowlist, and
+`import-from-derivation` is off by default. The allowlist is derived from the
+project's `flake.lock`, so locked inputs resolve while undeclared eval-time
+fetches are blocked. Deployers extend it with `evaluator.allowed_uris` or opt
+out with `restrict_eval = false`.
+
 ## Binary Cache and Channels
 
 Circus serves a Nix-compatible binary cache at `/nix-cache/`. It supports the
