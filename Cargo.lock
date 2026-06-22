@@ -1659,9 +1659,9 @@ dependencies = [
 
 [[package]]
 name = "evix"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6f989ebc26542fc5b3e806b1f22742d725ee39412e5471522f6c02aa371ef42"
+checksum = "84f684521a2733493f3dd4370a81f132af8d9fa4f93db6e6c69e04568e72aa9e"
 dependencies = [
  "anyhow",
  "libc",

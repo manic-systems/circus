@@ -127,11 +127,7 @@ pub(super) async fn run_eval(
         .map_err(|e| {
           CiError::NixEval(format!("evix evaluation task failed to join: {e}"))
         })?
-        .map_err(|e| {
-          CiError::NixEval(format!(
-            "{description} evix evaluation failed: {e:#}"
-          ))
-        })?;
+        .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?;
 
       let result = {
         let guard = collected
@@ -163,6 +159,10 @@ pub(super) async fn run_eval(
   }
 }
 
+fn evix_eval_failure(description: &str, details: &str) -> CiError {
+  CiError::NixEval(format!("{description} evix evaluation failed: {details}"))
+}
+
 #[cfg(test)]
 mod policy_tests {
   use super::*;
@@ -178,6 +178,33 @@ mod policy_tests {
   #[test]
   fn no_options_when_permissive() {
     assert!(policy(false, true).nix_options().is_empty());
+  }
+
+  #[test]
+  fn evix_worker_shutdown_error_keeps_worker_context() {
+    let err = evix_eval_failure(
+      "flake",
+      concat!(
+        "evix worker closed stdout while reading event for ",
+        "packages.x86_64-linux.bad; worker status: exit status: 1; ",
+        "worker stderr:\nevix worker failed: locking flake"
+      ),
+    );
+
+    assert!(
+      matches!(&err, CiError::NixEval(_)),
+      "expected NixEval error, got {err:?}"
+    );
+    let CiError::NixEval(message) = err else {
+      return;
+    };
+
+    assert!(message.contains("flake evix evaluation failed"));
+    assert!(message.contains("reading event"));
+    assert!(message.contains("packages.x86_64-linux.bad"));
+    assert!(message.contains("exit status: 1"));
+    assert!(message.contains("locking flake"));
+    assert!(!message.contains("worker closed stdout unexpectedly"));
   }
 
   #[test]
