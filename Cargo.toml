@@ -7,24 +7,24 @@ edition      = "2024"
 license      = "MPL-2.0"
 repository   = "https://github.com/manic-systems/circus"
 rust-version = "1.95.0"
-version      = "0.11.0"
+version      = "0.12.0"
 
 [workspace.dependencies]
 # Workspace Components
-circus-agent        = { path = "./crates/agent", version = "0.11.0" }
-circus-cli          = { path = "./crates/cli", version = "0.11.0" }
-circus-common       = { path = "./crates/common", version = "0.11.0" }
-circus-config       = { path = "./crates/config", version = "0.11.0" }
-circus-evaluator    = { path = "./crates/evaluator", version = "0.11.0" }
-circus-logs         = { path = "./crates/logs", version = "0.11.0" }
-circus-migrations   = { path = "./crates/migrations", version = "0.11.0" }
-circus-nix          = { path = "./crates/nix", version = "0.11.0" }
-circus-notification = { path = "./crates/notification", version = "0.11.0" }
-circus-proto        = { path = "./crates/proto", version = "0.11.0" }
-circus-queue-runner = { path = "./crates/queue-runner", version = "0.11.0" }
-circus-s3           = { path = "./crates/s3", version = "0.11.0" }
-circus-server       = { path = "./crates/server", version = "0.11.0" }
-circus-types        = { path = "./crates/types", version = "0.11.0" }
+circus-agent        = { path = "./crates/agent", version = "0.12.0" }
+circus-cli          = { path = "./crates/cli", version = "0.12.0" }
+circus-common       = { path = "./crates/common", version = "0.12.0" }
+circus-config       = { path = "./crates/config", version = "0.12.0" }
+circus-evaluator    = { path = "./crates/evaluator", version = "0.12.0" }
+circus-logs         = { path = "./crates/logs", version = "0.12.0" }
+circus-migrations   = { path = "./crates/migrations", version = "0.12.0" }
+circus-nix          = { path = "./crates/nix", version = "0.12.0" }
+circus-notification = { path = "./crates/notification", version = "0.12.0" }
+circus-proto        = { path = "./crates/proto", version = "0.12.0" }
+circus-queue-runner = { path = "./crates/queue-runner", version = "0.12.0" }
+circus-s3           = { path = "./crates/s3", version = "0.12.0" }
+circus-server       = { path = "./crates/server", version = "0.12.0" }
+circus-types        = { path = "./crates/types", version = "0.12.0" }
 
 # Other dependencies
 askama = "0.16.0"
