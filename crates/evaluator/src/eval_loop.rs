@@ -432,6 +432,7 @@ async fn run_nix_and_record_builds(
   ));
   let result = crate::nix::evaluate(
     repo_path,
+    &jobset.repository_url,
     &eval.commit_hash,
     &jobset.nix_expression,
     jobset.flake_mode,
