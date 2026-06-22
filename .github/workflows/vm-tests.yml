@@ -59,9 +59,13 @@ jobs:
           purge-primary-key: never
 
       - name: Build all circus packages
+        # Keep out-links so the built packages become GC roots. cache-nix-action
+        # garbage-collects before saving (gc-max-store-size below); with --no-link
+        # the fresh outputs have no root, get collected, and never reach the
+        # cache, so every vm-test job recompiles them from scratch.
         run: |
           nix build .#circus-server .#circus-evaluator .#circus-queue-runner \
-                    .#circus-cli .#circus-agent -L --no-link
+                    .#circus-cli .#circus-agent -L --out-link result-circus
 
   vm-test:
     name: ${{ matrix.name }}
