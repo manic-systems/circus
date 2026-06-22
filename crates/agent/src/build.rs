@@ -97,8 +97,41 @@ pub async fn run(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
   )]
+  // nix-store --realise requires the .drv to be present in the local store;
+  // it will not fetch it from a substituter. Pull it from the runner's cache
+  // before realising so the agent doesn't need out-of-band store access.
+  if !opts.cache_substituter.is_empty() {
+    fetch_drv_from_cache(&opts).await;
+  }
   let cmd = crate::sandbox::wrap_command(opts.rootless, build_command(&opts)?)?;
   run_command(cmd, &opts, Tunables::default(), log_sink, cancel).await
+}
+
+async fn fetch_drv_from_cache(opts: &BuildOptions<'_>) {
+  let Ok(mut cmd) = crate::sandbox::nix_command(opts.rootless, NixTool::Nix)
+  else {
+    return;
+  };
+  let status = cmd
+    .args([
+      "--extra-experimental-features",
+      "nix-command",
+      "copy",
+      "--no-check-sigs",
+      "--derivation",
+      "--from",
+      opts.cache_substituter.as_str(),
+      opts.drv_path,
+    ])
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .status()
+    .await;
+  if let Ok(s) = status
+    && !s.success()
+  {
+    tracing::warn!(drv = %opts.drv_path, "drv pre-fetch from cache failed (exit {})", s.code().unwrap_or(-1));
+  }
 }
 
 fn build_command(opts: &BuildOptions<'_>) -> color_eyre::Result<Command> {
