@@ -16,7 +16,6 @@ testers.runNixOSTest {
   # Feature tests: logging, CSS, setup wizard, probe, metrics improvements
   testScript = ''
     import hashlib
-    import re
 
     machine.start()
     machine.wait_for_unit("postgresql.service")
@@ -145,12 +144,10 @@ testers.runNixOSTest {
 
     # Dashboard
     with subtest("Admin page JS uses escapeHtml for error handling"):
-        # Login to get admin view
-        if match:
-            body = machine.succeed(
-                f"curl -sf -H 'Cookie: circus_session={session_val}' http://127.0.0.1:3000/admin"
-            )
-            assert "escapeHtml" in body, "Admin page JS should use escapeHtml"
+        body = machine.succeed(
+            f"curl -sf {auth_header} http://127.0.0.1:3000/admin"
+        )
+        assert "escapeHtml" in body, "Admin page JS should use escapeHtml"
 
     # Metrics reflect actual data
     with subtest("Metrics circus_projects_total reflects created projects"):

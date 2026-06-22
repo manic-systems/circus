@@ -147,8 +147,7 @@ testers.runNixOSTest {
             "curl -s -o /dev/null -w '%{http_code}' "
             "http://127.0.0.1:3000/project/00000000-0000-0000-0000-000000000000"
         )
-        # Should return 200 with "not found" message or similar, not crash
-        assert code.strip() == "200", f"Expected 200 for missing project detail, got {code.strip()}"
+        assert code.strip() == "404", f"Expected 404 for missing project detail, got {code.strip()}"
 
     # Project update via PUT
     with subtest("Update project description via PUT"):
