@@ -937,16 +937,22 @@ untrusted build code.
 ## Authentication Bootstrapping
 
 Circus supports API keys, local users, GitHub OAuth, and LDAP. Day-to-day user
-and admin workflows are covered in [USAGE.md](./USAGE.md). The most important
-installation-time task is creating the first admin API key. SHA-256 hashed API
-keys are stored in the `api_keys` table. To create the first admin key after
-initial deployment:
+and admin workflows are covered in [USAGE.md](./USAGE.md).
+
+> [!TIP]
+> The **declarative config** approach (NixOS module or `circus.toml`) is the
+> recommended way to create the first admin user and API key. See
+> [USAGE.md § First-Time Bootstrapping](./USAGE.md#first-time-bootstrapping) for
+> examples.
+
+If you need to bootstrap manually, create the first admin API key via SQL.
+SHA-256 hashed API keys are stored in the `api_keys` table:
 
 <!--markdownlint-disable MD013-->
 
 ```bash
 # Generate a key and its hash
-$ export CIRCUS_KEY="circus_$(openssl rand -hex 16)"
+$ export CIRCUS_KEY="circus_$(openssl rand -hex 32)"
 $ export CIRCUS_HASH=$(echo -n "$CIRCUS_KEY" | sha256sum | cut -d' ' -f1)
 
 # Insert into the database
@@ -958,6 +964,10 @@ $ sudo -u circus psql -U circus -d circus -c \
 ```
 
 <!--markdownlint-enable MD013-->
+
+Once you have an admin API key, create additional users with
+`circusctl admin users create` or from the admin dashboard. Creating users
+directly via SQL is impractical because passwords use argon2id hashing.
 
 > [!TIP]
 > Subsequent keys can be created with `circusctl admin api-keys create` or the

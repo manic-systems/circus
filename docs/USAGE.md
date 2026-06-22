@@ -334,6 +334,98 @@ inventory: filter by store-path hash prefix or package name, and inspect each
 NAR's sizes, upload time, and last-fetched time. The matching JSON lives under
 `GET /api/v1/admin/caches/{name}/nars`.
 
+## First-Time Bootstrapping
+
+On a fresh installation there are no users or API keys yet. You need an admin
+account and an admin API key before you can use `circusctl admin` commands or
+the admin dashboard.
+
+### With the NixOS module
+
+Set `declarative.users` and `declarative.api_keys` in the NixOS config. The
+server reads these on startup and reconciles them with the database, creating or
+updating records as needed. Prefer the `_file` variants to avoid storing secrets
+in the world-readable Nix store:
+
+```nix
+{
+  services.circus.settings.declarative.users = [
+    {
+      username = "admin";
+      email = "admin@example.org";
+      password_file = "/run/secrets/circus-admin-password"; # or agenix
+      role = "admin";
+    }
+  ];
+
+  services.circus.settings.declarative.api_keys = [
+    {
+      name = "admin-key";
+      key_file = "/run/secrets/circus-admin-key"; # or agenix
+      role = "admin";
+    }
+  ];
+}
+```
+
+The `password` and `key` fields are also available for inline use during
+testing, but the NixOS module emits a warning when they are used. Secrets placed
+inline end up in the Nix store. Avoid this in production.
+
+> [!TIP]
+> API keys use the `circus_` prefix. Generate one with
+> `echo "circus_$(openssl rand -hex 32)" > /path/to/key-file`.
+
+### Without the NixOS module
+
+Declarative config works the same way via `circus.toml`:
+
+```toml
+[declarative]
+
+[[declarative.users]]
+username = "admin"
+email = "admin@example.org"
+password_file = "/run/secrets/circus-admin-password"
+role = "admin"
+
+[[declarative.api_keys]]
+name = "admin-key"
+key_file = "/run/secrets/circus-admin-key"
+role = "admin"
+```
+
+Inline `password` and `key` fields exist for testing, but avoid them in
+production. Secrets in config files are not encrypted at rest. The server
+reconciles declarative config with the database on every startup.
+
+### Manual database insertion (any setup)
+
+If you cannot restart the server or prefer direct SQL, insert records into
+PostgreSQL:
+
+```bash
+# Create the first admin API key
+export CIRCUS_KEY="circus_$(openssl rand -hex 32)"
+export CIRCUS_HASH=$(echo -n "$CIRCUS_KEY" | sha256sum | cut -d' ' -f1)
+sudo -u circus psql -U circus -d circus -c \
+  "INSERT INTO api_keys (name, key_hash, role) VALUES ('admin', '$CIRCUS_HASH', 'admin')"
+
+# Create the first admin user
+# The password is hashed with argon2id, generating that hash from the shell
+# is impractical. If you must insert users directly, use a known argon2 hash
+# or prefer the declarative config approach.
+```
+
+> [!WARNING]
+> The password must be an argon2id hash. Generating one from the shell is
+> impractical; prefer the declarative config approach for user creation. Once
+> you have an admin API key, use `circusctl admin users create` for additional
+> users.
+
+Once you have an admin API key, subsequent users and keys are managed with
+`circusctl admin` (see below).
+
 ### API Keys
 
 API keys authenticate API and `circusctl` requests. Keys are stored hashed; the
