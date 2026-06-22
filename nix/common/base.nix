@@ -83,7 +83,7 @@ in {
         api_keys = [
           {
             name = "bootstrap-admin";
-            key = "circus_bootstrap_key";
+            key_file = toString (pkgs.writeText "bootstrap-admin-key" "circus_bootstrap_key");
             role = "admin";
           }
         ];

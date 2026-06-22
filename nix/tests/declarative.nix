@@ -9,6 +9,8 @@
   adminPasswordFile = pkgs.writeText "admin-password" "SecretAdmin123!";
   userPasswordFile = pkgs.writeText "user-password" "SecretUser123!";
   disabledPasswordFile = pkgs.writeText "disabled-password" "DisabledPass123!";
+  declAdminKeyFile = pkgs.writeText "decl-admin-key" "circus_decl_admin";
+  declReadonlyKeyFile = pkgs.writeText "decl-readonly-key" "circus_decl_readonly";
 in
   testers.runNixOSTest {
     name = "circus-declarative";
@@ -58,12 +60,12 @@ in
           api_keys = lib.mkForce [
             {
               name = "decl-admin-key";
-              key = "circus_decl_admin";
+              key_file = toString declAdminKeyFile;
               role = "admin";
             }
             {
               name = "decl-readonly-key";
-              key = "circus_decl_readonly";
+              key_file = toString declReadonlyKeyFile;
               role = "read-only";
             }
           ];

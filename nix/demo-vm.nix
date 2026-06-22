@@ -6,8 +6,7 @@
   inherit (lib.modules) mkForce;
   circusPkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
 
-  # Demo password file to demonstrate password_file configuration.
-  # Password must be at least 12 characters with at least one uppercase letter
+  adminPasswordFile = pkgs.writeText "admin-password" "AdminPassword123!";
   demoPasswordFile = pkgs.writeText "demo-password" "DemoPassword123!";
 
   nixos = pkgs.nixos ({
@@ -95,7 +94,7 @@
             {
               username = "admin";
               email = "admin@circus.local";
-              password = "AdminPassword123!";
+              password_file = toString adminPasswordFile;
               role = "admin";
             }
             {
