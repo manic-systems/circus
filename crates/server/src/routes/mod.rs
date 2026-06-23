@@ -165,6 +165,18 @@ async fn serve_theme_css(State(state): State<AppState>) -> Response {
     css.push_str(value);
     css.push_str(";\n");
   }
+  append_derived_contrast(
+    &mut css,
+    &state.config.ui.css_variables,
+    "accent",
+    "accent-contrast",
+  );
+  append_derived_contrast(
+    &mut css,
+    &state.config.ui.css_variables,
+    "accent-hover",
+    "accent-hover-contrast",
+  );
   css.push_str("}\n");
 
   #[expect(
@@ -179,6 +191,77 @@ async fn serve_theme_css(State(state): State<AppState>) -> Response {
       .expect("response builder should not fail")
   }
   .into_response()
+}
+
+fn css_variable<'a>(
+  variables: &'a std::collections::BTreeMap<String, String>,
+  name: &str,
+) -> Option<&'a str> {
+  variables
+    .get(name)
+    .or_else(|| variables.get(&format!("--{name}")))
+    .map(String::as_str)
+}
+
+fn append_derived_contrast(
+  css: &mut String,
+  variables: &std::collections::BTreeMap<String, String>,
+  color_name: &str,
+  contrast_name: &str,
+) {
+  if css_variable(variables, contrast_name).is_some() {
+    return;
+  }
+  let Some(color) =
+    css_variable(variables, color_name).and_then(accent_contrast_color)
+  else {
+    return;
+  };
+  css.push_str("  --");
+  css.push_str(contrast_name);
+  css.push_str(": ");
+  css.push_str(color);
+  css.push_str(";\n");
+}
+
+fn accent_contrast_color(color: &str) -> Option<&'static str> {
+  let hex = color.trim().strip_prefix('#')?.as_bytes();
+  let (r, g, b) = match hex {
+    [r, g, b] => {
+      (
+        hex_nibble(*r)? * 17,
+        hex_nibble(*g)? * 17,
+        hex_nibble(*b)? * 17,
+      )
+    },
+    [r1, r2, g1, g2, b1, b2] => {
+      (
+        hex_byte(*r1, *r2)?,
+        hex_byte(*g1, *g2)?,
+        hex_byte(*b1, *b2)?,
+      )
+    },
+    _ => return None,
+  };
+  let yiq = u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114;
+  if yiq >= 128_000 {
+    Some("#0b0f14")
+  } else {
+    Some("#ffffff")
+  }
+}
+
+fn hex_byte(high: u8, low: u8) -> Option<u8> {
+  Some(hex_nibble(high)? * 16 + hex_nibble(low)?)
+}
+
+const fn hex_nibble(byte: u8) -> Option<u8> {
+  match byte {
+    b'0'..=b'9' => Some(byte - b'0'),
+    b'a'..=b'f' => Some(byte - b'a' + 10),
+    b'A'..=b'F' => Some(byte - b'A' + 10),
+    _ => None,
+  }
 }
 
 async fn serve_custom_css(State(state): State<AppState>) -> Response {
@@ -337,4 +420,18 @@ pub fn router(state: AppState, config: &Config) -> Router {
   }
 
   app.with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::accent_contrast_color;
+
+  #[test]
+  fn accent_contrast_chooses_readable_text_for_hex_colors() {
+    assert_eq!(accent_contrast_color("#111827"), Some("#ffffff"));
+    assert_eq!(accent_contrast_color("#f4f6f8"), Some("#0b0f14"));
+    assert_eq!(accent_contrast_color("#000"), Some("#ffffff"));
+    assert_eq!(accent_contrast_color("#fff"), Some("#0b0f14"));
+    assert_eq!(accent_contrast_color("currentColor"), None);
+  }
 }
