@@ -30,7 +30,7 @@
                     <label for="probe-url">Flake repository URL</label>
                     <input type="url" id="probe-url" placeholder="https://github.com/user/repo" required>
                 </div>
-                <button class="btn" id="probe-btn" onclick="probeRepo()">Probe Repository</button>
+                <button type="button" class="btn" id="probe-btn" onclick="probeRepo()">Probe Repository</button>
                 <div id="probe-status" class="form-status"></div>
             </div>
         </div>
@@ -41,8 +41,8 @@
             <p class="wizard-hint">Select which outputs to build. You can customise the Nix expression for each.</p>
             <div id="outputs-list"></div>
             <div class="wizard-actions">
-                <button class="btn" onclick="goToStep(3)">Continue</button>
-                <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+                <button type="button" class="btn" onclick="goToStep(3)">Continue</button>
+                <button type="button" class="btn btn-secondary" onclick="goToStep(1)">Back</button>
             </div>
         </div>
 
@@ -60,8 +60,8 @@
                     </textarea>
                 </div>
                 <div class="wizard-actions">
-                    <button class="btn" onclick="goToStep(4)">Review</button>
-                    <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
+                    <button type="button" class="btn" onclick="goToStep(4)">Review</button>
+                    <button type="button" class="btn btn-secondary" onclick="goToStep(2)">Back</button>
                 </div>
             </div>
         </div>
@@ -75,8 +75,8 @@
                 <h3>Selected Jobsets</h3>
                 <div id="summary-jobsets"></div>
                 <div class="wizard-actions">
-                    <button class="btn" id="create-btn" onclick="createProject()">Create Project</button>
-                    <button class="btn btn-secondary" onclick="goToStep(3)">Back</button>
+                    <button type="button" class="btn" id="create-btn" onclick="createProject()">Create Project</button>
+                    <button type="button" class="btn btn-secondary" onclick="goToStep(3)">Back</button>
                 </div>
                 <div id="create-status" class="form-status"></div>
             </div>
