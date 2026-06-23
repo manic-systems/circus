@@ -318,6 +318,7 @@ mod tests {
   ) -> BuildView {
     BuildView {
       id,
+      id_short: super::super::shared::short_uuid(id),
       job_name: job_name.into(),
       project_id: Some(Uuid::nil()),
       project_name: "nh".into(),

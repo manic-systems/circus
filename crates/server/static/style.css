@@ -635,17 +635,23 @@ p {
 .operator-toolbar {
   grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
 
 .dashboard-search {
-  width: clamp(260px, 24vw, 380px);
+  flex: 1 1 260px;
+  width: auto;
+  min-width: 0;
+  max-width: 380px;
 }
 
 .dashboard-system {
+  flex: 0 1 154px;
   width: 154px;
+  min-width: 0;
 }
 
 .motd-line {
@@ -1183,20 +1189,25 @@ tbody tr:hover {
 }
 
 .panel .filter-bar {
-  height: 42px;
+  min-height: 42px;
   padding: 8px 10px;
   margin: 0;
   gap: 6px;
+  align-items: center;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 
 .filter-bar input[type="search"] {
-  width: 220px;
+  flex: 1 1 220px;
+  width: auto;
+  min-width: 0;
 }
 
 .filter-bar select {
+  flex: 0 1 110px;
   width: 110px;
+  min-width: 0;
 }
 
 input,
@@ -1724,11 +1735,33 @@ button:disabled {
 .path-short,
 .hash-short {
   display: inline-block;
-  max-width: 34rem;
+  max-width: min(34rem, 100%);
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: bottom;
   white-space: nowrap;
+}
+
+.build-meta-value {
+  min-width: 0;
+}
+
+.build-meta-value code,
+.detail-grid dd code,
+td > code {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+pre code {
+  display: inline;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: inherit;
 }
 
 .text-sm {
@@ -1746,6 +1779,9 @@ button:disabled {
 }
 
 .row-actions {
+  width: 10rem;
+  max-width: none;
+  overflow: visible;
   text-align: right;
   white-space: nowrap;
 }

@@ -58,7 +58,9 @@
                     {% for b in builds %}
                         <tr>
                             <td class="mono">
-                                <a href="/build/{{ b.id }}">#{{ b.id }}</a>
+                                <a href="/build/{{ b.id }}"
+                                   title="{{ b.id }}"
+                                   aria-label="Build {{ b.id }}">#{{ b.id_short }}</a>
                             </td>
                             <td class="truncate" title="{{ b.project_name }}">
                                 {% match b.project_id %}
