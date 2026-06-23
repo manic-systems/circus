@@ -127,6 +127,7 @@ impl Pagination {
 
 pub(super) struct BuildView {
   pub(super) id:            Uuid,
+  pub(super) id_short:      String,
   pub(super) job_name:      String,
   pub(super) project_id:    Option<Uuid>,
   pub(super) project_name:  String,
@@ -442,6 +443,7 @@ impl From<&operator::OperatorBuild> for BuildView {
   fn from(b: &operator::OperatorBuild) -> Self {
     Self {
       id:            b.id,
+      id_short:      short_uuid(b.id),
       job_name:      b.job_name.clone(),
       project_id:    b.project_id,
       project_name:  b.project_name.clone(),
@@ -634,6 +636,7 @@ impl From<&Build> for BuildView {
     let (text, class) = b.status.badge();
     Self {
       id:            b.id,
+      id_short:      short_uuid(b.id),
       job_name:      b.job_name.clone(),
       project_id:    None,
       project_name:  String::new(),
@@ -680,6 +683,10 @@ impl From<&Build> for BuildView {
 
 pub(super) fn build_view(b: &Build) -> BuildView {
   BuildView::from(b)
+}
+
+pub(super) fn short_uuid(id: Uuid) -> String {
+  format!("{:08x}", id.as_u128() as u32)
 }
 
 pub(super) fn build_view_with_context(

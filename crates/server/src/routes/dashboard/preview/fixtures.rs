@@ -23,6 +23,7 @@ use super::super::{
     JobStatusRow,
     ProjectSummaryView,
     QueueBuildView,
+    short_uuid,
   },
   templates::UiTemplateConfig,
 };
@@ -120,8 +121,10 @@ pub(super) fn build_view(
   status: &str,
   class: &str,
 ) -> BuildView {
+  let build_id = id(n);
   BuildView {
-    id:            id(n),
+    id:            build_id,
+    id_short:      short_uuid(build_id),
     job_name:      job.into(),
     project_id:    Some(id(1)),
     project_name:  "circus".into(),
