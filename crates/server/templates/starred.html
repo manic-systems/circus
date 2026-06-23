@@ -88,7 +88,7 @@ const CSRF_TOKEN = '{{ csrf_token }}';
 async function unstar(id) {
 if (!confirm('Remove this job from your starred list?')) return;
 try {
-const res = await fetch('/api/v1/me/starred/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
+const res = await fetch('/api/v1/me/starred-jobs/' + id, { method: 'DELETE', headers: {'x-csrf-token': CSRF_TOKEN} });
 if (!res.ok) {
 const err = await res.json().catch(() => ({ error: res.statusText }));
 throw new Error(err.error || err.message || 'Failed to unstar');
