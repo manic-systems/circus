@@ -709,6 +709,43 @@ async fn test_batch_check_deps_for_builds() {
 }
 
 #[tokio::test]
+async fn test_list_pending_prioritizes_dependency_ready_builds() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "ready-deps").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  let parent_drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  let dependency_drv =
+    format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+
+  let parent =
+    create_test_build(&pool, eval.id, "parent", &parent_drv, None).await;
+  let dependency =
+    create_test_build(&pool, eval.id, "dependency", &dependency_drv, None)
+      .await;
+  repo::build_dependencies::create(&pool, parent.id, dependency.id)
+    .await
+    .expect("create dependency edge");
+  let bumped = repo::builds::bump_priority(&pool, parent.id, 1)
+    .await
+    .expect("bump blocked parent priority");
+  assert!(bumped.is_some());
+
+  let pending = repo::builds::list_pending(&pool, 1, 1)
+    .await
+    .expect("list pending");
+
+  assert_eq!(pending.len(), 1);
+  assert_eq!(pending[0].id, dependency.id);
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
 async fn test_list_filtered_with_system_filter() {
   let Some(pool) = get_pool().await else {
     return;

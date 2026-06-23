@@ -142,20 +142,22 @@ pub async fn list_pending(
 ) -> Result<Vec<Build>> {
   Ok(
     sqlx::query_as::<_, Build>(
-      "WITH running_counts AS ( SELECT e.jobset_id, COUNT(*) AS running FROM \
-       builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE b.status = \
-       'running' GROUP BY e.jobset_id ), active_shares AS ( SELECT j.id AS \
-       jobset_id, j.scheduling_shares, COALESCE(rc.running, 0) AS running, \
-       SUM(j.scheduling_shares) OVER () AS total_shares FROM jobsets j JOIN \
-       evaluations e2 ON e2.jobset_id = j.id JOIN builds b2 ON \
-       b2.evaluation_id = e2.id AND b2.status = 'pending' LEFT JOIN \
+      "WITH eligible_pending AS ( SELECT b.* FROM builds b WHERE b.status = \
+       'pending' AND NOT EXISTS ( SELECT 1 FROM build_dependencies bd JOIN \
+       builds dep ON dep.id = bd.dependency_build_id WHERE bd.build_id = b.id \
+       AND dep.status != 'succeeded' ) ), running_counts AS ( SELECT \
+       e.jobset_id, COUNT(*) AS running FROM builds b JOIN evaluations e ON \
+       b.evaluation_id = e.id WHERE b.status = 'running' GROUP BY e.jobset_id \
+       ), active_shares AS ( SELECT j.id AS jobset_id, j.scheduling_shares, \
+       COALESCE(rc.running, 0) AS running, SUM(j.scheduling_shares) OVER () \
+       AS total_shares FROM jobsets j JOIN evaluations e2 ON e2.jobset_id = \
+       j.id JOIN eligible_pending b2 ON b2.evaluation_id = e2.id LEFT JOIN \
        running_counts rc ON rc.jobset_id = j.id WHERE j.scheduling_shares > 0 \
        GROUP BY j.id, j.scheduling_shares, rc.running ) SELECT b.* FROM \
-       builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN \
-       active_shares ash ON ash.jobset_id = e.jobset_id WHERE b.status = \
-       'pending' ORDER BY b.priority DESC, \
-       cardinality(COALESCE(b.effective_features, b.required_features)) DESC, \
-       (ash.scheduling_shares::float / GREATEST(ash.total_shares, 1) - \
+       eligible_pending b JOIN evaluations e ON b.evaluation_id = e.id JOIN \
+       active_shares ash ON ash.jobset_id = e.jobset_id ORDER BY b.priority \
+       DESC, cardinality(COALESCE(b.effective_features, b.required_features)) \
+       DESC, (ash.scheduling_shares::float / GREATEST(ash.total_shares, 1) - \
        ash.running::float / GREATEST($2, 1)) DESC, b.created_at ASC, b.id ASC \
        LIMIT $1",
     )
