@@ -1,5 +1,5 @@
 //! Read/write of the `cache_traffic` table plus storage time-series derived
-//! from `narinfo_cache`.
+//! from uploaded NAR metadata and signed local build products.
 //!
 //! The server keeps in-memory per-cache serving counters and a background
 //! worker drains them into `cache_traffic` once a minute (see
@@ -129,9 +129,8 @@ pub async fn traffic_timeseries(
   )
 }
 
-/// Storage added over time, derived from `narinfo_cache.created_at`: packages
-/// and on-disk bytes added per bucket for one cache scope. `project_id = None`
-/// is the global cache.
+/// Storage added over time: uploaded NAR rows plus signed local build products.
+/// `project_id = None` is the global cache.
 ///
 /// # Errors
 ///
@@ -145,10 +144,26 @@ pub async fn storage_timeseries(
   let bucket = granularity.bucket_seconds();
   let window = bucket * points.max(1);
   let rows = sqlx::query_as::<_, (DateTime<Utc>, i64, i64)>(
-    "SELECT to_timestamp(floor(extract(epoch FROM created_at) / $2) * $2) AS \
-     bucket_time, COUNT(*), COALESCE(SUM(file_size), 0)::bigint FROM \
-     narinfo_cache WHERE ($1::uuid IS NULL OR project_id = $1) AND created_at \
-     > NOW() - ($3 * INTERVAL '1 second') GROUP BY bucket_time ORDER BY \
+    "WITH uploaded AS (SELECT store_path, created_at, file_size FROM \
+     narinfo_cache WHERE ($1::uuid IS NULL OR project_id = $1)), local AS \
+     (SELECT DISTINCT ON (path) path AS store_path, created_at, \
+     COALESCE(file_size, 0) AS file_size FROM (SELECT bp.path, bp.created_at, \
+     bp.file_size FROM build_products bp JOIN builds b ON b.id = bp.build_id \
+     JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
+     e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
+     ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT \
+     b.build_output_path AS path, COALESCE(b.completed_at, b.created_at) AS \
+     created_at, NULL::bigint AS file_size FROM builds b JOIN evaluations e \
+     ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE \
+     b.status = 'succeeded' AND b.signed = true AND b.build_output_path IS \
+     NOT NULL AND ($1::uuid IS NULL OR j.project_id = $1)) candidates WHERE \
+     NOT EXISTS (SELECT 1 FROM narinfo_cache n WHERE n.store_path = \
+     candidates.path AND ($1::uuid IS NULL OR n.project_id = $1)) ORDER BY \
+     path, created_at DESC), inventory AS (SELECT * FROM uploaded UNION ALL \
+     SELECT * FROM local) SELECT to_timestamp(floor(extract(epoch FROM \
+     created_at) / $2) * $2) AS bucket_time, COUNT(*), \
+     COALESCE(SUM(file_size), 0)::bigint FROM inventory WHERE created_at > \
+     NOW() - ($3 * INTERVAL '1 second') GROUP BY bucket_time ORDER BY \
      bucket_time ASC",
   )
   .bind(project_id)
