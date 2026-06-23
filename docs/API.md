@@ -134,9 +134,11 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/job/{project}/{jobset}/{job}/badge` | Build status badge SVG | 200 |
 | GET | `/job/{project}/{jobset}/{job}/latest` | Redirect to the latest successful build output | 302, 404 |
 | GET | `/job/{project}/{jobset}/{job}/shield` | Build status shield SVG | 200 |
+| GET | `/nix-cache` | Nix binary cache info endpoint | 200 |
 | GET | `/nix-cache/nar/{hash}` | NAR download | 200, 404 |
 | GET | `/nix-cache/nix-cache-info` | Nix binary cache metadata | 200 |
 | GET | `/nix-cache/{hash}` | NAR info lookup | 200, 404 |
+| GET | `/projects/{project}/nix-cache` | Project Nix binary cache info endpoint | 200 |
 | GET | `/projects/{project}/nix-cache/nar/{hash}` | Project NAR download | 200, 404 |
 | GET | `/projects/{project}/nix-cache/nix-cache-info` | Project Nix binary cache metadata | 200, 404 |
 | GET | `/projects/{project}/nix-cache/{hash}` | Project NAR info lookup | 200, 404 |
