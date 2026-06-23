@@ -802,7 +802,11 @@ Run all service binaries with the same `--config <path>` or
 
 Circus supports SSH remote builders and persistent `circus-agent` builders.
 Detailed usage and operations are covered in [USAGE.md](./USAGE.md); protocol
-details are covered in [DISTRIBUTED.md](./DISTRIBUTED.md).
+details are covered in [DISTRIBUTED.md](./DISTRIBUTED.md). The agent package is
+also exposed for Darwin systems, and the flake ships a nix-darwin launchd module
+for macOS builder hosts. The Darwin agent section in
+[DISTRIBUTED.md](./DISTRIBUTED.md) covers the module shape and the Nix
+trusted-user caveats.
 
 Agent configuration is loaded from `/etc/circus-agent.toml`, the path passed to
 `--config`, or `CIRCUS_AGENT_CONFIG`. Environment overrides use the

@@ -42,6 +42,25 @@ fn read_avg(path: &str) -> (f32, f32) {
   let Ok(contents) = fs::read_to_string(path) else {
     return (0.0, 0.0);
   };
-  circus_common::psi::parse_pressure_some(&contents)
-    .map_or((0.0, 0.0), |avg| (avg.avg10 as f32, avg.avg60 as f32))
+  parse_pressure_some(&contents).unwrap_or((0.0, 0.0))
+}
+
+fn parse_pressure_some(text: &str) -> Option<(f32, f32)> {
+  text.lines().find_map(|line| {
+    let rest = line.strip_prefix("some ")?;
+    parse_pressure_fields(rest)
+  })
+}
+
+fn parse_pressure_fields(fields: &str) -> Option<(f32, f32)> {
+  let mut avg10 = None;
+  let mut avg60 = None;
+  for kv in fields.split_whitespace() {
+    if let Some(v) = kv.strip_prefix("avg10=") {
+      avg10 = v.parse().ok();
+    } else if let Some(v) = kv.strip_prefix("avg60=") {
+      avg60 = v.parse().ok();
+    }
+  }
+  Some((avg10?, avg60?))
 }

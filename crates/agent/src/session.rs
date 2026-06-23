@@ -37,7 +37,6 @@ use circus_proto::{
 };
 use color_eyre::eyre::{Context as _, bail, eyre};
 use parking_lot::Mutex;
-use procfs::Current as _;
 use tokio::net::TcpStream;
 use tokio_util::{
   compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _},
@@ -289,15 +288,9 @@ fn fill_info(mut info: agent_info::Builder<'_>, cfg: &Agent, machine_id: Uuid) {
   }
 }
 
-/// Best-effort hostname read. Falls back to the configured agent name
-/// when /etc/hostname is unavailable; the runner only treats the field
-/// as a display label, not as identity.
+/// Best-effort hostname read.
 fn read_hostname() -> String {
-  std::fs::read_to_string("/etc/hostname")
-    .map(|s| s.trim().to_owned())
-    .ok()
-    .filter(|s| !s.is_empty())
-    .unwrap_or_else(|| "unknown".into())
+  sysinfo::System::host_name().unwrap_or_else(|| "unknown".into())
 }
 
 fn num_cpus() -> usize {
@@ -357,20 +350,27 @@ async fn send_heartbeat(
 }
 
 fn read_loadavg() -> (f32, f32, f32) {
-  procfs::LoadAverage::current()
-    .map_or((0.0, 0.0, 0.0), |load| (load.one, load.five, load.fifteen))
+  let load = sysinfo::System::load_average();
+  (load.one as f32, load.five as f32, load.fifteen as f32)
 }
 
 fn read_meminfo() -> (u64, u64) {
-  procfs::Meminfo::current().map_or((0, 0), |mem| {
-    let available = mem.mem_available.unwrap_or(mem.mem_total);
-    (mem.mem_total, mem.mem_total.saturating_sub(available))
-  })
+  let mut system = sysinfo::System::new();
+  system.refresh_memory();
+  let total = system.total_memory();
+  (total, total.saturating_sub(system.available_memory()))
 }
 
 fn fs_available_bytes(path: &Path) -> u64 {
   nix::sys::statvfs::statvfs(path).map_or(0, |stat| {
-    stat.blocks_available().saturating_mul(stat.fragment_size())
+    #[cfg(target_os = "macos")]
+    {
+      u64::from(stat.blocks_available()).saturating_mul(stat.fragment_size())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+      stat.blocks_available().saturating_mul(stat.fragment_size())
+    }
   })
 }
 

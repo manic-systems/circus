@@ -364,6 +364,36 @@ The agent runs as a Systemd service. A NixOS module is provided at
 The queue-runner picks the agent up the first time it connects; no operator
 action is required beyond provisioning the token and (optionally) TLS material.
 
+macOS builder hosts run the same `circus-agent` binary and advertise Darwin
+systems such as `aarch64-darwin`. The flake exposes
+`packages.<system>.circus-agent` on Darwin systems and a nix-darwin module as
+`darwinModules.circus-agent`:
+
+```nix
+{
+  services.circus-agent = {
+    enable = true;
+    authTokenFile = "/var/lib/circus-agent/token";
+    settings.agent = {
+      name = "mac-01";
+      runner_url = "circus+tls://runner.internal:8443";
+      systems = [ "aarch64-darwin" ];
+      max_jobs = 4;
+    };
+  };
+}
+```
+
+The launchd module renders `authTokenFile` into a private runtime config so the
+token never enters the Nix store. The token file must be readable by the daemon
+user, which defaults to `_circus-agent`. The module also appends that user to
+Nix `trusted-users` when nix-darwin manages Nix. With `nix.enable = false`,
+whatever owns `/etc/nix/nix.conf` needs the same trust setting added by hand.
+
+Load average and memory are reported the same way on Linux and macOS. PSI has no
+macOS equivalent, so pressure fields stay zero on Darwin and the scheduler falls
+back to the other heartbeat fields.
+
 If you have a setup already, existing clusters keep working. To migrate a host:
 
 1. Install `circus-agent` on the build host.
