@@ -333,3 +333,146 @@
         </aside>
     </section>
 {% endblock %}
+{% block scripts %}
+    <script>
+        (function() {
+            function rowsFor(table) {
+                return Array.prototype.slice.call(
+                    table.querySelectorAll('tbody tr[data-href]')
+                );
+            }
+
+            function rowText(row) {
+                return [
+                    row.getAttribute('data-project') || '',
+                    row.getAttribute('data-job') || '',
+                    row.getAttribute('data-system') || '',
+                    row.textContent || ''
+                ].join(' ').toLowerCase();
+            }
+
+            function statusMatches(rowStatus, wanted) {
+                if (!wanted) return true;
+                if (wanted === rowStatus) return true;
+                return wanted === 'succeeded' && rowStatus === 'completed';
+            }
+
+            function selectedRow(table) {
+                return table.querySelector('tbody tr[aria-selected="true"]');
+            }
+
+            function visibleRows(table) {
+                return rowsFor(table).filter(function(row) {
+                    return !row.hidden;
+                });
+            }
+
+            function selectRow(table, row, shouldFocus) {
+                rowsFor(table).forEach(function(item) {
+                    item.removeAttribute('aria-selected');
+                });
+
+                if (!row) return;
+
+                row.setAttribute('aria-selected', 'true');
+                if (shouldFocus) row.focus();
+                updateOpenSelected(table);
+            }
+
+            function updateOpenSelected(table) {
+                var form = document.querySelector('[data-table-filter="' + table.id + '"]');
+                if (!form) return;
+
+                var openLink = form.querySelector('[data-open-selected]');
+                if (!openLink) return;
+
+                var row = selectedRow(table);
+                if (row) {
+                    openLink.href = row.getAttribute('data-href');
+                    openLink.removeAttribute('aria-disabled');
+                } else {
+                    openLink.href = '/builds';
+                    openLink.setAttribute('aria-disabled', 'true');
+                }
+            }
+
+            function applyFilter(form) {
+                var table = document.getElementById(form.getAttribute('data-table-filter'));
+                if (!table) return;
+
+                var textInput = form.querySelector('[data-filter-text]');
+                var statusInput = form.querySelector('[data-filter-status]');
+                var query = textInput ? textInput.value.trim().toLowerCase() : '';
+                var status = statusInput ? statusInput.value : '';
+
+                rowsFor(table).forEach(function(row) {
+                    var matchesText = !query || rowText(row).indexOf(query) !== -1;
+                    var matchesStatus = statusMatches(
+                        row.getAttribute('data-status') || '',
+                        status
+                    );
+                    row.hidden = !(matchesText && matchesStatus);
+                });
+
+                var current = selectedRow(table);
+                if (!current || current.hidden) {
+                    selectRow(table, visibleRows(table)[0], false);
+                }
+                updateOpenSelected(table);
+            }
+
+            document.querySelectorAll('[data-keyboard-table]').forEach(function(table) {
+                var rows = rowsFor(table);
+                selectRow(table, rows[0], false);
+
+                rows.forEach(function(row) {
+                    row.addEventListener('click', function(event) {
+                        if (event.target.closest('a, button, input, select, textarea, label')) {
+                            return;
+                        }
+
+                        selectRow(table, row, false);
+                        window.location.href = row.getAttribute('data-href');
+                    });
+
+                    row.addEventListener('focus', function() {
+                        selectRow(table, row, false);
+                    });
+
+                    row.addEventListener('keydown', function(event) {
+                        var visible = visibleRows(table);
+                        var index = visible.indexOf(row);
+
+                        if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            window.location.href = row.getAttribute('data-href');
+                        } else if (event.key === 'ArrowDown' && index < visible.length - 1) {
+                            event.preventDefault();
+                            selectRow(table, visible[index + 1], true);
+                        } else if (event.key === 'ArrowUp' && index > 0) {
+                            event.preventDefault();
+                            selectRow(table, visible[index - 1], true);
+                        }
+                    });
+                });
+            });
+
+            document.querySelectorAll('[data-table-filter]').forEach(function(form) {
+                form.addEventListener('submit', function(event) {
+                    event.preventDefault();
+                    applyFilter(form);
+                });
+
+                form.addEventListener('input', function() {
+                    applyFilter(form);
+                });
+
+                form.addEventListener('change', function() {
+                    applyFilter(form);
+                });
+
+                applyFilter(form);
+            });
+        })();
+    </script>
+{% endblock %}
