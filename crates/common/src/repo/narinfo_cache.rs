@@ -194,11 +194,25 @@ pub async fn storage_summary(
 ) -> Result<CacheStorageSummary> {
   let (nar_count, uncompressed_bytes, compressed_bytes) =
     sqlx::query_as::<_, (i64, i64, i64)>(
-      // SUM over a BIGINT column yields NUMERIC in Postgres; cast back so the
-      // row decodes into i64.
-      "SELECT COUNT(*), COALESCE(SUM(nar_size), 0)::bigint, \
-       COALESCE(SUM(file_size), 0)::bigint FROM narinfo_cache WHERE ($1::uuid \
-       IS NULL OR project_id = $1)",
+      "WITH uploaded AS (SELECT store_path, nar_size, file_size FROM \
+       narinfo_cache WHERE ($1::uuid IS NULL OR project_id = $1)), local AS \
+       (SELECT DISTINCT ON (path) path AS store_path, COALESCE(file_size, 0) \
+       AS nar_size, NULL::bigint AS file_size FROM (SELECT bp.path, \
+       bp.file_size, bp.created_at FROM build_products bp JOIN builds b ON \
+       b.id = bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN \
+       jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND \
+       b.signed = true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL \
+       SELECT b.build_output_path AS path, NULL::bigint AS file_size, \
+       COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b \
+       JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
+       e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
+       b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id \
+       = $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM narinfo_cache n \
+       WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR \
+       n.project_id = $1)) ORDER BY path, created_at DESC), inventory AS \
+       (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT \
+       COUNT(*), COALESCE(SUM(nar_size), 0)::bigint, COALESCE(SUM(file_size), \
+       0)::bigint FROM inventory",
     )
     .bind(project_id)
     .fetch_one(pool)
@@ -222,8 +236,23 @@ pub async fn storage_extremes(
 ) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
   let (last_uploaded, oldest_fetched) =
     sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
-      "SELECT MAX(created_at), MIN(last_fetched_at) FROM narinfo_cache WHERE \
-       ($1::uuid IS NULL OR project_id = $1)",
+      "WITH uploaded AS (SELECT store_path, created_at, last_fetched_at FROM \
+       narinfo_cache WHERE ($1::uuid IS NULL OR project_id = $1)), local AS \
+       (SELECT DISTINCT ON (path) path AS store_path, created_at, \
+       NULL::timestamptz AS last_fetched_at FROM (SELECT bp.path, \
+       bp.created_at FROM build_products bp JOIN builds b ON b.id = \
+       bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets \
+       j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = \
+       true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT \
+       b.build_output_path AS path, COALESCE(b.completed_at, b.created_at) AS \
+       created_at FROM builds b JOIN evaluations e ON e.id = b.evaluation_id \
+       JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND \
+       b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS \
+       NULL OR j.project_id = $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM \
+       narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS \
+       NULL OR n.project_id = $1)) ORDER BY path, created_at DESC), inventory \
+       AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT \
+       MAX(created_at), MIN(last_fetched_at) FROM inventory",
     )
     .bind(project_id)
     .fetch_one(pool)
@@ -233,7 +262,7 @@ pub async fn storage_extremes(
 
 /// A single NAR row prepared for the Caches dashboard listing. `package_name`
 /// is the store-path name with the 32-char hash stripped.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NarListItem {
   pub store_path:      String,
   pub package_name:    String,
@@ -284,9 +313,29 @@ pub async fn list_filtered(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<NarListItem>> {
-  let rows = sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache WHERE ($1::uuid IS NULL OR project_id = $1) \
-     AND ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') AND \
+  let rows = sqlx::query_as::<_, NarListItem>(
+    "WITH uploaded AS (SELECT store_path, nar_size, file_size, compression, \
+     created_at, last_fetched_at FROM narinfo_cache WHERE ($1::uuid IS NULL \
+     OR project_id = $1)), local AS (SELECT DISTINCT ON (path) path AS \
+     store_path, COALESCE(file_size, 0) AS nar_size, NULL::bigint AS \
+     file_size, 'none' AS compression, created_at, NULL::timestamptz AS \
+     last_fetched_at FROM (SELECT bp.path, bp.file_size, bp.created_at FROM \
+     build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations e \
+     ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE \
+     b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR \
+     j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, \
+     NULL::bigint AS file_size, COALESCE(b.completed_at, b.created_at) AS \
+     created_at FROM builds b JOIN evaluations e ON e.id = b.evaluation_id \
+     JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND \
+     b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS \
+     NULL OR j.project_id = $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM \
+     narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS \
+     NULL OR n.project_id = $1)) ORDER BY path, created_at DESC), inventory \
+     AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT \
+     store_path, COALESCE(substring(store_path from \
+     '^/nix/store/[^-]+-(.*)$'), store_path) AS package_name, nar_size, \
+     file_size, compression, created_at, last_fetched_at FROM inventory WHERE \
+     ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') AND \
      ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%') ORDER BY \
      created_at DESC LIMIT $4 OFFSET $5",
   )
@@ -297,7 +346,7 @@ pub async fn list_filtered(
   .bind(offset)
   .fetch_all(pool)
   .await?;
-  Ok(rows.into_iter().map(NarListItem::from).collect())
+  Ok(rows)
 }
 
 /// Count NARs matching the same filters as [`list_filtered`].
@@ -312,9 +361,23 @@ pub async fn count_filtered(
   package_query: Option<&str>,
 ) -> Result<i64> {
   let (n,) = sqlx::query_as::<_, (i64,)>(
-    "SELECT COUNT(*) FROM narinfo_cache WHERE ($1::uuid IS NULL OR project_id \
-     = $1) AND ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || \
-     '%') AND ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%')",
+    "WITH uploaded AS (SELECT store_path FROM narinfo_cache WHERE ($1::uuid \
+     IS NULL OR project_id = $1)), local AS (SELECT DISTINCT ON (path) path \
+     AS store_path FROM (SELECT bp.path, bp.created_at FROM build_products bp \
+     JOIN builds b ON b.id = bp.build_id JOIN evaluations e ON e.id = \
+     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = \
+     'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR j.project_id = \
+     $1) UNION ALL SELECT b.build_output_path AS path, \
+     COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN \
+     evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
+     e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
+     b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = \
+     $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM narinfo_cache n WHERE \
+     n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = \
+     $1)) ORDER BY path, created_at DESC), inventory AS (SELECT * FROM \
+     uploaded UNION ALL SELECT * FROM local) SELECT COUNT(*) FROM inventory \
+     WHERE ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') \
+     AND ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%')",
   )
   .bind(project_id)
   .bind(hash_prefix)
