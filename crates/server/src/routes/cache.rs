@@ -660,7 +660,7 @@ async fn serve_nar_for_settings(
 }
 
 /// Nix binary cache info endpoint.
-/// GET /nix-cache/nix-cache-info
+/// GET /nix-cache, /nix-cache/, /nix-cache/nix-cache-info
 async fn cache_info(State(state): State<AppState>) -> Response {
   let settings = CacheSettings::global(&state.config);
   cache_info_for_settings(&state, &settings)
@@ -690,9 +690,13 @@ fn cache_info_for_settings(
 
 pub fn router() -> Router<AppState> {
   Router::new()
+    .route("/nix-cache", get(cache_info))
+    .route("/nix-cache/", get(cache_info))
     .route("/nix-cache/nix-cache-info", get(cache_info))
     .route("/nix-cache/{hash}", get(narinfo))
     .route("/nix-cache/nar/{hash}", get(serve_nar_combined))
+    .route("/projects/{project}/nix-cache", get(project_cache_info))
+    .route("/projects/{project}/nix-cache/", get(project_cache_info))
     .route(
       "/projects/{project}/nix-cache/nix-cache-info",
       get(project_cache_info),

@@ -914,6 +914,30 @@ async fn test_cache_disabled_returns_404() {
     .clone()
     .oneshot(
       Request::builder()
+        .uri("/nix-cache")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri("/nix-cache/")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
         .uri("/nix-cache/abcdefghijklmnopqrstuvwxyz012345.narinfo")
         .body(Body::empty())
         .unwrap(),
@@ -1096,29 +1120,27 @@ async fn test_cache_info_returns_correct_headers() {
   config.cache.enabled = true;
   let app = build_app_with_config(pool, &config);
 
-  let response = app
-    .oneshot(
-      Request::builder()
-        .uri("/nix-cache/nix-cache-info")
-        .body(Body::empty())
-        .unwrap(),
-    )
-    .await
-    .unwrap();
+  for uri in ["/nix-cache", "/nix-cache/", "/nix-cache/nix-cache-info"] {
+    let response = app
+      .clone()
+      .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+      .await
+      .unwrap();
 
-  assert_eq!(response.status(), StatusCode::OK);
-  assert_eq!(
-    response.headers().get("content-type").unwrap(),
-    "text/plain"
-  );
+    assert_eq!(response.status(), StatusCode::OK, "{uri}");
+    assert_eq!(
+      response.headers().get("content-type").unwrap(),
+      "text/plain"
+    );
 
-  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-    .await
-    .unwrap();
-  let body_str = String::from_utf8(body.to_vec()).unwrap();
-  assert!(body_str.contains("StoreDir: /nix/store"));
-  assert!(body_str.contains("WantMassQuery: 1"));
-  assert!(body_str.contains("Priority: 30"));
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let body_str = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body_str.contains("StoreDir: /nix/store"));
+    assert!(body_str.contains("WantMassQuery: 1"));
+    assert!(body_str.contains("Priority: 30"));
+  }
 }
 
 #[tokio::test]
