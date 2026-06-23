@@ -42,6 +42,10 @@ pub fn router() -> Router {
     .route("/", get(pages::home))
     .route("/projects", get(pages::projects))
     .route("/projects/new", get(pages::project_setup))
+    .route(
+      "/project/{id}/notifications",
+      get(pages::notifications).post(preview_notifications_action),
+    )
     .route("/project/{id}", get(pages::project))
     .route("/jobset/{id}", get(pages::jobset))
     .route("/jobset/{id}/jobs", get(pages::jobset_jobs))
@@ -49,6 +53,7 @@ pub fn router() -> Router {
     .route("/evaluation/{id}", get(pages::evaluation))
     .route("/builds", get(pages::builds))
     .route("/build/{id}", get(pages::build))
+    .route("/build/{id}/log", get(build_log))
     .route("/queue", get(pages::queue))
     .route("/channels", get(pages::channels))
     .route("/channel/{id}", get(pages::channel))
@@ -79,6 +84,27 @@ pub(super) fn render<T: Template>(template: T) -> Response {
 
 async fn index() -> Redirect {
   Redirect::temporary("/")
+}
+
+async fn preview_notifications_action() -> Redirect {
+  Redirect::temporary(
+    "/project/00000000-0000-0000-0000-000000000001/notifications",
+  )
+}
+
+async fn build_log() -> Response {
+  Response::builder()
+    .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+    .header(header::CACHE_CONTROL, "no-cache")
+    .body(Body::from(
+      "preview build log\n[1/2] evaluating derivation\n[2/2] build completed\n",
+    ))
+    .unwrap_or_else(|error| {
+      Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::from(format!("response builder failed: {error}")))
+        .unwrap_or_else(|_| Response::new(Body::empty()))
+    })
 }
 
 async fn theme_css() -> Response {

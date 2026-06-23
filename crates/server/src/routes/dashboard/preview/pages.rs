@@ -35,6 +35,7 @@ use super::{
       NarRowView,
       NewsTemplate,
       NotificationTaskView,
+      NotificationsTemplate,
       PinnedOutputView,
       ProjectSetupTemplate,
       ProjectTemplate,
@@ -160,6 +161,17 @@ pub(super) async fn projects() -> Response {
 pub(super) async fn project_setup() -> Response {
   render(ProjectSetupTemplate {
     ui:         ui(),
+    is_admin:   true,
+    auth_name:  "operator".into(),
+    csrf_token: csrf(),
+  })
+}
+
+pub(super) async fn notifications() -> Response {
+  render(NotificationsTemplate {
+    ui:         ui(),
+    project:    project_fixture(),
+    configs:    Vec::new(),
     is_admin:   true,
     auth_name:  "operator".into(),
     csrf_token: csrf(),
