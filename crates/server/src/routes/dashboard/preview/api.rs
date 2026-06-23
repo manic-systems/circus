@@ -8,6 +8,39 @@ pub(super) async fn api_projects() -> Json<serde_json::Value> {
   }))
 }
 
+pub(super) async fn api_ok() -> Json<serde_json::Value> {
+  Json(serde_json::json!({ "ok": true }))
+}
+
+pub(super) async fn api_project_create(
+  Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  let name = body
+    .get("name")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("circus-preview");
+
+  Json(serde_json::json!({
+    "id": "00000000-0000-0000-0000-000000000001",
+    "name": name
+  }))
+}
+
+pub(super) async fn api_project_jobset_create(
+  Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  let name = body
+    .get("name")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("preview-jobset");
+
+  Json(serde_json::json!({
+    "id": "00000000-0000-0000-0000-000000000011",
+    "name": name,
+    "enabled": true
+  }))
+}
+
 pub(super) async fn api_project_probe(
   Json(_body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
@@ -64,6 +97,58 @@ pub(super) async fn api_project_setup(
       .get("jobsets")
       .cloned()
       .unwrap_or_else(|| serde_json::json!([]))
+  }))
+}
+
+pub(super) async fn api_key_create(
+  Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  let name = body
+    .get("name")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("preview-key");
+  let role = body
+    .get("role")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("read-only");
+
+  Json(serde_json::json!({
+    "key": "circus_preview_key_000000",
+    "api_key": {
+      "id": "00000000-0000-0000-0000-00000000002b",
+      "name": name,
+      "role": role
+    }
+  }))
+}
+
+pub(super) async fn api_user_create(
+  Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  let username = body
+    .get("username")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("preview-user");
+
+  Json(serde_json::json!({
+    "id": "00000000-0000-0000-0000-000000000031",
+    "username": username,
+    "enabled": true
+  }))
+}
+
+pub(super) async fn api_builder_create(
+  Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  let name = body
+    .get("name")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("preview-builder");
+
+  Json(serde_json::json!({
+    "id": "00000000-0000-0000-0000-000000000029",
+    "name": name,
+    "enabled": true
   }))
 }
 
