@@ -152,9 +152,9 @@ let html = '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>
 probeResult.suggested_jobsets.forEach((js, i) => {
 const checked = js.priority >= 6 ? 'checked' : '';
 html += '<tr>'
-+ '<td><input type="checkbox" class="js-check" data-idx="' + i + '" ' + checked + '></td>'
++ '<td><input type="checkbox" id="setup-jobset-check-' + i + '" name="jobset_selected_' + i + '" class="js-check" data-idx="' + i + '" aria-label="Include ' + escapeHtml(js.name) + '" ' + checked + '></td>'
 + '<td>' + escapeHtml(js.name) + '</td>'
-+ '<td><input type="text" class="js-expr" data-idx="' + i + '" value="' + escapeHtml(js.nix_expression) + '" class="inline-input"></td>'
++ '<td><input type="text" id="setup-jobset-expr-' + i + '" name="jobset_expression_' + i + '" class="js-expr inline-input" data-idx="' + i + '" aria-label="Nix expression for ' + escapeHtml(js.name) + '" value="' + escapeHtml(js.nix_expression) + '"></td>'
 + '<td class="text-muted text-sm">' + escapeHtml(js.description) + '</td>'
 + '<td class="text-center">' + js.priority + '</td>'
 + '</tr>';
