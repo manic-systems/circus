@@ -97,7 +97,9 @@ fn parse_documented_paths() -> BTreeSet<String> {
         || normalized == "/prometheus"
         || normalized.starts_with("/channel/")
         || normalized.starts_with("/job/")
+        || normalized == "/nix-cache"
         || normalized.starts_with("/nix-cache/")
+        || normalized == "/projects/{project}/nix-cache"
         || (normalized.starts_with("/projects/")
           && normalized.contains("/nix-cache/"))
         || normalized.starts_with("/api/")

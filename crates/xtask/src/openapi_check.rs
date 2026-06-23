@@ -169,7 +169,9 @@ fn is_absolute_public_path(path: &str) -> bool {
     || path == "/prometheus"
     || path.starts_with("/channel/")
     || path.starts_with("/job/")
+    || path == "/nix-cache"
     || path.starts_with("/nix-cache/")
+    || path == "/projects/{project}/nix-cache"
     || (path.starts_with("/projects/") && path.contains("/nix-cache/"))
 }
 

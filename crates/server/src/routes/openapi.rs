@@ -326,6 +326,10 @@ fn document_value() -> Value {
         "get": { "summary": "Redirect to the latest successful build output",
           "responses": { "302": { "description": "Redirect to build output" }, "404": { "description": "No successful build" } } }
       },
+      "/nix-cache": {
+        "get": { "summary": "Nix binary cache info endpoint",
+          "responses": { "200": { "description": "Cache info text" } } }
+      },
       "/nix-cache/nix-cache-info": {
         "get": { "summary": "Nix binary cache metadata",
           "responses": { "200": { "description": "nix-cache-info text" } } }
@@ -337,6 +341,10 @@ fn document_value() -> Value {
       "/nix-cache/nar/{hash}": {
         "get": { "summary": "NAR download",
           "responses": { "200": { "description": "NAR stream" }, "404": { "description": "NAR not found" } } }
+      },
+      "/projects/{project}/nix-cache": {
+        "get": { "summary": "Project Nix binary cache info endpoint",
+          "responses": { "200": { "description": "Cache info text" } } }
       },
       "/projects/{project}/nix-cache/nix-cache-info": {
         "get": { "summary": "Project Nix binary cache metadata",
