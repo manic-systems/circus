@@ -130,15 +130,17 @@ pub fn substituter_url(
   config: &Config,
   cache_ref: &CacheRef,
 ) -> Option<String> {
+  if !cache_ref.active {
+    return None;
+  }
   if cache_ref.is_global() {
     return config.cache.cache_url.clone();
   }
-  if let Some(url) = &cache_ref.cache_url {
-    return Some(url.clone());
-  }
-  let base = config.cache.cache_url.as_deref()?.trim_end_matches('/');
-  let site = base.strip_suffix("/nix-cache").unwrap_or(base);
-  Some(format!("{site}/projects/{}/nix-cache/", cache_ref.name))
+  circus_config::project_cache_url(
+    config.cache.cache_url.as_deref(),
+    &cache_ref.name,
+    cache_ref.cache_url.as_deref(),
+  )
 }
 
 /// The public signing key consumers add to `trusted-public-keys`. Same value
