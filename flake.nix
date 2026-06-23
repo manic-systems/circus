@@ -47,6 +47,21 @@
       default = self.nixosModules.circus; # agent is optional
     };
 
+    darwinModules = {
+      circus-agent = {
+        _file = ./flake.nix;
+        key = "circus/darwinModules/circus-agent";
+        imports = [
+          ./nix/modules/circus-agent-darwin.nix
+          ({pkgs, ...}: {
+            services.circus-agent.package =
+              lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
+          })
+        ];
+      };
+      default = self.darwinModules.circus-agent;
+    };
+
     packages = forAllSystems (system: let
       pkgs = pkgsFor system;
       craneLib = crane.mkLib pkgs;
@@ -108,6 +123,21 @@
           commonArgs = commonArgs // buildShaArgs;
         };
 
+      # The agent also builds on Darwin, so it skips the control plane's
+      # Nix/glibc/libclang stack.
+      agentArgs = {
+        pname = "circus-agent";
+        inherit src;
+        strictDeps = true;
+        nativeBuildInputs = with pkgs; [pkg-config capnproto];
+        buildInputs = [];
+      };
+      agentCargoArtifacts = craneLib.buildDepsOnly (agentArgs
+        // {
+          src = cargoDepsSrc;
+          cargoExtraArgs = "--package circus-agent";
+        });
+
       muslCrossAttr = {
         x86_64-linux = "musl64";
         i686-linux = "musl32";
@@ -138,6 +168,11 @@
 
         # circus Packages
         circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
+        circus-agent = pkgs.callPackage ./nix/packages/circus-agent.nix {
+          inherit craneLib;
+          cargoArtifacts = agentCargoArtifacts;
+          commonArgs = agentArgs;
+        };
         circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
         circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
         circus-server = callCratePackage ./nix/packages/circus-server.nix;
@@ -151,6 +186,10 @@
               name = "vendor";
               path = craneLib.vendorCargoDeps depsCommonArgs;
             }
+            {
+              name = "deps-agent";
+              path = agentCargoArtifacts;
+            }
           ]
           ++ lib.optionals (muslCrossAttr ? ${system}) [
             {
@@ -158,9 +197,6 @@
               path = staticCargoArtifacts;
             }
           ]);
-      }
-      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        circus-agent = callCratePackage ./nix/packages/circus-agent.nix;
       }
       // lib.optionalAttrs (muslCrossAttr ? ${system}) {
         circus-agent-static = staticCraneLib.buildPackage (

@@ -80,3 +80,4 @@ historical documentation and progress tracking:
 | **Metrics API**          | Prometheus                 | Prometheus              | Complete | Both expose metrics                                    |
 | **Log Streaming**        | Polling only               | SSE streaming           | Complete | Circus has Server-Sent Events                          |
 | **Queue Runner API**     | Internal REST on :8080     | Agent-session admin API | Partial  | Circus exposes builder sessions through the server API |
+| **macOS Builders**       | Remote build machines      | Persistent agents       | Complete | Darwin agents attach to a Linux control plane          |

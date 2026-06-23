@@ -28,15 +28,25 @@ jobs:
         run: nix develop --command cargo fmt --check
 
   clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
+    name: Clippy (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            os: ubuntu-latest
+            scope: --all-targets
+          - platform: macOS
+            os: macos-26
+            scope: -p circus-agent --all-targets
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Run Clippy
-        run: nix develop --command cargo clippy --all-targets -- -D warnings
+        run: nix develop --command cargo clippy ${{ matrix.scope }} -- -D warnings
 
   deny:
     name: Dependency Audit
@@ -57,15 +67,28 @@ jobs:
         run: nix develop --command cargo deny check advisories
 
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            os: ubuntu-latest
+            scope: --all
+          - platform: macOS
+            os: macos-26
+            scope: -p circus-agent
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Run Test Suite
-        run: nix develop --command cargo nextest run --all
+        run: nix develop --command cargo nextest run ${{ matrix.scope }}
+      - name: Build Agent Package
+        if: runner.os == 'macOS'
+        run: nix build .#packages.aarch64-darwin.circus-agent -L --no-link
 
   nix-eval-test:
     name: Nix Evaluation Integration

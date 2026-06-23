@@ -2,13 +2,18 @@
 
 use std::{
   ffi::{OsStr, OsString},
-  fs,
   io,
+  path::PathBuf,
+};
+#[cfg(target_os = "linux")]
+use std::{
+  fs,
   os::{fd::OwnedFd, unix::process::CommandExt},
-  path::{Path, PathBuf},
+  path::Path,
   process::Stdio,
 };
 
+#[cfg(target_os = "linux")]
 use nix::{
   fcntl::OFlag,
   mount::{MntFlags, MsFlags, mount, umount2},
@@ -118,13 +123,18 @@ pub(crate) fn wrap_command(
   target: Command,
 ) -> io::Result<Command> {
   if rootless {
-    helper_command(&target)
+    rootless_wrap_command(&target)
   } else {
     Ok(target)
   }
 }
 
 fn rootless_nix_tool(tool: NixTool) -> color_eyre::Result<PathBuf> {
+  if !cfg!(target_os = "linux") {
+    return Err(color_eyre::eyre::eyre!(
+      "rootless agent mode is only supported on Linux"
+    ));
+  }
   let nix = std::env::var_os(NIX_ENV)
     .ok_or_else(|| color_eyre::Report::new(Error::MissingNixEnv))?;
   sibling_tool(PathBuf::from(nix), tool)
@@ -140,6 +150,20 @@ fn sibling_tool(nix: PathBuf, tool: NixTool) -> Option<PathBuf> {
   }
 }
 
+#[cfg(target_os = "linux")]
+fn rootless_wrap_command(target: &Command) -> io::Result<Command> {
+  helper_command(target)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn rootless_wrap_command(_target: &Command) -> io::Result<Command> {
+  Err(io::Error::new(
+    io::ErrorKind::Unsupported,
+    "rootless agent mode is only supported on Linux",
+  ))
+}
+
+#[cfg(target_os = "linux")]
 fn helper_command(target: &Command) -> io::Result<Command> {
   let mut cmd = Command::new(std::env::current_exe()?);
   cmd
@@ -174,7 +198,17 @@ pub fn maybe_run_helper(
     .ok_or_else(|| color_eyre::Report::new(Error::MissingCommand))?;
   let mut cmd = Command::new(program);
   cmd.args(args);
-  run_sandboxed_command(cmd).map(Some)
+  #[cfg(not(target_os = "linux"))]
+  {
+    let _ = cmd;
+    Err(color_eyre::eyre::eyre!(
+      "rootless agent mode is only supported on Linux"
+    ))
+  }
+  #[cfg(target_os = "linux")]
+  {
+    run_sandboxed_command(cmd).map(Some)
+  }
 }
 
 /// Validate the rootless environment once at startup. User namespaces must
@@ -185,6 +219,11 @@ pub fn maybe_run_helper(
 ///
 /// Returns an error describing the failing requirement.
 pub fn preflight() -> color_eyre::Result<()> {
+  if !cfg!(target_os = "linux") {
+    return Err(color_eyre::eyre::eyre!(
+      "rootless agent mode is only supported on Linux"
+    ));
+  }
   let nix = rootless_nix_tool(NixTool::Nix)?;
   let out = std::process::Command::new(std::env::current_exe()?)
     .arg(HELPER_ARG)
@@ -203,12 +242,14 @@ pub fn preflight() -> color_eyre::Result<()> {
   }
 }
 
+#[cfg(target_os = "linux")]
 struct SandboxPaths {
   local_nixdir: PathBuf,
   local_tmp:    tempfile::TempDir,
   newroot:      tempfile::TempDir,
 }
 
+#[cfg(target_os = "linux")]
 struct SyncPipes {
   child_rx:  OwnedFd,
   child_tx:  OwnedFd,
@@ -216,6 +257,7 @@ struct SyncPipes {
   parent_tx: OwnedFd,
 }
 
+#[cfg(target_os = "linux")]
 fn run_sandboxed_command(cmd: Command) -> color_eyre::Result<i32> {
   let paths = prepare_paths()?;
   let (child_rx, child_tx) = pipe2(OFlag::O_CLOEXEC)?;
@@ -237,6 +279,7 @@ fn run_sandboxed_command(cmd: Command) -> color_eyre::Result<i32> {
 }
 
 /// `$CIRCUS_AGENT_DATA_DIR` when set, else `$XDG_DATA_HOME/circus-agent`.
+#[cfg(target_os = "linux")]
 fn data_dir() -> color_eyre::Result<PathBuf> {
   if let Some(dir) = std::env::var_os(DATA_DIR_ENV)
     .map(PathBuf::from)
@@ -259,6 +302,7 @@ fn data_dir() -> color_eyre::Result<PathBuf> {
   )
 }
 
+#[cfg(target_os = "linux")]
 fn prepare_paths() -> color_eyre::Result<SandboxPaths> {
   let local_nixdir = data_dir()?;
   for path in [
@@ -303,6 +347,7 @@ fn prepare_paths() -> color_eyre::Result<SandboxPaths> {
   })
 }
 
+#[cfg(target_os = "linux")]
 fn parent_handshake(
   child: nix::unistd::Pid,
   pipes: SyncPipes,
@@ -327,6 +372,7 @@ fn parent_handshake(
   })
 }
 
+#[cfg(target_os = "linux")]
 fn child_enter_and_exec(
   mut cmd: Command,
   pipes: SyncPipes,
@@ -380,6 +426,7 @@ fn child_enter_and_exec(
   unsafe { libc::_exit(127) };
 }
 
+#[cfg(target_os = "linux")]
 fn write_token(
   fd: &OwnedFd,
   token: [u8; 1],
@@ -401,6 +448,7 @@ fn write_token(
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn read_token(
   fd: &OwnedFd,
   token: [u8; 1],
@@ -426,6 +474,7 @@ fn read_token(
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn touch(path: impl AsRef<Path>) -> color_eyre::Result<()> {
   if let Some(parent) = path.as_ref().parent() {
     fs::create_dir_all(parent)?;
@@ -437,6 +486,7 @@ fn touch(path: impl AsRef<Path>) -> color_eyre::Result<()> {
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn bind(
   source: impl AsRef<Path>,
   target: impl AsRef<Path>,
@@ -451,6 +501,7 @@ fn bind(
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn bind_if_exists(
   source: impl AsRef<Path>,
   target: impl AsRef<Path>,
@@ -469,6 +520,7 @@ fn bind_if_exists(
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn make_mounts_private() -> color_eyre::Result<()> {
   mount::<str, str, str, str>(
     None,
@@ -480,6 +532,7 @@ fn make_mounts_private() -> color_eyre::Result<()> {
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
   make_mounts_private()?;
 
@@ -509,6 +562,7 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn write_id_maps(child: nix::unistd::Pid) -> color_eyre::Result<()> {
   let base = PathBuf::from("/proc").join(child.to_string());
   fs::write(base.join("setgroups"), "deny\n")?;
@@ -523,6 +577,7 @@ fn write_id_maps(child: nix::unistd::Pid) -> color_eyre::Result<()> {
   Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn set_parent_death_signal() -> color_eyre::Result<()> {
   // SAFETY: prctl is called in the freshly forked child before exec, with a
   // constant operation and signal number.
