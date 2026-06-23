@@ -172,10 +172,15 @@
                 </div>
                 <form class="filter-bar" data-table-filter="recent-builds">
                     <input type="search"
+                           id="recent-builds-filter"
+                           name="q"
                            aria-label="Filter recent builds"
                            placeholder="filter project, job, system"
                            data-filter-text>
-                    <select aria-label="Filter recent builds by status" data-filter-status>
+                    <select id="recent-builds-status"
+                            name="status"
+                            aria-label="Filter recent builds by status"
+                            data-filter-status>
                         <option value="">All status</option>
                         <option value="failed">Failed</option>
                         <option value="succeeded">Succeeded</option>
