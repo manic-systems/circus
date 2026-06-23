@@ -107,9 +107,9 @@
         </div>
         <div class="panel-body">
             {% if has_substituter %}
-                <label class="copy-label">Substituter URL</label>
+                <label class="copy-label" for="cache-substituter-url">Substituter URL</label>
                 <div class="copy-field">
-                    <input type="text" readonly value="{{ substituter_url }}">
+                    <input id="cache-substituter-url" type="text" readonly value="{{ substituter_url }}">
                     <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
                 </div>
             {% else %}
@@ -119,9 +119,9 @@
             {% endif %}
 
             {% if has_public_key %}
-                <label class="copy-label">Trusted public key</label>
+                <label class="copy-label" for="cache-public-key">Trusted public key</label>
                 <div class="copy-field">
-                    <input type="text" readonly value="{{ public_key }}">
+                    <input id="cache-public-key" type="text" readonly value="{{ public_key }}">
                     <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
                 </div>
             {% else %}
@@ -129,11 +129,9 @@
             {% endif %}
 
             {% if has_snippet %}
-                <label class="copy-label">nix.conf snippet</label>
+                <label class="copy-label" for="cache-nix-conf-snippet">nix.conf snippet</label>
                 <div class="copy-field copy-field-block">
-                    <textarea readonly rows="2">
-                        {{ nix_conf_snippet }}
-                    </textarea>
+                    <textarea id="cache-nix-conf-snippet" readonly rows="2">{{ nix_conf_snippet }}</textarea>
                     <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
                 </div>
             {% endif %}
