@@ -22,6 +22,8 @@ pub fn router() -> Router {
     .route("/static/theme.css", get(theme_css))
     .nest_service("/static", ServeDir::new(static_dir()))
     .route("/api/v1/projects", get(api::api_projects))
+    .route("/api/v1/projects/probe", post(api::api_project_probe))
+    .route("/api/v1/projects/setup", post(api::api_project_setup))
     .route(
       "/api/v1/metrics/timeseries/builds",
       get(api::api_metrics_builds),

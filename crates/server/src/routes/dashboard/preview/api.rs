@@ -8,6 +8,65 @@ pub(super) async fn api_projects() -> Json<serde_json::Value> {
   }))
 }
 
+pub(super) async fn api_project_probe(
+  Json(_body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  Json(serde_json::json!({
+    "is_flake": true,
+    "outputs": [
+      {
+        "path": "packages.x86_64-linux.circus-server",
+        "output_type": "derivation",
+        "systems": ["x86_64-linux"]
+      },
+      {
+        "path": "checks.x86_64-linux.clippy",
+        "output_type": "derivation",
+        "systems": ["x86_64-linux"]
+      }
+    ],
+    "suggested_jobsets": [
+      {
+        "name": "packages",
+        "nix_expression": "packages",
+        "description": "Build package outputs",
+        "priority": 8
+      },
+      {
+        "name": "checks",
+        "nix_expression": "checks",
+        "description": "Run flake checks",
+        "priority": 6
+      }
+    ],
+    "metadata": {
+      "description": "Fixture flake used by the frontend preview",
+      "url": "https://example.invalid/circus-preview"
+    },
+    "error": null
+  }))
+}
+
+pub(super) async fn api_project_setup(
+  Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+  let name = body
+    .get("name")
+    .and_then(serde_json::Value::as_str)
+    .unwrap_or("circus-preview");
+
+  Json(serde_json::json!({
+    "project": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "name": name
+    },
+    "jobsets": body
+      .get("jobsets")
+      .cloned()
+      .unwrap_or_else(|| serde_json::json!([]))
+  }))
+}
+
 pub(super) async fn api_metrics_builds() -> Json<serde_json::Value> {
   Json(serde_json::json!({
     "timestamps": [
