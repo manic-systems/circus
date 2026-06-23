@@ -16,11 +16,11 @@
         <span class="sep">/</span>
         <a href="/project/{{ project_id }}">{{ project_name }}</a>
         <span class="sep">/</span>
+        <a href="/project/{{ project_id }}#jobsets">Jobsets</a>
+        <span class="sep">/</span>
         <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a>
         <span class="sep">/</span>
         <a href="/evaluation/{{ eval_id }}">{{ eval_commit_short }}</a>
-        <span class="sep">/</span>
-        <span class="current">{{ build.job_name }}</span>
     </nav>
 {% endblock %}
 {% block content %}
