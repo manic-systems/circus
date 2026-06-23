@@ -61,12 +61,13 @@
                                 {% block topbar_context %}Nix CI{% endblock %}
                             </span>
                         </div>
-                        <div class="topbar-search">
+                        <form class="topbar-search" method="get" action="/builds">
                             <input class="command-input"
                                    type="search"
-                                   placeholder="Search projects, builds, derivations"
-                                   aria-label="Search">
-                        </div>
+                                   name="job_name"
+                                   placeholder="Filter builds by job name"
+                                   aria-label="Filter builds by job name">
+                        </form>
                         <div class="topbar-actions nav-auth">
                             {% block auth %}
                                 {% if !auth_name.is_empty() %}

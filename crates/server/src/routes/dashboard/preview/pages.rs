@@ -1,4 +1,4 @@
-use axum::response::Response;
+use axum::{extract::Query, response::Response};
 use chrono::{Duration, Utc};
 use circus_common::models::{BuildProduct, BuildStep, SystemStatus};
 
@@ -65,6 +65,25 @@ use super::{
   },
   render,
 };
+
+#[derive(serde::Deserialize)]
+pub(super) struct PreviewBuildFilterParams {
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  status:   Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  system:   Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  job_name: Option<String>,
+}
 
 pub(super) async fn home() -> Response {
   render(HomeTemplate {
@@ -219,22 +238,45 @@ pub(super) async fn evaluation() -> Response {
   })
 }
 
-pub(super) async fn builds() -> Response {
+pub(super) async fn builds(
+  Query(params): Query<PreviewBuildFilterParams>,
+) -> Response {
+  let status = params.status.unwrap_or_default();
+  let system = params.system.unwrap_or_default();
+  let job_name = params.job_name.unwrap_or_default();
+  let status_filter = status.to_lowercase();
+  let system_filter = system.to_lowercase();
+  let job_filter = job_name.to_lowercase();
+  let builds = builds_fixture()
+    .into_iter()
+    .filter(|build| {
+      let status_matches = status_filter.is_empty()
+        || build.status_class == status_filter
+        || (status_filter == "succeeded" && build.status_class == "completed");
+      let system_matches = system_filter.is_empty()
+        || build.system.to_lowercase().contains(&system_filter);
+      let job_matches = job_filter.is_empty()
+        || build.job_name.to_lowercase().contains(&job_filter);
+
+      status_matches && system_matches && job_matches
+    })
+    .collect();
+
   render(BuildsTemplate {
-    ui:            ui(),
-    builds:        builds_fixture(),
-    limit:         20,
-    has_prev:      false,
-    has_next:      false,
-    prev_offset:   0,
-    next_offset:   20,
-    page:          1,
-    total_pages:   1,
-    filter_status: String::new(),
-    filter_system: String::new(),
-    filter_job:    String::new(),
-    is_admin:      true,
-    auth_name:     "operator".into(),
+    ui: ui(),
+    builds,
+    limit: 20,
+    has_prev: false,
+    has_next: false,
+    prev_offset: 0,
+    next_offset: 20,
+    page: 1,
+    total_pages: 1,
+    filter_status: status,
+    filter_system: system,
+    filter_job: job_name,
+    is_admin: true,
+    auth_name: "operator".into(),
   })
 }
 
