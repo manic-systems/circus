@@ -7,7 +7,7 @@
 
 use std::{
   cmp::Reverse,
-  collections::{BTreeMap, HashMap},
+  collections::{BTreeMap, BTreeSet, HashMap},
   path::Path as StdPath,
 };
 
@@ -74,6 +74,37 @@ pub(super) use secondary::{
 
 fn ui_config(state: &AppState) -> UiTemplateConfig {
   UiTemplateConfig::from_config(&state.config.ui)
+}
+
+fn dashboard_system_filters(
+  overview: &operator::OperatorOverview,
+) -> Vec<String> {
+  let mut systems = BTreeSet::new();
+  for build in &overview.recent_builds {
+    if !build.system.is_empty() && build.system != "unknown" {
+      systems.insert(build.system.clone());
+    }
+  }
+  for item in &overview.queue_by_system {
+    if !item.system.is_empty() {
+      systems.insert(item.system.clone());
+    }
+  }
+  for worker in &overview.workers {
+    for system in worker.system.split(',').map(str::trim) {
+      if !system.is_empty() && system != "-" {
+        systems.insert(system.to_string());
+      }
+    }
+  }
+  for project in &overview.projects {
+    for system in project.systems.split(',').map(str::trim) {
+      if !system.is_empty() && system != "-" {
+        systems.insert(system.to_string());
+      }
+    }
+  }
+  systems.into_iter().collect()
 }
 
 #[derive(serde::Deserialize)]
@@ -182,6 +213,7 @@ pub(super) async fn home(
       .iter()
       .map(WorkerSummaryView::from)
       .collect(),
+    system_filters: dashboard_system_filters(&overview),
     worker_online: overview.worker_online,
     worker_total: overview.worker_total,
     refreshed_at: overview.refreshed_at,

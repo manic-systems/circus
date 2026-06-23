@@ -130,6 +130,7 @@ pub(super) async fn home() -> Response {
         max_jobs:     2,
       },
     ],
+    system_filters:     vec!["aarch64-linux".into(), "x86_64-linux".into()],
     worker_online:      2,
     worker_total:       3,
     refreshed_at:       "2026-06-18 12:00 UTC".into(),

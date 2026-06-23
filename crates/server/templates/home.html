@@ -22,15 +22,20 @@
                 <a class="btn btn-secondary" href="/login">Login</a>
             {% endif %}
         </div>
-        <div class="operator-toolbar">
+        <form class="operator-toolbar" method="get" action="/builds">
             <input class="dashboard-search"
                    type="search"
-                   placeholder="Search projects, builds, derivations"
-                   aria-label="Dashboard search">
-            <select class="dashboard-system" aria-label="System filter">
-                <option>All systems</option>
+                   name="job_name"
+                   placeholder="Filter builds by job name"
+                   aria-label="Filter builds by job name">
+            <select class="dashboard-system" name="system" aria-label="Filter builds by system">
+                <option value="">All systems</option>
+                {% for system in system_filters %}
+                    <option value="{{ system }}">{{ system }}</option>
+                {% endfor %}
             </select>
-        </div>
+            <button class="btn btn-small btn-secondary" type="submit">View builds</button>
+        </form>
     </header>
 
     {% if !announcements.is_empty() %}
