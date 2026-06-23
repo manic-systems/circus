@@ -90,6 +90,8 @@ async fn theme_css() -> Response {
   --accent: #111827;
   --accent-hover: #000000;
   --accent-strong: #374151;
+  --accent-contrast: #ffffff;
+  --accent-hover-contrast: #ffffff;
 }
 ",
     ))

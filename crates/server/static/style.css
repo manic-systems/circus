@@ -11,11 +11,14 @@
   --border-strong: #b9c2ca;
   --accent: #111827;
   --accent-hover: #000000;
+  --accent-contrast: #ffffff;
+  --accent-hover-contrast: #ffffff;
   --focus: #475569;
 
   --status-success: #0f7a3b;
   --status-success-bg: transparent;
   --status-failed: #b91c1c;
+  --status-failed-contrast: #ffffff;
   --status-failed-bg: transparent;
   --status-running: #007481;
   --status-running-bg: transparent;
@@ -74,9 +77,12 @@
     --border-strong: #3a4652;
     --accent: #f4f6f8;
     --accent-hover: #ffffff;
+    --accent-contrast: #090b0e;
+    --accent-hover-contrast: #090b0e;
     --focus: #94a3b8;
     --status-success: #22c55e;
     --status-failed: #f87171;
+    --status-failed-contrast: #090b0e;
     --status-running: #22d3ee;
     --status-queued: #cbd5e1;
     --status-canceled: #cbd5e1;
@@ -944,10 +950,10 @@ th {
 .sort-link:hover,
 .sort-link:focus-visible,
 .sort-link.is-active {
-  color: var(--accent);
+  color: var(--text);
 }
 .sort-link:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -1284,7 +1290,7 @@ button,
   border: 1px solid var(--accent);
   border-radius: var(--radius-control);
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-contrast);
   cursor: pointer;
   font-family: inherit;
   font-size: 12px;
@@ -1314,7 +1320,7 @@ button,
 .btn:hover,
 button:hover,
 .filter-form button:hover {
-  color: var(--surface);
+  color: var(--accent-hover-contrast);
   background: var(--accent-hover);
   border-color: var(--accent-hover);
   opacity: 1;
@@ -1358,6 +1364,13 @@ button:hover,
 }
 
 .btn-danger {
+  color: var(--status-failed-contrast);
+  background: var(--status-failed);
+  border-color: var(--status-failed);
+}
+
+.btn-danger:hover {
+  color: var(--status-failed-contrast);
   background: var(--status-failed);
   border-color: var(--status-failed);
 }
