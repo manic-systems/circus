@@ -318,12 +318,16 @@ fn cache_args_for_build(
   config: &CacheConfig,
   project: Option<&Project>,
 ) -> Vec<String> {
-  let (cache_url, upstreams): (Option<&str>, Vec<(&str, Option<&str>)>) =
+  let (cache_url, upstreams): (Option<String>, Vec<(&str, Option<&str>)>) =
     if let Some(project) = project
       && project.cache_enabled
     {
       (
-        project.cache_url.as_deref(),
+        circus_config::project_cache_url(
+          config.cache_url.as_deref(),
+          &project.name,
+          project.cache_url.as_deref(),
+        ),
         project
           .cache_upstreams
           .0
@@ -336,7 +340,7 @@ fn cache_args_for_build(
       )
     } else if config.enabled {
       (
-        config.cache_url.as_deref(),
+        config.cache_url.clone(),
         config
           .upstreams
           .iter()
@@ -350,7 +354,7 @@ fn cache_args_for_build(
     };
 
   let mut substituters = Vec::new();
-  if let Some(cache_url) = cache_url {
+  if let Some(cache_url) = cache_url.as_deref() {
     substituters.push(cache_url);
   }
   substituters.extend(upstreams.iter().map(|(url, _)| *url));
@@ -1457,6 +1461,34 @@ mod tests {
         "cache.nixos.org-1:key",
       ]
     );
+  }
+
+  #[test]
+  fn test_cache_args_derive_project_cache_when_global_cache_disabled() {
+    let cache_config = CacheConfig {
+      enabled: false,
+      cache_url: Some("https://ci.example.org/nix-cache/".to_string()),
+      ..Default::default()
+    };
+    let project = Project {
+      id:              Uuid::new_v4(),
+      name:            "project-a".to_string(),
+      description:     None,
+      repository_url:  "https://example.org/project-a.git".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: Json(BinaryCacheUpstreams::default()),
+      created_at:      chrono::Utc::now(),
+      updated_at:      chrono::Utc::now(),
+    };
+
+    let args = cache_args_for_build(&cache_config, Some(&project));
+
+    assert_eq!(args, vec![
+      "--option",
+      "extra-substituters",
+      "https://ci.example.org/projects/project-a/nix-cache/",
+    ]);
   }
 
   #[test]

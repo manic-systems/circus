@@ -73,7 +73,11 @@ async fn binary_cache_url(
   if let Ok(project) =
     circus_common::repo::projects::get(&state.pool, channel.project_id).await
     && project.cache_enabled
-    && let Some(url) = project.cache_url
+    && let Some(url) = circus_config::project_cache_url(
+      state.config.cache.cache_url.as_deref(),
+      &project.name,
+      project.cache_url.as_deref(),
+    )
   {
     return Ok(
       (
@@ -85,7 +89,13 @@ async fn binary_cache_url(
     );
   }
 
-  let Some(url) = state.config.cache.cache_url.as_deref() else {
+  let Some(url) = state
+    .config
+    .cache
+    .enabled
+    .then_some(state.config.cache.cache_url.as_deref())
+    .flatten()
+  else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 

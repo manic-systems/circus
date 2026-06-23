@@ -15,6 +15,27 @@ pub(crate) use env::{apply_env_vars, parse_env_value, set_nested};
 pub use queue::*;
 pub use redact::redact_secrets;
 pub use structs::*;
+
+/// Resolve the public substituter URL for a per-project cache.
+///
+/// An explicit project URL wins. Otherwise derive
+/// `<site>/projects/<project>/nix-cache/` from the configured global cache URL,
+/// using the global URL only as the public site base; the global cache itself
+/// does not need to be enabled for project caches to be usable.
+#[must_use]
+pub fn project_cache_url(
+  global_cache_url: Option<&str>,
+  project_name: &str,
+  project_cache_url: Option<&str>,
+) -> Option<String> {
+  if let Some(url) = project_cache_url {
+    return Some(url.to_owned());
+  }
+  let base = global_cache_url?.trim_end_matches('/');
+  let site = base.strip_suffix("/nix-cache").unwrap_or(base);
+  Some(format!("{site}/projects/{project_name}/nix-cache/"))
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
