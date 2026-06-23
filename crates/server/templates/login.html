@@ -11,14 +11,15 @@
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
                 Authentication required to access this instance.
             </p>
-            <button class="btn" onclick="document.getElementById('login-dialog').showModal()">Sign in</button>
+            <button type="button" class="btn" onclick="document.getElementById('login-dialog').showModal()">Sign in</button>
         </div>
     </div>
 
     <dialog id="login-dialog" class="dialog-sm">
         <div class="dialog-header">
             <h2>Sign in</h2>
-            <button class="btn-ghost dialog-close"
+            <button type="button"
+                    class="btn-ghost dialog-close"
                     onclick="document.getElementById('login-dialog').close()"
                     aria-label="Close">
                 &times;

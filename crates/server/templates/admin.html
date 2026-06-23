@@ -101,7 +101,8 @@
                                     </td>
                                     <td>{{ output.product_created_at }}</td>
                                     <td class="row-actions">
-                                        <button class="btn btn-small btn-danger"
+                                        <button type="button"
+                                                class="btn btn-small btn-danger"
                                                 onclick="unpinBuild('{{ output.build_id }}')">
                                             Unpin Build
                                         </button>
@@ -167,7 +168,9 @@
                                     <td>{{ k.last_used_at }}</td>
                                     {% if is_admin %}
                                         <td class="row-actions">
-                                            <button class="btn btn-small btn-danger" onclick="deleteKey('{{ k.id }}')">
+                                            <button type="button"
+                                                    class="btn btn-small btn-danger"
+                                                    onclick="deleteKey('{{ k.id }}')">
                                                 Delete
                                             </button>
                                         </td>
@@ -248,7 +251,8 @@
                                 {% if is_admin %}
                                     <td class="row-actions">
                                         {% if task.status == "failed" %}
-                                            <button class="btn btn-small btn-secondary"
+                                            <button type="button"
+                                                    class="btn btn-small btn-secondary"
                                                     onclick="retryNotificationTask('{{ task.id }}')">
                                                 Retry
                                             </button>
@@ -412,7 +416,8 @@
                                 </td>
                                 {% if is_admin %}
                                     <td class="row-actions">
-                                        <button class="btn btn-small btn-secondary"
+                                        <button type="button"
+                                                class="btn btn-small btn-secondary"
                                                 onclick="toggleBuilder('{{ b.id }}', {{ !b.enabled }})">
                                             {% if b.enabled %}
                                                 Disable
@@ -420,7 +425,9 @@
                                                 Enable
                                             {% endif %}
                                         </button>
-                                        <button class="btn btn-small btn-danger" onclick="deleteBuilder('{{ b.id }}')">
+                                        <button type="button"
+                                                class="btn btn-small btn-danger"
+                                                onclick="deleteBuilder('{{ b.id }}')">
                                             Delete
                                         </button>
                                     </td>

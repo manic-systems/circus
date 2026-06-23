@@ -89,7 +89,8 @@
                             <td>{{ u.last_login_at }}</td>
                             {% if is_admin %}
                                 <td class="row-actions">
-                                    <button class="btn btn-small btn-secondary"
+                                    <button type="button"
+                                            class="btn btn-small btn-secondary"
                                             onclick="toggleUser('{{ u.id }}', {{ !u.enabled }})">
                                         {% if u.enabled %}
                                             Disable
@@ -97,7 +98,9 @@
                                             Enable
                                         {% endif %}
                                     </button>
-                                    <button class="btn btn-small btn-danger" onclick="deleteUser('{{ u.id }}')">
+                                    <button type="button"
+                                            class="btn btn-small btn-danger"
+                                            onclick="deleteUser('{{ u.id }}')">
                                         Delete
                                     </button>
                                 </td>
