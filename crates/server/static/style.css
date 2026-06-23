@@ -75,6 +75,12 @@
     --accent: #f4f6f8;
     --accent-hover: #ffffff;
     --focus: #94a3b8;
+    --status-success: #22c55e;
+    --status-failed: #f87171;
+    --status-running: #22d3ee;
+    --status-queued: #cbd5e1;
+    --status-canceled: #cbd5e1;
+    --status-unknown: #cbd5e1;
   }
 }
 
@@ -2248,8 +2254,8 @@ body:has(#login-dialog[open]) .login-container {
 }
 
 .granularity-toggle button.active {
-  background: var(--accent);
-  color: var(--surface);
+  background: var(--text);
+  color: var(--bg);
 }
 
 /* Copyable mono fields in the "How to use" panel */
