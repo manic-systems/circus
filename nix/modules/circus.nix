@@ -155,7 +155,7 @@
           options = {
             enabled = mkOption {
               type = bool;
-              default = false;
+              default = true;
               description = "Serve the global binary cache at `/nix-cache/`.";
             };
             secret_key_file = mkOption {
