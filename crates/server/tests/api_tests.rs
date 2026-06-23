@@ -1144,6 +1144,80 @@ async fn test_cache_info_returns_correct_headers() {
 }
 
 #[tokio::test]
+async fn test_channel_binary_cache_url_uses_active_project_cache_when_global_disabled()
+ {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_name = format!("project-cache-{}", uuid::Uuid::new_v4().simple());
+  let channel_name = format!("channel-cache-{}", uuid::Uuid::new_v4().simple());
+  let project = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            project_name.clone(),
+      repository_url:  "https://github.com/test/project-cache".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+  let jobset =
+    circus_common::repo::jobsets::create(&pool, circus_common::CreateJobset {
+      project_id:        project.id,
+      name:              "default".to_string(),
+      nix_expression:    "packages".to_string(),
+      enabled:           Some(true),
+      flake_mode:        Some(true),
+      check_interval:    Some(300),
+      trigger_mode:      None,
+      branch:            None,
+      branch_pattern:    None,
+      tag_pattern:       None,
+      scheduling_shares: None,
+      state:             None,
+      keep_nr:           None,
+    })
+    .await
+    .unwrap();
+  circus_common::repo::channels::create(&pool, circus_common::CreateChannel {
+    project_id: project.id,
+    name:       channel_name.clone(),
+    jobset_id:  jobset.id,
+  })
+  .await
+  .unwrap();
+
+  let mut config = circus_config::Config::default();
+  config.cache.enabled = false;
+  config.cache.cache_url =
+    Some("https://ci.example.org/nix-cache/".to_string());
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/channel/{channel_name}/binary-cache-url"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  assert_eq!(
+    String::from_utf8(body.to_vec()).unwrap(),
+    format!("https://ci.example.org/projects/{project_name}/nix-cache/")
+  );
+}
+
+#[tokio::test]
 async fn test_metrics_endpoint() {
   let Some(pool) = get_pool().await else {
     return;
@@ -1834,6 +1908,328 @@ async fn test_admin_cache_storage_summary() {
   assert_eq!(json["storage"]["nar_count"], 1);
   assert_eq!(json["storage"]["uncompressed_bytes"], 200);
   assert_eq!(json["storage"]["compressed_bytes"], 100);
+}
+
+#[tokio::test]
+async fn test_admin_global_cache_includes_signed_local_build_products() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_name = format!("local-cache-{}", uuid::Uuid::new_v4().simple());
+  let project = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            project_name,
+      repository_url:  "https://github.com/test/local-cache".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+  let jobset =
+    circus_common::repo::jobsets::create(&pool, circus_common::CreateJobset {
+      project_id:        project.id,
+      name:              "default".to_string(),
+      nix_expression:    "packages".to_string(),
+      enabled:           Some(true),
+      flake_mode:        Some(true),
+      check_interval:    Some(300),
+      trigger_mode:      None,
+      branch:            None,
+      branch_pattern:    None,
+      tag_pattern:       None,
+      scheduling_shares: None,
+      state:             None,
+      keep_nr:           None,
+    })
+    .await
+    .unwrap();
+  let evaluation = circus_common::repo::evaluations::create(
+    &pool,
+    circus_common::CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    uuid::Uuid::new_v4().simple().to_string(),
+      pr_number:      None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action:      None,
+    },
+  )
+  .await
+  .unwrap();
+  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let store_path = format!("/nix/store/{hash}-local-cache-pkg");
+  let build =
+    circus_common::repo::builds::create(&pool, circus_common::CreateBuild {
+      evaluation_id: evaluation.id,
+      job_name: "local-cache-pkg".to_string(),
+      drv_path: format!("/nix/store/{hash}-local-cache-pkg.drv"),
+      system: Some("x86_64-linux".to_string()),
+      outputs: Some(serde_json::json!({ "out": store_path })),
+      ..Default::default()
+    })
+    .await
+    .unwrap();
+  circus_common::repo::builds::complete(
+    &pool,
+    build.id,
+    circus_common::BuildStatus::Succeeded,
+    None,
+    Some(&store_path),
+    None,
+  )
+  .await
+  .unwrap();
+  circus_common::repo::builds::mark_signed(&pool, build.id)
+    .await
+    .unwrap();
+  circus_common::repo::build_products::create(
+    &pool,
+    circus_common::CreateBuildProduct {
+      build_id:     build.id,
+      name:         "local-cache-pkg".to_string(),
+      path:         store_path.clone(),
+      sha256_hash:  Some(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          .to_string(),
+      ),
+      file_size:    Some(1234),
+      content_type: None,
+      is_directory: true,
+    },
+  )
+  .await
+  .unwrap();
+
+  let app = build_app_with_admin_key(pool).await;
+  let detail = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/admin/caches/global")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(detail.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(detail.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert!(
+    json["storage"]["nar_count"].as_i64().unwrap() >= 1,
+    "{json}"
+  );
+  assert!(
+    json["storage"]["uncompressed_bytes"].as_i64().unwrap() >= 1234,
+    "{json}"
+  );
+
+  let nars = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri(format!("/api/v1/admin/caches/global/nars?hash={hash}"))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(nars.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(nars.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["total"], 1);
+  assert_eq!(json["items"][0]["store_path"], store_path);
+  assert_eq!(json["items"][0]["package_name"], "local-cache-pkg");
+
+  let series = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/admin/caches/global/storage-timeseries?granularity=hours")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(series.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(series.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  let bytes_added = json["bytes_added"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .filter_map(serde_json::Value::as_i64)
+    .sum::<i64>();
+  assert!(bytes_added >= 1234, "{json}");
+}
+
+#[tokio::test]
+async fn test_project_cache_includes_local_product_when_other_project_uploaded_same_path()
+ {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_a_name =
+    format!("uploaded-owner-{}", uuid::Uuid::new_v4().simple());
+  let project_a = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            project_a_name,
+      repository_url:  "https://github.com/test/uploaded-owner".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+  let project_b_name = format!("local-owner-{}", uuid::Uuid::new_v4().simple());
+  let project_b = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            project_b_name.clone(),
+      repository_url:  "https://github.com/test/local-owner".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let store_path = format!("/nix/store/{hash}-shared-cache-pkg");
+  circus_common::repo::narinfo_cache::upsert(
+    &pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path:  &store_path,
+      nar_hash:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      nar_size:    10,
+      file_hash:   None,
+      file_size:   Some(5),
+      compression: "zstd",
+      url:         &format!("nar/{hash}.nar.zst"),
+      deriver:     None,
+      references:  &[],
+      sig:         Some("circus:test-signature"),
+      ca:          None,
+      build_id:    None,
+      project_id:  Some(project_a.id),
+    },
+  )
+  .await
+  .unwrap();
+
+  let jobset =
+    circus_common::repo::jobsets::create(&pool, circus_common::CreateJobset {
+      project_id:        project_b.id,
+      name:              "default".to_string(),
+      nix_expression:    "packages".to_string(),
+      enabled:           Some(true),
+      flake_mode:        Some(true),
+      check_interval:    Some(300),
+      trigger_mode:      None,
+      branch:            None,
+      branch_pattern:    None,
+      tag_pattern:       None,
+      scheduling_shares: None,
+      state:             None,
+      keep_nr:           None,
+    })
+    .await
+    .unwrap();
+  let evaluation = circus_common::repo::evaluations::create(
+    &pool,
+    circus_common::CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    uuid::Uuid::new_v4().simple().to_string(),
+      pr_number:      None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action:      None,
+    },
+  )
+  .await
+  .unwrap();
+  let build =
+    circus_common::repo::builds::create(&pool, circus_common::CreateBuild {
+      evaluation_id: evaluation.id,
+      job_name: "shared-cache-pkg".to_string(),
+      drv_path: format!("/nix/store/{hash}-shared-cache-pkg.drv"),
+      system: Some("x86_64-linux".to_string()),
+      outputs: Some(serde_json::json!({ "out": store_path })),
+      ..Default::default()
+    })
+    .await
+    .unwrap();
+  circus_common::repo::builds::complete(
+    &pool,
+    build.id,
+    circus_common::BuildStatus::Succeeded,
+    None,
+    Some(&store_path),
+    None,
+  )
+  .await
+  .unwrap();
+  circus_common::repo::builds::mark_signed(&pool, build.id)
+    .await
+    .unwrap();
+  circus_common::repo::build_products::create(
+    &pool,
+    circus_common::CreateBuildProduct {
+      build_id:     build.id,
+      name:         "shared-cache-pkg".to_string(),
+      path:         store_path.clone(),
+      sha256_hash:  Some(
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+      ),
+      file_size:    Some(1234),
+      content_type: None,
+      is_directory: true,
+    },
+  )
+  .await
+  .unwrap();
+
+  let app = build_app_with_admin_key(pool).await;
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!(
+          "/api/v1/admin/caches/{project_b_name}/nars?hash={hash}"
+        ))
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["total"], 1);
+  assert_eq!(json["items"][0]["store_path"], store_path);
+  assert_eq!(json["items"][0]["package_name"], "shared-cache-pkg");
 }
 
 #[tokio::test]
