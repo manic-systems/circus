@@ -8,7 +8,7 @@ use axum::{
   body::Body,
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
-  routing::get,
+  routing::{get, post},
 };
 use tower_http::services::ServeDir;
 
@@ -39,30 +39,46 @@ pub fn router() -> Router {
       "/api/v1/admin/caches/{name}/traffic-timeseries",
       get(api::api_cache_traffic_timeseries),
     )
+    .route(
+      "/api/v1/builds/{build_id}/products/{product_id}/download",
+      get(product_download),
+    )
     .route("/", get(pages::home))
+    .route("/logout", post(preview_logout_action))
     .route("/projects", get(pages::projects))
     .route("/projects/new", get(pages::project_setup))
     .route(
       "/project/{id}/notifications",
       get(pages::notifications).post(preview_notifications_action),
     )
+    .route(
+      "/project/{id}/notifications/{config_id}/delete",
+      post(preview_notifications_action),
+    )
     .route("/project/{id}", get(pages::project))
     .route("/jobset/{id}", get(pages::jobset))
     .route("/jobset/{id}/jobs", get(pages::jobset_jobs))
+    .route("/jobset/{id}/delete", post(preview_project_action))
     .route("/evaluations", get(pages::evaluations))
     .route("/evaluation/{id}", get(pages::evaluation))
+    .route(
+      "/evaluation/{id}/visibility",
+      post(preview_evaluations_action),
+    )
     .route("/builds", get(pages::builds))
     .route("/build/{id}", get(pages::build))
     .route("/build/{id}/log", get(build_log))
+    .route("/build/{id}/bump", post(preview_queue_action))
     .route("/queue", get(pages::queue))
     .route("/channels", get(pages::channels))
     .route("/channel/{id}", get(pages::channel))
-    .route("/news", get(pages::news))
+    .route("/news", get(pages::news).post(preview_news_action))
+    .route("/news/{id}/delete", post(preview_news_action))
     .route("/admin", get(pages::admin))
     .route("/users", get(pages::users))
     .route("/starred", get(pages::starred))
     .route("/metrics", get(pages::metrics))
-    .route("/login", get(pages::login))
+    .route("/login", get(pages::login).post(preview_login_action))
     .route("/private", get(pages::private))
     .route("/caches", get(pages::caches))
     .route("/caches/{name}", get(pages::cache_detail))
@@ -86,10 +102,32 @@ async fn index() -> Redirect {
   Redirect::temporary("/")
 }
 
+async fn preview_login_action() -> Redirect {
+  Redirect::to("/login")
+}
+
+async fn preview_logout_action() -> Redirect {
+  Redirect::to("/")
+}
+
+async fn preview_project_action() -> Redirect {
+  Redirect::to("/project/00000000-0000-0000-0000-000000000001")
+}
+
 async fn preview_notifications_action() -> Redirect {
-  Redirect::temporary(
-    "/project/00000000-0000-0000-0000-000000000001/notifications",
-  )
+  Redirect::to("/project/00000000-0000-0000-0000-000000000001/notifications")
+}
+
+async fn preview_evaluations_action() -> Redirect {
+  Redirect::to("/evaluations")
+}
+
+async fn preview_queue_action() -> Redirect {
+  Redirect::to("/queue")
+}
+
+async fn preview_news_action() -> Redirect {
+  Redirect::to("/news")
 }
 
 async fn build_log() -> Response {
@@ -99,6 +137,19 @@ async fn build_log() -> Response {
     .body(Body::from(
       "preview build log\n[1/2] evaluating derivation\n[2/2] build completed\n",
     ))
+    .unwrap_or_else(|error| {
+      Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::from(format!("response builder failed: {error}")))
+        .unwrap_or_else(|_| Response::new(Body::empty()))
+    })
+}
+
+async fn product_download() -> Response {
+  Response::builder()
+    .header(header::CONTENT_TYPE, "application/octet-stream")
+    .header(header::CACHE_CONTROL, "no-cache")
+    .body(Body::from("preview artifact\n"))
     .unwrap_or_else(|error| {
       Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
