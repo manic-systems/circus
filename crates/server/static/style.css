@@ -398,6 +398,13 @@ pre {
   white-space: nowrap;
 }
 
+.topbar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+
 .command-input,
 .topbar-search input {
   width: clamp(140px, 24vw, 420px);
@@ -1893,6 +1900,10 @@ pre code {
   .command-input,
   .topbar-search input {
     width: 100%;
+  }
+
+  .topbar-search .btn {
+    flex: 0 0 auto;
   }
 
   .container {
