@@ -8,7 +8,7 @@ use axum::{
   body::Body,
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
-  routing::{get, post},
+  routing::{delete, get, post, put},
 };
 use tower_http::services::ServeDir;
 
@@ -21,9 +21,32 @@ pub fn router() -> Router {
     .route("/__preview", get(index))
     .route("/static/theme.css", get(theme_css))
     .nest_service("/static", ServeDir::new(static_dir()))
-    .route("/api/v1/projects", get(api::api_projects))
+    .route(
+      "/api/v1/projects",
+      get(api::api_projects).post(api::api_project_create),
+    )
     .route("/api/v1/projects/probe", post(api::api_project_probe))
     .route("/api/v1/projects/setup", post(api::api_project_setup))
+    .route("/api/v1/projects/{id}", delete(api::api_ok))
+    .route(
+      "/api/v1/projects/{id}/jobsets",
+      post(api::api_project_jobset_create),
+    )
+    .route("/api/v1/me/starred-jobs/{id}", delete(api::api_ok))
+    .route("/api/v1/api-keys", post(api::api_key_create))
+    .route("/api/v1/api-keys/{id}", delete(api::api_ok))
+    .route("/api/v1/users", post(api::api_user_create))
+    .route("/api/v1/users/{id}", put(api::api_ok).delete(api::api_ok))
+    .route(
+      "/api/v1/admin/notification-tasks/{id}/retry",
+      post(api::api_ok),
+    )
+    .route("/api/v1/admin/pinned-builds/{id}/unpin", post(api::api_ok))
+    .route("/api/v1/admin/builders", post(api::api_builder_create))
+    .route(
+      "/api/v1/admin/builders/{id}",
+      put(api::api_ok).delete(api::api_ok),
+    )
     .route(
       "/api/v1/metrics/timeseries/builds",
       get(api::api_metrics_builds),
