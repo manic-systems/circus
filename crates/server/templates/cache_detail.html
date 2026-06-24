@@ -131,7 +131,9 @@
             {% if has_snippet %}
                 <label class="copy-label" for="cache-nix-conf-snippet">nix.conf snippet</label>
                 <div class="copy-field copy-field-block">
-                    <textarea id="cache-nix-conf-snippet" readonly rows="2">{{ nix_conf_snippet }}</textarea>
+                    <textarea id="cache-nix-conf-snippet" readonly rows="2">
+                        {{ nix_conf_snippet }}
+                    </textarea>
                     <button type="button" class="btn btn-small btn-secondary" data-copy>Copy</button>
                 </div>
             {% endif %}
