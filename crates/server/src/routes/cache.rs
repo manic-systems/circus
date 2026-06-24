@@ -472,9 +472,15 @@ fn render_narinfo_row(
   }
   let _ = writeln!(s, "NarHash: {}", row.nar_hash);
   let _ = writeln!(s, "NarSize: {}", row.nar_size);
-  let _ = writeln!(s, "References: {}", row.references.join(" "));
+  let references = row
+    .references
+    .iter()
+    .map(|path| store_path_name(path))
+    .collect::<Vec<_>>()
+    .join(" ");
+  let _ = writeln!(s, "References: {references}");
   if let Some(d) = &row.deriver {
-    let _ = writeln!(s, "Deriver: {d}");
+    let _ = writeln!(s, "Deriver: {}", store_path_name(d));
   }
   if let Some(c) = &row.ca {
     let _ = writeln!(s, "CA: {c}");
@@ -483,6 +489,33 @@ fn render_narinfo_row(
     let _ = writeln!(s, "Sig: {sig}");
   }
   s
+}
+
+fn store_path_name(path: &str) -> &str {
+  path
+    .rsplit('/')
+    .find(|part| !part.is_empty())
+    .unwrap_or(path)
+}
+
+fn store_path_hash_part(path: &str) -> Option<&str> {
+  let (hash, _) = store_path_name(path).split_once('-')?;
+  Some(hash)
+}
+
+fn nar_hash_part(nar_hash: &str) -> Option<&str> {
+  nar_hash.strip_prefix("sha256:")
+}
+
+fn persisted_local_nar_row_matches(
+  row: &circus_common::repo::narinfo_cache::NarInfo,
+  output_hash: &str,
+  nar_hash: &str,
+) -> bool {
+  narinfo_has_signature(row)
+    && row.compression == "none"
+    && store_path_hash_part(&row.store_path) == Some(output_hash)
+    && nar_hash_part(&row.nar_hash) == Some(nar_hash)
 }
 
 fn uploaded_nar_presigner(
@@ -551,6 +584,48 @@ async fn redirect_uploaded_nar(
   }
 }
 
+async fn serve_persisted_local_nar(
+  state: &AppState,
+  object_name: &str,
+  output_hash: &str,
+  nar_hash: &str,
+  cache_name: &str,
+  scope: CacheScope,
+) -> Result<Option<Response>, ApiError> {
+  if !is_valid_nar_object_name(object_name) {
+    return Ok(None);
+  }
+
+  let url = format!("nar/{object_name}?hash={output_hash}");
+  let row = circus_common::repo::narinfo_cache::get_by_url(
+    &state.pool,
+    &url,
+    scope.project_id(),
+  )
+  .await;
+  let row = match row {
+    Ok(row) => row,
+    Err(circus_common::CiError::NotFound(_)) => return Ok(None),
+    Err(e) => return Err(ApiError(e)),
+  };
+
+  if !persisted_local_nar_row_matches(&row, output_hash, nar_hash) {
+    return Ok(Some(StatusCode::NOT_FOUND.into_response()));
+  }
+
+  if tokio::fs::metadata(&row.store_path).await.is_err() {
+    return Ok(Some(StatusCode::NOT_FOUND.into_response()));
+  }
+
+  let nar_size = row.nar_size.max(0) as u64;
+  Ok(Some(serve_nar_from_store_path(
+    state,
+    row.store_path,
+    nar_size,
+    cache_name,
+  )))
+}
+
 /// Fire-and-forget best-effort `last_fetched_at` stamp for a served path. Never
 /// blocks or fails the response; mirrors `touch_api_key_last_used`.
 fn spawn_touch_last_fetched(state: &AppState, store_path: String) {
@@ -563,6 +638,25 @@ fn spawn_touch_last_fetched(state: &AppState, store_path: String) {
       tracing::debug!(%error, store_path, "failed to stamp last_fetched_at");
     }
   });
+}
+
+/// Stream a NAR straight from a store path, recording the serve and stamping
+/// `last_fetched_at`.
+fn serve_nar_from_store_path(
+  state: &AppState,
+  store_path: String,
+  nar_size: u64,
+  cache_name: &str,
+) -> Response {
+  let body = Body::from_stream(NarByteStream::new(PathBuf::from(&store_path)));
+  state.record_cache_serve(cache_name, nar_size);
+  spawn_touch_last_fetched(state, store_path);
+  (
+    StatusCode::OK,
+    [("content-type", "application/x-nix-nar")],
+    body,
+  )
+    .into_response()
 }
 
 /// Serve an uncompressed NAR file. Harmonia narinfos point here as
@@ -612,6 +706,20 @@ async fn serve_nar_for_settings(
     return Ok(StatusCode::NOT_FOUND.into_response());
   }
 
+  if let Some(output_hash) = query.hash.as_deref()
+    && let Some(response) = serve_persisted_local_nar(
+      &state,
+      &hash,
+      output_hash,
+      stripped,
+      &settings.cache_name,
+      settings.scope,
+    )
+    .await?
+  {
+    return Ok(response);
+  }
+
   let Some(nix_store_db) = open_nix_store_db(&state).await else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
@@ -642,21 +750,12 @@ async fn serve_nar_for_settings(
   }
 
   let store_path_str = info.info.store_dir.display(&info.path).to_string();
-  let nar_size = info.info.nar_size;
-  let store_path = PathBuf::from(&store_path_str);
-  let body = Body::from_stream(NarByteStream::new(store_path));
-
-  state.record_cache_serve(&settings.cache_name, nar_size);
-  spawn_touch_last_fetched(&state, store_path_str);
-
-  Ok(
-    (
-      StatusCode::OK,
-      [("content-type", "application/x-nix-nar")],
-      body,
-    )
-      .into_response(),
-  )
+  Ok(serve_nar_from_store_path(
+    &state,
+    store_path_str,
+    info.info.nar_size,
+    &settings.cache_name,
+  ))
 }
 
 /// Nix binary cache info endpoint.
@@ -706,4 +805,69 @@ pub fn router() -> Router<AppState> {
       "/projects/{project}/nix-cache/nar/{hash}",
       get(project_serve_nar_combined),
     )
+}
+
+#[cfg(test)]
+mod tests {
+  use chrono::Utc;
+  use circus_common::repo::narinfo_cache::NarInfo;
+
+  use super::*;
+
+  fn test_narinfo_row() -> circus_common::repo::narinfo_cache::NarInfo {
+    let now = Utc::now();
+    circus_common::repo::narinfo_cache::NarInfo {
+      store_path:      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cache-test"
+        .to_owned(),
+      nar_hash:
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+      nar_size:        1,
+      file_hash:       None,
+      file_size:       None,
+      compression:     "none".to_owned(),
+      url:             "nar/cache-test.nar".to_owned(),
+      deriver:         Some(
+        "/nix/store/cccccccccccccccccccccccccccccccc-cache-test.drv".to_owned(),
+      ),
+      references:      vec![
+        "/nix/store/dddddddddddddddddddddddddddddddd-glibc".to_owned(),
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-zlib".to_owned(),
+      ],
+      sig:             Some("circus:test-signature".to_owned()),
+      ca:              None,
+      build_id:        None,
+      project_id:      None,
+      created_at:      now,
+      updated_at:      now,
+      last_fetched_at: None,
+    }
+  }
+
+  #[test]
+  fn render_narinfo_row_uses_store_path_names_for_refs_and_deriver() {
+    let body = render_narinfo_row(&test_narinfo_row());
+    assert!(
+      body.contains(
+        "References: dddddddddddddddddddddddddddddddd-glibc \
+         eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-zlib\n"
+      ),
+      "{body}"
+    );
+    assert!(
+      body
+        .contains("Deriver: cccccccccccccccccccccccccccccccc-cache-test.drv\n"),
+      "{body}"
+    );
+  }
+
+  #[test]
+  fn persisted_local_nar_row_requires_a_signature() {
+    let row = test_narinfo_row();
+    let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let nar = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    assert!(persisted_local_nar_row_matches(&row, hash, nar));
+
+    let unsigned = NarInfo { sig: None, ..row };
+    assert!(!persisted_local_nar_row_matches(&unsigned, hash, nar));
+  }
 }
