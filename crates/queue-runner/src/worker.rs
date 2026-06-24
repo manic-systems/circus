@@ -18,6 +18,7 @@ use circus_common::{
     metric_names,
     metric_units,
   },
+  narinfo_signing::{read_signing_key, sign_narinfo},
   repo,
 };
 use circus_config::{
@@ -53,6 +54,16 @@ use crate::{
   psi::{self, PsiCache},
   rpc::AgentPool,
 };
+
+#[derive(Debug, Clone)]
+struct ClosurePathInfo {
+  store_path: String,
+  nar_hash:   String,
+  nar_size:   i64,
+  references: Vec<String>,
+  deriver:    Option<String>,
+  ca:         Option<String>,
+}
 
 pub type ActiveBuilds = Arc<DashMap<Uuid, CancellationToken>>;
 
@@ -163,6 +174,22 @@ impl WorkerPool {
   #[must_use]
   pub const fn active_builds(&self) -> &ActiveBuilds {
     &self.active_builds
+  }
+
+  pub async fn persist_closure_narinfos(
+    &self,
+    build_id: Uuid,
+    output_paths: &[String],
+    project_id: Option<Uuid>,
+  ) {
+    persist_closure_narinfos(
+      &self.pool,
+      build_id,
+      output_paths,
+      &self.signing_config,
+      project_id,
+    )
+    .await;
   }
 
   #[tracing::instrument(skip(self, build), fields(build_id = %build.id, job = %build.job_name))]
@@ -285,10 +312,109 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
   let parsed: serde_json::Value = serde_json::from_str(&stdout).ok()?;
 
   let entry = first_path_info_entry(&parsed)?;
-  let nar_hash = entry.get("narHash")?.as_str()?.to_string();
+  let nar_hash = canonical_nix_sha256_hash(entry.get("narHash")?.as_str()?)?;
   let nar_size = entry.get("narSize")?.as_i64()?;
 
   Some((nar_hash, nar_size))
+}
+
+async fn get_recursive_path_infos_with_nix(
+  nix: &Path,
+  output_paths: &[String],
+) -> Option<Vec<ClosurePathInfo>> {
+  if output_paths.is_empty() {
+    return Some(Vec::new());
+  }
+
+  let output = Command::new(nix)
+    .args(["path-info", "--json", "--recursive"])
+    .args(output_paths)
+    .output()
+    .await
+    .ok()?;
+
+  if !output.status.success() {
+    tracing::warn!(
+      stderr = %String::from_utf8_lossy(&output.stderr),
+      "nix path-info --recursive failed while recording cache closure"
+    );
+    return None;
+  }
+
+  let parsed: serde_json::Value =
+    serde_json::from_slice(&output.stdout).ok()?;
+  Some(parse_recursive_path_infos(&parsed))
+}
+
+fn parse_recursive_path_infos(
+  parsed: &serde_json::Value,
+) -> Vec<ClosurePathInfo> {
+  match parsed {
+    serde_json::Value::Array(entries) => {
+      entries
+        .iter()
+        .filter_map(|entry| parse_closure_path_info(None, entry))
+        .collect()
+    },
+    serde_json::Value::Object(entries) => {
+      entries
+        .iter()
+        .filter_map(|(path, entry)| parse_closure_path_info(Some(path), entry))
+        .collect()
+    },
+    _ => Vec::new(),
+  }
+}
+
+fn parse_closure_path_info(
+  path_key: Option<&String>,
+  entry: &serde_json::Value,
+) -> Option<ClosurePathInfo> {
+  let store_path = entry
+    .get("path")
+    .and_then(serde_json::Value::as_str)
+    .or_else(|| path_key.map(String::as_str))?
+    .to_string();
+  let raw_nar_hash = entry.get("narHash")?.as_str()?;
+  let Some(nar_hash) = canonical_nix_sha256_hash(raw_nar_hash) else {
+    tracing::warn!(
+      store_path = %store_path,
+      nar_hash = %raw_nar_hash,
+      "skipping closure path info with unsupported nar hash format"
+    );
+    return None;
+  };
+  let nar_size = entry.get("narSize")?.as_i64()?;
+  let references = entry
+    .get("references")
+    .and_then(serde_json::Value::as_array)
+    .map(|refs| {
+      refs
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect()
+    })
+    .unwrap_or_default();
+  let deriver = entry
+    .get("deriver")
+    .and_then(serde_json::Value::as_str)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned);
+  let ca = entry
+    .get("ca")
+    .and_then(serde_json::Value::as_str)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned);
+
+  Some(ClosurePathInfo {
+    store_path,
+    nar_hash,
+    nar_size,
+    references,
+    deriver,
+    ca,
+  })
 }
 
 fn first_path_info_entry(
@@ -298,6 +424,194 @@ fn first_path_info_entry(
     arr.first()
   } else {
     parsed.as_object()?.values().next()
+  }
+}
+
+fn store_hash_part(store_path: &str) -> Option<&str> {
+  let name = store_path.rsplit('/').next()?;
+  let (hash, _) = name.split_once('-')?;
+  circus_nix::NixHash::is_valid(hash).then_some(hash)
+}
+
+fn nar_hash_key_segment(nar_hash: &str) -> Option<&str> {
+  nar_hash
+    .strip_prefix("sha256:")
+    .filter(|hash| !hash.is_empty())
+}
+
+fn canonical_nix_sha256_hash(text: &str) -> Option<String> {
+  if let Some(sri) = text.strip_prefix("sha256-") {
+    let mut padded = sri.to_owned();
+    while padded.len() % 4 != 0 {
+      padded.push('=');
+    }
+    let bytes = {
+      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+      B64.decode(padded).ok()?
+    };
+    return canonical_sha256_bytes(&bytes);
+  }
+
+  let rest = text.strip_prefix("sha256:")?;
+  if rest.len() == 52 && rest.bytes().all(is_nix_base32_byte) {
+    return Some(text.to_owned());
+  }
+  if rest.len() == 64 && rest.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let bytes = hex::decode(rest).ok()?;
+    return canonical_sha256_bytes(&bytes);
+  }
+  None
+}
+
+fn canonical_sha256_bytes(bytes: &[u8]) -> Option<String> {
+  if bytes.len() != 32 {
+    return None;
+  }
+  Some(format!("sha256:{}", encode_nix_base32_sha256(bytes)))
+}
+
+const fn is_nix_base32_byte(byte: u8) -> bool {
+  matches!(
+    byte,
+    b'0'
+      ..=b'9'
+        | b'a'
+        | b'b'
+        | b'c'
+        | b'd'
+        | b'f'
+        | b'g'
+        | b'h'
+        | b'i'
+        | b'j'
+        | b'k'
+        | b'l'
+        | b'm'
+        | b'n'
+        | b'p'
+        | b'q'
+        | b'r'
+        | b's'
+        | b'v'
+        | b'w'
+        | b'x'
+        | b'y'
+        | b'z'
+  )
+}
+
+fn encode_nix_base32_sha256(bytes: &[u8]) -> String {
+  const ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
+  let len = 52;
+  let mut out = String::with_capacity(len);
+  for pos in 0..len {
+    let n = len - 1 - pos;
+    let bit = n * 5;
+    let byte = bit / 8;
+    let offset = bit % 8;
+    let mut value = u16::from(bytes[byte]) >> offset;
+    if byte + 1 < bytes.len() {
+      value |= u16::from(bytes[byte + 1]) << (8 - offset);
+    }
+    out.push(ALPHABET[(value & 0x1F) as usize] as char);
+  }
+  out
+}
+
+fn nar_url_for_path(info: &ClosurePathInfo) -> Option<String> {
+  let output_hash = store_hash_part(&info.store_path)?;
+  let nar_hash = nar_hash_key_segment(&info.nar_hash)?;
+  Some(format!("nar/{nar_hash}.nar?hash={output_hash}"))
+}
+
+async fn persist_closure_narinfos(
+  pool: &PgPool,
+  build_id: Uuid,
+  output_paths: &[String],
+  signing_config: &SigningConfig,
+  project_id: Option<Uuid>,
+) {
+  persist_closure_narinfos_with_nix(
+    Path::new("nix"),
+    pool,
+    build_id,
+    output_paths,
+    signing_config,
+    project_id,
+  )
+  .await;
+}
+
+async fn persist_closure_narinfos_with_nix(
+  nix: &Path,
+  pool: &PgPool,
+  build_id: Uuid,
+  output_paths: &[String],
+  signing_config: &SigningConfig,
+  project_id: Option<Uuid>,
+) {
+  let key_file = match &signing_config.key_file {
+    Some(kf) if signing_config.enabled && kf.exists() => kf,
+    _ => return,
+  };
+  let signing_key = match read_signing_key(key_file).await {
+    Ok(key) => key,
+    Err(e) => {
+      tracing::warn!(
+        key_file = %key_file.display(),
+        "failed to read closure narinfo signing key: {e}"
+      );
+      return;
+    },
+  };
+
+  let Some(infos) = get_recursive_path_infos_with_nix(nix, output_paths).await
+  else {
+    return;
+  };
+
+  for info in infos {
+    let Some(url) = nar_url_for_path(&info) else {
+      tracing::warn!(
+        store_path = %info.store_path,
+        nar_hash = %info.nar_hash,
+        "skipping closure narinfo with unsupported hash format"
+      );
+      continue;
+    };
+
+    let sig = sign_narinfo(
+      &signing_key,
+      &info.store_path,
+      &info.nar_hash,
+      info.nar_size,
+      &info.references,
+    );
+
+    if let Err(e) =
+      repo::narinfo_cache::upsert(pool, repo::narinfo_cache::UpsertNarInfo {
+        store_path: &info.store_path,
+        nar_hash: &info.nar_hash,
+        nar_size: info.nar_size,
+        file_hash: Some(&info.nar_hash),
+        file_size: Some(info.nar_size),
+        compression: "none",
+        url: &url,
+        deriver: info.deriver.as_deref(),
+        references: &info.references,
+        sig: Some(&sig),
+        ca: info.ca.as_deref(),
+        build_id: Some(build_id),
+        project_id,
+      })
+      .await
+    {
+      tracing::warn!(
+        build_id = %build_id,
+        store_path = %info.store_path,
+        "failed to persist closure narinfo: {e}"
+      );
+    }
   }
 }
 
@@ -1242,6 +1556,15 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           tracing::warn!(build_id = %build.id, "Failed to mark build as signed: {e}");
         }
 
+        persist_closure_narinfos(
+          pool,
+          build.id,
+          &build_result.output_paths,
+          signing_config,
+          project_context.as_ref().map(|(project, _)| project.id),
+        )
+        .await;
+
         // Push to external binary cache if configured
         let upload_failed_paths = if cache_upload_config.enabled
           && !build_result.cache_upload_handled
@@ -1419,6 +1742,261 @@ mod tests {
   use sqlx::types::Json;
 
   use super::*;
+
+  #[test]
+  fn test_canonical_nix_sha256_hash_accepts_common_formats() {
+    let bytes = [7u8; 32];
+    let nix32 = encode_nix_base32_sha256(&bytes);
+    let expected = format!("sha256:{nix32}");
+
+    assert_eq!(
+      canonical_nix_sha256_hash(&format!("sha256:{nix32}")).as_deref(),
+      Some(expected.as_str())
+    );
+    assert_eq!(
+      canonical_nix_sha256_hash(&format!("sha256:{}", hex::encode(bytes)))
+        .as_deref(),
+      Some(expected.as_str())
+    );
+    assert_eq!(
+      canonical_nix_sha256_hash(&format!("sha256-{}", {
+        use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+        B64.encode(bytes)
+      }))
+      .as_deref(),
+      Some(expected.as_str())
+    );
+  }
+
+  #[test]
+  fn test_parse_recursive_path_infos_canonicalizes_sri_nar_hashes() {
+    let bytes = [11u8; 32];
+    let sri_hash = {
+      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+      format!("sha256-{}", B64.encode(bytes))
+    };
+    let expected_hash = format!("sha256:{}", encode_nix_base32_sha256(&bytes));
+    let parsed = serde_json::json!({
+      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-linux-6.18.33-valve2": {
+        "narHash": sri_hash,
+        "narSize": 1234,
+        "references": [
+          "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-glibc"
+        ],
+        "deriver": "/nix/store/cccccccccccccccccccccccccccccccc-linux.drv",
+        "ca": null
+      }
+    });
+
+    let infos = parse_recursive_path_infos(&parsed);
+
+    assert_eq!(infos.len(), 1);
+    assert_eq!(
+      infos[0].store_path,
+      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-linux-6.18.33-valve2"
+    );
+    assert_eq!(infos[0].nar_hash, expected_hash);
+  }
+
+  #[tokio::test]
+  async fn test_persist_closure_narinfos_records_dependency_closure() {
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+      return;
+    };
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+      .max_connections(5)
+      .connect(&url)
+      .await
+      .expect("failed to connect");
+
+    sqlx::migrate!("../migrations/migrations")
+      .run(&pool)
+      .await
+      .expect("migration failed");
+
+    let project = repo::projects::create(&pool, circus_common::CreateProject {
+      name:            format!("closure-cache-{}", Uuid::new_v4().simple()),
+      description:     None,
+      repository_url:  "https://github.com/test/closure-cache".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+    })
+    .await
+    .expect("create project");
+    let jobset = repo::jobsets::create(&pool, circus_common::CreateJobset {
+      project_id:        project.id,
+      name:              "main".to_string(),
+      nix_expression:    "packages".to_string(),
+      enabled:           None,
+      flake_mode:        None,
+      check_interval:    None,
+      trigger_mode:      None,
+      branch:            None,
+      branch_pattern:    None,
+      tag_pattern:       None,
+      scheduling_shares: None,
+      state:             None,
+      keep_nr:           None,
+    })
+    .await
+    .expect("create jobset");
+    let evaluation =
+      repo::evaluations::create(&pool, circus_common::CreateEvaluation {
+        jobset_id:      jobset.id,
+        commit_hash:    Uuid::new_v4().simple().to_string(),
+        pr_number:      None,
+        pr_head_branch: None,
+        pr_base_branch: None,
+        pr_action:      None,
+      })
+      .await
+      .expect("create evaluation");
+    let build = repo::builds::create(&pool, circus_common::CreateBuild {
+      evaluation_id: evaluation.id,
+      job_name: "closure-cache-job".to_string(),
+      drv_path: format!(
+        "/nix/store/{}-closure-cache-job.drv",
+        "33333333333333333333333333333333"
+      ),
+      system: Some("x86_64-linux".to_string()),
+      outputs: None,
+      is_aggregate: None,
+      constituents: None,
+      is_fod: None,
+      fod_hash: None,
+      ..Default::default()
+    })
+    .await
+    .expect("create build");
+
+    let temp_dir = std::env::temp_dir()
+      .join(format!("circus-closure-cache-{}", Uuid::new_v4().simple()));
+    tokio::fs::create_dir_all(&temp_dir)
+      .await
+      .expect("create temp dir");
+    let key_file = temp_dir.join("signing.key");
+    let fake_nix = temp_dir.join("nix");
+
+    // A real Ed25519 key (seed + matching public half); the signer now
+    // verifies the public key against the seed, so a placeholder is rejected.
+    let signing_key = "circus-test-1:\
+                       OlzHrxDxaOpPjkL5uNXF77Xq4VRiz6Zy0LqlK6GCNqRX90gxFy2HSr/\
+                       hxqdpc2VMU2UIlDOAEBv842MCsbPfgQ=="
+      .to_string();
+    tokio::fs::write(&key_file, signing_key)
+      .await
+      .expect("write signing key");
+
+    let output_store_hash = "11111111111111111111111111111111";
+    let dep_store_hash = "22222222222222222222222222222222";
+    let output_path = format!("/nix/store/{output_store_hash}-output");
+    let dep_path = format!("/nix/store/{dep_store_hash}-dependency");
+    let output_nar_bytes = [21u8; 32];
+    let dep_nar_bytes = [22u8; 32];
+    let output_sri = {
+      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+      format!("sha256-{}", B64.encode(output_nar_bytes))
+    };
+    let dep_sri = {
+      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+      format!("sha256-{}", B64.encode(dep_nar_bytes))
+    };
+    let output_nar_hash =
+      format!("sha256:{}", encode_nix_base32_sha256(&output_nar_bytes));
+    let dep_nar_hash =
+      format!("sha256:{}", encode_nix_base32_sha256(&dep_nar_bytes));
+    let path_info = serde_json::json!({
+      output_path.clone(): {
+        "narHash": output_sri,
+        "narSize": 123,
+        "references": [dep_path.clone()],
+        "deriver": "/nix/store/44444444444444444444444444444444-output.drv",
+        "ca": null
+      },
+      dep_path.clone(): {
+        "narHash": dep_sri,
+        "narSize": 45,
+        "references": [],
+        "deriver": serde_json::Value::Null,
+        "ca": null
+      }
+    });
+    tokio::fs::write(
+      &fake_nix,
+      format!("#!/bin/sh\ncat <<'JSON'\n{path_info}\nJSON\n"),
+    )
+    .await
+    .expect("write fake nix");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+
+      let mut permissions = std::fs::metadata(&fake_nix)
+        .expect("stat fake nix")
+        .permissions();
+      permissions.set_mode(0o755);
+      std::fs::set_permissions(&fake_nix, permissions).expect("chmod fake nix");
+    }
+
+    persist_closure_narinfos_with_nix(
+      &fake_nix,
+      &pool,
+      build.id,
+      std::slice::from_ref(&output_path),
+      &SigningConfig {
+        enabled:  true,
+        key_file: Some(key_file),
+      },
+      Some(project.id),
+    )
+    .await;
+
+    let output_row = repo::narinfo_cache::get(&pool, &output_path)
+      .await
+      .expect("output narinfo row");
+    let dep_row = repo::narinfo_cache::get(&pool, &dep_path)
+      .await
+      .expect("dependency narinfo row");
+
+    assert_eq!(output_row.build_id, Some(build.id));
+    assert_eq!(output_row.project_id, Some(project.id));
+    assert_eq!(output_row.nar_hash, output_nar_hash);
+    assert_eq!(
+      output_row.url,
+      format!(
+        "nar/{}.nar?hash={output_store_hash}",
+        output_nar_hash
+          .strip_prefix("sha256:")
+          .expect("canonical nar hash should have sha256 prefix")
+      )
+    );
+    assert_eq!(output_row.references, vec![dep_path.clone()]);
+    assert!(output_row.sig.as_deref().is_some_and(|sig| {
+      sig.starts_with("circus-test-1:") && sig.len() > "circus-test-1:".len()
+    }));
+
+    // The transitive dependency is cached and signed too, not just the output.
+    assert_eq!(dep_row.nar_hash, dep_nar_hash);
+    assert!(dep_row.sig.as_deref().is_some_and(|sig| {
+      sig.starts_with("circus-test-1:") && sig.len() > "circus-test-1:".len()
+    }));
+
+    let cleanup_paths = [output_path, dep_path];
+    let _ = sqlx::query("DELETE FROM narinfo_cache WHERE store_path = ANY($1)")
+      .bind(&cleanup_paths[..])
+      .execute(&pool)
+      .await;
+    let _ = repo::builds::delete(&pool, build.id).await;
+    let _ = sqlx::query("DELETE FROM evaluations WHERE id = $1")
+      .bind(evaluation.id)
+      .execute(&pool)
+      .await;
+    let _ = repo::jobsets::delete(&pool, jobset.id).await;
+    let _ = repo::projects::delete(&pool, project.id).await;
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+  }
 
   #[test]
   fn test_cache_args_use_project_cache_and_upstreams() {
