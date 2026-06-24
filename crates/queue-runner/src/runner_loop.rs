@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use circus_common::{
   error::Result as CiResult,
-  models::{BuildStatus, JobsetState},
+  models::{Build, BuildStatus, JobsetState},
   repo,
 };
 use circus_config::HotConfig;
@@ -94,6 +94,87 @@ async fn mark_build_done(
   )
   .await
   .map(|_| ())
+}
+
+async fn publish_succeeded_output_closure(
+  pool: &PgPool,
+  worker_pool: &WorkerPool,
+  build_id: Uuid,
+  output_paths: &[String],
+) {
+  if output_paths.is_empty() {
+    return;
+  }
+  let project_id = match repo::builds::get(pool, build_id).await {
+    Ok(build) => {
+      if let Some((project, _)) = get_project_for_build(pool, &build).await {
+        Some(project.id)
+      } else {
+        tracing::warn!(
+          build_id = %build_id,
+          "could not resolve project for closure narinfo publication"
+        );
+        None
+      }
+    },
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build_id,
+        "failed to reload build for closure narinfo publication: {e}"
+      );
+      None
+    },
+  };
+  worker_pool
+    .persist_closure_narinfos(build_id, output_paths, project_id)
+    .await;
+}
+
+async fn completed_build_output_paths(
+  pool: &PgPool,
+  build: &Build,
+) -> Vec<String> {
+  let mut output_paths = match repo::build_outputs::list_for_build(
+    pool, build.id,
+  )
+  .await
+  {
+    Ok(outputs) => {
+      outputs
+        .into_iter()
+        .filter_map(|output| output.path)
+        .collect::<Vec<_>>()
+    },
+    Err(e) => {
+      tracing::warn!(
+        build_id = %build.id,
+        "failed to load completed build outputs for closure narinfo publication: {e}"
+      );
+      Vec::new()
+    },
+  };
+
+  if output_paths.is_empty()
+    && let Some(outputs) =
+      build.outputs.as_ref().and_then(|value| value.as_object())
+  {
+    output_paths.extend(
+      outputs
+        .values()
+        .filter_map(serde_json::Value::as_str)
+        .map(ToOwned::to_owned),
+    );
+  }
+
+  if output_paths.is_empty()
+    && let Some(output_path) = &build.build_output_path
+  {
+    output_paths.push(output_path.clone());
+  }
+
+  output_paths.sort();
+  output_paths.dedup();
+  output_paths
 }
 
 /// Main queue runner loop. Polls for pending builds and dispatches them to
@@ -256,6 +337,16 @@ pub async fn run(
                 .await
                 {
                   tracing::warn!(build_id = %build.id, "Failed to complete dedup build: {e}");
+                } else {
+                  let output_paths =
+                    completed_build_output_paths(&pool, &existing).await;
+                  publish_succeeded_output_closure(
+                    &pool,
+                    &worker_pool,
+                    build.id,
+                    &output_paths,
+                  )
+                  .await;
                 }
                 continue;
               },
@@ -303,6 +394,14 @@ pub async fn run(
               .await
               {
                 tracing::warn!(build_id = %build.id, "Failed to complete FOD build: {e}");
+              } else {
+                publish_succeeded_output_closure(
+                  &pool,
+                  &worker_pool,
+                  build.id,
+                  std::slice::from_ref(&output_path),
+                )
+                .await;
               }
               continue;
             }

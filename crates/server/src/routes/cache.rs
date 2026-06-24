@@ -223,6 +223,23 @@ async fn has_circus_build_product(
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
 }
 
+async fn has_signed_persisted_narinfo(
+  pool: &PgPool,
+  store_path: &str,
+  project_id: Option<Uuid>,
+) -> Result<bool, ApiError> {
+  sqlx::query_scalar::<_, bool>(
+    "SELECT EXISTS(SELECT 1 FROM narinfo_cache WHERE store_path = $1 AND sig \
+     IS NOT NULL AND btrim(sig) != '' AND ($2::uuid IS NULL OR project_id = \
+     $2))",
+  )
+  .bind(store_path)
+  .bind(project_id)
+  .fetch_one(pool)
+  .await
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+}
+
 /// As [`has_circus_build_product`], but additionally requires that the build
 /// was signed by Circus.
 async fn has_circus_signed_build_product(
@@ -301,19 +318,20 @@ async fn is_servable_harmonia_path(
   info: &ValidPathInfo,
   scope: CacheScope,
 ) -> Result<bool, ApiError> {
-  // The unauthenticated cache may only rebroadcast paths Circus built, never
-  // arbitrary store paths. Content addressing makes a path self-verifying
-  // (integrity) but not confidential, so it is no license to serve; the
-  // boundary is provenance.
+  // The unauthenticated cache only rebroadcasts paths Circus built, never
+  // arbitrary store paths.
   let store_path = info.info.store_dir.display(&info.path).to_string();
-  // A dispatched build's own .drv: agents substitute it from this cache to
-  // start the build. Derivations are content-addressed, so this must be
-  // checked before the generic CA branch below, which only covers build
-  // outputs and their direct inputs, never the derivation file itself.
+
+  // A dispatched build's own .drv, which agents substitute from this cache to
+  // start the build.
   if PathBuf::from(&store_path)
     .extension()
     .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
     && has_circus_derivation_path(pool, &store_path, scope.project_id()).await?
+  {
+    return Ok(true);
+  }
+  if has_signed_persisted_narinfo(pool, &store_path, scope.project_id()).await?
   {
     return Ok(true);
   }

@@ -25,7 +25,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
-use color_eyre::eyre::{Context as _, bail, eyre};
+use color_eyre::eyre::{Context as _, bail};
 use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
 use subtle::ConstantTimeEq as _;
@@ -897,11 +897,7 @@ impl runner::Server for RunnerImpl {
   }
 }
 
-/// Sign a narinfo fingerprint with the Nix-format signing key on disk.
-///
-/// Nix key files are one line: `<key-name>:<base64 secret>`. The secret
-/// is a 64-byte concatenation of the Ed25519 seed and public key (the
-/// canonical libsodium "secret key" layout). Output is
+/// Sign a narinfo fingerprint with the on-disk Nix signing key, returning
 /// `<key-name>:<base64 signature>`.
 async fn sign_fingerprint(
   key_file: &std::path::Path,
@@ -910,35 +906,10 @@ async fn sign_fingerprint(
   nar_size: i64,
   references: &[String],
 ) -> color_eyre::Result<String> {
-  use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-  use ring::signature::Ed25519KeyPair;
-  let raw = tokio::fs::read_to_string(key_file)
-    .await
-    .with_context(|| format!("read signing key {}", key_file.display()))?;
-  let raw = raw.trim();
-  let (name, secret_b64) = raw
-    .split_once(':')
-    .ok_or_else(|| eyre!("signing key not in `name:base64` form"))?;
-  let secret = B64
-    .decode(secret_b64)
-    .with_context(|| "signing key base64 decode")?;
-  if secret.len() != 64 {
-    bail!("signing key has {} bytes, expected 64", secret.len());
-  }
-  // libsodium layout is `seed (32) || public key (32)`. ring wants the
-  // seed alone.
-  let key = Ed25519KeyPair::from_seed_unchecked(&secret[..32])
-    .map_err(|e| eyre!("ring rejected key seed: {e}"))?;
-  // Nix builds the fingerprint from a sorted StorePathSet and re-sorts the
-  // references when verifying so the signed order must match.
-  let mut sorted_refs = references.to_vec();
-  sorted_refs.sort();
-  let fingerprint = format!(
-    "1;{store_path};{nar_hash};{nar_size};{}",
-    sorted_refs.join(",")
-  );
-  let sig = key.sign(fingerprint.as_bytes());
-  Ok(format!("{name}:{}", B64.encode(sig.as_ref())))
+  let key = circus_common::narinfo_signing::read_signing_key(key_file).await?;
+  Ok(circus_common::narinfo_signing::sign_narinfo(
+    &key, store_path, nar_hash, nar_size, references,
+  ))
 }
 
 /// Map a compression algorithm name to the conventional NAR file extension.
