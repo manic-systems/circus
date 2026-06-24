@@ -20,7 +20,7 @@ use circus_common::models::{
   User,
 };
 use circus_config::{Config, PageAccessLevel, ServerConfig, UiConfig};
-use circus_proto::nix_log::{self, LogLine};
+use cognos::internal::json::{self as nix_json, Actions, Verbosity};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
@@ -174,16 +174,16 @@ pub(super) struct QueueBuildView {
 }
 
 pub(super) struct EvalView {
-  pub(super) id:            Uuid,
-  pub(super) commit_hash:   String,
-  pub(super) commit_short:  String,
-  pub(super) status_text:   String,
-  pub(super) status_class:  String,
-  pub(super) time:          String,
-  pub(super) error_message: Option<String>,
-  pub(super) hidden:        bool,
-  pub(super) jobset_name:   String,
-  pub(super) project_name:  String,
+  pub(super) id:           Uuid,
+  pub(super) commit_hash:  String,
+  pub(super) commit_short: String,
+  pub(super) status_text:  String,
+  pub(super) status_class: String,
+  pub(super) time:         String,
+  pub(super) error_lines:  Vec<BuildErrorLine>,
+  pub(super) hidden:       bool,
+  pub(super) jobset_name:  String,
+  pub(super) project_name: String,
 }
 
 pub(super) struct EvalSummaryView {
@@ -538,34 +538,77 @@ pub(super) struct StarredJobView {
   pub(super) latest_build_id: Option<Uuid>,
 }
 
-/// A single parsed line from a nix build error stream, classed for styling.
+/// A single parsed line from a nix diagnostic stream, classed for styling.
 pub(super) struct BuildErrorLine {
   pub(super) text:  String,
   pub(super) level: &'static str,
 }
 
-fn strip_ansi(s: &str) -> String {
-  String::from_utf8_lossy(&strip_ansi_escapes::strip(s)).into_owned()
+pub(super) fn strip_ansi(s: &str) -> String {
+  let stripped =
+    String::from_utf8_lossy(&strip_ansi_escapes::strip(s)).into_owned();
+  strip_bare_csi_fragments(&stripped)
 }
 
-/// Decode a stored `internal-json` build log into plain terminal text.
-pub(super) fn decode_build_log(raw: &str) -> String {
-  let mut out = String::with_capacity(raw.len());
-  for line in raw.lines() {
-    match nix_log::parse_line(line) {
-      Some(LogLine::Message { text, .. } | LogLine::Output { text }) => {
-        out.push_str(&strip_ansi(&text));
-        out.push('\n');
-      },
-      // Plain output is passed through
-      None if !nix_log::is_envelope(line) => {
-        out.push_str(&strip_ansi(line));
-        out.push('\n');
-      },
-      None => {},
+fn strip_bare_csi_fragments(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  let mut chars = s.chars().peekable();
+
+  while let Some(ch) = chars.next() {
+    if ch == '[' {
+      let mut seq = String::from("[");
+      while let Some(next) = chars.peek().copied() {
+        if next.is_ascii_digit() || next == ';' {
+          seq.push(next);
+          chars.next();
+        } else {
+          break;
+        }
+      }
+      if chars.peek() == Some(&'m') && seq.len() > 1 {
+        chars.next();
+        continue;
+      }
+      out.push_str(&seq);
+    } else {
+      out.push(ch);
     }
   }
+
   out
+}
+
+pub(super) const fn classify_verbosity(level: Verbosity) -> &'static str {
+  match level {
+    Verbosity::Error => "error",
+    Verbosity::Warning => "warn",
+    Verbosity::Notice => "notice",
+    Verbosity::Info | Verbosity::Talkative => "info",
+    Verbosity::Chatty | Verbosity::Debug | Verbosity::Vomit => "debug",
+  }
+}
+
+pub(super) fn classify_plain_line(line: &str) -> &'static str {
+  let lower = line.trim_start().to_ascii_lowercase();
+  if lower.starts_with("error:")
+    || lower.starts_with("error ")
+    || lower.contains(" error:")
+  {
+    "error"
+  } else if lower.starts_with("warning:")
+    || lower.starts_with("warn:")
+    || lower.contains(" warning:")
+  {
+    "warn"
+  } else if lower.starts_with("trace:") {
+    "notice"
+  } else {
+    "info"
+  }
+}
+
+pub(super) fn display_log_line(raw: &str) -> String {
+  strip_ansi(raw).trim_end().to_string()
 }
 
 /// Parse a build's `error_message` field into displayable lines.
@@ -577,29 +620,36 @@ pub(super) fn decode_build_log(raw: &str) -> String {
 /// strip ANSI codes, and tag a severity class. Anything that isn't a
 /// recognisable envelope is preserved as a single line.
 pub(super) fn parse_build_error(raw: &str) -> Vec<BuildErrorLine> {
-  const fn classify(level: i64) -> &'static str {
-    match level {
-      0 => "error",
-      1 => "warn",
-      2 | 3 => "notice",
-      _ => "info",
-    }
-  }
-
   let mut lines = Vec::new();
   for line in raw.lines() {
-    let (text, level) = match nix_log::parse_line(line) {
-      Some(LogLine::Message { level, text }) => {
-        (strip_ansi(&text).trim().to_string(), classify(level))
-      },
-      Some(LogLine::Output { .. }) => continue,
-      None if nix_log::is_envelope(line) => continue,
-      None => {
+    let (text, level) = match nix_json::parse_line(line) {
+      Some(Actions::Message {
+        level,
+        msg,
+        raw_msg,
+        ..
+      }) => {
         (
-          // A plain line
-          strip_ansi(line).trim().trim_end_matches(':').trim().into(),
-          "info",
+          display_log_line(raw_msg.as_deref().unwrap_or(&msg))
+            .trim()
+            .to_string(),
+          classify_verbosity(level),
         )
+      },
+      Some(
+        Actions::Result { .. } | Actions::Start { .. } | Actions::Stop { .. },
+      ) => {
+        continue;
+      },
+      None if line.starts_with("@nix ") => continue,
+      None => {
+        let text = display_log_line(line)
+          .trim()
+          .trim_end_matches(':')
+          .trim()
+          .to_string();
+        let level = classify_plain_line(&text);
+        (text, level)
       },
     };
     if !text.is_empty() {
@@ -713,16 +763,20 @@ impl From<&Evaluation> for EvalView {
       e.commit_hash.clone()
     };
     Self {
-      id:            e.id,
-      commit_hash:   e.commit_hash.clone(),
-      commit_short:  short,
-      status_text:   text.to_string(),
-      status_class:  class.to_string(),
-      time:          e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
-      error_message: e.error_message.clone(),
-      hidden:        e.hidden,
-      jobset_name:   String::new(),
-      project_name:  String::new(),
+      id:           e.id,
+      commit_hash:  e.commit_hash.clone(),
+      commit_short: short,
+      status_text:  text.to_string(),
+      status_class: class.to_string(),
+      time:         e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      error_lines:  e
+        .error_message
+        .as_deref()
+        .map(parse_build_error)
+        .unwrap_or_default(),
+      hidden:       e.hidden,
+      jobset_name:  String::new(),
+      project_name: String::new(),
     }
   }
 }
@@ -789,7 +843,7 @@ mod tests {
     assert_eq!(lines[0].text, "error: boom");
     assert_eq!(lines[0].level, "error");
     assert_eq!(lines[1].text, "hello");
-    assert_eq!(lines[1].level, "notice");
+    assert_eq!(lines[1].level, "info");
   }
 
   #[test]
@@ -820,27 +874,5 @@ mod tests {
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].text, "warn line");
     assert_eq!(lines[0].level, "warn");
-  }
-
-  #[test]
-  fn decode_build_log_actually_decodes() {
-    let raw = [
-      r#"@nix {"action":"start","id":1}"#,
-      r#"@nix {"action":"result","id":1,"type":101,"fields":["cc -c main.c"]}"#,
-      r#"@nix {"action":"result","id":1,"type":105,"fields":[0,1]}"#,
-      r#"@nix {"action":"msg","level":0,"msg":"error: build failed"}"#,
-      "plain stdout line",
-      r#"@nix {"action":"stop","id":1}"#,
-    ]
-    .join("\n");
-
-    // 101 + msg kept
-    assert_eq!(
-      decode_build_log(&raw),
-      "cc -c main.c\nerror: build failed\nplain stdout line\n"
-    );
-
-    // ANSI escapes stripped
-    assert_eq!(decode_build_log("\x1b[1mbold\x1b[0m"), "bold\n");
   }
 }

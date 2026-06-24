@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Build {{ build.job_name }} log - circus{% endblock %}
+{% block auth %}
+    {% if !auth_name.is_empty() %}
+        <span class="auth-user">{{ auth_name }}</span>
+        <form method="POST" action="/logout">
+            <button class="btn-ghost" type="submit">Logout</button>
+        </form>
+    {% else %}
+        <a class="btn btn-secondary" href="/login">Login</a>
+    {% endif %}
+{% endblock %}
+{% block breadcrumbs %}
+    <nav class="breadcrumbs">
+        <a href="/projects">Projects</a>
+        <span class="sep">/</span>
+        <a href="/project/{{ project_id }}">{{ project_name }}</a>
+        <span class="sep">/</span>
+        <a href="/jobset/{{ jobset_id }}">{{ jobset_name }}</a>
+        <span class="sep">/</span>
+        <a href="/evaluation/{{ eval_id }}">{{ eval_commit_short }}</a>
+        <span class="sep">/</span>
+        <a href="/build/{{ build.id }}">{{ build.job_name }}</a>
+        <span class="sep">/</span>
+        <span class="current">Log</span>
+    </nav>
+{% endblock %}
+{% block content %}
+    <section class="build-log-hero">
+        <div class="build-log-title">
+            <div class="build-log-kicker">Build log</div>
+            <h1>{{ build.job_name }}</h1>
+            <div class="build-log-meta">
+                <span class="status status-{{ build.status_class }}">{{ build.status_text }}</span>
+                <span>{{ build.system }}</span>
+                {% if !build.duration.is_empty() %}<span>{{ build.duration }}</span>{% endif %}
+                <a href="/build/{{ build.id }}">Build #{{ build.id_short }}</a>
+            </div>
+        </div>
+        <div class="build-log-facts" aria-label="Build log summary">
+            <div class="build-log-fact">
+                <strong>{{ log.summary.visible_lines }}</strong>
+                <span>lines</span>
+            </div>
+            <div class="build-log-fact">
+                <strong>{{ log.summary.activity_count }}</strong>
+                <span>activities</span>
+            </div>
+            <div class="build-log-fact build-log-fact-error">
+                <strong>{{ log.summary.error_count }}</strong>
+                <span>errors</span>
+            </div>
+            <div class="build-log-fact build-log-fact-warn">
+                <strong>{{ log.summary.warning_count }}</strong>
+                <span>warnings</span>
+            </div>
+        </div>
+    </section>
+
+    <div class="log-layout">
+        <aside class="log-activities" aria-label="Build failure summary">
+            <div class="log-pane-header">
+                {% if build.status_class == "failed" %}
+                    <h2>Failure</h2>
+                {% else %}
+                    <h2>Activity</h2>
+                {% endif %}
+                <span>{{ log.summary.activity_count }} activities</span>
+            </div>
+            {% if log.activities.is_empty() %}
+                <div class="empty compact-empty">
+                    <div class="empty-title">No Nix activity events.</div>
+                </div>
+            {% else %}
+                {% if build.status_class == "failed" %}
+                    {% for activity in log.activities %}
+                        {% if activity.is_failed() %}
+                            <section class="failure-activity">
+                                <div class="failure-title">{{ activity.label }}</div>
+                                <div class="failure-meta">
+                                    <span>{{ activity.kind() }}</span>
+                                    {% if !activity.line_range.is_empty() %}
+                                        <span>{{ activity.line_range }}</span>
+                                    {% endif %}
+                                    {% if !activity.detail.is_empty() %}<span>{{ activity.detail }}</span>{% endif %}
+                                </div>
+                            </section>
+                        {% endif %}
+                    {% endfor %}
+                    <div class="activity-context-title">Context</div>
+                {% endif %}
+                <ol class="activity-list">
+                    {% for activity in log.activities %}
+                        {% if !activity.is_failed() %}
+                            <li class="activity-item activity-{{ activity.status_class() }}"
+                                style="--activity-depth: {{ activity.depth }}">
+                                <span class="activity-dot"></span>
+                                <div class="activity-body">
+                                    <span class="activity-label">{{ activity.label }}</span>
+                                    <div class="activity-meta">
+                                        <span>{{ activity.kind() }}</span>
+                                        <span>{{ activity.status() }}</span>
+                                        {% if !activity.detail.is_empty() %}
+                                            <span>{{ activity.detail }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+                </ol>
+            {% endif %}
+        </aside>
+
+        <section class="log-stream" aria-label="Build log lines">
+            <div class="log-pane-header">
+                <h2>Log Stream</h2>
+                <span>Nix output</span>
+            </div>
+            {% if log.lines.is_empty() %}
+                <div class="empty compact-empty">
+                    <div class="empty-title">No displayable log lines.</div>
+                </div>
+            {% else %}
+                <ol class="log-lines">
+                    {% for line in log.lines %}
+                        {% if line.is_phase() %}
+                            <li class="log-line log-line-phase">
+                                <span class="log-line-number">{{ line.number }}</span>
+                                <span class="log-phase-label">{{ line.text }}</span>
+                            </li>
+                        {% else %}
+                            <li class="log-line log-line-{{ line.level_class() }}">
+                                <span class="log-line-number">{{ line.number }}</span>
+                                <span class="log-line-text">{{ line.text }}</span>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+                </ol>
+            {% endif %}
+        </section>
+    </div>
+{% endblock %}

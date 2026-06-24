@@ -55,7 +55,8 @@ circus-nix.workspace          = true
 circus-notification.workspace = true
 circus-s3.workspace           = true
 
-regex.workspace = true
+cognos.workspace = true
+regex.workspace  = true
 
 [dev-dependencies]
 serde_urlencoded = "0.7"

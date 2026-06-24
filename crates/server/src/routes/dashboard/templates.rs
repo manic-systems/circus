@@ -20,19 +20,22 @@ use circus_common::models::{
 use uuid::Uuid;
 
 pub(super) use super::shared::UiTemplateConfig;
-use super::shared::{
-  ApiKeyView,
-  BuildView,
-  EvalSummaryView,
-  EvalView,
-  JobStatusColumn,
-  JobStatusRow,
-  ProjectSummaryView,
-  QueueBuildView,
-  QueueSystemView,
-  StarredJobView,
-  UserView,
-  WorkerSummaryView,
+use super::{
+  build_log::BuildLogView,
+  shared::{
+    ApiKeyView,
+    BuildView,
+    EvalSummaryView,
+    EvalView,
+    JobStatusColumn,
+    JobStatusRow,
+    ProjectSummaryView,
+    QueueBuildView,
+    QueueSystemView,
+    StarredJobView,
+    UserView,
+    WorkerSummaryView,
+  },
 };
 use crate::permissions::UiPermissions;
 
@@ -179,6 +182,22 @@ pub(super) struct BuildTemplate {
   pub(super) products:          Vec<BuildProduct>,
   pub(super) dependencies:      Vec<BuildView>,
   pub(super) dependents:        Vec<BuildView>,
+  pub(super) eval_id:           Uuid,
+  pub(super) eval_commit_short: String,
+  pub(super) jobset_id:         Uuid,
+  pub(super) jobset_name:       String,
+  pub(super) project_id:        Uuid,
+  pub(super) project_name:      String,
+  pub(super) is_admin:          bool,
+  pub(super) auth_name:         String,
+}
+
+#[derive(Template)]
+#[template(path = "build_log.html")]
+pub(super) struct BuildLogTemplate {
+  pub(super) ui:                UiTemplateConfig,
+  pub(super) build:             BuildView,
+  pub(super) log:               BuildLogView,
   pub(super) eval_id:           Uuid,
   pub(super) eval_commit_short: String,
   pub(super) jobset_id:         Uuid,

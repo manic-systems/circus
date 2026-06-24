@@ -970,6 +970,7 @@ dependencies = [
  "circus-proto",
  "circus-s3",
  "clap",
+ "cognos",
  "color-eyre",
  "config",
  "dashmap",
@@ -1086,6 +1087,17 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
+name = "cognos"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cde1effdc2ca9df723c82f6b5f394de16cd8ca226f5ca6c6f5313f7f98dcf51c"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_repr",
+]
 
 [[package]]
 name = "color-eyre"
@@ -3955,6 +3967,17 @@ dependencies = [
  "itoa",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

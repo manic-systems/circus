@@ -13,7 +13,7 @@ use std::{
 
 use axum::{
   extract::{Path, Query, State},
-  http::{StatusCode, header},
+  http::StatusCode,
   response::{Html, IntoResponse, Response},
 };
 use circus_common::models::{Build, BuildStatus};
@@ -21,6 +21,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::{
+  build_log::parse_build_log,
   shared::{
     BuildView,
     DashboardContext,
@@ -36,7 +37,6 @@ use super::{
     WorkerSummaryView,
     build_view,
     build_view_with_context,
-    decode_build_log,
     enforce_page_access,
     eval_badge,
     eval_view,
@@ -45,6 +45,7 @@ use super::{
     status_badge,
   },
   templates::{
+    BuildLogTemplate,
     BuildTemplate,
     BuildsTemplate,
     EvaluationTemplate,
@@ -878,7 +879,7 @@ pub(super) async fn build_page(
   tmpl.render_html_or_500()
 }
 
-/// Serve a build's full log as plain text.
+/// Render a build's full log as a structured dashboard page.
 pub(super) async fn build_log(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
@@ -900,6 +901,23 @@ pub(super) async fn build_log(
   {
     return Ok((StatusCode::NOT_FOUND, "Build not found").into_response());
   }
+
+  let Ok(eval) =
+    circus_common::repo::evaluations::get(&state.pool, build.evaluation_id)
+      .await
+  else {
+    return Ok((StatusCode::NOT_FOUND, "Evaluation not found").into_response());
+  };
+  let Ok(jobset) =
+    circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
+  else {
+    return Ok((StatusCode::NOT_FOUND, "Jobset not found").into_response());
+  };
+  let Ok(project) =
+    circus_common::repo::projects::get(&state.pool, jobset.project_id).await
+  else {
+    return Ok((StatusCode::NOT_FOUND, "Project not found").into_response());
+  };
 
   let Some(path) = build.log_path.as_deref().filter(|p| !p.is_empty()) else {
     return Ok(
@@ -923,13 +941,25 @@ pub(super) async fn build_log(
     );
   };
 
-  Ok(
-    (
-      [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-      decode_build_log(&raw),
-    )
-      .into_response(),
-  )
+  let eval_commit_short = if eval.commit_hash.len() > 12 {
+    eval.commit_hash[..12].to_string()
+  } else {
+    eval.commit_hash.clone()
+  };
+  let tmpl = BuildLogTemplate {
+    ui: ui_config(&state),
+    build: build_view(&build),
+    log: parse_build_log(&raw),
+    eval_id: eval.id,
+    eval_commit_short,
+    jobset_id: jobset.id,
+    jobset_name: jobset.name,
+    project_id: project.id,
+    project_name: project.name,
+    is_admin: ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+  };
+  tmpl.render_html_or_500().map(IntoResponse::into_response)
 }
 
 #[cfg(test)]

@@ -51,34 +51,44 @@
     <p>
         <strong>Time:</strong> {{ eval.time }}
     </p>
-    {% match eval.error_message %}
-        {% when Some with (err) %}
-            <div class="flash-message flash-error">
-                <strong>Evaluation error</strong>
-                <pre class="error-detail">
-{{ err }}</pre>
+    {% if !eval.error_lines.is_empty() %}
+        <section class="evaluation-diagnostics">
+            <div class="section-heading">
+                <h2>Evaluation Error</h2>
+                <span>Nix diagnostics</span>
             </div>
-        {% when None %}
-    {% endmatch %}
+            <ul class="error-log">
+                {% for line in eval.error_lines %}
+                    <li class="error-log-line error-log-{{ line.level }}">{{ line.text }}</li>
+                {% endfor %}
+            </ul>
+        </section>
+    {% endif %}
 
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value">{{ succeeded_count }}</div>
-            <div class="stat-label">Succeeded</div>
+    <section class="outcome-panel">
+        <div class="section-heading">
+            <h2>Build Outcomes</h2>
+            <span>This evaluation</span>
         </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ failed_count }}</div>
-            <div class="stat-label">Failed</div>
+        <div class="outcome-grid">
+            <div class="outcome-card outcome-success">
+                <div class="stat-value">{{ succeeded_count }}</div>
+                <div class="stat-label">Succeeded</div>
+            </div>
+            <div class="outcome-card outcome-failed">
+                <div class="stat-value">{{ failed_count }}</div>
+                <div class="stat-label">Failed</div>
+            </div>
+            <div class="outcome-card outcome-running">
+                <div class="stat-value">{{ running_count }}</div>
+                <div class="stat-label">Running</div>
+            </div>
+            <div class="outcome-card outcome-pending">
+                <div class="stat-value">{{ pending_count }}</div>
+                <div class="stat-label">Pending</div>
+            </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ running_count }}</div>
-            <div class="stat-label">Running</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ pending_count }}</div>
-            <div class="stat-label">Pending</div>
-        </div>
-    </div>
+    </section>
 
     <h2>Builds</h2>
     {% if builds.is_empty() %}

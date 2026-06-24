@@ -19,6 +19,7 @@ use crate::state::AppState;
 
 mod admin;
 mod auth;
+mod build_log;
 mod pages;
 mod preview;
 mod shared;
