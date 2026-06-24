@@ -13,6 +13,7 @@ use sqlx::types::Json as SqlxJson;
 use uuid::Uuid;
 
 use super::super::{
+  build_log::parse_build_log,
   shared::{
     BuildErrorLine,
     BuildView,
@@ -25,7 +26,7 @@ use super::super::{
     QueueBuildView,
     short_uuid,
   },
-  templates::UiTemplateConfig,
+  templates::{BuildLogTemplate, UiTemplateConfig},
 };
 use crate::permissions::UiPermissions;
 
@@ -122,6 +123,7 @@ pub(super) fn build_view(
   class: &str,
 ) -> BuildView {
   let build_id = id(n);
+  let system = job.split('.').nth(1).unwrap_or("x86_64-linux");
   BuildView {
     id:            build_id,
     id_short:      short_uuid(build_id),
@@ -132,7 +134,7 @@ pub(super) fn build_view(
     jobset_name:   "packages".into(),
     status_text:   status.into(),
     status_class:  class.into(),
-    system:        "x86_64-linux".into(),
+    system:        system.into(),
     created_at:    "2026-06-18 11:45".into(),
     started_at:    "2026-06-18 11:46".into(),
     completed_at:  if class == "running" {
@@ -149,8 +151,14 @@ pub(super) fn build_view(
     priority:      100,
     is_aggregate:  false,
     signed:        true,
-    drv_path:      "/nix/store/preview-circus-server.drv".into(),
-    output_path:   "/nix/store/preview-circus-server".into(),
+    drv_path:      format!(
+      "/nix/store/8s69x68y-{}.drv",
+      job.rsplit('.').next().unwrap_or(job)
+    ),
+    output_path:   format!(
+      "/nix/store/lq2n7cav-{}",
+      job.rsplit('.').next().unwrap_or(job)
+    ),
     error_message: if class == "failed" {
       "error: builder failed with exit code 1".into()
     } else {
@@ -168,18 +176,119 @@ pub(super) fn build_view(
   }
 }
 
-pub(super) fn builds_fixture() -> Vec<BuildView> {
-  vec![
-    build_view(
-      4,
-      "packages.x86_64-linux.circus-server",
-      "Succeeded",
-      "completed",
-    ),
-    build_view(5, "packages.aarch64-linux.server", "Failed", "failed"),
-    build_view(6, "checks.x86_64-linux.integration", "Running", "running"),
-  ]
+struct PreviewBuildFixture {
+  n:       u128,
+  job:     &'static str,
+  status:  &'static str,
+  class:   &'static str,
+  raw_log: Option<&'static str>,
 }
+
+impl PreviewBuildFixture {
+  fn build(&self) -> BuildView {
+    build_view(self.n, self.job, self.status, self.class)
+  }
+}
+
+const PREVIEW_BUILDS: &[PreviewBuildFixture] = &[
+  PreviewBuildFixture {
+    n:       4,
+    job:     "packages.x86_64-linux.circus-server",
+    status:  "Succeeded",
+    class:   "completed",
+    raw_log: Some(PREVIEW_SUCCEEDED_BUILD_LOG),
+  },
+  PreviewBuildFixture {
+    n:       5,
+    job:     "packages.aarch64-linux.circus-server",
+    status:  "Failed",
+    class:   "failed",
+    raw_log: Some(PREVIEW_FAILED_BUILD_LOG),
+  },
+  PreviewBuildFixture {
+    n:       6,
+    job:     "checks.x86_64-linux.integration",
+    status:  "Running",
+    class:   "running",
+    raw_log: Some(PREVIEW_RUNNING_BUILD_LOG),
+  },
+];
+
+fn build_fixture_by_id(build_id: Uuid) -> Option<&'static PreviewBuildFixture> {
+  PREVIEW_BUILDS
+    .iter()
+    .find(|fixture| id(fixture.n) == build_id)
+}
+
+pub(super) fn builds_fixture() -> Vec<BuildView> {
+  PREVIEW_BUILDS
+    .iter()
+    .map(PreviewBuildFixture::build)
+    .collect()
+}
+
+pub(super) fn build_log_template(build_id: Uuid) -> Option<BuildLogTemplate> {
+  let fixture = build_fixture_by_id(build_id)?;
+  let raw_log = fixture.raw_log?;
+  Some(BuildLogTemplate {
+    ui:                ui(),
+    build:             fixture.build(),
+    log:               parse_build_log(raw_log),
+    eval_id:           id(3),
+    eval_commit_short: "9f2c7a113bad".into(),
+    jobset_id:         id(2),
+    jobset_name:       "packages".into(),
+    project_id:        id(1),
+    project_name:      "circus".into(),
+    is_admin:          true,
+    auth_name:         "preview-admin".into(),
+  })
+}
+
+const PREVIEW_SUCCEEDED_BUILD_LOG: &str = r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"building 1 derivations","type":104,"fields":[1]}
+@nix {"action":"start","id":2,"level":3,"parent":1,"text":"copying path '/nix/store/wpl2q3yx-rustc-1.88.0' from 'https://cache.nixos.org'","type":108,"fields":["/nix/store/wpl2q3yx-rustc-1.88.0","https://cache.nixos.org"]}
+@nix {"action":"stop","id":2}
+@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/8s69x68y-circus-server-0.12.0.drv'","type":105,"fields":["/nix/store/8s69x68y-circus-server-0.12.0.drv","builder-01",1,1]}
+@nix {"action":"result","id":10,"type":104,"fields":["unpackPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["unpacking source archive /nix/store/vv1q7x3-circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":101,"fields":["source root is circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":104,"fields":["patchPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["applying patch /nix/store/h3ad2x8q-use-workspace-cargo-lock.patch"]}
+@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["cargo build --locked --package circus-server --release"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-common v0.12.0 (/build/source/crates/common)"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-server v0.12.0 (/build/source/crates/server)"]}
+@nix {"action":"result","id":10,"type":104,"fields":["installPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["installing target/release/circus-server to /nix/store/lq2n7cav-circus-server-0.12.0/bin"]}
+@nix {"action":"stop","id":10}
+@nix {"action":"stop","id":1}"#;
+
+const PREVIEW_FAILED_BUILD_LOG: &str = r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"building 1 derivations","type":104,"fields":[1]}
+@nix {"action":"start","id":2,"level":3,"parent":1,"text":"copying path '/nix/store/wpl2q3yx-rustc-1.88.0' from 'https://cache.nixos.org'","type":108,"fields":["/nix/store/wpl2q3yx-rustc-1.88.0","https://cache.nixos.org"]}
+@nix {"action":"stop","id":2}
+@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv'","type":105,"fields":["/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv","builder-aarch64-01",1,1]}
+@nix {"action":"result","id":10,"type":104,"fields":["unpackPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["unpacking source archive /nix/store/vv1q7x3-circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":101,"fields":["source root is circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["cargo build --locked --package circus-server --target aarch64-unknown-linux-gnu --release"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-common v0.12.0 (/build/source/crates/common)"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-server v0.12.0 (/build/source/crates/server)"]}
+@nix {"action":"msg","level":1,"msg":"warning: cargo is rebuilding the workspace because Cargo.lock changed"}
+@nix {"action":"result","id":10,"type":101,"fields":["error: linking with `aarch64-unknown-linux-gnu-cc` failed: exit status: 1"]}
+@nix {"action":"result","id":10,"type":101,"fields":["  = note: collect2: fatal error: ld terminated with signal 9 [Killed]"]}
+@nix {"action":"result","id":10,"type":101,"fields":["          compilation terminated."]}
+@nix {"action":"result","id":10,"type":101,"fields":["error: could not compile `circus-server` due to previous error; 1 warning emitted"]}
+@nix {"action":"msg","level":0,"msg":"error: builder for '/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv' failed with exit code 101"}
+@nix {"action":"stop","id":10}
+@nix {"action":"stop","id":1}"#;
+
+const PREVIEW_RUNNING_BUILD_LOG: &str = r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"running integration checks","type":104,"fields":[1]}
+@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/mx19g4kq-circus-integration-check.drv'","type":105,"fields":["/nix/store/mx19g4kq-circus-integration-check.drv","builder-01",1,1]}
+@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["cargo test --workspace --test integration"]}
+@nix {"action":"result","id":10,"type":101,"fields":["running 12 integration tests"]}
+@nix {"action":"msg","level":3,"msg":"test evaluator_schedules_builds ... ok"}"#;
 
 pub(super) fn queue_build(
   n: u128,
@@ -211,16 +320,16 @@ pub(super) fn queue_build(
 
 pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
   EvalView {
-    id:            id(n),
-    commit_hash:   "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
-    commit_short:  "9f2c7a113bad".into(),
-    status_text:   status.into(),
-    status_class:  class.into(),
-    time:          "2026-06-18 11:42".into(),
-    error_message: None,
-    hidden:        false,
-    jobset_name:   "packages".into(),
-    project_name:  "circus".into(),
+    id:           id(n),
+    commit_hash:  "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
+    commit_short: "9f2c7a113bad".into(),
+    status_text:  status.into(),
+    status_class: class.into(),
+    time:         "2026-06-18 11:42".into(),
+    error_lines:  Vec::new(),
+    hidden:       false,
+    jobset_name:  "packages".into(),
+    project_name: "circus".into(),
   }
 }
 

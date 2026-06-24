@@ -6,6 +6,7 @@ use askama::Template;
 use axum::{
   Router,
   body::Body,
+  extract::Path,
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
   routing::{delete, get, post, put},
@@ -155,19 +156,11 @@ async fn preview_news_action() -> Redirect {
   Redirect::to("/news")
 }
 
-async fn build_log() -> Response {
-  Response::builder()
-    .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-    .header(header::CACHE_CONTROL, "no-cache")
-    .body(Body::from(
-      "preview build log\n[1/2] evaluating derivation\n[2/2] build completed\n",
-    ))
-    .unwrap_or_else(|error| {
-      Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::from(format!("response builder failed: {error}")))
-        .unwrap_or_else(|_| Response::new(Body::empty()))
-    })
+async fn build_log(Path(id): Path<uuid::Uuid>) -> Response {
+  fixtures::build_log_template(id).map_or_else(
+    || (StatusCode::NOT_FOUND, "Build log not found").into_response(),
+    render,
+  )
 }
 
 async fn product_download() -> Response {

@@ -97,7 +97,7 @@ pub(super) async fn home() -> Response {
     recent_builds:      builds_fixture(),
     failed_builds_list: vec![fixtures::build_view(
       5,
-      "packages.aarch64-linux.server",
+      "packages.aarch64-linux.circus-server",
       "Failed",
       "failed",
     )],
