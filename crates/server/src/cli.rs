@@ -8,6 +8,7 @@ use tokio::net::TcpListener;
 
 use crate::{
   routes,
+  signing,
   state::{AppState, NixStore},
 };
 
@@ -159,6 +160,24 @@ where
   let nix_store = NixStore::new(config.nix.store_dir.clone())
     .map_err(|e| color_eyre::eyre::eyre!(e))?;
 
+  // Fail fast on a signing config whose key cannot be used.
+  let cache_public_key = match signing::signing_public_key(&config) {
+    Some(key) => {
+      Some(Arc::new(key.parse().map_err(|e| {
+        color_eyre::eyre::eyre!(
+          "signing.key_file yields an unusable public key: {e:?}"
+        )
+      })?))
+    },
+    None if config.signing.enabled && config.signing.key_file.is_some() => {
+      return Err(color_eyre::eyre::eyre!(
+        "signing is enabled but no public key could be derived from \
+         signing.key_file"
+      ));
+    },
+    None => None,
+  };
+
   let state = AppState {
     pool: db.pool().clone(),
     nix_store,
@@ -169,6 +188,7 @@ where
     csrf_secret: Arc::new(csrf_secret),
     email_regex,
     cache_traffic: Arc::new(dashmap::DashMap::new()),
+    cache_public_key,
   };
 
   // Start background session cleanup to prevent memory leaks

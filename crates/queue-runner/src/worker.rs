@@ -1785,6 +1785,11 @@ mod tests {
         ],
         "deriver": "/nix/store/cccccccccccccccccccccccccccccccc-linux.drv",
         "ca": null
+      },
+      "/nix/store/dddddddddddddddddddddddddddddddd-bad-hash": {
+        "narHash": "md5:0123456789abcdef0123456789abcdef",
+        "narSize": 99,
+        "references": []
       }
     });
 
@@ -1879,12 +1884,10 @@ mod tests {
     let key_file = temp_dir.join("signing.key");
     let fake_nix = temp_dir.join("nix");
 
-    // A real Ed25519 key (seed + matching public half); the signer now
-    // verifies the public key against the seed, so a placeholder is rejected.
-    let signing_key = "circus-test-1:\
-                       OlzHrxDxaOpPjkL5uNXF77Xq4VRiz6Zy0LqlK6GCNqRX90gxFy2HSr/\
-                       hxqdpc2VMU2UIlDOAEBv842MCsbPfgQ=="
-      .to_string();
+    let signing_key = {
+      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+      format!("circus-test-1:{}", B64.encode([1u8; 64]))
+    };
     tokio::fs::write(&key_file, signing_key)
       .await
       .expect("write signing key");
@@ -1969,7 +1972,7 @@ mod tests {
         "nar/{}.nar?hash={output_store_hash}",
         output_nar_hash
           .strip_prefix("sha256:")
-          .expect("canonical nar hash should have sha256 prefix")
+          .expect("test nar hash should use sha256 prefix")
       )
     );
     assert_eq!(output_row.references, vec![dep_path.clone()]);
@@ -1977,23 +1980,14 @@ mod tests {
       sig.starts_with("circus-test-1:") && sig.len() > "circus-test-1:".len()
     }));
 
-    // The transitive dependency is cached and signed too, not just the output.
+    assert_eq!(dep_row.build_id, Some(build.id));
+    assert_eq!(dep_row.project_id, Some(project.id));
     assert_eq!(dep_row.nar_hash, dep_nar_hash);
+    assert!(dep_row.references.is_empty());
     assert!(dep_row.sig.as_deref().is_some_and(|sig| {
       sig.starts_with("circus-test-1:") && sig.len() > "circus-test-1:".len()
     }));
 
-    let cleanup_paths = [output_path, dep_path];
-    let _ = sqlx::query("DELETE FROM narinfo_cache WHERE store_path = ANY($1)")
-      .bind(&cleanup_paths[..])
-      .execute(&pool)
-      .await;
-    let _ = repo::builds::delete(&pool, build.id).await;
-    let _ = sqlx::query("DELETE FROM evaluations WHERE id = $1")
-      .bind(evaluation.id)
-      .execute(&pool)
-      .await;
-    let _ = repo::jobsets::delete(&pool, jobset.id).await;
     let _ = repo::projects::delete(&pool, project.id).await;
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
   }

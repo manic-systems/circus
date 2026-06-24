@@ -7,7 +7,10 @@ use circus_common::{
 };
 use circus_config::HotConfig;
 use sqlx::PgPool;
-use tokio::sync::{Notify, RwLock};
+use tokio::{
+  sync::{Notify, RwLock},
+  task::JoinSet,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -136,6 +139,7 @@ async fn publish_succeeded_output_closure(
     .await;
 }
 
+/// Collects the build's output paths from the first source that has any.
 async fn completed_build_output_paths(
   pool: &PgPool,
   build: &Build,
@@ -183,6 +187,36 @@ async fn completed_build_output_paths(
   output_paths
 }
 
+fn spawn_succeeded_output_closure_publication(
+  tasks: &mut JoinSet<()>,
+  pool: &PgPool,
+  worker_pool: &Arc<WorkerPool>,
+  build_id: Uuid,
+  output_paths: Vec<String>,
+) {
+  let pool = pool.clone();
+  let worker_pool = Arc::clone(worker_pool);
+  // Published off the scheduler loop, but tracked so a panic surfaces in
+  // reap_closure_publications.
+  tasks.spawn(async move {
+    publish_succeeded_output_closure(
+      &pool,
+      &worker_pool,
+      build_id,
+      &output_paths,
+    )
+    .await;
+  });
+}
+
+fn reap_closure_publications(tasks: &mut JoinSet<()>) {
+  while let Some(result) = tasks.try_join_next() {
+    if let Err(e) = result {
+      tracing::warn!("closure narinfo publication task failed: {e}");
+    }
+  }
+}
+
 /// Main queue runner loop. Polls for pending builds and dispatches them to
 /// workers.
 ///
@@ -200,10 +234,12 @@ pub async fn run(
 ) -> color_eyre::Result<()> {
   let mut last_orphan_reset = tokio::time::Instant::now();
   let orphan_reset_interval = Duration::from_mins(1);
+  let mut closure_publications: JoinSet<()> = JoinSet::new();
   reset_orphaned_builds(&pool, worker_pool.active_builds()).await;
   prune_stale_ephemeral_sessions(&pool).await;
 
   loop {
+    reap_closure_publications(&mut closure_publications);
     if last_orphan_reset.elapsed() >= orphan_reset_interval {
       reset_orphaned_builds(&pool, worker_pool.active_builds()).await;
       prune_stale_ephemeral_sessions(&pool).await;
@@ -346,13 +382,13 @@ pub async fn run(
                 } else {
                   let output_paths =
                     completed_build_output_paths(&pool, &existing).await;
-                  publish_succeeded_output_closure(
+                  spawn_succeeded_output_closure_publication(
+                    &mut closure_publications,
                     &pool,
                     &worker_pool,
                     build.id,
-                    &output_paths,
-                  )
-                  .await;
+                    output_paths,
+                  );
                 }
                 continue;
               },
@@ -401,13 +437,13 @@ pub async fn run(
               {
                 tracing::warn!(build_id = %build.id, "Failed to complete FOD build: {e}");
               } else {
-                publish_succeeded_output_closure(
+                spawn_succeeded_output_closure_publication(
+                  &mut closure_publications,
                   &pool,
                   &worker_pool,
                   build.id,
-                  std::slice::from_ref(&output_path),
-                )
-                .await;
+                  vec![output_path.clone()],
+                );
               }
               continue;
             }

@@ -47,6 +47,7 @@ fn build_app(pool: sqlx::PgPool) -> axum::Router {
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
     cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
+    cache_public_key: None,
   };
   circus_server::routes::router(state, &config)
 }
@@ -71,6 +72,7 @@ async fn test_router_no_duplicate_routes() {
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
     cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
+    cache_public_key: None,
   };
 
   let _app = circus_server::routes::router(state, &config);
@@ -93,6 +95,7 @@ fn build_app_with_config(
     csrf_secret: std::sync::Arc::new([0u8; 32]),
     email_regex: None,
     cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
+    cache_public_key: None,
   };
   circus_server::routes::router(state, config)
 }
@@ -852,6 +855,144 @@ async fn test_project_cache_serves_only_owned_persisted_narinfo() {
 }
 
 #[tokio::test]
+async fn test_project_cache_keeps_shared_narinfo_for_each_owner() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_a_name = format!("shared-a-{}", uuid::Uuid::new_v4().simple());
+  let project_a = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            project_a_name.clone(),
+      repository_url:  "https://github.com/test/shared-a".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+  let project_b_name = format!("shared-b-{}", uuid::Uuid::new_v4().simple());
+  let project_b = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            project_b_name.clone(),
+      repository_url:  "https://github.com/test/shared-b".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let store_path = format!("/nix/store/{hash}-shared-cache-test");
+  let references = Vec::new();
+  for project_id in [project_a.id, project_b.id] {
+    circus_common::repo::narinfo_cache::upsert(
+      &pool,
+      circus_common::repo::narinfo_cache::UpsertNarInfo {
+        store_path:  &store_path,
+        nar_hash:
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        nar_size:    1,
+        file_hash:   None,
+        file_size:   None,
+        compression: "none",
+        url:         &format!("nar/{hash}.nar"),
+        deriver:     None,
+        references:  &references,
+        sig:         Some("circus:test-signature"),
+        ca:          None,
+        build_id:    None,
+        project_id:  Some(project_id),
+      },
+    )
+    .await
+    .unwrap();
+  }
+
+  let config = circus_config::Config::default();
+  let app = build_app_with_config(pool, &config);
+
+  for project_name in [project_a_name, project_b_name] {
+    let response = app
+      .clone()
+      .oneshot(
+        Request::builder()
+          .uri(format!("/projects/{project_name}/nix-cache/{hash}.narinfo"))
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+  }
+}
+
+#[tokio::test]
+async fn test_cache_narinfo_local_url_requires_local_store_path() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let temp_root = std::env::temp_dir().join(format!(
+    "circus-cache-missing-store-{}",
+    uuid::Uuid::new_v4().simple()
+  ));
+  let store_dir = temp_root.join("store");
+  tokio::fs::create_dir_all(&store_dir).await.unwrap();
+
+  let store_hash = uuid::Uuid::new_v4().simple().to_string();
+  let nar_hash_bare = "0".repeat(52);
+  let nar_hash = format!("sha256:{nar_hash_bare}");
+  let store_path = store_dir.join(format!("{store_hash}-missing-cache-test"));
+  let store_path = store_path.to_string_lossy().to_string();
+
+  circus_common::repo::narinfo_cache::upsert(
+    &pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path:  &store_path,
+      nar_hash:    &nar_hash,
+      nar_size:    10,
+      file_hash:   Some(&nar_hash),
+      file_size:   Some(10),
+      compression: "none",
+      url:         &format!("nar/{nar_hash_bare}.nar?hash={store_hash}"),
+      deriver:     None,
+      references:  &[],
+      sig:         Some("circus:test-signature"),
+      ca:          None,
+      build_id:    None,
+      project_id:  None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let mut config = circus_config::Config::default();
+  config.cache.enabled = true;
+  config.nix.store_dir = store_dir;
+  let app = build_app_with_config(pool, &config);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!("/nix-cache/{store_hash}.narinfo"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+  let _ = tokio::fs::remove_dir_all(&temp_root).await;
+}
+
+#[tokio::test]
 async fn test_cache_nar_invalid_hash_returns_404() {
   let Some(pool) = get_pool().await else {
     return;
@@ -886,6 +1027,103 @@ async fn test_cache_nar_invalid_hash_returns_404() {
     .await
     .unwrap();
   assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_cache_nar_route_accepts_signed_persisted_narinfo_provenance() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let temp_root = std::env::temp_dir().join(format!(
+    "circus-cache-store-{}",
+    uuid::Uuid::new_v4().simple()
+  ));
+  let store_dir = temp_root.join("store");
+  let db_dir = temp_root.join("var/nix/db");
+  tokio::fs::create_dir_all(&store_dir).await.unwrap();
+  tokio::fs::create_dir_all(&db_dir).await.unwrap();
+
+  let store_hash = "0123456789abcdfghijklmnpqrsvwxyz";
+  let nar_hash_bare = "0".repeat(52);
+  let nar_hash = format!("sha256:{nar_hash_bare}");
+  let store_path = store_dir.join(format!("{store_hash}-signed-cache-test"));
+  tokio::fs::write(&store_path, b"cache test").await.unwrap();
+  let store_path = store_path.to_string_lossy().to_string();
+
+  let sqlite = sqlx::SqlitePool::connect_with(
+    sqlx::sqlite::SqliteConnectOptions::new()
+      .filename(db_dir.join("db.sqlite"))
+      .create_if_missing(true),
+  )
+  .await
+  .unwrap();
+  sqlx::query(
+    "CREATE TABLE ValidPaths (id INTEGER PRIMARY KEY, path TEXT NOT NULL, \
+     hash TEXT NOT NULL, registrationTime INTEGER NOT NULL, deriver TEXT, \
+     narSize INTEGER, ultimate INTEGER, sigs TEXT, ca TEXT)",
+  )
+  .execute(&sqlite)
+  .await
+  .unwrap();
+  sqlx::query(
+    "CREATE TABLE Refs (referrer INTEGER NOT NULL, reference INTEGER NOT NULL)",
+  )
+  .execute(&sqlite)
+  .await
+  .unwrap();
+  sqlx::query(
+    "INSERT INTO ValidPaths (id, path, hash, registrationTime, deriver, \
+     narSize, ultimate, sigs, ca) VALUES (1, $1, $2, 1, NULL, 10, 0, NULL, \
+     NULL)",
+  )
+  .bind(&store_path)
+  .bind(&nar_hash)
+  .execute(&sqlite)
+  .await
+  .unwrap();
+  sqlite.close().await;
+
+  circus_common::repo::narinfo_cache::upsert(
+    &pool,
+    circus_common::repo::narinfo_cache::UpsertNarInfo {
+      store_path:  &store_path,
+      nar_hash:    &nar_hash,
+      nar_size:    10,
+      file_hash:   Some(&nar_hash),
+      file_size:   Some(10),
+      compression: "none",
+      url:         &format!("nar/{nar_hash_bare}.nar?hash={store_hash}"),
+      deriver:     None,
+      references:  &[],
+      sig:         Some("circus:test-signature"),
+      ca:          None,
+      build_id:    None,
+      project_id:  None,
+    },
+  )
+  .await
+  .unwrap();
+
+  let mut config = circus_config::Config::default();
+  config.cache.enabled = true;
+  config.nix.store_dir = store_dir;
+  let app = build_app_with_config(pool, &config);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri(format!(
+          "/nix-cache/nar/{nar_hash_bare}.nar?hash={store_hash}"
+        ))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let _ = tokio::fs::remove_dir_all(&temp_root).await;
 }
 
 #[tokio::test]
