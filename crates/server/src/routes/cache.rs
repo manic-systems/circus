@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, num::NonZero, path::PathBuf, time::Duration};
+use std::{
+  collections::BTreeSet,
+  num::NonZero,
+  path::{self, PathBuf},
+  time::Duration,
+};
 
 use axum::{
   Router,
@@ -14,6 +19,8 @@ use circus_binary_cache::{
   HashFormat as _,
   NarByteStream,
   NarHash,
+  PublicKey,
+  Signature,
   StoreDir,
   StorePath,
   StorePathHash,
@@ -129,6 +136,86 @@ fn narinfo_has_signature(
   row.sig.as_ref().is_some_and(|sig| !sig.trim().is_empty())
 }
 
+/// Whether a persisted narinfo row may be served.
+///
+/// With a loaded public key the signature must verify cryptographically.
+/// Without one we cannot verify anything, so fall back to the historical
+/// non-empty signature check.
+fn persisted_row_is_trusted(
+  row: &circus_common::repo::narinfo_cache::NarInfo,
+  public_key: Option<&PublicKey>,
+) -> bool {
+  let Some(public_key) = public_key else {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+      tracing::warn!(
+        "serving persisted narinfos without signature verification because no \
+         signing public key is loaded"
+      );
+    });
+    return narinfo_has_signature(row);
+  };
+  let sig_row = PersistedNarinfoSig {
+    nar_hash:   row.nar_hash.clone(),
+    nar_size:   row.nar_size,
+    references: row.references.clone(),
+    sig:        row.sig.clone(),
+  };
+  narinfo_signature_verifies(&row.store_path, &sig_row, public_key)
+}
+
+fn narinfo_row_uses_local_nar_route(
+  row: &circus_common::repo::narinfo_cache::NarInfo,
+) -> bool {
+  if row.compression != "none" {
+    return false;
+  }
+  let Some(path) = row.url.strip_prefix("nar/") else {
+    return false;
+  };
+  let Some((object, query)) = path.split_once('?') else {
+    return false;
+  };
+  let object = path::Path::new(object);
+  let has_nar_ext = object
+    .extension()
+    .is_some_and(|ext| ext.eq_ignore_ascii_case("nar"));
+  let stem_nonempty = object
+    .file_stem()
+    .and_then(|s| s.to_str())
+    .is_some_and(|s| !s.is_empty());
+  // Require a real store hash in `hash=`, not just the URL shape.
+  let has_valid_output_hash = query
+    .split('&')
+    .filter_map(|part| part.strip_prefix("hash="))
+    .any(circus_nix::NixHash::is_valid);
+  has_nar_ext && stem_nonempty && has_valid_output_hash
+}
+
+async fn local_narinfo_row_is_servable(
+  state: &AppState,
+  hash: &str,
+  scope: CacheScope,
+) -> Result<bool, ApiError> {
+  let Some(nix_store_db) = open_nix_store_db(state).await else {
+    return Ok(false);
+  };
+  let store_dir = state.nix_store.store_dir();
+  let Some(info) =
+    query_binary_cache_path_info(hash, &store_dir, nix_store_db).await?
+  else {
+    return Ok(false);
+  };
+  is_servable_binary_cache_path(
+    &state.pool,
+    nix_store_db,
+    &info,
+    scope,
+    state.cache_public_key.as_deref(),
+  )
+  .await
+}
+
 async fn query_binary_cache_path_info(
   hash: &str,
   store_dir: &StoreDir,
@@ -229,21 +316,65 @@ async fn has_circus_build_product(
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
 }
 
+#[derive(FromRow)]
+struct PersistedNarinfoSig {
+  nar_hash:   String,
+  nar_size:   i64,
+  references: Vec<String>,
+  sig:        Option<String>,
+}
+
+/// Whether a persisted narinfo's signature verifies under our own public key.
+///
+/// Without a loaded key this falls back to the historical non-empty signature
+/// check the query already applies.
 async fn has_signed_persisted_narinfo(
   pool: &PgPool,
   store_path: &str,
   project_id: Option<Uuid>,
+  public_key: Option<&PublicKey>,
 ) -> Result<bool, ApiError> {
-  sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM narinfo_cache WHERE store_path = $1 AND sig \
-     IS NOT NULL AND btrim(sig) != '' AND ($2::uuid IS NULL OR project_id = \
-     $2))",
+  let row = sqlx::query_as::<_, PersistedNarinfoSig>(
+    "SELECT nar_hash, nar_size, \"references\", sig FROM narinfo_cache n \
+     WHERE n.store_path = $1 AND n.sig IS NOT NULL AND btrim(n.sig) != '' AND \
+     ($2::uuid IS NULL OR n.project_id = $2 OR EXISTS (SELECT 1 FROM \
+     narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND \
+     ncp.project_id = $2))",
   )
   .bind(store_path)
   .bind(project_id)
-  .fetch_one(pool)
+  .fetch_optional(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+  let Some(public_key) = public_key else {
+    return Ok(row.is_some());
+  };
+  Ok(row.is_some_and(|row| {
+    narinfo_signature_verifies(store_path, &row, public_key)
+  }))
+}
+
+/// Verify a persisted narinfo signature against the same fingerprint the runner
+/// signed.
+fn narinfo_signature_verifies(
+  store_path: &str,
+  row: &PersistedNarinfoSig,
+  public_key: &PublicKey,
+) -> bool {
+  let Some(signature) =
+    row.sig.as_deref().and_then(|s| s.parse::<Signature>().ok())
+  else {
+    return false;
+  };
+  let mut references = row.references.clone();
+  references.sort();
+  let fingerprint = format!(
+    "1;{store_path};{};{};{}",
+    row.nar_hash,
+    row.nar_size,
+    references.join(",")
+  );
+  public_key.verify(fingerprint.as_bytes(), &signature)
 }
 
 /// As [`has_circus_build_product`], but additionally requires that the build
@@ -323,21 +454,29 @@ async fn is_servable_binary_cache_path(
   nix_store_db: &SqlitePool,
   info: &ValidPathInfo,
   scope: CacheScope,
+  public_key: Option<&PublicKey>,
 ) -> Result<bool, ApiError> {
   // The unauthenticated cache only rebroadcasts paths Circus built, never
   // arbitrary store paths.
   let store_path = info.info.store_dir.display(&info.path).to_string();
-
-  // A dispatched build's own .drv, which agents substitute from this cache to
-  // start the build.
+  if has_signed_persisted_narinfo(
+    pool,
+    &store_path,
+    scope.project_id(),
+    public_key,
+  )
+  .await?
+  {
+    return Ok(true);
+  }
+  // A dispatched build's own .drv: agents substitute it from this cache to
+  // start the build. Derivations are content-addressed, so this must be
+  // checked before the generic CA branch below, which only covers build
+  // outputs and their direct inputs, never the derivation file itself.
   if PathBuf::from(&store_path)
     .extension()
     .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
     && has_circus_derivation_path(pool, &store_path, scope.project_id()).await?
-  {
-    return Ok(true);
-  }
-  if has_signed_persisted_narinfo(pool, &store_path, scope.project_id()).await?
   {
     return Ok(true);
   }
@@ -420,10 +559,18 @@ async fn narinfo_for_settings(
   )
   .await;
   if let Ok(row) = row
-    && narinfo_has_signature(&row)
+    && persisted_row_is_trusted(&row, state.cache_public_key.as_deref())
   {
+    let local_nar_route = narinfo_row_uses_local_nar_route(&row);
+    if local_nar_route
+      && !local_narinfo_row_is_servable(&state, hash, settings.scope).await?
+    {
+      return Ok(StatusCode::NOT_FOUND.into_response());
+    }
     let body = render_narinfo_row(&row);
-    state.narinfo_cache.insert(cache_key, body.clone());
+    if !local_nar_route {
+      state.narinfo_cache.insert(cache_key, body.clone());
+    }
     state.record_cache_serve(&settings.cache_name, body.len() as u64);
     return Ok(
       (
@@ -450,6 +597,7 @@ async fn narinfo_for_settings(
     nix_store_db,
     &info,
     settings.scope,
+    state.cache_public_key.as_deref(),
   )
   .await?
   {
@@ -759,6 +907,7 @@ async fn serve_nar_for_settings(
     nix_store_db,
     &info,
     settings.scope,
+    state.cache_public_key.as_deref(),
   )
   .await?
   {
@@ -893,5 +1042,62 @@ mod tests {
 
     let unsigned = NarInfo { sig: None, ..row };
     assert!(!persisted_local_nar_row_matches(&unsigned, hash, nar));
+  }
+
+  #[test]
+  fn persisted_narinfo_signature_must_verify_against_our_key() {
+    use circus_binary_cache::SecretKey;
+
+    let secret = "circus-test-1:\
+                  OlzHrxDxaOpPjkL5uNXF77Xq4VRiz6Zy0LqlK6GCNqRX90gxFy2HSr/\
+                  hxqdpc2VMU2UIlDOAEBv842MCsbPfgQ=="
+      .parse::<SecretKey>()
+      .expect("valid test secret key");
+    let public = secret.to_public_key();
+    let store_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cache-test";
+    let nar_hash =
+      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let references = vec![
+      "/nix/store/dddddddddddddddddddddddddddddddd-glibc".to_owned(),
+      "/nix/store/cccccccccccccccccccccccccccccccc-zlib".to_owned(),
+    ];
+    let mut sorted = references.clone();
+    sorted.sort();
+    let fingerprint =
+      format!("1;{store_path};{nar_hash};42;{}", sorted.join(","));
+    let sig = secret.sign(fingerprint.as_bytes()).to_string();
+
+    let signed = PersistedNarinfoSig {
+      nar_hash: nar_hash.to_owned(),
+      nar_size: 42,
+      references,
+      sig: Some(sig),
+    };
+    assert!(narinfo_signature_verifies(store_path, &signed, &public));
+
+    let tampered = PersistedNarinfoSig {
+      nar_size: 43,
+      ..signed
+    };
+    assert!(!narinfo_signature_verifies(store_path, &tampered, &public));
+  }
+
+  #[test]
+  fn persisted_row_trust_requires_verification_only_with_a_key() {
+    use circus_binary_cache::SecretKey;
+
+    let secret = "circus-test-1:\
+                  OlzHrxDxaOpPjkL5uNXF77Xq4VRiz6Zy0LqlK6GCNqRX90gxFy2HSr/\
+                  hxqdpc2VMU2UIlDOAEBv842MCsbPfgQ=="
+      .parse::<SecretKey>()
+      .expect("valid test secret key");
+    let public = secret.to_public_key();
+    let row = NarInfo {
+      sig: Some("circus-test-1:bm90IGEgcmVhbCBzaWduYXR1cmU=".to_owned()),
+      ..test_narinfo_row()
+    };
+
+    assert!(persisted_row_is_trusted(&row, None));
+    assert!(!persisted_row_is_trusted(&row, Some(&public)));
   }
 }

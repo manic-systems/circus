@@ -183,22 +183,24 @@ impl NixStore {
 
 #[derive(Clone)]
 pub struct AppState {
-  pub pool:          PgPool,
-  pub nix_store:     NixStore,
-  pub config:        Config,
-  pub sessions:      Arc<DashMap<String, SessionData>>,
-  pub narinfo_cache: NarinfoCache,
-  pub http_client:   reqwest::Client,
+  pub pool:             PgPool,
+  pub nix_store:        NixStore,
+  pub config:           Config,
+  pub sessions:         Arc<DashMap<String, SessionData>>,
+  pub narinfo_cache:    NarinfoCache,
+  pub http_client:      reqwest::Client,
   /// Per-process key used to derive CSRF tokens from session IDs via HMAC.
   /// Regenerated on every restart, which invalidates outstanding tokens; the
   /// dashboard re-issues them on the next page render so this is benign.
-  pub csrf_secret:   Arc<[u8; 32]>,
+  pub csrf_secret:      Arc<[u8; 32]>,
   /// Compiled email validation regex from `server.email_validation_regex`.
   /// `None` means only structural checks (non-empty, contains `@`).
-  pub email_regex:   Option<Arc<Regex>>,
+  pub email_regex:      Option<Arc<Regex>>,
   /// In-memory cache-serving counters, drained to `cache_traffic` every 60s
   /// by [`AppState::spawn_cache_traffic_flush`].
-  pub cache_traffic: CacheTrafficCounters,
+  pub cache_traffic:    CacheTrafficCounters,
+  /// Our binary-cache public key.
+  pub cache_public_key: Option<Arc<circus_binary_cache::PublicKey>>,
 }
 
 impl AppState {
