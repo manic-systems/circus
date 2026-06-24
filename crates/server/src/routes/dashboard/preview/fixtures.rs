@@ -245,50 +245,12 @@ pub(super) fn build_log_template(build_id: Uuid) -> Option<BuildLogTemplate> {
   })
 }
 
-const PREVIEW_SUCCEEDED_BUILD_LOG: &str = r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"building 1 derivations","type":104,"fields":[1]}
-@nix {"action":"start","id":2,"level":3,"parent":1,"text":"copying path '/nix/store/wpl2q3yx-rustc-1.88.0' from 'https://cache.nixos.org'","type":108,"fields":["/nix/store/wpl2q3yx-rustc-1.88.0","https://cache.nixos.org"]}
-@nix {"action":"stop","id":2}
-@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/8s69x68y-circus-server-0.12.0.drv'","type":105,"fields":["/nix/store/8s69x68y-circus-server-0.12.0.drv","builder-01",1,1]}
-@nix {"action":"result","id":10,"type":104,"fields":["unpackPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["unpacking source archive /nix/store/vv1q7x3-circus-0.12.0-src"]}
-@nix {"action":"result","id":10,"type":101,"fields":["source root is circus-0.12.0-src"]}
-@nix {"action":"result","id":10,"type":104,"fields":["patchPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["applying patch /nix/store/h3ad2x8q-use-workspace-cargo-lock.patch"]}
-@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["cargo build --locked --package circus-server --release"]}
-@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-common v0.12.0 (/build/source/crates/common)"]}
-@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-server v0.12.0 (/build/source/crates/server)"]}
-@nix {"action":"result","id":10,"type":104,"fields":["installPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["installing target/release/circus-server to /nix/store/lq2n7cav-circus-server-0.12.0/bin"]}
-@nix {"action":"stop","id":10}
-@nix {"action":"stop","id":1}"#;
-
-const PREVIEW_FAILED_BUILD_LOG: &str = r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"building 1 derivations","type":104,"fields":[1]}
-@nix {"action":"start","id":2,"level":3,"parent":1,"text":"copying path '/nix/store/wpl2q3yx-rustc-1.88.0' from 'https://cache.nixos.org'","type":108,"fields":["/nix/store/wpl2q3yx-rustc-1.88.0","https://cache.nixos.org"]}
-@nix {"action":"stop","id":2}
-@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv'","type":105,"fields":["/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv","builder-aarch64-01",1,1]}
-@nix {"action":"result","id":10,"type":104,"fields":["unpackPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["unpacking source archive /nix/store/vv1q7x3-circus-0.12.0-src"]}
-@nix {"action":"result","id":10,"type":101,"fields":["source root is circus-0.12.0-src"]}
-@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["cargo build --locked --package circus-server --target aarch64-unknown-linux-gnu --release"]}
-@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-common v0.12.0 (/build/source/crates/common)"]}
-@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-server v0.12.0 (/build/source/crates/server)"]}
-@nix {"action":"msg","level":1,"msg":"warning: cargo is rebuilding the workspace because Cargo.lock changed"}
-@nix {"action":"result","id":10,"type":101,"fields":["error: linking with `aarch64-unknown-linux-gnu-cc` failed: exit status: 1"]}
-@nix {"action":"result","id":10,"type":101,"fields":["  = note: collect2: fatal error: ld terminated with signal 9 [Killed]"]}
-@nix {"action":"result","id":10,"type":101,"fields":["          compilation terminated."]}
-@nix {"action":"result","id":10,"type":101,"fields":["error: could not compile `circus-server` due to previous error; 1 warning emitted"]}
-@nix {"action":"msg","level":0,"msg":"error: builder for '/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv' failed with exit code 101"}
-@nix {"action":"stop","id":10}
-@nix {"action":"stop","id":1}"#;
-
-const PREVIEW_RUNNING_BUILD_LOG: &str = r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"running integration checks","type":104,"fields":[1]}
-@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/mx19g4kq-circus-integration-check.drv'","type":105,"fields":["/nix/store/mx19g4kq-circus-integration-check.drv","builder-01",1,1]}
-@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
-@nix {"action":"result","id":10,"type":101,"fields":["cargo test --workspace --test integration"]}
-@nix {"action":"result","id":10,"type":101,"fields":["running 12 integration tests"]}
-@nix {"action":"msg","level":3,"msg":"test evaluator_schedules_builds ... ok"}"#;
+const PREVIEW_SUCCEEDED_BUILD_LOG: &str =
+  include_str!("fixtures/build-00000004.internal-json");
+const PREVIEW_FAILED_BUILD_LOG: &str =
+  include_str!("fixtures/build-00000005.internal-json");
+const PREVIEW_RUNNING_BUILD_LOG: &str =
+  include_str!("fixtures/build-00000006.internal-json");
 
 pub(super) fn queue_build(
   n: u128,

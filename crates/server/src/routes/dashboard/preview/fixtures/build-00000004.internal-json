@@ -1,0 +1,17 @@
+@nix {"action":"start","id":1,"level":3,"parent":0,"text":"building 1 derivations","type":104,"fields":[1]}
+@nix {"action":"start","id":2,"level":3,"parent":1,"text":"copying path '/nix/store/wpl2q3yx-rustc-1.88.0' from 'https://cache.nixos.org'","type":108,"fields":["/nix/store/wpl2q3yx-rustc-1.88.0","https://cache.nixos.org"]}
+@nix {"action":"stop","id":2}
+@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/8s69x68y-circus-server-0.12.0.drv'","type":105,"fields":["/nix/store/8s69x68y-circus-server-0.12.0.drv","builder-01",1,1]}
+@nix {"action":"result","id":10,"type":104,"fields":["unpackPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["unpacking source archive /nix/store/vv1q7x3-circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":101,"fields":["source root is circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":104,"fields":["patchPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["applying patch /nix/store/h3ad2x8q-use-workspace-cargo-lock.patch"]}
+@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["cargo build --locked --package circus-server --release"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-common v0.12.0 (/build/source/crates/common)"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-server v0.12.0 (/build/source/crates/server)"]}
+@nix {"action":"result","id":10,"type":104,"fields":["installPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["installing target/release/circus-server to /nix/store/lq2n7cav-circus-server-0.12.0/bin"]}
+@nix {"action":"stop","id":10}
+@nix {"action":"stop","id":1}

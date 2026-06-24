@@ -1,0 +1,19 @@
+@nix {"action":"start","id":1,"level":3,"parent":0,"text":"building 1 derivations","type":104,"fields":[1]}
+@nix {"action":"start","id":2,"level":3,"parent":1,"text":"copying path '/nix/store/wpl2q3yx-rustc-1.88.0' from 'https://cache.nixos.org'","type":108,"fields":["/nix/store/wpl2q3yx-rustc-1.88.0","https://cache.nixos.org"]}
+@nix {"action":"stop","id":2}
+@nix {"action":"start","id":10,"level":3,"parent":1,"text":"building '/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv'","type":105,"fields":["/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv","builder-aarch64-01",1,1]}
+@nix {"action":"result","id":10,"type":104,"fields":["unpackPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["unpacking source archive /nix/store/vv1q7x3-circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":101,"fields":["source root is circus-0.12.0-src"]}
+@nix {"action":"result","id":10,"type":104,"fields":["buildPhase"]}
+@nix {"action":"result","id":10,"type":101,"fields":["cargo build --locked --package circus-server --target aarch64-unknown-linux-gnu --release"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-common v0.12.0 (/build/source/crates/common)"]}
+@nix {"action":"result","id":10,"type":101,"fields":["   Compiling circus-server v0.12.0 (/build/source/crates/server)"]}
+@nix {"action":"msg","level":1,"msg":"warning: cargo is rebuilding the workspace because Cargo.lock changed"}
+@nix {"action":"result","id":10,"type":101,"fields":["error: linking with `aarch64-unknown-linux-gnu-cc` failed: exit status: 1"]}
+@nix {"action":"result","id":10,"type":101,"fields":["  = note: collect2: fatal error: ld terminated with signal 9 [Killed]"]}
+@nix {"action":"result","id":10,"type":101,"fields":["          compilation terminated."]}
+@nix {"action":"result","id":10,"type":101,"fields":["error: could not compile `circus-server` due to previous error; 1 warning emitted"]}
+@nix {"action":"msg","level":0,"msg":"error: builder for '/nix/store/jk42cl7q-circus-server-0.12.0-aarch64-unknown-linux-gnu.drv' failed with exit code 101"}
+@nix {"action":"stop","id":10}
+@nix {"action":"stop","id":1}
