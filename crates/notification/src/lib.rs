@@ -244,6 +244,14 @@ async fn dispatch(
   commit_status_only: bool,
 ) {
   let event = BuildEvent::from_build(build, project, commit_hash);
+
+  // Intermediate dependency builds are internal scheduling artifacts; their
+  // status is rolled up into the top-level job. Forwarding them would pollute
+  // commit statuses (and every other channel) with one entry per dependency.
+  if event.is_dependency() {
+    return;
+  }
+
   let channels =
     resolve_channels(pool, build, project, commit_hash, config, encryption_key)
       .await;

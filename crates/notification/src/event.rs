@@ -50,6 +50,16 @@ impl BuildEvent {
     !self.status.is_success()
   }
 
+  /// Whether this event is an intermediate dependency build synthesized from
+  /// the derivation graph rather than a top-level jobset job. Such builds are
+  /// excluded from notification dispatch to avoid polluting commit statuses.
+  #[must_use]
+  pub fn is_dependency(&self) -> bool {
+    self
+      .job_name
+      .starts_with(circus_common::models::DEPENDENCY_JOB_PREFIX)
+  }
+
   /// Coarse status string for generic webhook payloads.
   #[must_use]
   pub const fn generic_status(&self) -> &'static str {
@@ -137,5 +147,33 @@ impl BuildEvent {
       BuildStatus::UnsupportedSystem => "UNSUPPORTED",
       BuildStatus::Pending | BuildStatus::Running => "PENDING",
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn event_with_job(job_name: &str) -> BuildEvent {
+    BuildEvent {
+      build_id:     Uuid::nil(),
+      status:       BuildStatus::Succeeded,
+      job_name:     job_name.to_string(),
+      drv_path:     "/nix/store/x.drv".to_string(),
+      build_output: None,
+      project_name: "proj".to_string(),
+      project_url:  "https://github.com/owner/repo".to_string(),
+      commit_hash:  "abc".to_string(),
+    }
+  }
+
+  #[test]
+  fn top_level_job_is_not_a_dependency() {
+    assert!(!event_with_job("hello").is_dependency());
+  }
+
+  #[test]
+  fn drv_prefixed_job_is_a_dependency() {
+    assert!(event_with_job("drv:abc-foo-1.0").is_dependency());
   }
 }
