@@ -141,10 +141,10 @@ impl<'a> LockedSource<'a> {
 }
 
 /// URI prefixes that satisfy Nix's exact-or-slash-delimited matcher.
-struct UriPrefixes(Vec<String>);
+pub(super) struct UriPrefixes(Vec<String>);
 
 impl UriPrefixes {
-  fn from_uri(uri: impl Into<String>) -> Self {
+  pub(super) fn from_uri(uri: impl Into<String>) -> Self {
     let uri = uri.into();
     let uri = uri.split(['?', '#']).next().unwrap_or(&uri);
     let mut prefixes = vec![uri.to_owned()];
@@ -154,7 +154,7 @@ impl UriPrefixes {
     Self(prefixes)
   }
 
-  fn into_vec(self) -> Vec<String> {
+  pub(super) fn into_vec(self) -> Vec<String> {
     self.0
   }
 }
