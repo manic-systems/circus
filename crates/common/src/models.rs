@@ -201,6 +201,12 @@ impl JobsetTriggerMode {
   }
 }
 
+/// Job-name prefix marking an intermediate dependency build synthesized by the
+/// evaluator from the derivation graph, as opposed to a top-level jobset job.
+/// These builds are internal scheduling artifacts and are excluded from
+/// user-facing notifications (commit statuses, webhooks, ...).
+pub const DEPENDENCY_JOB_PREFIX: &str = "drv:";
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[expect(
   clippy::struct_excessive_bools,
@@ -257,6 +263,14 @@ impl Build {
       .effective_features
       .as_deref()
       .unwrap_or(&self.required_features)
+  }
+
+  /// Whether this is an intermediate dependency build synthesized from the
+  /// derivation graph rather than a top-level jobset job. See
+  /// [`DEPENDENCY_JOB_PREFIX`].
+  #[must_use]
+  pub fn is_dependency(&self) -> bool {
+    self.job_name.starts_with(DEPENDENCY_JOB_PREFIX)
   }
 }
 

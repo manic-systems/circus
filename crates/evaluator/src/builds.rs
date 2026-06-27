@@ -143,7 +143,7 @@ fn dependency_job_name(drv_path: &str) -> String {
     .and_then(|name| name.to_str())
     .unwrap_or(drv_path)
     .trim_end_matches(".drv");
-  format!("drv:{basename}")
+  format!("{}{basename}", circus_common::models::DEPENDENCY_JOB_PREFIX)
 }
 
 async fn expand_derivation_graph(
