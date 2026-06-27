@@ -250,6 +250,11 @@ pub struct EvaluatorConfig {
   /// Whether to abort on the first evaluation cycle error instead of logging
   /// and retrying.
   pub strict_errors: bool,
+
+  /// Number of evix worker subprocesses spawned per evaluation. Each worker
+  /// initializes a full Nix evaluator, so higher counts increase parallelism
+  /// at the cost of memory. Reduce this on memory-constrained hosts.
+  pub eval_workers: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -795,6 +800,7 @@ impl Default for EvaluatorConfig {
       auto_allowed_uris:    true,
       require_locked_flake: false,
       strict_errors:        false,
+      eval_workers:         4,
     }
   }
 }
