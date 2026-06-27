@@ -434,6 +434,9 @@ pub async fn process_notification_task(
     .map_err(|e| format!("Invalid stored notification channel: {e}"))?;
     let event: BuildEvent = serde_json::from_value(event.clone())
       .map_err(|e| format!("Invalid stored build event: {e}"))?;
+    if event.is_dependency() {
+      return Ok(());
+    }
     if channel.is_commit_status()
       && stale_commit_status_event(pool, &event).await?
     {
