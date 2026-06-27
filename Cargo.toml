@@ -153,7 +153,7 @@ jsonwebtoken = { version = "10.4.0", default-features = false }
 
 # In-house crates and Nix utilities
 cognos = "1.0.0"
-evix   = { version = "0.3.3", features = [ "flake" ] }
+evix   = { version = "1.0.2", features = [ "flake" ] }
 
 # Workspace Clippy lints. All workspace crates must inherit them in individual
 # manifests for subcrates. The below list is a rather pedantic list of lints

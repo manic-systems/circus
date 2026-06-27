@@ -320,6 +320,7 @@ async fn evaluate_flake(
     show_input_drvs: true,
     override_inputs,
     nix_options: policy.nix_options(),
+    ..evix::Config::default()
   };
 
   eval_command::run_eval(evix_config, timeout, "flake").await
@@ -504,6 +505,7 @@ async fn evaluate_legacy(
     show_input_drvs: true,
     override_inputs: Vec::new(),
     nix_options: NixEvalPolicy::from(config).nix_options(),
+    ..evix::Config::default()
   };
 
   eval_command::run_eval(evix_config, timeout, "legacy").await

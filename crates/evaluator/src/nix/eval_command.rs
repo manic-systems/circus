@@ -1,17 +1,11 @@
-use std::{
-  sync::{
-    Arc,
-    Mutex,
-    atomic::{AtomicBool, Ordering},
-  },
-  time::Duration,
-};
+use std::time::Duration;
 
 use circus_common::{CiError, error::Result};
 use circus_config::EvaluatorConfig;
+use futures::StreamExt as _;
 use tokio::process::Command;
 
-use super::{EvalResult, NixJob, nix_job_from_derivation};
+use super::{EvalResult, nix_job_from_derivation};
 
 /// Nix evaluation settings derived from the evaluator configuration, forwarded
 /// to evix as `(key, value)` options.
@@ -100,52 +94,35 @@ pub(super) async fn run_eval(
     "Starting evix evaluation with Nix options"
   );
 
-  let collected: Arc<Mutex<(Vec<NixJob>, usize)>> =
-    Arc::new(Mutex::new((Vec::new(), 0)));
-  let cancel = Arc::new(AtomicBool::new(false));
+  let session = evix::Session::open(config)
+    .await
+    .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?;
 
-  let sink_state = Arc::clone(&collected);
-  let cancel_eval = Arc::clone(&cancel);
-  let handle = tokio::task::spawn_blocking(move || {
-    evix::evaluate_cancellable(&config, &cancel_eval, move |event| {
-      match event {
+  let collect = async move {
+    let mut events = session.stream();
+    let mut jobs = Vec::new();
+    let mut error_count = 0usize;
+
+    while let Some(event) = events.next().await {
+      match event
+        .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?
+      {
         evix::Event::Derivation(drv) => {
-          sink_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .0
-            .push(nix_job_from_derivation(drv));
+          jobs.push(nix_job_from_derivation(&drv));
         },
         evix::Event::Error(err) => {
           tracing::warn!(job = %err.attr, "evix reported error: {}", err.error);
-          sink_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .1 += 1;
+          error_count += 1;
         },
         evix::Event::AttrSet { .. } => {},
       }
-      Ok(())
-    })
-  });
+    }
+    Ok::<EvalResult, CiError>(EvalResult { jobs, error_count })
+  };
 
-  match tokio::time::timeout(timeout, handle).await {
-    Ok(joined) => {
-      joined
-        .map_err(|e| {
-          CiError::NixEval(format!("evix evaluation task failed to join: {e}"))
-        })?
-        .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?;
-
-      let result = {
-        let guard = collected
-          .lock()
-          .unwrap_or_else(std::sync::PoisonError::into_inner);
-        EvalResult {
-          jobs:        guard.0.clone(),
-          error_count: guard.1,
-        }
-      };
+  match tokio::time::timeout(timeout, collect).await {
+    Ok(result) => {
+      let result = result?;
       if result.error_count > 0 {
         tracing::warn!(
           error_count = result.error_count,
@@ -158,8 +135,6 @@ pub(super) async fn run_eval(
       Ok(result)
     },
     Err(_elapsed) => {
-      // Ask the in-flight evaluation to stop; its workers exit cooperatively.
-      cancel.store(true, Ordering::Relaxed);
       Err(CiError::Timeout(format!(
         "Nix evaluation timed out after {timeout:?}"
       )))
@@ -342,16 +317,17 @@ mod policy_tests {
     };
 
     let evix_config = evix::Config {
-      input:           evix::Input::Expr("{}".to_string()),
-      auto_args:       Vec::new(),
-      force_recurse:   true,
-      gc_roots_dir:    None,
-      workers:         1,
+      input: evix::Input::Expr("{}".to_string()),
+      auto_args: Vec::new(),
+      force_recurse: true,
+      gc_roots_dir: None,
+      workers: 1,
       max_memory_size: 512,
-      meta:            false,
+      meta: false,
       show_input_drvs: false,
       override_inputs: Vec::new(),
-      nix_options:     NixEvalPolicy::from(&config).nix_options(),
+      nix_options: NixEvalPolicy::from(&config).nix_options(),
+      ..evix::Config::default()
     };
 
     assert_eq!(evix_config.nix_options, vec![
