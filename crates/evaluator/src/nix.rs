@@ -9,8 +9,6 @@ mod flake_lock;
 
 use eval_command::NixEvalPolicy;
 
-/// Number of evix worker processes spawned per evaluation.
-const EVAL_WORKERS: usize = 4;
 /// Per-worker memory ceiling in MB; evix restarts a worker once it is exceeded.
 const EVAL_MAX_MEMORY_MB: usize = 4096;
 
@@ -314,7 +312,7 @@ async fn evaluate_flake(
     auto_args: Vec::new(),
     force_recurse: true,
     gc_roots_dir: None,
-    workers: EVAL_WORKERS,
+    workers: config.eval_workers,
     max_memory_size: EVAL_MAX_MEMORY_MB,
     meta: true,
     show_input_drvs: true,
@@ -499,7 +497,7 @@ async fn evaluate_legacy(
     auto_args,
     force_recurse: true,
     gc_roots_dir: None,
-    workers: EVAL_WORKERS,
+    workers: config.eval_workers,
     max_memory_size: EVAL_MAX_MEMORY_MB,
     meta: true,
     show_input_drvs: true,
