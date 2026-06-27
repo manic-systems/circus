@@ -203,7 +203,8 @@ pub async fn evaluate(
   let nix_expression = normalize_flake_expression(nix_expression);
 
   if flake_mode {
-    let source = flake_ref::source_flake_ref(repository_url, commit_hash);
+    let source =
+      flake_ref::source_flake_ref(repository_url, commit_hash, repo_path)?;
     tracing::debug!(
       flake_ref = %source.flake_ref,
       "Resolved canonical flake source"

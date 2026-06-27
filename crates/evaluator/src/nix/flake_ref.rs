@@ -17,10 +17,18 @@
 //! the `github:`/`gitlab:`/`sourcehut:` shorthand for the known forges, or a
 //! `git+<scheme>` ref pinned by `?rev=` for anything else.
 //!
-//! TODO: for private repositories the forge fetcher needs its own credentials
-//! (Nix `access-tokens` / netrc); Circus's git clone credentials do not carry
-//! over to the in-process fetcher. We've got to fix this for Evix, or more
-//! directly, in the C API bindings.
+//! Local and `file://` sources are pinned to the working checkout Circus
+//! already cloned (`repo_path`), not to the `repository_url`. The latter is
+//! frequently a bare repository, which has no worktree for the git fetcher to
+//! resolve `?rev=` against (evix null-pointers while locking it); the checkout
+//! is a normal working tree that already contains the resolved commit, and a
+//! local source has no public-forge hash to reproduce anyway.
+use std::path::Path;
+
+use circus_common::{CiError, error::Result};
+use url::Url;
+
+use super::flake_lock::UriPrefixes;
 
 /// Canonical flake reference for a repository at a specific revision, plus the
 /// `allowed-uris` prefixes `restrict-eval`'s `checkURI` accepts for it.
@@ -40,9 +48,15 @@ pub struct SourceFlakeRef {
 /// `nix build <shorthand>`; every other host falls back to a `git+<scheme>`
 /// reference pinned by `?rev=`. GitLab subgroups (more than `owner/repo`) have
 /// no clean shorthand and also take the `git+https` fallback.
-#[must_use]
-pub fn source_flake_ref(repository_url: &str, rev: &str) -> SourceFlakeRef {
-  ParsedRepo::parse(repository_url).into_flake_ref(rev)
+///
+/// Local and `file://` sources ignore the parsed path and pin `git+file://` to
+/// `repo_path`, the working checkout Circus already cloned (see module docs).
+pub fn source_flake_ref(
+  repository_url: &str,
+  rev: &str,
+  repo_path: &Path,
+) -> Result<SourceFlakeRef> {
+  ParsedRepo::parse(repository_url).into_flake_ref(rev, repo_path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +77,7 @@ impl Scheme {
     }
   }
 
-  /// `git+<scheme>` prefix for the fallback fetcher.
+  /// `git+<scheme>` prefix for the generic fetcher.
   fn git_prefix(&self) -> String {
     match self {
       Self::Https => "git+https".to_string(),
@@ -76,8 +90,8 @@ impl Scheme {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParsedRepo {
-  /// A local filesystem path (absolute), used only in tests and defensive
-  /// fallbacks. Mapped to `git+file://` so the git fetcher excludes `.git`.
+  /// A local filesystem path (absolute), mapped to `git+file://` so the git
+  /// fetcher excludes `.git`.
   Local(String),
   Remote {
     scheme: Scheme,
@@ -125,9 +139,13 @@ impl ParsedRepo {
     }
   }
 
-  fn into_flake_ref(self, rev: &str) -> SourceFlakeRef {
+  fn into_flake_ref(
+    self,
+    rev: &str,
+    repo_path: &Path,
+  ) -> Result<SourceFlakeRef> {
     let (scheme, user, host, path) = match self {
-      Self::Local(path) => return local_git_ref(&path, rev),
+      Self::Local(_) => return local_git_ref(repo_path, rev),
       Self::Remote {
         scheme,
         user,
@@ -138,12 +156,14 @@ impl ParsedRepo {
 
     let segments = path.split('/').filter(|s| !s.is_empty()).count();
 
-    match host.as_str() {
+    let primary = match host.as_str() {
       "github.com" if segments == 2 => forge_ref("github", &path, rev),
       "gitlab.com" if segments == 2 => forge_ref("gitlab", &path, rev),
       "git.sr.ht" if segments == 2 => forge_ref("sourcehut", &path, rev),
       _ => generic_git_ref(&scheme, user.as_deref(), &host, &path, rev),
-    }
+    };
+
+    Ok(primary)
   }
 }
 
@@ -165,11 +185,31 @@ fn generic_git_ref(
   pinned(&base, rev)
 }
 
-/// `git+file://<path>` for a local checkout. The git fetcher copies the tracked
-/// tree (excluding `.git` and gitignored paths), unlike the bare-path `path:`
-/// fetcher which copies the directory verbatim.
-fn local_git_ref(path: &str, rev: &str) -> SourceFlakeRef {
-  pinned(&format!("git+file://{path}"), rev)
+/// `git+file://<repo_path>` for the local working checkout. The git fetcher
+/// copies the tracked tree (excluding `.git` and gitignored paths), unlike the
+/// bare-path `path:` fetcher which copies the directory verbatim. `repo_path`
+/// is the checkout Circus cloned, which has a worktree and the resolved commit;
+/// the bare `repository_url` would have neither.
+fn local_git_ref(repo_path: &Path, rev: &str) -> Result<SourceFlakeRef> {
+  let repo_path = if repo_path.is_absolute() {
+    repo_path.to_path_buf()
+  } else {
+    std::env::current_dir()
+      .map_err(|error| {
+        CiError::NixEval(format!(
+          "Failed to resolve relative repository checkout {}: {error}",
+          repo_path.display()
+        ))
+      })?
+      .join(repo_path)
+  };
+  let url = Url::from_file_path(&repo_path).map_err(|()| {
+    CiError::NixEval(format!(
+      "Failed to convert repository checkout to a file URL: {}",
+      repo_path.display()
+    ))
+  })?;
+  Ok(pinned(&format!("git+{url}"), rev))
 }
 
 /// Append `?rev=<rev>` to a `git+*` base and derive its `allowed-uris`.
@@ -180,7 +220,7 @@ fn pinned(base: &str, rev: &str) -> SourceFlakeRef {
     format!("{base}?rev={rev}")
   };
   SourceFlakeRef {
-    allowed_uris: scheme_url_and_parent(base),
+    allowed_uris: UriPrefixes::from_uri(base).into_vec(),
     flake_ref,
   }
 }
@@ -200,18 +240,6 @@ fn forge_ref(forge: &str, path: &str, rev: &str) -> SourceFlakeRef {
     flake_ref,
     allowed_uris: vec![allowed],
   }
-}
-
-/// A `git+<scheme>://...` url and its parent directory, covering the prefixes
-/// `checkURI` matches against the rev-suffixed fetch.
-fn scheme_url_and_parent(base: &str) -> Vec<String> {
-  let mut out = vec![base.to_string()];
-  if let Some(slash) = base.rfind('/')
-    && slash + 1 < base.len()
-  {
-    out.push(base[..=slash].to_string());
-  }
-  out
 }
 
 /// Split an scp-like `git@host:owner/repo` into (`authority`, `path`).
@@ -261,17 +289,24 @@ mod tests {
   use super::*;
 
   const REV: &str = "abc123def456";
+  const CHECKOUT: &str = "/var/lib/circus/evaluator/proj";
+
+  /// Resolve a remote ref; `repo_path` is irrelevant for non-local sources.
+  fn sref(url: &str, rev: &str) -> SourceFlakeRef {
+    source_flake_ref(url, rev, Path::new(CHECKOUT))
+      .expect("test source reference")
+  }
 
   #[test]
   fn github_https_maps_to_shorthand() {
-    let r = source_flake_ref("https://github.com/owner/repo", REV);
+    let r = sref("https://github.com/owner/repo", REV);
     assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
     assert_eq!(r.allowed_uris, vec!["github:owner/repo"]);
   }
 
   #[test]
   fn github_dot_git_suffix_is_stripped() {
-    let r = source_flake_ref("https://github.com/owner/repo.git", REV);
+    let r = sref("https://github.com/owner/repo.git", REV);
     assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
   }
 
@@ -279,33 +314,33 @@ mod tests {
   fn github_ssh_url_still_uses_tarball_shorthand() {
     // A user builds `github:owner/repo` regardless of the clone transport, so
     // the shorthand (not git+ssh) is what reproduces their hash.
-    let r = source_flake_ref("ssh://git@github.com/owner/repo.git", REV);
+    let r = sref("ssh://git@github.com/owner/repo.git", REV);
     assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
   }
 
   #[test]
   fn github_scp_form_is_handled() {
-    let r = source_flake_ref("git@github.com:owner/repo.git", REV);
+    let r = sref("git@github.com:owner/repo.git", REV);
     assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
   }
 
   #[test]
   fn gitlab_https_maps_to_shorthand() {
-    let r = source_flake_ref("https://gitlab.com/owner/repo", REV);
+    let r = sref("https://gitlab.com/owner/repo", REV);
     assert_eq!(r.flake_ref, "gitlab:owner/repo/abc123def456");
     assert_eq!(r.allowed_uris, vec!["gitlab:owner/repo"]);
   }
 
   #[test]
   fn sourcehut_keeps_tilde_owner() {
-    let r = source_flake_ref("https://git.sr.ht/~owner/repo", REV);
+    let r = sref("https://git.sr.ht/~owner/repo", REV);
     assert_eq!(r.flake_ref, "sourcehut:~owner/repo/abc123def456");
     assert_eq!(r.allowed_uris, vec!["sourcehut:~owner/repo"]);
   }
 
   #[test]
   fn gitlab_subgroup_falls_back_to_generic_git() {
-    let r = source_flake_ref("https://gitlab.com/group/subgroup/repo", REV);
+    let r = sref("https://gitlab.com/group/subgroup/repo", REV);
     assert_eq!(
       r.flake_ref,
       "git+https://gitlab.com/group/subgroup/repo?rev=abc123def456"
@@ -314,7 +349,7 @@ mod tests {
 
   #[test]
   fn self_hosted_https_uses_git_plus_https() {
-    let r = source_flake_ref("https://git.example.com/owner/repo.git", REV);
+    let r = sref("https://git.example.com/owner/repo.git", REV);
     assert_eq!(
       r.flake_ref,
       "git+https://git.example.com/owner/repo?rev=abc123def456"
@@ -327,7 +362,7 @@ mod tests {
 
   #[test]
   fn self_hosted_ssh_preserves_user() {
-    let r = source_flake_ref("ssh://git@git.example.com/owner/repo", REV);
+    let r = sref("ssh://git@git.example.com/owner/repo", REV);
     assert_eq!(
       r.flake_ref,
       "git+ssh://git@git.example.com/owner/repo?rev=abc123def456"
@@ -336,26 +371,57 @@ mod tests {
 
   #[test]
   fn host_casing_is_normalized() {
-    let r = source_flake_ref("https://GitHub.com/Owner/Repo", REV);
+    let r = sref("https://GitHub.com/Owner/Repo", REV);
     assert_eq!(r.flake_ref, "github:Owner/Repo/abc123def456");
   }
 
   #[test]
-  fn local_path_maps_to_git_file() {
-    let r = source_flake_ref("/var/lib/circus/work/proj", REV);
+  fn local_sources_pin_git_file_to_the_checkout() {
+    // A bare local path and a file:// origin both resolve to the working
+    // checkout (`repo_path`), not the parsed source path: the origin may be a
+    // bare repo with no worktree for the git fetcher to lock against.
+    let bare = source_flake_ref(
+      "/var/lib/circus/test-repos/test-flake.git",
+      REV,
+      Path::new(CHECKOUT),
+    )
+    .expect("test source reference");
     assert_eq!(
-      r.flake_ref,
-      "git+file:///var/lib/circus/work/proj?rev=abc123def456"
+      bare.flake_ref,
+      "git+file:///var/lib/circus/evaluator/proj?rev=abc123def456"
     );
-    let f = source_flake_ref("file:///tmp/checkout", REV);
-    assert_eq!(f.flake_ref, "git+file:///tmp/checkout?rev=abc123def456");
+
+    let file_url = source_flake_ref(
+      "file:///var/lib/circus/test-repos/test-flake.git",
+      REV,
+      Path::new(CHECKOUT),
+    )
+    .expect("test source reference");
+    assert_eq!(
+      file_url.flake_ref,
+      "git+file:///var/lib/circus/evaluator/proj?rev=abc123def456"
+    );
   }
 
   #[test]
   fn empty_rev_omits_pin() {
-    let r = source_flake_ref("https://github.com/owner/repo", "");
+    let r = sref("https://github.com/owner/repo", "");
     assert_eq!(r.flake_ref, "github:owner/repo");
-    let g = source_flake_ref("https://git.example.com/owner/repo", "");
+    let g = sref("https://git.example.com/owner/repo", "");
     assert_eq!(g.flake_ref, "git+https://git.example.com/owner/repo");
+  }
+  #[test]
+  fn local_checkout_path_is_percent_encoded() {
+    let local = source_flake_ref(
+      "/var/lib/circus/test-repos/test-flake.git",
+      REV,
+      Path::new("/var/lib/circus/evaluator/a project"),
+    )
+    .expect("test source reference");
+    assert_eq!(
+      local.flake_ref,
+      "git+file:///var/lib/circus/evaluator/a%20project?rev=abc123def456"
+    );
+    assert!(local.allowed_uris.iter().all(|uri| !uri.contains(' ')));
   }
 }
