@@ -34,6 +34,13 @@ where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
 {
+  // Cap Nix's GC heap. By default it sizes from total RAM and the reservation
+  // fails on swapless low-memory hosts, killing the evix worker.
+  if std::env::var_os("GC_INITIAL_HEAP_SIZE").is_none() {
+    // SAFETY: set at process start, before any threads spawn.
+    unsafe { std::env::set_var("GC_INITIAL_HEAP_SIZE", "268435456") };
+  }
+
   // evix evaluates Nix in worker subprocesses that re-execute this binary with
   // `EVIX_WORKER` set. When invoked that way, act purely as an evix worker and
   // do not start the evaluator service (tokio runtime, database, etc.).
