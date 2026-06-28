@@ -453,7 +453,7 @@ fn canonical_nix_sha256_hash(text: &str) -> Option<String> {
   }
 
   let rest = text.strip_prefix("sha256:")?;
-  if rest.len() == 52 && rest.bytes().all(is_nix_base32_byte) {
+  if rest.len() == 52 && rest.bytes().all(circus_nix::base32::is_base32_byte) {
     return Some(text.to_owned());
   }
   if rest.len() == 64 && rest.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -467,55 +467,10 @@ fn canonical_sha256_bytes(bytes: &[u8]) -> Option<String> {
   if bytes.len() != 32 {
     return None;
   }
-  Some(format!("sha256:{}", encode_nix_base32_sha256(bytes)))
-}
-
-const fn is_nix_base32_byte(byte: u8) -> bool {
-  matches!(
-    byte,
-    b'0'
-      ..=b'9'
-        | b'a'
-        | b'b'
-        | b'c'
-        | b'd'
-        | b'f'
-        | b'g'
-        | b'h'
-        | b'i'
-        | b'j'
-        | b'k'
-        | b'l'
-        | b'm'
-        | b'n'
-        | b'p'
-        | b'q'
-        | b'r'
-        | b's'
-        | b'v'
-        | b'w'
-        | b'x'
-        | b'y'
-        | b'z'
-  )
-}
-
-fn encode_nix_base32_sha256(bytes: &[u8]) -> String {
-  const ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
-  let len = 52;
-  let mut out = String::with_capacity(len);
-  for pos in 0..len {
-    let n = len - 1 - pos;
-    let bit = n * 5;
-    let byte = bit / 8;
-    let offset = bit % 8;
-    let mut value = u16::from(bytes[byte]) >> offset;
-    if byte + 1 < bytes.len() {
-      value |= u16::from(bytes[byte + 1]) << (8 - offset);
-    }
-    out.push(ALPHABET[(value & 0x1F) as usize] as char);
-  }
-  out
+  Some(format!(
+    "sha256:{}",
+    circus_nix::base32::encode_sha256(bytes)
+  ))
 }
 
 fn nar_url_for_path(info: &ClosurePathInfo) -> Option<String> {
@@ -1746,7 +1701,7 @@ mod tests {
   #[test]
   fn test_canonical_nix_sha256_hash_accepts_common_formats() {
     let bytes = [7u8; 32];
-    let nix32 = encode_nix_base32_sha256(&bytes);
+    let nix32 = circus_nix::base32::encode_sha256(&bytes);
     let expected = format!("sha256:{nix32}");
 
     assert_eq!(
@@ -1775,7 +1730,8 @@ mod tests {
       use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
       format!("sha256-{}", B64.encode(bytes))
     };
-    let expected_hash = format!("sha256:{}", encode_nix_base32_sha256(&bytes));
+    let expected_hash =
+      format!("sha256:{}", circus_nix::base32::encode_sha256(&bytes));
     let parsed = serde_json::json!({
       "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-linux-6.18.33-valve2": {
         "narHash": sri_hash,
@@ -1906,10 +1862,14 @@ mod tests {
       use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
       format!("sha256-{}", B64.encode(dep_nar_bytes))
     };
-    let output_nar_hash =
-      format!("sha256:{}", encode_nix_base32_sha256(&output_nar_bytes));
-    let dep_nar_hash =
-      format!("sha256:{}", encode_nix_base32_sha256(&dep_nar_bytes));
+    let output_nar_hash = format!(
+      "sha256:{}",
+      circus_nix::base32::encode_sha256(&output_nar_bytes)
+    );
+    let dep_nar_hash = format!(
+      "sha256:{}",
+      circus_nix::base32::encode_sha256(&dep_nar_bytes)
+    );
     let path_info = serde_json::json!({
       output_path.clone(): {
         "narHash": output_sri,

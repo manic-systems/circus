@@ -139,7 +139,10 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
 
   // Store and sign in Nix sha256 base32, the form a client re-encodes the
   // nar hash to before verifying.
-  let nar_hash = format!("sha256:{}", encode_nix_base32_sha256(&computed_nar));
+  let nar_hash = format!(
+    "sha256:{}",
+    circus_nix::base32::encode_sha256(&computed_nar)
+  );
 
   Ok(UploadedNar {
     nar_hash,
@@ -210,55 +213,11 @@ fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
     return hex::decode(hex).context("decode sha256 hex hash");
   }
   if let Some(nix32) = text.strip_prefix("sha256:") {
-    return decode_nix_base32_sha256(nix32)
+    return circus_nix::base32::decode_sha256(nix32)
+      .map_err(|e| eyre!("{e}"))
       .with_context(|| format!("decode Nix base32 sha256 hash {text}"));
   }
   bail!("unsupported sha256 hash format: {text}")
-}
-
-fn encode_nix_base32_sha256(bytes: &[u8]) -> String {
-  const ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
-  let len = 52;
-  let mut out = String::with_capacity(len);
-  for pos in 0..len {
-    let n = len - 1 - pos;
-    let bit = n * 5;
-    let byte = bit / 8;
-    let offset = bit % 8;
-    let mut value = u16::from(bytes[byte]) >> offset;
-    if byte + 1 < bytes.len() {
-      value |= u16::from(bytes[byte + 1]) << (8 - offset);
-    }
-    out.push(ALPHABET[(value & 0x1F) as usize] as char);
-  }
-  out
-}
-
-fn decode_nix_base32_sha256(text: &str) -> color_eyre::Result<Vec<u8>> {
-  const ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
-  if text.len() != 52 {
-    bail!(
-      "Nix base32 sha256 hash has {} chars, expected 52",
-      text.len()
-    );
-  }
-  let mut out = vec![0u8; 32];
-  for (pos, c) in text.bytes().enumerate() {
-    let value = ALPHABET
-      .iter()
-      .position(|b| *b == c)
-      .ok_or_else(|| eyre!("invalid Nix base32 character {}", c as char))?
-      as u16;
-    let n = text.len() - 1 - pos;
-    let bit = n * 5;
-    let byte = bit / 8;
-    let offset = bit % 8;
-    out[byte] |= (value << offset) as u8;
-    if byte + 1 < out.len() && offset > 3 {
-      out[byte + 1] |= (value >> (8 - offset)) as u8;
-    }
-  }
-  Ok(out)
 }
 
 #[cfg(test)]
@@ -280,16 +239,5 @@ mod tests {
     let bytes = [0u8; 32];
     let text = format!("sha256-{}", B64.encode(bytes));
     assert!(hash_matches(&text, &bytes).expect("SRI hash should parse"));
-  }
-
-  #[test]
-  fn nix_base32_roundtrip() {
-    for bytes in [[0u8; 32], [0xFF; 32], core::array::from_fn(|i| i as u8)] {
-      let encoded = super::encode_nix_base32_sha256(&bytes);
-      assert_eq!(encoded.len(), 52);
-      let decoded =
-        super::decode_nix_base32_sha256(&encoded).expect("re-decode");
-      assert_eq!(decoded, bytes);
-    }
   }
 }

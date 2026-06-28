@@ -1,6 +1,7 @@
 //! Nix integration: flake references, store paths, derivation features, and
 //! flake probing.
 
+pub mod base32;
 pub mod derivation;
 pub mod error;
 pub mod flake;
