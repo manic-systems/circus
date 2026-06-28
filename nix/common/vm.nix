@@ -4,7 +4,7 @@
 
   config = {
     virtualisation = {
-      memorySize = 4096;
+      memorySize = 2048;
       cores = 2;
       diskSize = 10000;
       graphics = false;
