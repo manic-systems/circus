@@ -61,13 +61,11 @@ impl NixHash {
   ///
   /// # Errors
   ///
-  /// Returns error if the hash is not exactly 32 lowercase alphanumeric
-  /// characters.
+  /// Returns error if the hash is not exactly 32 Nix base32 characters.
   pub fn parse(hash: &str) -> Result<Self, String> {
     if !Self::is_valid(hash) {
       return Err(
-        "nix hash must be exactly 32 lowercase alphanumeric characters"
-          .to_string(),
+        "nix hash must be exactly 32 Nix base32 characters".to_string(),
       );
     }
     Ok(Self(hash.to_string()))
@@ -76,10 +74,7 @@ impl NixHash {
   /// Check validity without constructing.
   #[must_use]
   pub fn is_valid(hash: &str) -> bool {
-    hash.len() == 32
-      && hash
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    hash.len() == 32 && hash.bytes().all(crate::base32::is_base32_byte)
   }
 
   #[must_use]
@@ -178,7 +173,7 @@ mod tests {
 
   #[test]
   fn valid_nix_hash_lowercase_alpha() {
-    assert!(NixHash::is_valid("abcdefghijklmnopqrstuvwxyzabcdef"));
+    assert!(NixHash::is_valid("0123456789abcdfghijklmnpqrsvwxyz"));
   }
 
   #[test]
@@ -188,7 +183,7 @@ mod tests {
 
   #[test]
   fn valid_nix_hash_mixed() {
-    assert!(NixHash::is_valid("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"));
+    assert!(NixHash::is_valid("a1b2c3d4f5g6a7b8c9d0f1g2a3b4c5d6"));
   }
 
   #[test]
@@ -250,10 +245,10 @@ mod tests {
 
   #[test]
   fn nix_hash_parse_returns_validated_type() {
-    let h = NixHash::parse("abcdefghijklmnopqrstuvwxyzabcdef");
+    let h = NixHash::parse("0123456789abcdfghijklmnpqrsvwxyz");
     assert_eq!(
       h.expect("valid nix hash").as_str(),
-      "abcdefghijklmnopqrstuvwxyzabcdef"
+      "0123456789abcdfghijklmnpqrsvwxyz"
     );
   }
 }
