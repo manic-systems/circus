@@ -13,13 +13,19 @@ use uuid::Uuid;
 use crate::{
   dispatch::supports_required_features,
   helpers::{get_project_for_build, is_interval_rebuild},
-  worker::WorkerPool,
+  worker::{ActiveBuilds, WorkerPool},
 };
 
 /// Reset builds left in `running` from a crashed runner. Builds older
 /// than 5 minutes in `running` are assumed orphaned.
-async fn reset_orphaned_builds(pool: &PgPool) {
-  match repo::builds::reset_orphaned(pool, 300).await {
+async fn reset_orphaned_builds(pool: &PgPool, active_builds: &ActiveBuilds) {
+  // Builds claimed after this snapshot stay under the age threshold anyway.
+  let active_ids = active_builds
+    .iter()
+    .map(|entry| *entry.key())
+    .collect::<Vec<Uuid>>();
+
+  match repo::builds::reset_orphaned_excluding(pool, 300, &active_ids).await {
     Ok(count) if count > 0 => {
       tracing::warn!(count, "Reset orphaned builds back to pending");
     },
@@ -194,12 +200,12 @@ pub async fn run(
 ) -> color_eyre::Result<()> {
   let mut last_orphan_reset = tokio::time::Instant::now();
   let orphan_reset_interval = Duration::from_mins(1);
-  reset_orphaned_builds(&pool).await;
+  reset_orphaned_builds(&pool, worker_pool.active_builds()).await;
   prune_stale_ephemeral_sessions(&pool).await;
 
   loop {
     if last_orphan_reset.elapsed() >= orphan_reset_interval {
-      reset_orphaned_builds(&pool).await;
+      reset_orphaned_builds(&pool, worker_pool.active_builds()).await;
       prune_stale_ephemeral_sessions(&pool).await;
       last_orphan_reset = tokio::time::Instant::now();
     }

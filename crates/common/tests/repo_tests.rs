@@ -535,6 +535,64 @@ async fn test_evaluation_and_build_lifecycle() {
 }
 
 #[tokio::test]
+async fn test_start_blocks_duplicate_running_drv_path() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "duplicate-drv").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+
+  let first =
+    create_test_build(&pool, eval.id, "first", &drv, Some("x86_64-linux"))
+      .await;
+  let second =
+    create_test_build(&pool, eval.id, "second", &drv, Some("x86_64-linux"))
+      .await;
+
+  let claimed_first = repo::builds::start(&pool, first.id)
+    .await
+    .expect("start first build");
+  assert!(claimed_first.is_some());
+
+  let pending = repo::builds::list_pending(&pool, 10, 4)
+    .await
+    .expect("list pending");
+  assert!(!pending.iter().any(|build| build.id == second.id));
+
+  let claimed_second = repo::builds::start(&pool, second.id)
+    .await
+    .expect("start second build");
+  assert!(claimed_second.is_none());
+
+  let second = repo::builds::get(&pool, second.id)
+    .await
+    .expect("reload second build");
+  assert!(matches!(second.status, BuildStatus::Pending));
+
+  repo::builds::complete(
+    &pool,
+    first.id,
+    BuildStatus::Succeeded,
+    None,
+    None,
+    None,
+  )
+  .await
+  .expect("complete first build");
+
+  let claimed_second = repo::builds::start(&pool, second.id)
+    .await
+    .expect("start second build after first completed");
+  assert!(claimed_second.is_some());
+
+  // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
 async fn test_not_found_errors() {
   let Some(pool) = get_pool().await else {
     return;
@@ -916,6 +974,68 @@ async fn test_reset_orphaned_batch_limit() {
   let build = repo::builds::get(&pool, build.id).await.expect("get build");
   assert!(matches!(build.status, BuildStatus::Pending));
   assert!(build.started_at.is_none());
+
+  // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_reset_orphaned_excludes_active_builds() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "orphan-active").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  let active_drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  let orphan_drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  let active =
+    create_test_build(&pool, eval.id, "active", &active_drv, None).await;
+  let orphan =
+    create_test_build(&pool, eval.id, "orphan", &orphan_drv, None).await;
+
+  repo::builds::start(&pool, active.id).await.unwrap();
+  repo::builds::start(&pool, orphan.id).await.unwrap();
+
+  let old_ids = vec![active.id, orphan.id];
+  sqlx::query(
+    "UPDATE builds SET started_at = NOW() - INTERVAL '2 hours' WHERE id = \
+     ANY($1)",
+  )
+  .bind(&old_ids)
+  .execute(&pool)
+  .await
+  .unwrap();
+
+  let reset_count =
+    repo::builds::reset_orphaned_excluding(&pool, 3600, &[active.id])
+      .await
+      .expect("reset orphaned excluding active");
+  assert!(reset_count >= 1);
+
+  let active = repo::builds::get(&pool, active.id)
+    .await
+    .expect("reload active build");
+  let orphan = repo::builds::get(&pool, orphan.id)
+    .await
+    .expect("reload orphan build");
+  assert!(matches!(active.status, BuildStatus::Running));
+  assert!(active.started_at.is_some());
+  assert!(matches!(orphan.status, BuildStatus::Pending));
+  assert!(orphan.started_at.is_none());
+
+  let reset_count = repo::builds::reset_orphaned(&pool, 3600)
+    .await
+    .expect("reset remaining orphaned build");
+  assert!(reset_count >= 1);
+
+  let active = repo::builds::get(&pool, active.id)
+    .await
+    .expect("reload active build after full reset");
+  assert!(matches!(active.status, BuildStatus::Pending));
+  assert!(active.started_at.is_none());
 
   // Cleanup
   let _ = repo::projects::delete(&pool, project.id).await;

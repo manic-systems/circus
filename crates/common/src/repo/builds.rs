@@ -145,13 +145,15 @@ pub async fn list_pending(
       "WITH eligible_pending AS ( SELECT b.* FROM builds b WHERE b.status = \
        'pending' AND NOT EXISTS ( SELECT 1 FROM build_dependencies bd JOIN \
        builds dep ON dep.id = bd.dependency_build_id WHERE bd.build_id = b.id \
-       AND dep.status != 'succeeded' ) ), running_counts AS ( SELECT \
-       e.jobset_id, COUNT(*) AS running FROM builds b JOIN evaluations e ON \
-       b.evaluation_id = e.id WHERE b.status = 'running' GROUP BY e.jobset_id \
-       ), active_shares AS ( SELECT j.id AS jobset_id, j.scheduling_shares, \
-       COALESCE(rc.running, 0) AS running, SUM(j.scheduling_shares) OVER () \
-       AS total_shares FROM jobsets j JOIN evaluations e2 ON e2.jobset_id = \
-       j.id JOIN eligible_pending b2 ON b2.evaluation_id = e2.id LEFT JOIN \
+       AND dep.status != 'succeeded' ) AND NOT EXISTS ( SELECT 1 FROM builds \
+       active WHERE active.drv_path = b.drv_path AND active.status = \
+       'running' ) ), running_counts AS ( SELECT e.jobset_id, COUNT(*) AS \
+       running FROM builds b JOIN evaluations e ON b.evaluation_id = e.id \
+       WHERE b.status = 'running' GROUP BY e.jobset_id ), active_shares AS ( \
+       SELECT j.id AS jobset_id, j.scheduling_shares, COALESCE(rc.running, 0) \
+       AS running, SUM(j.scheduling_shares) OVER () AS total_shares FROM \
+       jobsets j JOIN evaluations e2 ON e2.jobset_id = j.id JOIN \
+       eligible_pending b2 ON b2.evaluation_id = e2.id LEFT JOIN \
        running_counts rc ON rc.jobset_id = j.id WHERE j.scheduling_shares > 0 \
        GROUP BY j.id, j.scheduling_shares, rc.running ) SELECT b.* FROM \
        eligible_pending b JOIN evaluations e ON b.evaluation_id = e.id JOIN \
@@ -168,7 +170,9 @@ pub async fn list_pending(
   )
 }
 
-/// Atomically claim a pending build by setting it to running.
+/// Atomically claim a pending build by setting it to running. The advisory
+/// lock and the running twin check keep duplicate pending builds of one
+/// `drv_path` from both dispatching.
 ///
 /// # Returns
 ///
@@ -180,10 +184,13 @@ pub async fn list_pending(
 pub async fn start(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
   Ok(
     sqlx::query_as::<_, Build>(
-      "WITH candidate AS ( SELECT id FROM builds WHERE id = $1 AND status = \
-       'pending' FOR UPDATE SKIP LOCKED ) UPDATE builds SET status = \
-       'running', started_at = NOW() FROM candidate WHERE builds.id = \
-       candidate.id RETURNING builds.*",
+      "WITH candidate AS ( SELECT b.id FROM builds b WHERE b.id = $1 AND \
+       b.status = 'pending' AND \
+       pg_try_advisory_xact_lock(hashtextextended(b.drv_path, 0)) AND NOT \
+       EXISTS ( SELECT 1 FROM builds active WHERE active.drv_path = \
+       b.drv_path AND active.status = 'running' ) FOR UPDATE SKIP LOCKED ) \
+       UPDATE builds SET status = 'running', started_at = NOW() FROM \
+       candidate WHERE builds.id = candidate.id RETURNING builds.*",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -400,6 +407,30 @@ pub async fn get_stats(pool: &PgPool) -> Result<BuildStats> {
   }
 }
 
+/// Reset builds that were left in 'running' state, excluding IDs that are
+/// known to still be active in the current runner process.
+///
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn reset_orphaned_excluding(
+  pool: &PgPool,
+  older_than_secs: i64,
+  excluded_ids: &[Uuid],
+) -> Result<u64> {
+  let result = sqlx::query(
+    "UPDATE builds SET status = 'pending', started_at = NULL, \
+     effective_features = NULL WHERE status = 'running' AND started_at < \
+     NOW() - make_interval(secs => $1) AND NOT (id = ANY($2))",
+  )
+  .bind(older_than_secs)
+  .bind(excluded_ids)
+  .execute(pool)
+  .await?;
+
+  Ok(result.rows_affected())
+}
+
 /// Reset builds that were left in 'running' state (orphaned by a crashed
 /// runner). Resets every row older than the threshold; the caller is
 /// expected to run this periodically so a crash that orphans many builds
@@ -412,16 +443,7 @@ pub async fn reset_orphaned(
   pool: &PgPool,
   older_than_secs: i64,
 ) -> Result<u64> {
-  let result = sqlx::query(
-    "UPDATE builds SET status = 'pending', started_at = NULL, \
-     effective_features = NULL WHERE status = 'running' AND started_at < \
-     NOW() - make_interval(secs => $1)",
-  )
-  .bind(older_than_secs)
-  .execute(pool)
-  .await?;
-
-  Ok(result.rows_affected())
+  reset_orphaned_excluding(pool, older_than_secs, &[]).await
 }
 
 /// List builds with optional `evaluation_id`, status, system, and `job_name`
