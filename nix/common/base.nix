@@ -71,7 +71,6 @@ in {
         work_dir = "/var/lib/circus/evaluator";
         nix_timeout = 60;
         strict_errors = true;
-        eval_workers = 1;
       };
 
       queue_runner = {
