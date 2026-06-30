@@ -18,7 +18,7 @@ jobs:
     outputs:
       files_changed: ${{ steps.changed-files.outputs.files }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - id: changed-files
         uses: dorny/paths-filter@v4
         with:
@@ -40,7 +40,7 @@ jobs:
     if: ${{ needs.changes.outputs.files_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: extra-experimental-features = nix-command flakes
@@ -107,7 +107,7 @@ jobs:
           - name: S3 Cache
             check: s3-cache
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: cachix/install-nix-action@v31
         with:
           enable_kvm: true

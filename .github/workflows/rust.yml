@@ -17,7 +17,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: cachix/install-nix-action@v31
       - name: Check Rust Formatting
         run: nix develop --command cargo fmt --check
@@ -26,7 +26,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: cachix/install-nix-action@v31
       - name: Run Clippy
         run: nix develop --command cargo clippy --all-targets -- -D warnings
@@ -35,7 +35,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: cachix/install-nix-action@v31
       - name: Run Test Suite
         run: nix develop --command cargo nextest run --all
