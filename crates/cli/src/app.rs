@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use clap::Parser;
 use color_eyre::Result;
 use serde_json::{Map, Value, json};
@@ -28,8 +30,24 @@ use crate::{
   },
 };
 
-pub(super) async fn run() -> Result<()> {
-  let cli = Cli::parse();
+/// Run the Circus API client CLI.
+///
+/// # Errors
+///
+/// Returns an error when argument parsing, API requests, or output rendering
+/// fail.
+pub async fn run() -> Result<()> {
+  run_from(std::env::args_os().collect()).await
+}
+
+/// Run the Circus API client CLI with explicit argv values.
+///
+/// # Errors
+///
+/// Returns an error when argument parsing, API requests, or output rendering
+/// fail.
+pub async fn run_from(args: Vec<OsString>) -> Result<()> {
+  let cli = Cli::parse_from(args);
   let base_url = cli
     .url
     .or_else(|| std::env::var("CIRCUS_URL").ok())

@@ -625,6 +625,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "circus"
+version = "0.12.0"
+dependencies = [
+ "circus-agent",
+ "circus-cli",
+ "circus-common",
+ "circus-config",
+ "circus-evaluator",
+ "circus-logs",
+ "circus-migrations",
+ "circus-nix",
+ "circus-notification",
+ "circus-proto",
+ "circus-queue-runner",
+ "circus-s3",
+ "circus-server",
+ "circus-types",
+ "color-eyre",
+ "evix",
+ "tokio",
+]
+
+[[package]]
 name = "circus-agent"
 version = "0.12.0"
 dependencies = [

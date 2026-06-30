@@ -12,6 +12,7 @@
 //! - [`tls`]     rustls connector builder
 
 pub mod build;
+pub mod cli;
 pub mod config;
 pub mod psi;
 pub mod sandbox;

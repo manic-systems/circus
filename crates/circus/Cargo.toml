@@ -1,0 +1,28 @@
+[package]
+name                 = "circus"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+circus-agent.workspace        = true
+circus-cli.workspace          = true
+circus-common.workspace       = true
+circus-config.workspace       = true
+circus-evaluator.workspace    = true
+circus-logs.workspace         = true
+circus-migrations.workspace   = true
+circus-nix.workspace          = true
+circus-notification.workspace = true
+circus-proto.workspace        = true
+circus-queue-runner.workspace = true
+circus-s3.workspace           = true
+circus-server.workspace       = true
+circus-types.workspace        = true
+color-eyre.workspace          = true
+evix.workspace                = true
+tokio.workspace               = true
+
+[lints]
+workspace = true
