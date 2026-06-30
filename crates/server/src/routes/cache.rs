@@ -8,12 +8,21 @@ use axum::{
   response::{IntoResponse, Response},
   routing::get,
 };
-use harmonia_file_nar::NarByteStream;
-use harmonia_store_content_address::ContentAddress;
-use harmonia_store_nar_info::{build_narinfo, format_narinfo_txt};
-use harmonia_store_path::{StoreDir, StorePath, StorePathHash};
-use harmonia_store_path_info::{UnkeyedValidPathInfo, ValidPathInfo};
-use harmonia_utils_hash::{Hash, HashFormat as _, fmt::Any as AnyHashFmt};
+use circus_binary_cache::{
+  ContentAddress,
+  Hash,
+  HashFormat as _,
+  NarByteStream,
+  NarHash,
+  StoreDir,
+  StorePath,
+  StorePathHash,
+  UnkeyedValidPathInfo,
+  ValidPathInfo,
+  build_narinfo,
+  fmt::Any as AnyHashFmt,
+  format_narinfo_txt,
+};
 use serde::Deserialize;
 use sqlx::{FromRow, PgPool, SqlitePool};
 use uuid::Uuid;
@@ -120,7 +129,7 @@ fn narinfo_has_signature(
   row.sig.as_ref().is_some_and(|sig| !sig.trim().is_empty())
 }
 
-async fn query_harmonia_path_info(
+async fn query_binary_cache_path_info(
   hash: &str,
   store_dir: &StoreDir,
   nix_store_db: &SqlitePool,
@@ -164,10 +173,7 @@ async fn query_harmonia_path_info(
   let deriver = row
     .deriver
     .and_then(|path| store_dir.parse::<StorePath>(&path).ok());
-  let Ok(nar_hash) = row
-    .nar_hash
-    .parse::<AnyHashFmt<harmonia_store_path_info::NarHash>>()
-  else {
+  let Ok(nar_hash) = row.nar_hash.parse::<AnyHashFmt<NarHash>>() else {
     return Ok(None);
   };
   let nar_hash = nar_hash.into_hash();
@@ -312,7 +318,7 @@ async fn has_circus_derivation_direct_reference(
   .map_err(|e| ApiError(circus_common::CiError::Database(e)))
 }
 
-async fn is_servable_harmonia_path(
+async fn is_servable_binary_cache_path(
   pool: &PgPool,
   nix_store_db: &SqlitePool,
   info: &ValidPathInfo,
@@ -434,12 +440,12 @@ async fn narinfo_for_settings(
   };
   let store_dir = state.nix_store.store_dir();
   let Some(info) =
-    query_harmonia_path_info(hash, &store_dir, nix_store_db).await?
+    query_binary_cache_path_info(hash, &store_dir, nix_store_db).await?
   else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(
+  if !is_servable_binary_cache_path(
     &state.pool,
     nix_store_db,
     &info,
@@ -743,12 +749,12 @@ async fn serve_nar_for_settings(
   };
   let store_dir = state.nix_store.store_dir();
   let Some(info) =
-    query_harmonia_path_info(output_hash, &store_dir, nix_store_db).await?
+    query_binary_cache_path_info(output_hash, &store_dir, nix_store_db).await?
   else {
     return Ok(StatusCode::NOT_FOUND.into_response());
   };
 
-  if !is_servable_harmonia_path(
+  if !is_servable_binary_cache_path(
     &state.pool,
     nix_store_db,
     &info,

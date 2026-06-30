@@ -4,9 +4,11 @@ version.workspace    = true
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
+description          = "Umbrella crate for Circus components"
 
 [dependencies]
 circus-agent.workspace        = true
+circus-binary-cache.workspace = true
 circus-cli.workspace          = true
 circus-common.workspace       = true
 circus-config.workspace       = true

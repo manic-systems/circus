@@ -1,6 +1,7 @@
 pub mod cli;
 
 pub use circus_agent as agent;
+pub use circus_binary_cache as binary_cache;
 pub use circus_cli as ctl;
 pub use circus_common as common;
 pub use circus_config as config;

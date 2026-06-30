@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
+use circus_binary_cache::SecretKey;
 use color_eyre::eyre::{Context as _, Result, eyre};
-use harmonia_utils_signature::SecretKey;
 
 /// Read a Nix-format `<name>:<base64 secret>` signing key from disk.
 ///

@@ -1,0 +1,41 @@
+[package]
+name                 = "circus-binary-cache"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description          = "Nix binary cache primitives used by Circus"
+
+[dependencies]
+blake3.workspace           = true
+bstr.workspace             = true
+bytes.workspace            = true
+data-encoding.workspace    = true
+derive_more.workspace      = true
+ed25519-dalek.workspace    = true
+futures-core.workspace     = true
+futures-sink.workspace     = true
+futures-util.workspace     = true
+getrandom.workspace        = true
+libc.workspace             = true
+md5.workspace              = true
+nix                        = { workspace = true, features = [ "fs", "mman" ] }
+pin-project-lite.workspace = true
+serde.workspace            = true
+serde_json.workspace       = true
+sha1.workspace             = true
+sha2.workspace             = true
+subtle.workspace           = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tokio-util                 = { workspace = true, features = [ "io-util" ] }
+tracing.workspace          = true
+walkdir.workspace          = true
+zerocopy.workspace         = true
+zeroize.workspace          = true
+
+[lints]
+workspace = true
+
+[features]
+test = [  ]

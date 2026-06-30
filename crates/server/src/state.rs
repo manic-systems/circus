@@ -7,13 +7,13 @@ use std::{
   time::Instant,
 };
 
+use circus_binary_cache::StoreDir;
 use circus_common::{
   models::{ApiKey, User},
   roles::GlobalRole,
 };
 use circus_config::Config;
 use dashmap::DashMap;
-use harmonia_store_path::StoreDir;
 use hmac::KeyInit;
 use moka::sync::Cache;
 use regex::Regex;

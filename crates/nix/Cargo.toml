@@ -4,6 +4,7 @@ version.workspace    = true
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
+description          = "Nix data types and helpers for Circus"
 
 [dependencies]
 circus-types.workspace = true

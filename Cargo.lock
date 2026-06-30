@@ -499,13 +499,13 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.12.1"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
 dependencies = [
  "memchr",
  "regex-automata",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -522,9 +522,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "capnp"
@@ -629,6 +629,7 @@ name = "circus"
 version = "0.12.0"
 dependencies = [
  "circus-agent",
+ "circus-binary-cache",
  "circus-cli",
  "circus-common",
  "circus-config",
@@ -686,6 +687,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "circus-binary-cache"
+version = "0.12.0"
+dependencies = [
+ "blake3",
+ "bstr",
+ "bytes",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "futures-core",
+ "futures-sink",
+ "futures-util",
+ "getrandom 0.4.2",
+ "libc",
+ "md5",
+ "nix",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.0",
+ "subtle",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "walkdir",
+ "zerocopy",
+ "zeroize",
+]
+
+[[package]]
 name = "circus-cli"
 version = "0.12.0"
 dependencies = [
@@ -707,6 +740,7 @@ dependencies = [
  "argon2",
  "base64",
  "chrono",
+ "circus-binary-cache",
  "circus-config",
  "circus-logs",
  "circus-migrations",
@@ -715,7 +749,6 @@ dependencies = [
  "clap",
  "color-eyre",
  "git2",
- "harmonia-utils-signature",
  "hex",
  "lettre",
  "libc",
@@ -923,6 +956,7 @@ dependencies = [
  "axum-extra",
  "base64",
  "chrono",
+ "circus-binary-cache",
  "circus-common",
  "circus-config",
  "circus-nix",
@@ -934,12 +968,6 @@ dependencies = [
  "config",
  "dashmap",
  "futures",
- "harmonia-file-nar",
- "harmonia-store-content-address",
- "harmonia-store-nar-info",
- "harmonia-store-path",
- "harmonia-store-path-info",
- "harmonia-utils-hash",
  "hex",
  "hmac",
  "ldap3",
@@ -1979,145 +2007,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "harmonia-file-core"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "harmonia-file-nar"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "bstr",
- "bytes",
- "derive_more",
- "futures-core",
- "futures-sink",
- "futures-util",
- "harmonia-file-core",
- "harmonia-utils-io",
- "nix",
- "pin-project-lite",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "harmonia-store-content-address"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "derive_more",
- "harmonia-store-path",
- "harmonia-utils-hash",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "harmonia-store-nar-info"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "harmonia-store-content-address",
- "harmonia-store-path",
- "harmonia-store-path-info",
- "harmonia-utils-hash",
- "harmonia-utils-signature",
- "serde",
-]
-
-[[package]]
-name = "harmonia-store-path"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "derive_more",
- "harmonia-utils-base-encoding",
- "harmonia-utils-hash",
- "serde",
- "thiserror 2.0.18",
- "zerocopy",
-]
-
-[[package]]
-name = "harmonia-store-path-info"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "harmonia-store-content-address",
- "harmonia-store-path",
- "harmonia-utils-hash",
- "harmonia-utils-signature",
- "serde",
-]
-
-[[package]]
-name = "harmonia-utils-base-encoding"
-version = "0.0.0-alpha.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "data-encoding",
- "derive_more",
- "serde",
-]
-
-[[package]]
-name = "harmonia-utils-hash"
-version = "0.0.0-alpha.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "blake3",
- "data-encoding",
- "derive_more",
- "harmonia-utils-base-encoding",
- "md5",
- "serde",
- "sha1 0.11.0",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "harmonia-utils-io"
-version = "0.0.0-alpha.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "bytes",
- "futures-util",
- "libc",
- "nix",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "harmonia-utils-signature"
-version = "3.1.0"
-source = "git+https://github.com/nix-community/harmonia.git?rev=12c6742560dd1ba1e66f5cc2f04cabd4e99ae754#12c6742560dd1ba1e66f5cc2f04cabd4e99ae754"
-dependencies = [
- "data-encoding",
- "ed25519-dalek",
- "getrandom 0.4.2",
- "harmonia-utils-base-encoding",
- "serde",
- "subtle",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2870,15 +2759,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
-name = "memoffset"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2948,7 +2828,6 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
- "memoffset",
 ]
 
 [[package]]
