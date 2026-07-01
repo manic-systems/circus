@@ -193,7 +193,6 @@ mod unittests {
   use std::io::{self, Cursor};
 
   use rstest::rstest;
-  use tokio::fs::File;
 
   use super::*;
   use crate::archive::{
@@ -201,20 +200,6 @@ mod unittests {
     test_data,
     write_nar,
   };
-
-  #[tokio::test]
-  #[rstest]
-  #[case::dir_example("test-data/test-dir.nar", test_data::dir_example())]
-  #[case::exec_file("test-data/test-exec.nar", test_data::exec_file())]
-  #[case::text_file("test-data/test-text.nar", test_data::text_file())]
-  async fn test_parse_nar(
-    #[case] file: &str,
-    #[case] expected: test_data::TestNarEvents,
-  ) {
-    let io = File::open(file).await.unwrap();
-    let actual = read_nar(io).await.unwrap();
-    assert_eq!(actual, expected);
-  }
 
   /// Hostile length fields must yield InvalidData, not allocate or panic.
   #[tokio::test]

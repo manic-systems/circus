@@ -25,6 +25,9 @@ pub fn arb_file_component() -> impl Strategy<Value = String> {
 pub fn arb_filename() -> impl Strategy<Value = String> {
   proptest::string::string_regex(r"[A-Za-z0-9._+-]{1,32}")
     .expect("filename regex is valid")
+    .prop_filter("not a pseudo-directory entry", |name| {
+      name != "." && name != ".."
+    })
 }
 
 pub fn arb_path() -> impl Strategy<Value = PathBuf> {
