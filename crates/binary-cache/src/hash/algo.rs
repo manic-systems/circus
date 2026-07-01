@@ -64,6 +64,25 @@ impl Algorithm {
   }
 }
 
+#[cfg(any(test, feature = "test"))]
+impl proptest::arbitrary::Arbitrary for Algorithm {
+  type Parameters = ();
+  type Strategy = proptest::strategy::BoxedStrategy<Algorithm>;
+
+  fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+    use proptest::{prelude::Just, strategy::Strategy as _};
+
+    proptest::prop_oneof![
+      1 => Just(Algorithm::MD5),
+      2 => Just(Algorithm::SHA1),
+      5 => Just(Algorithm::SHA256),
+      2 => Just(Algorithm::SHA512),
+      2 => Just(Algorithm::BLAKE3),
+    ]
+    .boxed()
+  }
+}
+
 #[derive(Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 #[error("unsupported digest algorithm '{0}'")]
 pub struct UnknownAlgorithm(pub(super) String);

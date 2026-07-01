@@ -432,7 +432,7 @@ mod proptests {
 
   use crate::{
     archive::{NarEvent, NarWriteError, dump, restore, test_data},
-    test::arbitrary::archive::arb_nar_events,
+    file_nar::test::arbitrary::archive::arb_nar_events,
   };
 
   #[test]

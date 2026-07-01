@@ -897,7 +897,10 @@ mod proptests {
   use tokio_test::io::Builder;
   use tracing::{info, trace};
 
-  use crate::{archive::NarReader, test::arbitrary::archive::arb_nar_contents};
+  use crate::{
+    archive::NarReader,
+    file_nar::test::arbitrary::archive::arb_nar_contents,
+  };
 
   #[test]
   fn proptest_read_nar() {

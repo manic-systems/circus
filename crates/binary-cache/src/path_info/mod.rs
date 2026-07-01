@@ -15,12 +15,13 @@ use harmonia_store_content_address::ContentAddress;
 use harmonia_store_path::{StoreDir, StorePath};
 use harmonia_utils_hash::HashFormat as _;
 use harmonia_utils_signature::Signature;
-#[cfg(any(test, feature = "test"))]
-use harmonia_utils_signature::proptests::arb_signatures;
 pub use nar_hash::NarHash;
 #[cfg(any(test, feature = "test"))]
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize, Serializer};
+
+#[cfg(any(test, feature = "test"))]
+use crate::signature::proptests::arb_signatures;
 
 /// Generate a fingerprint for signing a store path.
 ///

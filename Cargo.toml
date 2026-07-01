@@ -63,6 +63,7 @@ futures-util = { version = "0.3", features = [ "sink" ] }
 getrandom = "0.4"
 git2 = { version = "0.21.0", features = [ "https" ] }
 hex = "0.4.3"
+hex-literal = "1.1.0"
 hmac = "0.13.0"
 humantime-serde = "1.1.1"
 ldap3 = { version = "0.12.1", default-features = false, features = [ "tls-rustls", "tls-rustls-ring" ] }
@@ -89,6 +90,8 @@ password-hash = { version = "0.6.1", features = [ "getrandom" ] }
 percent-encoding = "2.3.2"
 pin-project-lite = "0.2"
 procfs = "0.18.0"
+proptest = "1.11.0"
+proptest-derive = "0.8.0"
 regex = "1.12.3"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "json",
@@ -96,6 +99,7 @@ reqwest = { version = "0.13.4", default-features = false, features = [
   "stream",
 ] }
 ring = "0.17.14"
+rstest = "0.26.1"
 rustls = { version = "0.23.40", default-features = false, features = [ "ring", "std", "tls12" ] }
 rustls-native-certs = "0.8.3"
 rustls-pemfile = "2.2.0"
@@ -121,6 +125,7 @@ thiserror = "2.0.18"
 time = "0.3.47"
 tokio = { version = "1.52.3", features = [ "full" ] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = [ "ring", "tls12" ] }
+tokio-test = "0.4.5"
 tokio-util = { version = "0.7.18", features = [ "io", "compat" ] }
 toml = "1.1.2"
 tower = "0.5.3"

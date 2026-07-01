@@ -34,6 +34,7 @@ pub use store_dir::{
 pub type StorePathSet = BTreeSet<StorePath>;
 
 #[cfg(any(test, feature = "test"))]
+#[allow(unused_imports)]
 pub mod proptest {
   pub use super::{path::proptest::*, store_dir::proptest::*};
 }

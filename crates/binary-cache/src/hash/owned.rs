@@ -67,6 +67,20 @@ impl Hash {
   }
 }
 
+#[cfg(any(test, feature = "test"))]
+impl proptest::arbitrary::Arbitrary for Hash {
+  type Parameters = Algorithm;
+  type Strategy = proptest::strategy::BoxedStrategy<Hash>;
+
+  fn arbitrary_with(algorithm: Self::Parameters) -> Self::Strategy {
+    use proptest::{arbitrary::any, collection, strategy::Strategy as _};
+
+    collection::vec(any::<u8>(), algorithm.size())
+      .prop_map(move |data| algorithm.digest(data))
+      .boxed()
+  }
+}
+
 impl HashView for Hash {
   #[inline]
   fn algorithm(&self) -> Algorithm {

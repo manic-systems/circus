@@ -5,7 +5,7 @@ use bytes::Bytes;
 
 use crate::{
   archive::{NarEvent, write_nar},
-  test::arbitrary::{arb_filename, arb_path},
+  file_nar::test::arbitrary::{arb_filename, arb_path},
 };
 
 #[derive(Clone, Debug)]

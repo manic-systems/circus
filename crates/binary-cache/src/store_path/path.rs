@@ -513,6 +513,7 @@ impl From<StorePathNameError> for StorePathError {
 }
 
 #[cfg(any(test, feature = "test"))]
+#[allow(dead_code)]
 pub mod proptest {
   use ::proptest::{arbitrary::Arbitrary, prelude::*};
 

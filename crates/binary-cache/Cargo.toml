@@ -21,6 +21,8 @@ libc.workspace             = true
 md5.workspace              = true
 nix                        = { workspace = true, features = [ "fs", "mman" ] }
 pin-project-lite.workspace = true
+proptest                   = { workspace = true, optional = true }
+proptest-derive            = { workspace = true, optional = true }
 serde.workspace            = true
 serde_json.workspace       = true
 sha1.workspace             = true
@@ -37,5 +39,13 @@ zeroize.workspace          = true
 [lints]
 workspace = true
 
+[dev-dependencies]
+hex-literal.workspace     = true
+proptest.workspace        = true
+proptest-derive.workspace = true
+rstest.workspace          = true
+tempfile.workspace        = true
+tokio-test.workspace      = true
+
 [features]
-test = [  ]
+test = [ "dep:proptest", "dep:proptest-derive" ]
