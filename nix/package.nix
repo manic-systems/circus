@@ -5,31 +5,37 @@
   capnproto,
   openssl,
   crate ? "circus-agent",
-}:
-rustPlatform.buildRustPackage {
-  pname = crate;
-  version = (lib.importTOML ../Cargo.toml).workspace.package.version;
+}: let
+  cargoTOML = (lib.importTOML ../Cargo.toml).workspace.package;
+in
+  rustPlatform.buildRustPackage (finalAttrs: {
+    pname = crate;
+    version = cargoTOML.version;
 
-  src = lib.fileset.toSource {
-    root = ../.;
-    fileset = lib.fileset.unions [
-      ../crates
-      ../Cargo.toml
-      ../Cargo.lock
-    ];
-  };
-  cargoLock = {
-    lockFile = ../Cargo.lock;
-    outputHashes = {
-      "harmonia-file-nar-3.1.0" = "sha256-6LJOkuyWuMjENbzZCKDOjEz4qjYipTwH0qRMcwpdLSk=";
+    src = let
+      fs = lib.fileset;
+      s = ./..;
+    in
+      fs.toSource {
+        root = s;
+        fileset = fs.unions [
+          (s + /crates)
+          (s + /Cargo.toml)
+          (s + /Cargo.lock)
+        ];
+      };
+
+    cargoLock.lockFile = "${finalAttrs.src}/Cargo.lock";
+
+    cargoBuildFlags = ["--package" crate];
+    cargoTestFlags = ["--package" crate];
+    useNextest = true;
+
+    nativeBuildInputs = [pkg-config capnproto];
+    buildInputs = [openssl.dev];
+    meta = {
+      homepage = "https://github.com/manic-systems/circus";
+      mainProgram = crate;
+      maintainers = with lib.maintainers; [NotAShelf];
     };
-  };
-
-  cargoBuildFlags = ["--package" crate];
-  cargoTestFlags = ["--package" crate];
-
-  nativeBuildInputs = [pkg-config capnproto];
-  buildInputs = [openssl];
-
-  meta.mainProgram = crate;
-}
+  })
