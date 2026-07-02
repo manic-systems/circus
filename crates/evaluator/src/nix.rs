@@ -60,7 +60,9 @@ pub(crate) fn nix_job_from_derivation(drv: &evix::Derivation) -> NixJob {
       drv
         .input_drvs
         .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
+        .map(|(key, value)| {
+          (key.clone(), serde_json::Value::from(value.clone()))
+        })
         .collect(),
     )
   };
@@ -964,7 +966,7 @@ mod meta_tests {
     let mut drv = derivation("hello", "hello");
     drv
       .input_drvs
-      .insert("/nix/store/dep.drv".into(), serde_json::json!(["out"]));
+      .insert("/nix/store/dep.drv".into(), vec!["out".to_string()]);
     let input_drvs = nix_job_from_derivation(&drv).input_drvs.unwrap();
     assert!(input_drvs.contains_key("/nix/store/dep.drv"));
   }
