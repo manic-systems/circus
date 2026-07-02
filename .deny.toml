@@ -28,6 +28,9 @@ exceptions = [
   ], crate = "evix" },
   { allow = [
     "EUPL-1.2",
+  ], crate = "evix-protocol" },
+  { allow = [
+    "EUPL-1.2",
   ], crate = "cognos" },
   { allow = [
     "EUPL-1.2",
