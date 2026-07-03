@@ -11,7 +11,7 @@
     ...
   }: let
     inherit (nixpkgs) lib;
-    forAllSystems = lib.genAttrs lib.systems.doubles.linux;
+    forAllSystems = lib.genAttrs (lib.systems.doubles.linux ++ ["aarch64-darwin"]);
     pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs {inherit system;});
   in {
     # NixOS modules for Circus and components
@@ -87,10 +87,10 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs; [pkg-config capnproto];
-        buildInputs = with pkgs; [openssl sqlite nixVersions.nix_2_34.dev glibc.dev];
+        buildInputs = with pkgs; [openssl sqlite nixVersions.nix_2_34.dev] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
         env = {
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
+          BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
         };
       };
 
@@ -118,7 +118,7 @@
       };
 
       # A statically linked agent
-      crossPkgs = pkgs.pkgsCross.${muslCrossAttr.${system} or "musl64"};
+      crossPkgs = pkgs.pkgsCross.${muslCrossAttr.${system}};
       staticCraneLib = crane.mkLib crossPkgs;
       staticAgentArgs = {
         pname = "circus-agent-static";
@@ -138,7 +138,6 @@
 
         # circus Packages
         circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
-        circus-agent = callCratePackage ./nix/packages/circus-agent.nix;
         circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
         circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
         circus-server = callCratePackage ./nix/packages/circus-server.nix;
@@ -159,6 +158,9 @@
               path = staticCargoArtifacts;
             }
           ]);
+      }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        circus-agent = callCratePackage ./nix/packages/circus-agent.nix;
       }
       // lib.optionalAttrs (muslCrossAttr ? ${system}) {
         circus-agent-static = staticCraneLib.buildPackage (
@@ -276,28 +278,29 @@
         inputsFrom = [self.packages.${system}.circus-server];
 
         strictDeps = true;
-        packages = with pkgs; [
-          pkg-config
-          openssl
-          postgresql_18
-          # DB query codegen: `scripts/codegen.sh` runs `cornucopia live`.
-          cornucopia
+        packages = with pkgs;
+          [
+            pkg-config
+            openssl
+            postgresql_18
+            # DB query codegen: `scripts/codegen.sh` runs `cornucopia live`.
+            cornucopia
 
-          # circus-evaluator builds evix's Nix C bindings.
-          nixVersions.nix_2_34.dev
-          glibc.dev
+            # circus-evaluator builds evix's Nix C bindings.
+            nixVersions.nix_2_34.dev
 
-          taplo
-          cargo-deny
-          cargo-nextest
-          clippy
-          rust-analyzer
-          (rustfmt.override {asNightly = true;})
-        ];
+            taplo
+            cargo-deny
+            cargo-nextest
+            clippy
+            rust-analyzer
+            (rustfmt.override {asNightly = true;})
+          ]
+          ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
 
         # bindgen (via nix-bindings-sys) needs libclang and a glibc sysroot.
         LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-        BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
+        BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
       };
     });
 

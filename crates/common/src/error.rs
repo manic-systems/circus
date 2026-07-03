@@ -129,12 +129,16 @@ pub fn check_disk_space(path: &std::path::Path) -> Result<DiskSpaceInfo> {
 
   #[cfg(unix)]
   {
+    fn widen(n: impl Into<u64>) -> u64 {
+      n.into()
+    }
+
     let stat = nix::sys::statvfs::statvfs(path)
       .map_err(|e| CiError::Io(std::io::Error::from_raw_os_error(e as i32)))?;
-    let block_size = stat.fragment_size();
-    let bavail = stat.blocks_available().saturating_mul(block_size);
-    let bfree = stat.blocks_free().saturating_mul(block_size);
-    let btotal = stat.blocks().saturating_mul(block_size);
+    let block_size = widen(stat.fragment_size());
+    let bavail = widen(stat.blocks_available()).saturating_mul(block_size);
+    let bfree = widen(stat.blocks_free()).saturating_mul(block_size);
+    let btotal = widen(stat.blocks()).saturating_mul(block_size);
 
     Ok(DiskSpaceInfo {
       total_gb:     to_gb(btotal),
