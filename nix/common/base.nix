@@ -6,6 +6,7 @@
 }: let
   inherit (lib.modules) mkForce;
 in {
+  documentation.enable = false;
   programs.git.enable = true;
   security.sudo.enable = true;
 
