@@ -4,12 +4,15 @@
   lib,
 }: let
   inherit (lib.modules) mkForce;
-  circusPkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
+  hostPkgs = pkgs;
+  hostSystem = hostPkgs.stdenv.hostPlatform.system;
+  guestSystem = builtins.replaceStrings ["darwin"] ["linux"] hostSystem;
+  circusPkgs = self.packages.${guestSystem};
 
   adminPasswordFile = pkgs.writeText "admin-password" "AdminPassword123!";
   demoPasswordFile = pkgs.writeText "demo-password" "DemoPassword123!";
 
-  nixos = pkgs.nixos ({
+  module = {
     modulesPath,
     pkgs,
     ...
@@ -23,9 +26,12 @@
       {config._module.args = {inherit self;};}
     ];
 
+    nixpkgs.hostPlatform = guestSystem;
+
     ## VM hardware
     # As it turns out 2gb and 2 cores is not enough.
     virtualisation = {
+      host.pkgs = hostPkgs;
       memorySize = mkForce 4096;
       cores = mkForce 4;
     };
@@ -141,7 +147,12 @@
     };
 
     system.stateVersion = "26.11";
-  });
+  };
+
+  nixos = import "${self.inputs.nixpkgs}/nixos" {
+    configuration = module;
+    system = null;
+  };
 in
   pkgs.writeShellApplication {
     name = "run-circus-demo-vm";

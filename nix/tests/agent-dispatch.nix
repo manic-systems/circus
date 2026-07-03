@@ -27,7 +27,7 @@ in
     name = "circus-agent-dispatch";
 
     nodes = {
-      runner = {
+      runner = {pkgs, ...}: {
         imports = [(import ../common/distributed-runner.nix {inherit self;})];
         virtualisation = {
           diskSize = 10 * 1000;
