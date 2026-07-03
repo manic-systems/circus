@@ -5,12 +5,14 @@
 pkgs.testers.nixosTest {
   name = "circus-s3-cache-upload";
 
-  nodes.machine = {
+  nodes.machine = {pkgs, ...}: {
     imports = [
       self.nixosModules.circus
       ../common/vm.nix
     ];
     _module.args.self = self;
+
+    environment.systemPackages = with pkgs; [garage_2 minio-client];
 
     # Add Garage for S3-compatible storage
     services.garage = {
@@ -69,14 +71,14 @@ pkgs.testers.nixosTest {
     machine.wait_for_open_port(3901)
 
     # Configure MinIO client and create bucket
-    machine.succeed("${pkgs.garage_2}/bin/garage layout assign -z test -c 1G $(${pkgs.garage_2}/bin/garage node id | cut -d@ -f1)")
-    machine.succeed("${pkgs.garage_2}/bin/garage layout apply --version 1")
-    machine.succeed("${pkgs.garage_2}/bin/garage bucket create circus-cache")
-    machine.succeed("${pkgs.garage_2}/bin/garage key import --yes -n circus-key GKcircus 0000000000000000")
-    machine.succeed("${pkgs.garage_2}/bin/garage bucket allow circus-cache --key circus-key --read --write")
-    machine.succeed("${pkgs.garage_2}/bin/garage bucket website circus-cache --allow")
-    machine.succeed("${pkgs.minio-client}/bin/mc alias set local http://127.0.0.1:3900 GKcircus 0000000000000000")
-    machine.succeed("echo StoreDir: /nix/store > nix-cache-info && ${pkgs.minio-client}/bin/mc cp nix-cache-info local/circus-cache/nix-cache-info")
+    machine.succeed("garage layout assign -z test -c 1G $(garage node id | cut -d@ -f1)")
+    machine.succeed("garage layout apply --version 1")
+    machine.succeed("garage bucket create circus-cache")
+    machine.succeed("garage key import --yes -n circus-key GKcircus 0000000000000000")
+    machine.succeed("garage bucket allow circus-cache --key circus-key --read --write")
+    machine.succeed("garage bucket website circus-cache --allow")
+    machine.succeed("mc alias set local http://127.0.0.1:3900 GKcircus 0000000000000000")
+    machine.succeed("echo StoreDir: /nix/store > nix-cache-info && mc cp nix-cache-info local/circus-cache/nix-cache-info")
 
     machine.wait_for_unit("circus-server.service")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -183,7 +185,7 @@ pkgs.testers.nixosTest {
     # Verify the build output was uploaded to S3
     with subtest("Build output was uploaded to S3 cache"):
         # List objects in the S3 bucket
-        bucket_contents = machine.succeed("${pkgs.minio-client}/bin/mc ls --recursive local/circus-cache/")
+        bucket_contents = machine.succeed("mc ls --recursive local/circus-cache/")
 
         # Should have the .narinfo file and the .nar file
         assert ".narinfo" in bucket_contents, f"Expected .narinfo file in bucket, got: {bucket_contents}"
