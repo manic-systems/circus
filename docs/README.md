@@ -2,23 +2,30 @@
 
 [design document]: ./DESIGN.md
 [Hydra]: https://github.com/nixos/hydra
+[evix]: https://github.com/manic-systems/evix
 [discussions tab]: https://github.com/manic-systems/circus/discussions/landing
 
 Circus is fast, modular and declarative continuous integration (CI) system built
-from the ground up in Rust for Nix-based projects for quick, easy deployments
-for mortals and long-term reliability. We emphasize on declarative system
-configurations, and robust remote/distributed builds without any fuss. The
-project used to follow [Hydra]'s three-daemon architecture, but the design has
-diverged since. Still, Circus addresses the original pain points with Hydra in
-the areas of performance, maintainability, and easy, declarative setups while
-staying true to our goals of having an "all in one" Nix CI option that can be
-maintained long-term with ease, and without compromising from performance while
-allowing deployed anywhere, anytime, _without friction_ and for any user or team
-of any size.
+from the ground up in Rust for Nix-based projects. It is designed for quick,
+painless deployments (for mortals & clowns) and robust remote/distributed builds
+and evaluations [^eval] without any fuss. While Circus initially followed
+[Hydra]'s three-daemon architecture at first and attempted to remain close in
+featureset, the design has since diverged. As our needs evolved, so did Circus
+into an "all in one" Nix CI option that can be maintained long-term with ease,
+deployed anywhere without friction, for any user or any team of any size. Thus,
+Circus is the last Nix CI system that addresses the questions of performance,
+maintainability and easy declarative setups with seamless scaling.
 
 Feature requests, feedback and constructive criticism are welcome in preparing
 Circus for long-term adoption. If you feel overwhelmed by the documentation at
 any time, please head to the [discussions tab] to ask your questions directly.
+
+[^eval]: While remote and distributed builds are nothing new in Nix, remote
+    evaluation is an ongoing side-branch of development alongside Circus as
+    [evix], our This aims to let you break free from the traditional model of
+    "eval locally, build remotely", bounded by Nix's clunky evaluator by
+    embedding it to Circus agents with resource controls, cache pre-warming and
+    more.
 
 > [!NOTE]
 > Until 1.0.0 is tagged and released (or, alternatively, this note is removed),
@@ -41,7 +48,8 @@ for clowns_. Hope this answers your other burning question.
 ## Features
 
 Circus is intended to be a full Nix CI system rather than a thin build script
-runner or a structured Nix wrapper. The main feature areas are:
+runner or a structured Nix wrapper. Powered by various crates and component, the
+main feature areas of Circus are:
 
 ### Nix-native evaluation and builds
 
@@ -51,7 +59,7 @@ runner or a structured Nix wrapper. The main feature areas are:
   build dependencies.
 - `requiredSystemFeatures` extraction and capability-aware scheduling, so builds
   that require features such as `kvm`, `nixos-test`, `benchmark`, or
-  `big-parallel` are routed to suitable builders.
+  `big-parallel` are routed to suitable builders through Circus "agents".
 - Failed-path caching to skip derivations already known to fail during the cache
   TTL.
 - Fixed-output derivation detection and reuse of already-valid store paths.
@@ -137,31 +145,6 @@ evaluations, and the queue-runner dispatches builds to workers. See the
 [design document] for architectural details, data flow, and how the pieces fit
 together.
 
-[evix]: https://github.com/manic-systems/evix
-
-- **server** (`circus-server`): REST API, dashboard, binary cache, metrics,
-  webhooks
-- **evaluator** (`circus-evaluator`): Git polling and Nix evaluation via [evix]
-- **queue-runner** (`circus-queue-runner`): Build dispatch with semaphore-based
-  worker pool
-- **agent** (`circus-agent`): Persistent build host that receives work over RPC
-- **CLI** (`circusctl`): API-backed command line interface for common
-  administration tasks
-- **common** (`circus-common`): Shared models, database layer, repository
-  helpers, bootstrap, and validation
-- **config** (`circus-config`): TOML/env configuration schema and validation
-- **types** (`circus-types`): Shared domain enums used by config, API, and CLI
-- **nix** (`circus-nix`): Nix store, derivation, flake, and validation helpers
-- **notification** (`circus-notification`): Notification channel construction
-  and delivery
-- **s3** (`circus-s3`): S3 signing and cache upload helpers
-- **logs** (`circus-logs`): Tracing configuration and initialization
-- **proto** (`circus-proto`): Cap'n Proto schema and generated RPC bindings
-- **migration commands** (`circusctl migrate`): Database migration CLI
-- **migrations** (`circus-migrations`): SQL migration files and runtime
-- **xtask** (`circus-xtask`): Developer tooling (API docs generation and route
-  drift checks)
-
 ## Documentation
 
 [INSTALL.md]: ./INSTALL.md
@@ -238,8 +221,8 @@ $ cargo nextest run -p circus-server
 
 ### API Reference Updates
 
-The endpoint reference is generated into [API.md](./API.md). Update it after
-route changes with:
+The endpoint reference is generated into [API.md]. Update it after route changes
+with:
 
 ```bash
 # Run api-docs task to generate 'docs/API.md'
