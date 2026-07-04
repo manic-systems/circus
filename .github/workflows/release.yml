@@ -2,15 +2,12 @@ name: Tag and Release
 
 on:
   workflow_dispatch:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["Format, Lint and Test"]
     types: [completed]
     branches: [main]
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,8 +16,12 @@ concurrency:
 jobs:
   prepare:
     name: Prepare Release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    uses: manic-systems/workflows/.github/workflows/rust-release.yml@tmp
+    uses: manic-systems/workflows/.github/workflows/rust-release.yml@8e0aa91fd3b74f101424d4e36ac743c8f8403a32 # tmp
     with:
       # The reusable workflow marks semver tags with suffixes as prereleases.
       # While the workspace version is `*-dev`, releases are intentionally
@@ -55,7 +56,7 @@ jobs:
             binary: circusctl
             os: ubuntu-latest
             suffix: ctl-linux-amd64
-    uses: manic-systems/workflows/.github/workflows/rust-build.yml@tmp
+    uses: manic-systems/workflows/.github/workflows/rust-build.yml@8e0aa91fd3b74f101424d4e36ac743c8f8403a32 # tmp
     with:
       upload: true
       version: ${{ needs.prepare.outputs.version }}
@@ -94,7 +95,7 @@ jobs:
             binary: circusctl
             os: ubuntu-24.04-arm
             suffix: ctl-linux-arm64
-    uses: manic-systems/workflows/.github/workflows/rust-build.yml@tmp
+    uses: manic-systems/workflows/.github/workflows/rust-build.yml@8e0aa91fd3b74f101424d4e36ac743c8f8403a32 # tmp
     with:
       upload: true
       version: ${{ needs.prepare.outputs.version }}
@@ -106,9 +107,12 @@ jobs:
 
   finalize:
     name: Finalize Release
+    permissions:
+      id-token: write
+      attestations: write
     needs: [prepare, build-amd64, build-arm64]
     if: ${{ needs.prepare.outputs.skip != 'true' && needs['build-amd64'].result == 'success' && needs['build-arm64'].result == 'success' }}
-    uses: manic-systems/workflows/.github/workflows/rust-release.yml@tmp
+    uses: manic-systems/workflows/.github/workflows/rust-release.yml@8e0aa91fd3b74f101424d4e36ac743c8f8403a32 # tmp
     with:
       stage: finalize
       version: ${{ needs.prepare.outputs.version }}

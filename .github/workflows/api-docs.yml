@@ -17,8 +17,7 @@ on:
       - "crates/xtask/src/main.rs"
       - "crates/xtask/src/openapi_check.rs"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: api-docs-${{ github.ref }}
@@ -27,14 +26,16 @@ concurrency:
 jobs:
   update:
     name: Update API Docs
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3 # zizmor: ignore[artipacked]
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
 
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
 
       - name: Generate API docs
         run: nix develop --command cargo run -p circus-xtask -- api-docs

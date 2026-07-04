@@ -8,6 +8,9 @@ on:
     branches: [main]
   merge_group:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -17,8 +20,10 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Check Rust Formatting
         run: nix develop --command cargo fmt --check
 
@@ -26,8 +31,10 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Run Clippy
         run: nix develop --command cargo clippy --all-targets -- -D warnings
 
@@ -35,7 +42,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Run Test Suite
         run: nix develop --command cargo nextest run --all
