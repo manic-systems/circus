@@ -177,7 +177,7 @@
       craneLib = crane.mkLib pkgs;
 
       callTest = path: pkgs.callPackage path {inherit self;};
-      vmTests = {
+      nixosTests = {
         # Split VM integration tests
         service-startup = callTest ./nix/tests/startup.nix;
         basic-api = callTest ./nix/tests/basic-api.nix;
@@ -196,12 +196,13 @@
         s3-cache = callTest ./nix/tests/s3-cache.nix;
         caches = callTest ./nix/tests/caches.nix;
       };
+      filteredNixosTests = lib.filterAttrs (_: t: builtins.length (lib.attrNames t.config.containers) > 0 -> pkgs.stdenv.hostPlatform.isLinux) nixosTests;
     in
-      vmTests
+      filteredNixosTests
       // {
         full = pkgs.symlinkJoin {
-          name = "vm-tests-full";
-          paths = builtins.attrValues vmTests;
+          name = "nixos-tests-full";
+          paths = builtins.attrValues filteredNixosTests;
         };
 
         cargo-deny = craneLib.cargoDeny {
