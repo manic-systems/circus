@@ -5,7 +5,7 @@
   self,
 }: let
   testFlake = system:
-    pkgs.writeText "flake.nix"
+    builtins.toFile "flake.nix"
     /*
     nix
     */
