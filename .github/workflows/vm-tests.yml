@@ -7,6 +7,9 @@ on:
     branches: [main]
   merge_group:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -18,9 +21,11 @@ jobs:
     outputs:
       files_changed: ${{ steps.changed-files.outputs.files }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
       - id: changed-files
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
         with:
           filters: |
             files:
@@ -40,14 +45,16 @@ jobs:
     if: ${{ needs.changes.outputs.files_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
         with:
           extra_nix_config: extra-experimental-features = nix-command flakes
 
       - name: Restore and save cached paths
         id: cache-store-restore
-        uses: nix-community/cache-nix-action@v7
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: nix-vm-packages-${{ runner.os }}-${{ hashFiles('nix/packages/**', 'flake.nix', 'flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
           restore-prefixes-first-match: nix-vm-packages-${{ runner.os }}-
@@ -107,8 +114,10 @@ jobs:
           - name: S3 Cache
             check: s3-cache
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
         with:
           enable_kvm: true
           extra_nix_config: |
@@ -119,7 +128,7 @@ jobs:
 
       - name: Restore cached paths
         id: cache-store-restore
-        uses: nix-community/cache-nix-action/restore@v7
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: nix-vm-packages-${{ runner.os }}-${{ hashFiles('nix/packages/**', 'flake.nix', 'flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
           restore-prefixes-first-match: nix-vm-packages-${{ runner.os }}-
