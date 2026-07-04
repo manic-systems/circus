@@ -152,7 +152,7 @@ argon2 = { version = "0.5.3", features = [ "std" ] }
 jsonwebtoken = { version = "10.4.0", default-features = false }
 
 # evix, in-process Nix evaluator (nix-eval-jobs replacement) driven as a library.
-evix = { version = "0.3.3", features = [ "flake" ] }
+evix = { version = "1.0.1", features = [ "flake" ] }
 
 # Workspace Clippy lints. All workspace crates must inherit them in individual
 # manifests for subcrates. The below list is a rather pedantic list of lints
