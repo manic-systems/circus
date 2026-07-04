@@ -2,7 +2,9 @@
   testers,
   self,
 }:
-testers.runNixOSTest {
+testers.runNixOSTest ({config, ...}: let
+  inherit (config.node.pkgs.stdenv.hostPlatform) system;
+in {
   name = "circus-e2e";
 
   nodes.machine = {
@@ -78,9 +80,9 @@ testers.runNixOSTest {
             "{\n"
             '  description = "circus test flake";\n'
             '  outputs = { self, ... }: {\n'
-            '    packages.x86_64-linux.hello = derivation {\n'
+            '    packages.${system}.hello = derivation {\n'
             '      name = "circus-test-hello";\n'
-            '      system = "x86_64-linux";\n'
+            '      system = "${system}";\n'
             '      builder = "builtin:fetchurl";\n'
             '      url = "file://''${builtins.toFile "circus-test-hello.txt" "hello\\n"}";\n'
             '      outputHashMode = "flat";\n'
@@ -183,9 +185,9 @@ testers.runNixOSTest {
             "{\n"
             '  description = "circus test flake v2";\n'
             '  outputs = { self, ... }: {\n'
-            '    packages.x86_64-linux.hello = derivation {\n'
+            '    packages.${system}.hello = derivation {\n'
             '      name = "circus-test-hello-v2";\n'
-            '      system = "x86_64-linux";\n'
+            '      system = "${system}";\n'
             '      builder = "builtin:fetchurl";\n'
             '      url = "file://''${builtins.toFile "circus-test-hello-v2.txt" "hello-v2\\n"}";\n'
             '      outputHashMode = "flat";\n'
@@ -477,9 +479,9 @@ testers.runNixOSTest {
             "{\n"
             '  description = "circus test flake notify";\n'
             '  outputs = { self, ... }: {\n'
-            '    packages.x86_64-linux.notify-test = derivation {\n'
+            '    packages.${system}.notify-test = derivation {\n'
             '      name = "circus-notify-test";\n'
-            '      system = "x86_64-linux";\n'
+            '      system = "${system}";\n'
             '      builder = "builtin:fetchurl";\n'
             '      url = "file://''${builtins.toFile "circus-notify-test.txt" "notify-test\\n"}";\n'
             '      outputHashMode = "flat";\n'
@@ -529,9 +531,9 @@ testers.runNixOSTest {
             "{\n"
             '  description = "circus test flake signing";\n'
             '  outputs = { self, ... }: {\n'
-            '    packages.x86_64-linux.sign-test = derivation {\n'
+            '    packages.${system}.sign-test = derivation {\n'
             '      name = "circus-sign-test";\n'
-            '      system = "x86_64-linux";\n'
+            '      system = "${system}";\n'
             '      builder = "builtin:fetchurl";\n'
             '      url = "file://''${builtins.toFile "circus-sign-test.txt" "signed-build\\n"}";\n'
             '      outputHashMode = "flat";\n'
@@ -608,9 +610,9 @@ testers.runNixOSTest {
             "{\n"
             '  description = "circus test flake gc";\n'
             '  outputs = { self, ... }: {\n'
-            '    packages.x86_64-linux.gc-test = derivation {\n'
+            '    packages.${system}.gc-test = derivation {\n'
             '      name = "circus-gc-test";\n'
-            '      system = "x86_64-linux";\n'
+            '      system = "${system}";\n'
             '      builder = "builtin:fetchurl";\n'
             '      url = "file://''${builtins.toFile "circus-gc-test.txt" "gc-test\\n"}";\n'
             '      outputHashMode = "flat";\n'
@@ -832,4 +834,4 @@ testers.runNixOSTest {
         )
         assert code.strip() == "404", f"Expected 404 for deleted project, got {code.strip()}"
   '';
-}
+})

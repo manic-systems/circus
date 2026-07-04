@@ -2,7 +2,9 @@
   pkgs,
   self,
 }:
-pkgs.testers.nixosTest {
+pkgs.testers.runNixOSTest ({config, ...}: let
+  inherit (config.node.pkgs.stdenv.hostPlatform) system;
+in {
   name = "circus-s3-cache-upload";
 
   nodes.machine = {pkgs, ...}: {
@@ -107,9 +109,9 @@ pkgs.testers.nixosTest {
             {
               description = "circus S3 cache test flake";
               outputs = { self, ... }: {
-                packages.x86_64-linux.s3-test = derivation {
+                packages.${system}.s3-test = derivation {
                   name = "circus-s3-test";
-                  system = "x86_64-linux";
+                  system = "${system}";
                   builder = "/bin/sh";
                   args = [ "-c" "echo s3-cache-test-content > $out" ];
                 };
@@ -203,4 +205,4 @@ pkgs.testers.nixosTest {
         assert "StorePath:" in narinfo_content, f"Expected StorePath in narinfo: {narinfo_content}"
         assert "NarHash:" in narinfo_content, f"Expected NarHash in narinfo: {narinfo_content}"
   '';
-}
+})

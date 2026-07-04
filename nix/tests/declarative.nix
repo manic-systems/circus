@@ -12,7 +12,9 @@
   declAdminKeyFile = pkgs.writeText "decl-admin-key" "circus_decl_admin";
   declReadonlyKeyFile = pkgs.writeText "decl-readonly-key" "circus_decl_readonly";
 in
-  testers.runNixOSTest {
+  testers.runNixOSTest ({config, ...}: let
+    inherit (config.node.pkgs.stdenv.hostPlatform) system;
+  in {
     name = "circus-declarative";
 
     nodes.machine = {
@@ -411,9 +413,9 @@ in
               "{\n"
               '  description = "circus declarative test flake";\n'
               '  outputs = { self, ... }: {\n'
-              '    packages.x86_64-linux.decl-hello = derivation {\n'
+              '    packages.${system}.decl-hello = derivation {\n'
               '      name = "circus-decl-hello";\n'
-              '      system = "x86_64-linux";\n'
+              '      system = "${system}";\n'
               '      builder = "builtin:fetchurl";\n'
               '      url = "file://''${builtins.toFile "circus-decl-hello.txt" "decl-hello\\n"}";\n'
               '      outputHashMode = "flat";\n'
@@ -537,4 +539,4 @@ in
           assert eval_count == 1, \
               f"Expected 1 completed evaluation for unchanged source, got {eval_count}"
     '';
-  }
+  })
