@@ -8,7 +8,9 @@
   testers,
   self,
 }:
-testers.runNixOSTest {
+testers.runNixOSTest ({config, ...}: let
+  inherit (config.node.pkgs.stdenv.hostPlatform) system;
+in {
   name = "circus-distributed";
 
   nodes = {
@@ -116,9 +118,9 @@ testers.runNixOSTest {
             "{\n"
             '  description = "circus distributed cache test";\n'
             '  outputs = { self, ... }: {\n'
-            '    packages.x86_64-linux.agent-cache-test = derivation {\n'
+            '    packages.${system}.agent-cache-test = derivation {\n'
             '      name = "circus-agent-cache-test";\n'
-            '      system = "x86_64-linux";\n'
+            '      system = "${system}";\n'
             '      builder = "builtin:fetchurl";\n'
             '      url = "file://''${builtins.toFile "circus-agent-cache-test.txt" "agent-cache-test\\n"}";\n'
             '      outputHashMode = "flat";\n'
@@ -185,4 +187,4 @@ testers.runNixOSTest {
         runner.succeed(f"curl -sf 'http://127.0.0.1:3000/nix-cache/{nar_url}' > /tmp/distributed-agent-output.nar")
         runner.succeed("test -s /tmp/distributed-agent-output.nar")
   '';
-}
+})

@@ -7,23 +7,24 @@
   self,
 }: let
   # Trivial buildable flake: a FOD fetch of a file served by the runner VM.
-  testFlake = pkgs.writeText "flake.nix" ''
-    {
-      outputs = { self, ... }: {
-        packages.x86_64-linux.hello = derivation {
-          name = "circus-test-hello";
-          system = "x86_64-linux";
-          builder = "builtin:fetchurl";
-          url = "http://runner:8000/hello.txt";
-          outputHashMode = "flat";
-          outputHashAlgo = "sha256";
-          outputHash = "sha256-WJG1tSLV3whtD/CxEPvZ0hu0/HFjrzTQgoai6Eb2vgM=";
+  testFlake = system:
+    pkgs.writeText "flake.nix" ''
+      {
+        outputs = { self, ... }: {
+          packages.${system}.hello = derivation {
+            name = "circus-test-hello";
+            system = "${system}";
+            builder = "builtin:fetchurl";
+            url = "http://runner:8000/hello.txt";
+            outputHashMode = "flat";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-WJG1tSLV3whtD/CxEPvZ0hu0/HFjrzTQgoai6Eb2vgM=";
+          };
         };
-      };
-    }
-  '';
+      }
+    '';
 in
-  testers.runNixOSTest {
+  testers.runNixOSTest ({config, ...}: {
     name = "circus-agent-dispatch";
 
     nodes = {
@@ -83,7 +84,7 @@ in
                 "git init --bare -q /var/lib/circus/test-repos/test-flake.git",
                 "git config --global --add safe.directory '*'",
                 "git init -q /tmp/wc",
-                "cp ${testFlake} /tmp/wc/flake.nix",
+                "cp ${testFlake config.node.pkgs.stdenv.hostPlatform.system} /tmp/wc/flake.nix",
                 "git -C /tmp/wc add -A",
                 "git -C /tmp/wc -c user.email=circus@manic.systems -c user.name=circus commit -qm flake",
                 "git -C /tmp/wc push -q /var/lib/circus/test-repos/test-flake.git HEAD:refs/heads/master",
@@ -111,4 +112,4 @@ in
                 "WHERE s.name='agent-01'"
             )
       '';
-  }
+  })

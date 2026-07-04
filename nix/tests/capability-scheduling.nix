@@ -4,7 +4,7 @@
   pkgs,
   self,
 }: let
-  testFlake =
+  testFlake = system:
     pkgs.writeText "flake.nix"
     /*
     nix
@@ -12,18 +12,18 @@
     ''
       {
         outputs = { self, ... }: {
-          packages.x86_64-linux.fungible = derivation {
+          packages.${system}.fungible = derivation {
             name = "circus-test-fungible";
-            system = "x86_64-linux";
+            system = "${system}";
             builder = "builtin:fetchurl";
             url = "http://runner:8000/fungible.txt";
             outputHashMode = "flat";
             outputHashAlgo = "sha256";
             outputHash = "sha256-9oWaD6E7O4521XC87GceZdWST/u9e+QFYSpMRRpFq6U=";
           };
-          packages.x86_64-linux.kvmonly = derivation {
+          packages.${system}.kvmonly = derivation {
             name = "circus-test-kvmonly";
-            system = "x86_64-linux";
+            system = "${system}";
             builder = "builtin:fetchurl";
             url = "http://runner:8000/kvmonly.txt";
             outputHashMode = "flat";
@@ -57,7 +57,7 @@
     );
   };
 in
-  testers.runNixOSTest {
+  testers.runNixOSTest ({config, ...}: {
     name = "circus-capability-scheduling";
 
     nodes = {
@@ -118,7 +118,7 @@ in
                 "mkdir -p /var/lib/circus/test-repos",
                 "git init --bare -q /var/lib/circus/test-repos/test-flake.git",
                 "git init -q /tmp/wc",
-                "cp ${testFlake} /tmp/wc/flake.nix",
+                "cp ${testFlake config.node.pkgs.stdenv.hostPlatform.system} /tmp/wc/flake.nix",
                 "git -C /tmp/wc add -A",
                 "git -C /tmp/wc -c user.email=circus@manic.systems -c user.name=circus commit -qm flake",
                 "git -C /tmp/wc push -q /var/lib/circus/test-repos/test-flake.git HEAD:refs/heads/master",
@@ -158,4 +158,4 @@ in
             )).strip()
             assert attributed == "agent-plain", f"fungible should be preserved off the kvm agent, ran on: {attributed!r}"
       '';
-  }
+  })
