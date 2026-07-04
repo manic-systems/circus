@@ -6,11 +6,11 @@
 }: let
   # Password files for testing password_file configuration.
   # Passwords must be at least 12 characters with at least one uppercase letter.
-  adminPasswordFile = pkgs.writeText "admin-password" "SecretAdmin123!";
-  userPasswordFile = pkgs.writeText "user-password" "SecretUser123!";
-  disabledPasswordFile = pkgs.writeText "disabled-password" "DisabledPass123!";
-  declAdminKeyFile = pkgs.writeText "decl-admin-key" "circus_decl_admin";
-  declReadonlyKeyFile = pkgs.writeText "decl-readonly-key" "circus_decl_readonly";
+  adminPasswordFile = builtins.toFile "admin-password" "SecretAdmin123!";
+  userPasswordFile = builtins.toFile "user-password" "SecretUser123!";
+  disabledPasswordFile = builtins.toFile "disabled-password" "DisabledPass123!";
+  declAdminKeyFile = builtins.toFile "decl-admin-key" "circus_decl_admin";
+  declReadonlyKeyFile = builtins.toFile "decl-readonly-key" "circus_decl_readonly";
 in
   testers.runNixOSTest ({config, ...}: let
     inherit (config.node.pkgs.stdenv.hostPlatform) system;

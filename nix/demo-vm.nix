@@ -9,8 +9,8 @@
   guestSystem = builtins.replaceStrings ["darwin"] ["linux"] hostSystem;
   circusPkgs = self.packages.${guestSystem};
 
-  adminPasswordFile = pkgs.writeText "admin-password" "AdminPassword123!";
-  demoPasswordFile = pkgs.writeText "demo-password" "DemoPassword123!";
+  adminPasswordFile = builtins.toFile "admin-password" "AdminPassword123!";
+  demoPasswordFile = builtins.toFile "demo-password" "DemoPassword123!";
 
   module = {
     modulesPath,

@@ -8,7 +8,7 @@
 }: let
   # Trivial buildable flake: a FOD fetch of a file served by the runner VM.
   testFlake = system:
-    pkgs.writeText "flake.nix" ''
+    builtins.toFile "flake.nix" ''
       {
         outputs = { self, ... }: {
           packages.${system}.hello = derivation {
