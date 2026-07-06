@@ -122,6 +122,7 @@
 
     checks = forAllSystems (system: let
       pkgs = pkgsFor system;
+      craneLib = crane.mkLib pkgs;
 
       callTest = path: pkgs.callPackage path {inherit self;};
       nixosModuleAgentPackage = pkgs.callPackage ./nix/package.nix {crate = "circus-agent";};
@@ -151,6 +152,25 @@
         full = pkgs.symlinkJoin {
           name = "vm-tests-full";
           paths = builtins.attrValues vmTests;
+        };
+
+        cargo-deny = craneLib.cargoDeny {
+          pname = "circus-audit";
+          src = let
+            fs = lib.fileset;
+            s = ./.;
+          in
+            fs.toSource {
+              root = s;
+              fileset = fs.unions [
+                (s + /crates)
+                (s + /Cargo.lock)
+                (s + /Cargo.toml)
+                (s + /.deny.toml)
+              ];
+            };
+          cargoDenyChecks = "bans licenses sources";
+          cargoExtraArgs = "--locked";
         };
 
         formatting =
@@ -188,6 +208,7 @@
           glibc.dev
 
           taplo
+          cargo-deny
           cargo-nextest
           clippy
           rust-analyzer

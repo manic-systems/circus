@@ -38,6 +38,19 @@ jobs:
       - name: Run Clippy
         run: nix develop --command cargo clippy --all-targets -- -D warnings
 
+  deny:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
+      - name: Check Dependency Policy
+        run: nix build .#checks.x86_64-linux.cargo-deny --no-link -L
+      - name: Audit Dependency Advisories
+        run: nix develop --command cargo deny check advisories
+
   test:
     name: Test
     runs-on: ubuntu-latest
