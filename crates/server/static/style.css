@@ -2010,6 +2010,8 @@ button:disabled {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 17px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 29px;
 }
 
 .log-line:last-child {
