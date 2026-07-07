@@ -2,10 +2,14 @@
 //! configured trust + identity material. Used when the runner URL is
 //! `circus+tls://` or `[agent.tls]` is set in config.
 
-use std::{io::BufReader, sync::Arc};
+use std::sync::Arc;
 
 use color_eyre::eyre::{bail, eyre};
-use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
+use rustls::{
+  ClientConfig,
+  RootCertStore,
+  pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
 use tokio_rustls::TlsConnector;
 
 use crate::config::TlsConfig;
@@ -42,8 +46,7 @@ pub fn build_client_connector(
   let mut roots = RootCertStore::empty();
   if let Some(ca_file) = &cfg.ca_file {
     let ca_bytes = std::fs::read(ca_file)?;
-    for cert in rustls_pemfile::certs(&mut BufReader::new(ca_bytes.as_slice()))
-    {
+    for cert in CertificateDer::pem_slice_iter(&ca_bytes) {
       roots.add(cert?)?;
     }
   } else {
@@ -60,13 +63,12 @@ pub fn build_client_connector(
   let builder = ClientConfig::builder().with_root_certificates(roots);
   let client_cfg = if let Some((cert_file, key_file)) = client_identity {
     let cert_bytes = std::fs::read(cert_file)?;
-    let cert_chain =
-      rustls_pemfile::certs(&mut BufReader::new(cert_bytes.as_slice()))
-        .collect::<Result<Vec<CertificateDer>, _>>()?;
+    let cert_chain = CertificateDer::pem_slice_iter(&cert_bytes)
+      .collect::<Result<Vec<_>, _>>()?;
     let key_bytes = std::fs::read(key_file)?;
-    let key =
-      rustls_pemfile::private_key(&mut BufReader::new(key_bytes.as_slice()))?
-        .ok_or_else(|| eyre!("no private key in {}", key_file.display()))?;
+    let key = PrivateKeyDer::from_pem_slice(&key_bytes).map_err(|e| {
+      eyre!("no usable private key in {}: {e}", key_file.display())
+    })?;
     builder.with_client_auth_cert(cert_chain, key)?
   } else {
     builder.with_no_client_auth()
