@@ -286,7 +286,7 @@ async fn dispatch(
           config.max_retry_attempts,
           encryption_key,
         )
-        .await
+        .await;
       },
       (false, Some(pool)) => {
         if channel.is_commit_status() {
@@ -309,7 +309,7 @@ async fn dispatch(
               build_id = %build.id,
               notification_type = %channel.notification_type(),
               "Notification delivery failed: {e}"
-          )
+          );
         }
       },
       (_, None) => {
@@ -326,7 +326,7 @@ async fn dispatch(
               build_id = %build.id,
               notification_type = %channel.notification_type(),
               "Notification delivery failed: {e}"
-          )
+          );
         }
       },
     }
