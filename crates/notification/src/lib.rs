@@ -277,21 +277,58 @@ async fn dispatch(
       continue;
     }
 
-    if let (true, Some(pool)) = (use_queue, pool) {
-      enqueue(
-        pool,
-        channel,
-        &event,
-        config.max_retry_attempts,
-        encryption_key,
-      )
-      .await;
-    } else if let Err(e) = channel.deliver(&event).await {
-      error!(
-        build_id = %build.id,
-        notification_type = %channel.notification_type(),
-        "Notification delivery failed: {e}"
-      );
+    match (use_queue, pool) {
+      (true, Some(pool)) => {
+        enqueue(
+          pool,
+          channel,
+          &event,
+          config.max_retry_attempts,
+          encryption_key,
+        )
+        .await
+      },
+      (false, Some(pool)) => {
+        if channel.is_commit_status() {
+          match stale_commit_status_event(pool, &event).await {
+            Ok(true) => continue,
+            Ok(false) => (),
+            Err(e) => {
+              warn!(
+                  build_id = %build.id,
+                  notification_type = %channel.notification_type(),
+                  "Skipping commit status, freshness check failed: {e}"
+              );
+              continue;
+            },
+          }
+        }
+
+        if let Err(e) = channel.deliver(&event).await {
+          error!(
+              build_id = %build.id,
+              notification_type = %channel.notification_type(),
+              "Notification delivery failed: {e}"
+          )
+        }
+      },
+      (_, None) => {
+        if channel.is_commit_status() {
+          warn!(
+              build_id = %build.id,
+              notification_type = %channel.notification_type(),
+              "Delivering commit status without freshness check"
+          );
+        }
+
+        if let Err(e) = channel.deliver(&event).await {
+          error!(
+              build_id = %build.id,
+              notification_type = %channel.notification_type(),
+              "Notification delivery failed: {e}"
+          )
+        }
+      },
     }
   }
 }
