@@ -324,6 +324,88 @@ pub async fn update_status(
   .ok_or_else(|| CiError::NotFound(format!("Evaluation {id} not found")))
 }
 
+/// Finish an evaluation only while this evaluator still owns its running state.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn finish_running(
+  pool: &PgPool,
+  id: Uuid,
+  status: EvaluationStatus,
+  error_message: Option<&str>,
+) -> Result<Option<Evaluation>> {
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "UPDATE evaluations SET status = $1, error_message = $2 WHERE id = $3 \
+       AND status = 'running' RETURNING *",
+    )
+    .bind(status)
+    .bind(error_message)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?,
+  )
+}
+
+/// Cancel an evaluation that has not reached a terminal state.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "UPDATE evaluations SET status = 'cancelled', error_message = NULL \
+       WHERE id = $1 AND status IN ('pending', 'running') RETURNING *",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?,
+  )
+}
+
+/// Requeue a cancelled or failed evaluation after discarding its stale builds.
+///
+/// # Errors
+///
+/// Returns an error if the database transaction fails.
+pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
+  let mut tx = pool.begin().await?;
+  let evaluation = sqlx::query_as::<_, Evaluation>(
+    "UPDATE evaluations SET status = 'pending', error_message = NULL, \
+     inputs_hash = NULL WHERE id = $1 AND status IN ('cancelled', 'failed') \
+     RETURNING *",
+  )
+  .bind(id)
+  .fetch_optional(&mut *tx)
+  .await?;
+
+  if evaluation.is_some() {
+    sqlx::query("DELETE FROM builds WHERE evaluation_id = $1")
+      .bind(id)
+      .execute(&mut *tx)
+      .await?;
+  }
+  tx.commit().await?;
+  Ok(evaluation)
+}
+
+/// Return whether an evaluator should cancel its currently-running work.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn is_cancelled(pool: &PgPool, id: Uuid) -> Result<bool> {
+  let status = sqlx::query_scalar::<_, EvaluationStatus>(
+    "SELECT status FROM evaluations WHERE id = $1",
+  )
+  .bind(id)
+  .fetch_optional(pool)
+  .await?;
+  Ok(status.is_some_and(|status| status == EvaluationStatus::Cancelled))
+}
+
 /// Get the latest completed evaluation for a jobset.
 ///
 /// Only completed evaluations are returned. Failed or running evaluations are
