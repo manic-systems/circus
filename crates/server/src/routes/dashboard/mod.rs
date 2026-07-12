@@ -50,6 +50,8 @@ pub fn router() -> Router<AppState> {
       "/evaluation/{id}/visibility",
       post(admin::evaluation_visibility),
     )
+    .route("/evaluation/{id}/cancel", post(admin::evaluation_cancel))
+    .route("/evaluation/{id}/restart", post(admin::evaluation_restart))
     .route("/builds", get(pages::builds_page))
     .route("/build/{id}", get(pages::build_page))
     .route("/build/{id}/log", get(pages::build_log))
