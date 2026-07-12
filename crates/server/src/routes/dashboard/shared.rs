@@ -174,16 +174,16 @@ pub(super) struct QueueBuildView {
 }
 
 pub(super) struct EvalView {
-  pub(super) id:           Uuid,
-  pub(super) commit_hash:  String,
-  pub(super) commit_short: String,
-  pub(super) status_text:  String,
-  pub(super) status_class: String,
-  pub(super) time:         String,
-  pub(super) error_lines:  Vec<BuildErrorLine>,
-  pub(super) hidden:       bool,
-  pub(super) jobset_name:  String,
-  pub(super) project_name: String,
+  pub(super) id:            Uuid,
+  pub(super) commit_hash:   String,
+  pub(super) commit_short:  String,
+  pub(super) status_text:   String,
+  pub(super) status_class:  String,
+  pub(super) time:          String,
+  pub(super) error_message: String,
+  pub(super) hidden:        bool,
+  pub(super) jobset_name:   String,
+  pub(super) project_name:  String,
 }
 
 pub(super) struct EvalSummaryView {
@@ -763,20 +763,16 @@ impl From<&Evaluation> for EvalView {
       e.commit_hash.clone()
     };
     Self {
-      id:           e.id,
-      commit_hash:  e.commit_hash.clone(),
-      commit_short: short,
-      status_text:  text.to_string(),
-      status_class: class.to_string(),
-      time:         e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
-      error_lines:  e
-        .error_message
-        .as_deref()
-        .map(parse_build_error)
-        .unwrap_or_default(),
-      hidden:       e.hidden,
-      jobset_name:  String::new(),
-      project_name: String::new(),
+      id:            e.id,
+      commit_hash:   e.commit_hash.clone(),
+      commit_short:  short,
+      status_text:   text.to_string(),
+      status_class:  class.to_string(),
+      time:          e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      error_message: e.error_message.clone().unwrap_or_default(),
+      hidden:        e.hidden,
+      jobset_name:   String::new(),
+      project_name:  String::new(),
     }
   }
 }
