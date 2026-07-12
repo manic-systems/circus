@@ -38,10 +38,11 @@ enabled        = true
 # text   = "#0f172a"
 
 [evaluator]
-allow_ifd            = false
-auto_allowed_uris    = true
-git_timeout          = 600
-nix_timeout          = 1800
+allow_ifd         = false
+auto_allowed_uris = true
+git_timeout       = 600
+nix_timeout       = 1800
+# max_eval_time      = 3600
 poll_interval        = 60
 require_locked_flake = false
 restrict_eval        = true
