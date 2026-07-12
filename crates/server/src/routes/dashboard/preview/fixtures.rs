@@ -282,16 +282,16 @@ pub(super) fn queue_build(
 
 pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
   EvalView {
-    id:           id(n),
-    commit_hash:  "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
-    commit_short: "9f2c7a113bad".into(),
-    status_text:  status.into(),
-    status_class: class.into(),
-    time:         "2026-06-18 11:42".into(),
-    error_lines:  Vec::new(),
-    hidden:       false,
-    jobset_name:  "packages".into(),
-    project_name: "circus".into(),
+    id:            id(n),
+    commit_hash:   "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
+    commit_short:  "9f2c7a113bad".into(),
+    status_text:   status.into(),
+    status_class:  class.into(),
+    time:          "2026-06-18 11:42".into(),
+    error_message: String::new(),
+    hidden:        false,
+    jobset_name:   "packages".into(),
+    project_name:  "circus".into(),
   }
 }
 
