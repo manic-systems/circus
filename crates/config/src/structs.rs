@@ -233,6 +233,8 @@ pub struct EvaluatorConfig {
   pub poll_interval:        u64,
   pub git_timeout:          u64,
   pub nix_timeout:          u64,
+  /// Optional wall-clock limit for an entire evaluation. `None` disables it.
+  pub max_eval_time:        Option<u64>,
   pub max_concurrent_evals: usize,
   pub work_dir:             PathBuf,
   pub restrict_eval:        bool,
@@ -792,6 +794,7 @@ impl Default for EvaluatorConfig {
       poll_interval:        60,
       git_timeout:          600,
       nix_timeout:          1800,
+      max_eval_time:        None,
       max_concurrent_evals: 4,
       work_dir:             PathBuf::from("/tmp/circus-evaluator"),
       restrict_eval:        true,
