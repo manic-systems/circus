@@ -726,6 +726,57 @@ pub(super) async fn evaluation_visibility(
   Ok(Redirect::to(&target))
 }
 
+pub(super) async fn evaluation_cancel(
+  State(state): State<AppState>,
+  Path(evaluation_id): Path<Uuid>,
+  ctx: DashboardContext,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Result<Redirect, Response> {
+  ctx
+    .require_permission(Permission::CancelBuild)
+    .map_err(|status| {
+      (status, "Cancel evaluation permission required").into_response()
+    })?;
+  ctx.check_csrf(&form.csrf_token)?;
+  circus_common::repo::evaluations::cancel(&state.pool, evaluation_id)
+    .await
+    .map_err(|e| {
+      (StatusCode::BAD_REQUEST, format!("Cancel failed: {e}")).into_response()
+    })?
+    .ok_or_else(|| {
+      (StatusCode::CONFLICT, "Evaluation is not running or pending")
+        .into_response()
+    })?;
+  Ok(Redirect::to(&format!("/evaluation/{evaluation_id}")))
+}
+
+pub(super) async fn evaluation_restart(
+  State(state): State<AppState>,
+  Path(evaluation_id): Path<Uuid>,
+  ctx: DashboardContext,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Result<Redirect, Response> {
+  ctx
+    .require_permission(Permission::RestartJobs)
+    .map_err(|status| {
+      (status, "Restart evaluation permission required").into_response()
+    })?;
+  ctx.check_csrf(&form.csrf_token)?;
+  circus_common::repo::evaluations::restart(&state.pool, evaluation_id)
+    .await
+    .map_err(|e| {
+      (StatusCode::BAD_REQUEST, format!("Restart failed: {e}")).into_response()
+    })?
+    .ok_or_else(|| {
+      (
+        StatusCode::CONFLICT,
+        "Only failed or cancelled evaluations can be restarted",
+      )
+        .into_response()
+    })?;
+  Ok(Redirect::to(&format!("/evaluation/{evaluation_id}")))
+}
+
 pub(super) async fn notifications_page(
   State(state): State<AppState>,
   Path(project_id): Path<Uuid>,

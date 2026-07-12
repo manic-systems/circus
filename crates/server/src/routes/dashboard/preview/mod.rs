@@ -91,6 +91,8 @@ pub fn router() -> Router {
       "/evaluation/{id}/visibility",
       post(preview_evaluations_action),
     )
+    .route("/evaluation/{id}/cancel", post(preview_evaluations_action))
+    .route("/evaluation/{id}/restart", post(preview_evaluations_action))
     .route("/builds", get(pages::builds))
     .route("/build/{id}", get(pages::build))
     .route("/build/{id}/log", get(build_log))

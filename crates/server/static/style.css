@@ -1751,6 +1751,11 @@ button:disabled {
   color: var(--status-failed);
 }
 
+.btn-danger {
+  color: var(--status-failed);
+  border-color: var(--status-failed);
+}
+
 .error-log-warn {
   color: var(--status-running);
 }
