@@ -10,6 +10,7 @@ use std::{fs, path::Path, process::Command, time::Duration};
 
 use circus_config::EvaluatorConfig;
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
 
 fn git_stage(dir: &Path) {
   for args in [
@@ -62,6 +63,7 @@ async fn eval_minimal_flake_returns_one_job() {
     Duration::from_mins(2),
     &permissive_config(),
     &[],
+    &CancellationToken::new(),
   )
   .await
   .expect("evaluation should succeed");
@@ -106,6 +108,7 @@ async fn eval_captures_per_attribute_errors_without_failing_fatally() {
     Duration::from_mins(2),
     &permissive_config(),
     &[],
+    &CancellationToken::new(),
   )
   .await
   .expect("fatal eval error not expected for per-attribute throws");
@@ -136,6 +139,7 @@ async fn eval_fatal_parse_error_returns_cierror_nixeval() {
     Duration::from_secs(30),
     &permissive_config(),
     &[],
+    &CancellationToken::new(),
   )
   .await;
 
@@ -176,6 +180,7 @@ async fn eval_timeout_returns_cierror_timeout() {
     Duration::from_millis(500),
     &permissive_config(),
     &[],
+    &CancellationToken::new(),
   )
   .await;
 

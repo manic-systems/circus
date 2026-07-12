@@ -4,6 +4,7 @@ use circus_common::{CiError, error::Result};
 use circus_config::EvaluatorConfig;
 use futures::StreamExt as _;
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 use super::{EvalResult, nix_job_from_derivation};
 
@@ -87,6 +88,7 @@ pub(super) async fn run_eval(
   config: evix::Config,
   timeout: Duration,
   description: &'static str,
+  cancel: &CancellationToken,
 ) -> Result<EvalResult> {
   tracing::info!(
     evaluation = description,
@@ -98,7 +100,7 @@ pub(super) async fn run_eval(
     .await
     .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?;
 
-  let collect = async move {
+  let collect = async {
     let mut events = session.stream();
     let mut jobs = Vec::new();
     let mut error_count = 0usize;
@@ -120,7 +122,8 @@ pub(super) async fn run_eval(
     Ok::<EvalResult, CiError>(EvalResult { jobs, error_count })
   };
 
-  match tokio::time::timeout(timeout, collect).await {
+  tokio::select! {
+    result = tokio::time::timeout(timeout, collect) => match result {
     Ok(result) => {
       let result = result?;
       if result.error_count > 0 {
@@ -135,9 +138,15 @@ pub(super) async fn run_eval(
       Ok(result)
     },
     Err(_elapsed) => {
+      session.cancel();
       Err(CiError::Timeout(format!(
         "Nix evaluation timed out after {timeout:?}"
       )))
+    },
+    },
+    () = cancel.cancelled() => {
+      session.cancel();
+      Err(CiError::NixEval("Nix evaluation was cancelled".to_string()))
     },
   }
 }

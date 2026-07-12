@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::Path, time::Duration};
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 mod eval_command;
 mod flake_lock;
@@ -180,6 +181,7 @@ pub async fn evaluate(
   timeout: Duration,
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
+  cancel: &CancellationToken,
 ) -> Result<EvalResult> {
   // Validate nix expression before constructing any commands
   circus_nix::validate::validate_nix_expression(nix_expression)
@@ -199,9 +201,11 @@ pub async fn evaluate(
   };
 
   if flake_mode {
-    evaluate_flake(repo_path, nix_expression, timeout, config, inputs).await
+    evaluate_flake(repo_path, nix_expression, timeout, config, inputs, cancel)
+      .await
   } else {
-    evaluate_legacy(repo_path, nix_expression, timeout, config, inputs).await
+    evaluate_legacy(repo_path, nix_expression, timeout, config, inputs, cancel)
+      .await
   }
 }
 
@@ -270,10 +274,13 @@ async fn evaluate_flake(
   timeout: Duration,
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
+  cancel: &CancellationToken,
 ) -> Result<EvalResult> {
   if nix_expression == "nixosConfigurations" {
-    return evaluate_all_nixos_configs(repo_path, timeout, config, inputs)
-      .await;
+    return evaluate_all_nixos_configs(
+      repo_path, timeout, config, inputs, cancel,
+    )
+    .await;
   }
 
   let effective_expr = rewrite_nixos_config_expr(nix_expression)
@@ -323,7 +330,7 @@ async fn evaluate_flake(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, timeout, "flake").await
+  eval_command::run_eval(evix_config, timeout, "flake", cancel).await
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -332,6 +339,7 @@ async fn evaluate_all_nixos_configs(
   _timeout: Duration,
   config: &EvaluatorConfig,
   _inputs: &[JobsetInput],
+  cancel: &CancellationToken,
 ) -> Result<EvalResult> {
   let flake_ref = format!("{}#nixosConfigurations", repo_path.display());
 
@@ -351,7 +359,10 @@ async fn evaluate_all_nixos_configs(
   NixEvalPolicy::from(config)
     .with_extra_allowed_uris(derived_uris)
     .apply_to(&mut cmd);
-  let output = cmd.output().await.map_err(|e| {
+  let output = tokio::select! {
+    output = cmd.output() => output,
+    () = cancel.cancelled() => return Err(CiError::NixEval("Nix evaluation was cancelled".to_string())),
+  }.map_err(|e| {
     CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
   })?;
 
@@ -443,6 +454,7 @@ async fn evaluate_legacy(
   timeout: Duration,
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
+  cancel: &CancellationToken,
 ) -> Result<EvalResult> {
   let repo_path = repo_path.canonicalize().map_err(|e| {
     CiError::NixEval(format!("Failed to canonicalize repository path: {e}"))
@@ -508,7 +520,7 @@ async fn evaluate_legacy(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, timeout, "legacy").await
+  eval_command::run_eval(evix_config, timeout, "legacy", cancel).await
 }
 
 /// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)
