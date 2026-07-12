@@ -74,6 +74,8 @@ pub enum EvaluationStatus {
   Running,
   Completed,
   Failed,
+  Cancelled,
+  TimedOut,
 }
 
 impl EvaluationStatus {
@@ -82,6 +84,8 @@ impl EvaluationStatus {
     match self {
       Self::Completed => ("Completed", "completed"),
       Self::Failed => ("Failed", "failed"),
+      Self::Cancelled => ("Cancelled", "cancelled"),
+      Self::TimedOut => ("Timed out", "timed-out"),
       Self::Running => ("Running", "running"),
       Self::Pending => ("Pending", "pending"),
     }
