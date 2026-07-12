@@ -20,6 +20,7 @@ use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
 use sqlx::PgPool;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use uuid::Uuid;
 
@@ -298,6 +299,11 @@ async fn evaluate_pending_eval(
     color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
   })???;
 
+  if repo::evaluations::is_cancelled(pool, claimed.id).await? {
+    tracing::info!(eval_id = %claimed.id, "Evaluation cancelled during checkout");
+    return Ok(());
+  }
+
   let inputs = repo::jobset_inputs::list_for_jobset(pool, jobset.id)
     .await
     .unwrap_or_default();
@@ -388,16 +394,51 @@ async fn run_nix_and_record_builds(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
 ) -> color_eyre::Result<()> {
-  match crate::nix::evaluate(
+  let max_eval_time = config.max_eval_time.map(Duration::from_secs);
+  let nix_timeout = max_eval_time.map_or(nix_timeout, |limit| {
+    let elapsed = (Utc::now() - eval.evaluation_time)
+      .to_std()
+      .unwrap_or_default();
+    limit.saturating_sub(elapsed).min(nix_timeout)
+  });
+  if max_eval_time.is_some_and(|_| nix_timeout.is_zero()) {
+    repo::evaluations::finish_running(
+      pool,
+      eval.id,
+      EvaluationStatus::TimedOut,
+      Some("Evaluation exceeded max_eval_time"),
+    )
+    .await?;
+    return Ok(());
+  }
+
+  let cancel = CancellationToken::new();
+  let watcher = tokio::spawn(watch_evaluation_cancellation(
+    pool.clone(),
+    eval.id,
+    cancel.clone(),
+  ));
+  let result = crate::nix::evaluate(
     repo_path,
     &jobset.nix_expression,
     jobset.flake_mode,
     nix_timeout,
     config,
     inputs,
+    &cancel,
   )
-  .await
-  {
+  .await;
+  cancel.cancel();
+  if let Err(error) = watcher.await {
+    tracing::warn!(eval_id = %eval.id, "Evaluation cancellation watcher stopped: {error}");
+  }
+
+  if repo::evaluations::is_cancelled(pool, eval.id).await? {
+    tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
+    return Ok(());
+  }
+
+  match result {
     Ok(eval_result) => {
       tracing::debug!(jobset = %jobset.name, job_count = eval_result.jobs.len(), "Nix evaluation returned");
       tracing::info!(
@@ -442,7 +483,7 @@ async fn run_nix_and_record_builds(
         }
       }
 
-      repo::evaluations::update_status(
+      repo::evaluations::finish_running(
         pool,
         eval.id,
         EvaluationStatus::Completed,
@@ -453,17 +494,42 @@ async fn run_nix_and_record_builds(
     Err(e) => {
       let msg = e.to_string();
       tracing::error!(jobset = %jobset.name, "Evaluation failed: {msg}");
-      repo::evaluations::update_status(
-        pool,
-        eval.id,
-        EvaluationStatus::Failed,
-        Some(&msg),
-      )
-      .await?;
+      let status = if max_eval_time.is_some_and(|limit| {
+        (Utc::now() - eval.evaluation_time)
+          .to_std()
+          .is_ok_and(|elapsed| elapsed >= limit)
+      }) {
+        EvaluationStatus::TimedOut
+      } else {
+        EvaluationStatus::Failed
+      };
+      repo::evaluations::finish_running(pool, eval.id, status, Some(&msg))
+        .await?;
     },
   }
 
   Ok(())
+}
+
+async fn watch_evaluation_cancellation(
+  pool: PgPool,
+  evaluation_id: Uuid,
+  cancel: CancellationToken,
+) {
+  let mut interval = tokio::time::interval(Duration::from_millis(500));
+  loop {
+    tokio::select! {
+      () = cancel.cancelled() => return,
+      _ = interval.tick() => match repo::evaluations::is_cancelled(&pool, evaluation_id).await {
+        Ok(true) => {
+          cancel.cancel();
+          return;
+        },
+        Ok(false) => {},
+        Err(error) => tracing::warn!(%evaluation_id, "Failed to check evaluation cancellation: {error}"),
+      },
+    }
+  }
 }
 
 async fn evaluate_jobset(
