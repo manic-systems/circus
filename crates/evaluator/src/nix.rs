@@ -4,6 +4,7 @@ use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 mod eval_command;
 mod flake_lock;
@@ -176,6 +177,7 @@ pub struct EvalResult {
 #[tracing::instrument(skip(config, inputs), fields(flake_mode, nix_expression))]
 pub async fn evaluate(
   repo_path: &Path,
+  commit_hash: &str,
   nix_expression: &str,
   flake_mode: bool,
   timeout: Duration,
@@ -201,8 +203,16 @@ pub async fn evaluate(
   };
 
   if flake_mode {
-    evaluate_flake(repo_path, nix_expression, timeout, config, inputs, cancel)
-      .await
+    evaluate_flake(
+      repo_path,
+      commit_hash,
+      nix_expression,
+      timeout,
+      config,
+      inputs,
+      cancel,
+    )
+    .await
   } else {
     evaluate_legacy(repo_path, nix_expression, timeout, config, inputs, cancel)
       .await
@@ -270,6 +280,7 @@ fn lock_derived_allowed_uris(
 #[tracing::instrument(skip(config, inputs))]
 async fn evaluate_flake(
   repo_path: &Path,
+  commit_hash: &str,
   nix_expression: &str,
   timeout: Duration,
   config: &EvaluatorConfig,
@@ -294,7 +305,7 @@ async fn evaluate_flake(
     );
   }
 
-  let flake_ref = format!("{}#{effective_expr}", repo_path.display());
+  let flake_ref = git_flake_ref(repo_path, commit_hash, &effective_expr)?;
 
   tracing::debug!(flake_ref = %flake_ref, "Running evix evaluation");
 
@@ -331,6 +342,21 @@ async fn evaluate_flake(
   };
 
   eval_command::run_eval(evix_config, timeout, "flake", cancel).await
+}
+
+fn git_flake_ref(
+  repo_path: &Path,
+  commit_hash: &str,
+  expression: &str,
+) -> Result<String> {
+  let mut url = Url::from_file_path(repo_path).map_err(|()| {
+    CiError::NixEval(format!(
+      "Failed to convert repository path to a file URL: {}",
+      repo_path.display()
+    ))
+  })?;
+  url.query_pairs_mut().append_pair("rev", commit_hash);
+  Ok(format!("git+{url}#{expression}"))
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -889,6 +915,19 @@ mod meta_tests {
       .is_none()
     );
     assert!(rewrite_nixos_config_expr("packages").is_none());
+  }
+
+  #[test]
+  fn git_flake_ref_pins_the_checked_out_commit() {
+    assert_eq!(
+      git_flake_ref(
+        Path::new("/tmp/circus fixture"),
+        "0123456789abcdef",
+        "packages",
+      )
+      .unwrap(),
+      "git+file:///tmp/circus%20fixture?rev=0123456789abcdef#packages",
+    );
   }
 
   #[test]
