@@ -1704,7 +1704,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1730,9 +1730,9 @@ dependencies = [
 
 [[package]]
 name = "evix"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b14b02c0f041de4779200d3a51007ae0c64c84b114eee5754e8d1f7e72580b3a"
+checksum = "2a93f2e9bf3ed581c8a179f32b81b973391800565ff29c2ff7fda746204dcdeb"
 dependencies = [
  "anyhow",
  "capnp",
@@ -1754,9 +1754,9 @@ dependencies = [
 
 [[package]]
 name = "evix-protocol"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40af0e69ca801a5d0d9352e2626e43c1ce994f9b001aef5febc5de795603bce6"
+checksum = "842c32b892c4a3a06f3f716ab519c1808d783c295e7b4760e63610f64f0d75d8"
 dependencies = [
  "serde",
  "serde_json",
@@ -2908,18 +2908,18 @@ dependencies = [
 
 [[package]]
 name = "nix-bindings"
-version = "0.2347.7"
+version = "0.2347.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31c8f8f43b9ef4af066624a4e88c757c8a424ec8bea8f98e1ae759e944be4c40"
+checksum = "b94a1f3782853a75651147aa9c8778a567d61489db5e4cbc1eb69d59a6caeef8"
 dependencies = [
  "nix-bindings-sys",
 ]
 
 [[package]]
 name = "nix-bindings-sys"
-version = "0.2347.7"
+version = "0.2347.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6364bad7b8e6de37db8a382e2225e7719302b5b1f8638160e09ddb7e6e79e929"
+checksum = "91fc9f8ca434646c9dd69a54145d3805c6690479bf17f848da33ade89073b168"
 dependencies = [
  "bindgen",
  "cc",
@@ -3450,7 +3450,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3824,7 +3824,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3882,7 +3882,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4522,7 +4522,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5302,7 +5302,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
