@@ -150,6 +150,7 @@ testers.runNixOSTest {
             f"curl -sf 'http://127.0.0.1:3000/api/v1/builds?evaluation_id={e2e_eval_id}' | jq -r '.items[0].drv_path'"
         ).strip()
         assert drv_path.startswith("/nix/store/"), f"Expected /nix/store/ drv_path, got '{drv_path}'"
+        e2e_drv_path = drv_path
 
         # Get the build ID for later
         e2e_build_id = machine.succeed(
@@ -197,12 +198,26 @@ testers.runNixOSTest {
         )
         machine.succeed("cd /tmp/test-flake-work && git add -A && git commit -m 'v2 update'")
         machine.succeed("cd /tmp/test-flake-work && git push origin HEAD:refs/heads/master")
+        updated_commit = machine.succeed(
+            "cd /tmp/test-flake-work && git rev-parse HEAD"
+        ).strip()
 
-        # Wait for evaluator to detect and create new evaluation
+        # Wait for this commit, rather than the older completed evaluation.
         machine.wait_until_succeeds(
-            f"test $(curl -sf 'http://127.0.0.1:3000/api/v1/evaluations?jobset_id={e2e_jobset_id}' | jq '.items | length') -gt {before_count_int}",
+            f"curl -sf 'http://127.0.0.1:3000/api/v1/evaluations?jobset_id={e2e_jobset_id}' "
+            f"| jq -e '.items[] | select(.commit_hash==\"{updated_commit}\" and .status==\"completed\")'",
             timeout=60
         )
+        updated_eval_id = machine.succeed(
+            f"curl -sf 'http://127.0.0.1:3000/api/v1/evaluations?jobset_id={e2e_jobset_id}' "
+            f"| jq -r '.items[] | select(.commit_hash==\"{updated_commit}\" and .status==\"completed\") | .id'"
+        ).strip()
+        updated_drv_path = machine.succeed(
+            f"curl -sf 'http://127.0.0.1:3000/api/v1/builds?evaluation_id={updated_eval_id}' "
+            "| jq -r '.items[0].drv_path'"
+        ).strip()
+        assert updated_drv_path != e2e_drv_path, \
+            "Expected the updated commit to produce a different derivation"
 
     with subtest("Queue runner builds pending derivation"):
         # Poll the E2E build until succeeded (queue-runner is already running)
