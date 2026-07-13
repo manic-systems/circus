@@ -12,12 +12,13 @@ use circus_config::EvaluatorConfig;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-fn git_stage(dir: &Path) {
+fn git_stage(dir: &Path) -> String {
   for args in [
     &["init", "-q"][..],
     &["config", "user.email", "test@circus"],
     &["config", "user.name", "Circus Test"],
     &["add", "."],
+    &["commit", "-qm", "fixture"],
   ] {
     Command::new("git")
       .args(args)
@@ -25,6 +26,17 @@ fn git_stage(dir: &Path) {
       .status()
       .expect("git command failed");
   }
+  String::from_utf8(
+    Command::new("git")
+      .args(["rev-parse", "HEAD"])
+      .current_dir(dir)
+      .output()
+      .expect("read fixture commit")
+      .stdout,
+  )
+  .expect("fixture commit is UTF-8")
+  .trim()
+  .to_owned()
 }
 
 fn permissive_config() -> EvaluatorConfig {
@@ -54,10 +66,11 @@ async fn eval_minimal_flake_returns_one_job() {
 }"#,
   )
   .unwrap();
-  git_stage(dir.path());
+  let commit = git_stage(dir.path());
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    &commit,
     "packages",
     true,
     Duration::from_mins(2),
@@ -99,10 +112,11 @@ async fn eval_captures_per_attribute_errors_without_failing_fatally() {
 }"#,
   )
   .unwrap();
-  git_stage(dir.path());
+  let commit = git_stage(dir.path());
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    &commit,
     "packages",
     true,
     Duration::from_mins(2),
@@ -130,10 +144,11 @@ async fn eval_fatal_parse_error_returns_cierror_nixeval() {
   let dir = TempDir::new().unwrap();
   fs::write(dir.path().join("flake.nix"), "not valid nix syntax at all")
     .unwrap();
-  git_stage(dir.path());
+  let commit = git_stage(dir.path());
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    &commit,
     "packages",
     true,
     Duration::from_secs(30),
@@ -171,10 +186,11 @@ async fn eval_timeout_returns_cierror_timeout() {
 }",
   )
   .unwrap();
-  git_stage(dir.path());
+  let commit = git_stage(dir.path());
 
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
+    &commit,
     "packages",
     true,
     Duration::from_millis(500),
