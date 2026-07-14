@@ -55,7 +55,7 @@ config = "0.15.23"
 dashmap = "6.2.1"
 data-encoding = "2.11"
 derive_more = { version = "2.1", features = [ "display" ] }
-ed25519-dalek = "2.2.0"
+ed25519-dalek = "3.0.0"
 futures = "0.3.32"
 futures-core = "0.3.32"
 futures-sink = "0.3.32"
