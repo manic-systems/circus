@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use capnp::capability::Rc;
+use circus_common::{PgPool, repo};
 use circus_proto::agent_session;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::pool::{AgentPool, HeartbeatSnapshot};
@@ -69,27 +69,29 @@ impl agent_session::Server for SessionImpl {
 
     let machine_id = self.machine_id;
     let db = self.db_pool.clone();
-    if let Err(e) = sqlx::query(
-      "UPDATE builder_sessions SET last_seen = NOW(), load1 = $2, load5 = $3, \
-       load15 = $4, cpu_psi_avg10 = $5, mem_psi_avg10 = $6, io_psi_avg10 = \
-       $7, current_jobs = $8, mem_total = $9, mem_used = $10, store_free = \
-       $11, build_dir_free = $12, updated_at = NOW() WHERE machine_id = $1",
-    )
-    .bind(machine_id)
-    .bind(load1)
-    .bind(load5)
-    .bind(load15)
-    .bind(cpu_psi)
-    .bind(mem_psi)
-    .bind(io_psi)
-    .bind(i32::try_from(current_jobs).unwrap_or(i32::MAX))
-    .bind(i64::try_from(mem_total).unwrap_or(i64::MAX))
-    .bind(i64::try_from(mem_used).unwrap_or(i64::MAX))
-    .bind(i64::try_from(store_free).unwrap_or(i64::MAX))
-    .bind(i64::try_from(build_dir_free).unwrap_or(i64::MAX))
-    .execute(&db)
-    .await
-    {
+    let current_jobs = i32::try_from(current_jobs).unwrap_or(i32::MAX);
+    let mem_total = i64::try_from(mem_total).unwrap_or(i64::MAX);
+    let mem_used = i64::try_from(mem_used).unwrap_or(i64::MAX);
+    let store_free = i64::try_from(store_free).unwrap_or(i64::MAX);
+    let build_dir_free = i64::try_from(build_dir_free).unwrap_or(i64::MAX);
+    let flush = repo::builder_sessions::heartbeat(
+      &db,
+      repo::builder_sessions::Heartbeat {
+        machine_id,
+        load1,
+        load5,
+        load15,
+        cpu_psi_avg10: cpu_psi,
+        mem_psi_avg10: mem_psi,
+        io_psi_avg10: io_psi,
+        current_jobs,
+        mem_total,
+        mem_used,
+        store_free,
+        build_dir_free,
+      },
+    );
+    if let Err(e) = flush.await {
       tracing::warn!(%machine_id, "heartbeat db flush: {e}");
     }
 

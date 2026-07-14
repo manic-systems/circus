@@ -7,13 +7,16 @@
 //! any agent in the cluster is immediately visible to substituters.
 
 use chrono::{DateTime, Utc};
+use circus_codegen::queries::narinfo_cache as q;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::error::{CiError, Result};
+use crate::{
+  db::PgPool,
+  error::{CiError, Result},
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NarInfo {
   pub store_path:      String,
   pub nar_hash:        String,
@@ -31,6 +34,29 @@ pub struct NarInfo {
   pub created_at:      DateTime<Utc>,
   pub updated_at:      DateTime<Utc>,
   pub last_fetched_at: Option<DateTime<Utc>>,
+}
+
+impl From<q::NarinfoCacheRow> for NarInfo {
+  fn from(r: q::NarinfoCacheRow) -> Self {
+    Self {
+      store_path:      r.store_path,
+      nar_hash:        r.nar_hash,
+      nar_size:        r.nar_size,
+      file_hash:       r.file_hash,
+      file_size:       r.file_size,
+      compression:     r.compression,
+      url:             r.url,
+      deriver:         r.deriver,
+      references:      r.references,
+      sig:             r.sig,
+      ca:              r.ca,
+      build_id:        r.build_id,
+      project_id:      r.project_id,
+      created_at:      r.created_at,
+      updated_at:      r.updated_at,
+      last_fetched_at: r.last_fetched_at,
+    }
+  }
 }
 
 pub struct UpsertNarInfo<'a> {
@@ -53,51 +79,33 @@ pub struct UpsertNarInfo<'a> {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
   // One transaction so a row never lands without its project association.
-  let mut tx = pool.begin().await?;
-  sqlx::query(
-    "INSERT INTO narinfo_cache (store_path, nar_hash, nar_size, file_hash, \
-     file_size, compression, url, deriver, \"references\", sig, ca, build_id, \
-     project_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
-     $11, $12, $13, NOW()) ON CONFLICT (store_path) DO UPDATE SET nar_hash = \
-     EXCLUDED.nar_hash, nar_size = EXCLUDED.nar_size, file_hash = \
-     EXCLUDED.file_hash, file_size = EXCLUDED.file_size, compression = \
-     EXCLUDED.compression, url = EXCLUDED.url, deriver = EXCLUDED.deriver, \
-     \"references\" = EXCLUDED.\"references\", sig = EXCLUDED.sig, ca = \
-     EXCLUDED.ca, build_id = COALESCE(narinfo_cache.build_id, \
-     EXCLUDED.build_id), project_id = COALESCE(narinfo_cache.project_id, \
-     EXCLUDED.project_id), updated_at = NOW()",
-  )
-  .bind(info.store_path)
-  .bind(info.nar_hash)
-  .bind(info.nar_size)
-  .bind(info.file_hash)
-  .bind(info.file_size)
-  .bind(info.compression)
-  .bind(info.url)
-  .bind(info.deriver)
-  .bind(info.references)
-  .bind(info.sig)
-  .bind(info.ca)
-  .bind(info.build_id)
-  .bind(info.project_id)
-  .execute(&mut *tx)
-  .await?;
-
-  if let Some(project_id) = info.project_id {
-    sqlx::query(
-      "INSERT INTO narinfo_cache_projects (store_path, project_id, build_id, \
-       updated_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (store_path, \
-       project_id) DO UPDATE SET build_id = COALESCE(EXCLUDED.build_id, \
-       narinfo_cache_projects.build_id), updated_at = NOW()",
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  q::upsert()
+    .bind(
+      &tx,
+      &info.store_path,
+      &info.nar_hash,
+      &info.nar_size,
+      &info.file_hash,
+      &info.file_size,
+      &info.compression,
+      &info.url,
+      &info.deriver,
+      &info.references,
+      &info.sig,
+      &info.ca,
+      &info.build_id,
+      &info.project_id,
     )
-    .bind(info.store_path)
-    .bind(project_id)
-    .bind(info.build_id)
-    .execute(&mut *tx)
     .await?;
+  if let Some(project_id) = info.project_id {
+    q::upsert_project_owner()
+      .bind(&tx, &info.store_path, &project_id, &info.build_id)
+      .await?;
   }
   tx.commit().await?;
   Ok(())
@@ -108,15 +116,15 @@ pub async fn upsert(pool: &PgPool, info: UpsertNarInfo<'_>) -> Result<()> {
 /// # Errors
 ///
 /// `CiError::NotFound` when no row matches, `CiError::Database` for
-/// underlying sqlx errors.
+/// underlying database errors.
 pub async fn get(pool: &PgPool, store_path: &str) -> Result<NarInfo> {
-  sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache WHERE store_path = $1",
-  )
-  .bind(store_path)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("narinfo for {store_path}")))
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &store_path)
+    .opt()
+    .await?
+    .map(NarInfo::from)
+    .ok_or_else(|| CiError::NotFound(format!("narinfo for {store_path}")))
 }
 
 /// Lookup by the first 32 base32 characters of the store path's hash.
@@ -132,17 +140,14 @@ pub async fn get_by_hash_part(
 ) -> Result<NarInfo> {
   // Nix store paths are `/nix/store/<32-chars>-<name>`; we match on the
   // 32-char hash part right after the prefix.
-  sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache n WHERE n.store_path LIKE $1 AND ($2::uuid \
-     IS NULL OR n.project_id = $2 OR EXISTS (SELECT 1 FROM \
-     narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND \
-     ncp.project_id = $2)) ORDER BY n.updated_at DESC LIMIT 1",
-  )
-  .bind(format!("/nix/store/{hash_part}-%"))
-  .bind(project_id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| narinfo_not_found("hash", hash_part, project_id))
+  let client = pool.get().await?;
+  let pattern = format!("/nix/store/{hash_part}-%");
+  q::get_by_hash_part()
+    .bind(&client, &pattern, &project_id)
+    .opt()
+    .await?
+    .map(NarInfo::from)
+    .ok_or_else(|| narinfo_not_found("hash", hash_part, project_id))
 }
 
 /// Lookup by the narinfo `URL` field, e.g. `nar/<hash>.nar.zst`.
@@ -158,17 +163,13 @@ pub async fn get_by_url(
   url: &str,
   project_id: Option<Uuid>,
 ) -> Result<NarInfo> {
-  sqlx::query_as::<_, NarInfo>(
-    "SELECT * FROM narinfo_cache n WHERE n.url = $1 AND ($2::uuid IS NULL OR \
-     n.project_id = $2 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp \
-     WHERE ncp.store_path = n.store_path AND ncp.project_id = $2)) ORDER BY \
-     n.updated_at DESC LIMIT 1",
-  )
-  .bind(url)
-  .bind(project_id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| narinfo_not_found("URL", url, project_id))
+  let client = pool.get().await?;
+  q::get_by_url()
+    .bind(&client, &url, &project_id)
+    .opt()
+    .await?
+    .map(NarInfo::from)
+    .ok_or_else(|| narinfo_not_found("URL", url, project_id))
 }
 
 fn narinfo_not_found(
@@ -184,12 +185,10 @@ fn narinfo_not_found(
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn count(pool: &PgPool) -> Result<i64> {
-  let (n,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM narinfo_cache")
-    .fetch_one(pool)
-    .await?;
-  Ok(n)
+  let client = pool.get().await?;
+  Ok(q::count().bind(&client).one().await?)
 }
 
 /// Aggregate storage figures for one cache scope.
@@ -209,43 +208,20 @@ pub struct CacheStorageSummary {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn storage_summary(
   pool: &PgPool,
   project_id: Option<Uuid>,
 ) -> Result<CacheStorageSummary> {
-  let (nar_count, uncompressed_bytes, compressed_bytes) =
-    sqlx::query_as::<_, (i64, i64, i64)>(
-      "WITH uploaded AS (SELECT store_path, nar_size, file_size FROM \
-       narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS \
-       (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = \
-       n.store_path AND ncp.project_id = $1))), local AS (SELECT DISTINCT ON \
-       (path) path AS store_path, COALESCE(file_size, 0) AS nar_size, \
-       NULL::bigint AS file_size FROM (SELECT bp.path, bp.file_size, \
-       bp.created_at FROM build_products bp JOIN builds b ON b.id = \
-       bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets \
-       j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = \
-       true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT \
-       b.build_output_path AS path, NULL::bigint AS file_size, \
-       COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b \
-       JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
-       e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
-       b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id \
-       = $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM narinfo_cache n \
-       WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR \
-       n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp \
-       WHERE ncp.store_path = n.store_path AND ncp.project_id = $1))) ORDER \
-       BY path, created_at DESC), inventory AS (SELECT * FROM uploaded UNION \
-       ALL SELECT * FROM local) SELECT COUNT(*), COALESCE(SUM(nar_size), \
-       0)::bigint, COALESCE(SUM(file_size), 0)::bigint FROM inventory",
-    )
-    .bind(project_id)
-    .fetch_one(pool)
+  let client = pool.get().await?;
+  let row = q::storage_summary()
+    .bind(&client, &project_id)
+    .one()
     .await?;
   Ok(CacheStorageSummary {
-    nar_count,
-    uncompressed_bytes,
-    compressed_bytes,
+    nar_count:          row.nar_count,
+    uncompressed_bytes: row.uncompressed_bytes,
+    compressed_bytes:   row.compressed_bytes,
   })
 }
 
@@ -254,44 +230,22 @@ pub async fn storage_summary(
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn storage_extremes(
   pool: &PgPool,
   project_id: Option<Uuid>,
 ) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
-  let (last_uploaded, oldest_fetched) =
-    sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
-      "WITH uploaded AS (SELECT store_path, created_at, last_fetched_at FROM \
-       narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS \
-       (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = \
-       n.store_path AND ncp.project_id = $1))), local AS (SELECT DISTINCT ON \
-       (path) path AS store_path, created_at, NULL::timestamptz AS \
-       last_fetched_at FROM (SELECT bp.path, bp.created_at FROM \
-       build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations \
-       e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE \
-       b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR \
-       j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, \
-       COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b \
-       JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
-       e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
-       b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id \
-       = $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM narinfo_cache n \
-       WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR \
-       n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp \
-       WHERE ncp.store_path = n.store_path AND ncp.project_id = $1))) ORDER \
-       BY path, created_at DESC), inventory AS (SELECT * FROM uploaded UNION \
-       ALL SELECT * FROM local) SELECT MAX(created_at), MIN(last_fetched_at) \
-       FROM inventory",
-    )
-    .bind(project_id)
-    .fetch_one(pool)
+  let client = pool.get().await?;
+  let row = q::storage_extremes()
+    .bind(&client, &project_id)
+    .one()
     .await?;
-  Ok((last_uploaded, oldest_fetched))
+  Ok((row.last_uploaded, row.oldest_fetched))
 }
 
 /// A single NAR row prepared for the Caches dashboard listing. `package_name`
 /// is the store-path name with the 32-char hash stripped.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NarListItem {
   pub store_path:      String,
   pub package_name:    String,
@@ -317,6 +271,20 @@ impl From<NarInfo> for NarListItem {
   }
 }
 
+impl From<q::ListFiltered> for NarListItem {
+  fn from(r: q::ListFiltered) -> Self {
+    Self {
+      store_path:      r.store_path,
+      package_name:    r.package_name,
+      nar_size:        r.nar_size,
+      file_size:       r.file_size,
+      compression:     r.compression,
+      created_at:      r.created_at,
+      last_fetched_at: r.last_fetched_at,
+    }
+  }
+}
+
 /// Derive the human-facing package name from a `/nix/store/<hash>-<name>`
 /// path: drop the prefix and the 32-char hash, returning `<name>`. Falls back
 /// to the raw path when it does not match the expected shape.
@@ -333,7 +301,7 @@ pub fn package_name_from_store_path(store_path: &str) -> String {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn list_filtered(
   pool: &PgPool,
   project_id: Option<Uuid>,
@@ -342,85 +310,39 @@ pub async fn list_filtered(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<NarListItem>> {
-  let rows = sqlx::query_as::<_, NarListItem>(
-    "WITH uploaded AS (SELECT store_path, nar_size, file_size, compression, \
-     created_at, last_fetched_at FROM narinfo_cache n WHERE ($1::uuid IS NULL \
-     OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp \
-     WHERE ncp.store_path = n.store_path AND ncp.project_id = $1))), local AS \
-     (SELECT DISTINCT ON (path) path AS store_path, COALESCE(file_size, 0) AS \
-     nar_size, NULL::bigint AS file_size, 'none' AS compression, created_at, \
-     NULL::timestamptz AS last_fetched_at FROM (SELECT bp.path, bp.file_size, \
-     bp.created_at FROM build_products bp JOIN builds b ON b.id = bp.build_id \
-     JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
-     e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
-     ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT \
-     b.build_output_path AS path, NULL::bigint AS file_size, \
-     COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN \
-     evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
-     e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
-     b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = \
-     $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM narinfo_cache n WHERE \
-     n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = \
-     $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE \
-     ncp.store_path = n.store_path AND ncp.project_id = $1))) ORDER BY path, \
-     created_at DESC), inventory AS (SELECT * FROM uploaded UNION ALL SELECT \
-     * FROM local) SELECT store_path, COALESCE(substring(store_path from \
-     '^/nix/store/[^-]+-(.*)$'), store_path) AS package_name, nar_size, \
-     file_size, compression, created_at, last_fetched_at FROM inventory WHERE \
-     ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') AND \
-     ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%') ORDER BY \
-     created_at DESC LIMIT $4 OFFSET $5",
-  )
-  .bind(project_id)
-  .bind(hash_prefix)
-  .bind(package_query)
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(pool)
-  .await?;
-  Ok(rows)
+  let client = pool.get().await?;
+  let rows = q::list_filtered()
+    .bind(
+      &client,
+      &project_id,
+      &hash_prefix,
+      &package_query,
+      &limit,
+      &offset,
+    )
+    .all()
+    .await?;
+  Ok(rows.into_iter().map(NarListItem::from).collect())
 }
 
 /// Count NARs matching the same filters as [`list_filtered`].
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn count_filtered(
   pool: &PgPool,
   project_id: Option<Uuid>,
   hash_prefix: Option<&str>,
   package_query: Option<&str>,
 ) -> Result<i64> {
-  let (n,) = sqlx::query_as::<_, (i64,)>(
-    "WITH uploaded AS (SELECT store_path FROM narinfo_cache n WHERE ($1::uuid \
-     IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM \
-     narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND \
-     ncp.project_id = $1))), local AS (SELECT DISTINCT ON (path) path AS \
-     store_path FROM (SELECT bp.path, bp.created_at FROM build_products bp \
-     JOIN builds b ON b.id = bp.build_id JOIN evaluations e ON e.id = \
-     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = \
-     'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR j.project_id = \
-     $1) UNION ALL SELECT b.build_output_path AS path, \
-     COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN \
-     evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
-     e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND \
-     b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = \
-     $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM narinfo_cache n WHERE \
-     n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = \
-     $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE \
-     ncp.store_path = n.store_path AND ncp.project_id = $1))) ORDER BY path, \
-     created_at DESC), inventory AS (SELECT * FROM uploaded UNION ALL SELECT \
-     * FROM local) SELECT COUNT(*) FROM inventory WHERE ($2::text IS NULL OR \
-     store_path LIKE '/nix/store/' || $2 || '%') AND ($3::text IS NULL OR \
-     store_path LIKE '%-%' || $3 || '%')",
+  let client = pool.get().await?;
+  Ok(
+    q::count_filtered()
+      .bind(&client, &project_id, &hash_prefix, &package_query)
+      .one()
+      .await?,
   )
-  .bind(project_id)
-  .bind(hash_prefix)
-  .bind(package_query)
-  .fetch_one(pool)
-  .await?;
-  Ok(n)
 }
 
 /// Best-effort stamp of `last_fetched_at` for one served store path. Fired
@@ -428,13 +350,9 @@ pub async fn count_filtered(
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn touch_last_fetched(pool: &PgPool, store_path: &str) -> Result<()> {
-  sqlx::query(
-    "UPDATE narinfo_cache SET last_fetched_at = NOW() WHERE store_path = $1",
-  )
-  .bind(store_path)
-  .execute(pool)
-  .await?;
+  let client = pool.get().await?;
+  q::touch_last_fetched().bind(&client, &store_path).await?;
   Ok(())
 }

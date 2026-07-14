@@ -8,10 +8,10 @@ use std::collections::HashMap;
 
 use circus_config::{DeclarativeConfig, DeclarativeWebhook};
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+  db::PgPool,
   error::Result,
   models::{CreateJobset, CreateProject, JobsetState, JobsetTriggerMode},
   repo,
@@ -377,10 +377,9 @@ pub async fn run(
 
   // Wake the evaluator so it picks up newly bootstrapped jobsets immediately
   // instead of waiting for the next poll interval.
-  if let Err(e) = sqlx::query("SELECT pg_notify($1, '')")
-    .bind(crate::pg_notify::CHANNEL_JOBSETS_CHANGED)
-    .execute(pool)
-    .await
+  if let Err(e) =
+    crate::pg_notify::notify(pool, crate::pg_notify::CHANNEL_JOBSETS_CHANGED)
+      .await
   {
     tracing::warn!("Failed to notify evaluator after bootstrap: {e}");
   }

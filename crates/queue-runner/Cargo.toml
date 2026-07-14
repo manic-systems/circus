@@ -36,7 +36,6 @@ rustls-pki-types.workspace   = true
 serde.workspace              = true
 serde_json.workspace         = true
 sha2.workspace               = true
-sqlx.workspace               = true
 subtle.workspace             = true
 tempfile.workspace           = true
 thiserror.workspace          = true
@@ -50,6 +49,9 @@ url.workspace                = true
 urlencoding.workspace        = true
 uuid.workspace               = true
 x509-parser.workspace        = true
+
+[dev-dependencies]
+circus-migrations.workspace = true
 
 [lints]
 workspace = true

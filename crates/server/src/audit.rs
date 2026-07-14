@@ -10,11 +10,11 @@ use std::net::SocketAddr;
 
 use axum::{extract::ConnectInfo, http::Extensions};
 use circus_common::{
+  PgPool,
   audit::{self, Actor, AuditRecord},
   models::{ApiKey, User},
 };
 use serde_json::Value;
-use sqlx::PgPool;
 
 pub struct AuditContext {
   pub actor:       Actor,

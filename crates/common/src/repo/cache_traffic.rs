@@ -9,11 +9,11 @@
 //! by `project_id`.
 
 use chrono::{DateTime, Utc};
+use circus_codegen::queries::cache_traffic as q;
 use serde::Serialize;
-use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::error::Result;
+use crate::{db::PgPool, error::Result};
 
 /// Time-bucket granularity for the cache charts. Each variant maps to a fixed
 /// bucket width; the dashboard's Minutes/Hours/Days/Weeks toggle selects one.
@@ -56,6 +56,16 @@ pub struct TrafficPoint {
   pub bytes:       i64,
 }
 
+impl From<q::TrafficTimeseries> for TrafficPoint {
+  fn from(r: q::TrafficTimeseries) -> Self {
+    Self {
+      bucket_time: r.bucket_time,
+      requests:    r.requests,
+      bytes:       r.bytes,
+    }
+  }
+}
+
 /// One point in a storage-added series (derived from upload timestamps).
 #[derive(Debug, Clone, Serialize)]
 pub struct StoragePoint {
@@ -64,12 +74,22 @@ pub struct StoragePoint {
   pub bytes_added:    i64,
 }
 
+impl From<q::StorageTimeseries> for StoragePoint {
+  fn from(r: q::StorageTimeseries) -> Self {
+    Self {
+      bucket_time:    r.bucket_time,
+      packages_added: r.packages_added,
+      bytes_added:    r.bytes_added,
+    }
+  }
+}
+
 /// Insert one accumulated counter row per cache for this flush tick. A no-op
 /// when there is nothing to record.
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn flush(pool: &PgPool, rows: &[(String, i64, i64)]) -> Result<()> {
   if rows.is_empty() {
     return Ok(());
@@ -77,15 +97,8 @@ pub async fn flush(pool: &PgPool, rows: &[(String, i64, i64)]) -> Result<()> {
   let names: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
   let requests: Vec<i64> = rows.iter().map(|r| r.1).collect();
   let bytes: Vec<i64> = rows.iter().map(|r| r.2).collect();
-  sqlx::query(
-    "INSERT INTO cache_traffic (cache_name, requests, bytes_served) SELECT * \
-     FROM UNNEST($1::text[], $2::bigint[], $3::bigint[])",
-  )
-  .bind(&names)
-  .bind(&requests)
-  .bind(&bytes)
-  .execute(pool)
-  .await?;
+  let client = pool.get().await?;
+  q::flush().bind(&client, &names, &requests, &bytes).await?;
   Ok(())
 }
 
@@ -94,7 +107,7 @@ pub async fn flush(pool: &PgPool, rows: &[(String, i64, i64)]) -> Result<()> {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn traffic_timeseries(
   pool: &PgPool,
   cache_name: &str,
@@ -103,30 +116,12 @@ pub async fn traffic_timeseries(
 ) -> Result<Vec<TrafficPoint>> {
   let bucket = granularity.bucket_seconds();
   let window = bucket * points.max(1);
-  let rows = sqlx::query_as::<_, (DateTime<Utc>, i64, i64)>(
-    "SELECT to_timestamp(floor(extract(epoch FROM recorded_at) / $2) * $2) AS \
-     bucket_time, COALESCE(SUM(requests), 0)::bigint, \
-     COALESCE(SUM(bytes_served), 0)::bigint FROM cache_traffic WHERE \
-     cache_name = $1 AND recorded_at > NOW() - ($3 * INTERVAL '1 second') \
-     GROUP BY bucket_time ORDER BY bucket_time ASC",
-  )
-  .bind(cache_name)
-  .bind(bucket)
-  .bind(window)
-  .fetch_all(pool)
-  .await?;
-  Ok(
-    rows
-      .into_iter()
-      .map(|(bucket_time, requests, bytes)| {
-        TrafficPoint {
-          bucket_time,
-          requests,
-          bytes,
-        }
-      })
-      .collect(),
-  )
+  let client = pool.get().await?;
+  let rows = q::traffic_timeseries()
+    .bind(&client, &bucket, &cache_name, &window)
+    .all()
+    .await?;
+  Ok(rows.into_iter().map(TrafficPoint::from).collect())
 }
 
 /// Storage added over time: uploaded NAR rows plus signed local build products.
@@ -134,7 +129,7 @@ pub async fn traffic_timeseries(
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn storage_timeseries(
   pool: &PgPool,
   project_id: Option<Uuid>,
@@ -143,67 +138,27 @@ pub async fn storage_timeseries(
 ) -> Result<Vec<StoragePoint>> {
   let bucket = granularity.bucket_seconds();
   let window = bucket * points.max(1);
-  let rows = sqlx::query_as::<_, (DateTime<Utc>, i64, i64)>(
-    "WITH uploaded AS (SELECT store_path, created_at, file_size FROM \
-     narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS \
-     (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = \
-     n.store_path AND ncp.project_id = $1))), local AS (SELECT DISTINCT ON \
-     (path) path AS store_path, created_at, COALESCE(file_size, 0) AS \
-     file_size FROM (SELECT bp.path, bp.created_at, bp.file_size FROM \
-     build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations e \
-     ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE \
-     b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR \
-     j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, \
-     COALESCE(b.completed_at, b.created_at) AS created_at, NULL::bigint AS \
-     file_size FROM builds b JOIN evaluations e ON e.id = b.evaluation_id \
-     JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND \
-     b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS \
-     NULL OR j.project_id = $1)) candidates WHERE NOT EXISTS (SELECT 1 FROM \
-     narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS \
-     NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM \
-     narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND \
-     ncp.project_id = $1))) ORDER BY path, created_at DESC), inventory AS \
-     (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT \
-     to_timestamp(floor(extract(epoch FROM created_at) / $2) * $2) AS \
-     bucket_time, COUNT(*), COALESCE(SUM(file_size), 0)::bigint FROM \
-     inventory WHERE created_at > NOW() - ($3 * INTERVAL '1 second') GROUP BY \
-     bucket_time ORDER BY bucket_time ASC",
-  )
-  .bind(project_id)
-  .bind(bucket)
-  .bind(window)
-  .fetch_all(pool)
-  .await?;
-  Ok(
-    rows
-      .into_iter()
-      .map(|(bucket_time, packages_added, bytes_added)| {
-        StoragePoint {
-          bucket_time,
-          packages_added,
-          bytes_added,
-        }
-      })
-      .collect(),
-  )
+  let client = pool.get().await?;
+  let rows = q::storage_timeseries()
+    .bind(&client, &project_id, &bucket, &window)
+    .all()
+    .await?;
+  Ok(rows.into_iter().map(StoragePoint::from).collect())
 }
 
 /// Total requests and bytes served for one cache in the trailing hour.
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn traffic_last_hour(
   pool: &PgPool,
   cache_name: &str,
 ) -> Result<(i64, i64)> {
-  let row = sqlx::query_as::<_, (i64, i64)>(
-    "SELECT COALESCE(SUM(requests), 0)::bigint, COALESCE(SUM(bytes_served), \
-     0)::bigint FROM cache_traffic WHERE cache_name = $1 AND recorded_at > \
-     NOW() - INTERVAL '1 hour'",
-  )
-  .bind(cache_name)
-  .fetch_one(pool)
-  .await?;
-  Ok(row)
+  let client = pool.get().await?;
+  let row = q::traffic_last_hour()
+    .bind(&client, &cache_name)
+    .one()
+    .await?;
+  Ok((row.requests, row.bytes_served))
 }

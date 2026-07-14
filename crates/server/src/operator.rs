@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use chrono::Utc;
 use circus_common::models::{Build, BuildStatus, Evaluation};
 use serde::Serialize;
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
@@ -473,15 +472,6 @@ struct BuildContext {
   jobset_name:  String,
 }
 
-#[derive(FromRow)]
-struct BuildContextRow {
-  evaluation_id: Uuid,
-  project_id:    Uuid,
-  project_name:  String,
-  jobset_id:     Uuid,
-  jobset_name:   String,
-}
-
 async fn context_for_builds<'a>(
   state: &AppState,
   builds: impl Iterator<Item = &'a Build>,
@@ -496,16 +486,12 @@ async fn context_for_builds<'a>(
     return Ok(HashMap::new());
   }
 
-  let rows = sqlx::query_as::<_, BuildContextRow>(
-    "SELECT e.id AS evaluation_id, p.id AS project_id, p.name AS \
-     project_name, j.id AS jobset_id, j.name AS jobset_name FROM evaluations \
-     e JOIN jobsets j ON e.jobset_id = j.id JOIN projects p ON j.project_id = \
-     p.id WHERE e.id = ANY($1)",
+  let rows = circus_common::repo::evaluations::get_build_contexts(
+    &state.pool,
+    &eval_ids,
   )
-  .bind(&eval_ids)
-  .fetch_all(&state.pool)
   .await
-  .map_err(|err| ApiError(circus_common::CiError::Database(err)))?;
+  .map_err(ApiError)?;
 
   Ok(
     rows

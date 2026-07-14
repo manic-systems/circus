@@ -10,12 +10,11 @@ pub use circus_types::{
   NotificationType,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::roles::{GlobalRole, ProjectRole};
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
   pub id:              Uuid,
   pub name:            String,
@@ -23,12 +22,12 @@ pub struct Project {
   pub repository_url:  String,
   pub cache_enabled:   bool,
   pub cache_url:       Option<String>,
-  pub cache_upstreams: sqlx::types::Json<BinaryCacheUpstreams>,
+  pub cache_upstreams: BinaryCacheUpstreams,
   pub created_at:      DateTime<Utc>,
   pub updated_at:      DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Jobset {
   pub id:                Uuid,
   pub project_id:        Uuid,
@@ -49,7 +48,7 @@ pub struct Jobset {
   pub keep_nr:           i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Evaluation {
   pub id:              Uuid,
   pub jobset_id:       Uuid,
@@ -66,9 +65,8 @@ pub struct Evaluation {
   pub pr_action:       Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum EvaluationStatus {
   Pending,
   Running,
@@ -79,6 +77,18 @@ pub enum EvaluationStatus {
 }
 
 impl EvaluationStatus {
+  #[must_use]
+  pub const fn as_db_str(&self) -> &'static str {
+    match self {
+      Self::Pending => "pending",
+      Self::Running => "running",
+      Self::Completed => "completed",
+      Self::Failed => "failed",
+      Self::Cancelled => "cancelled",
+      Self::TimedOut => "timed_out",
+    }
+  }
+
   #[must_use]
   pub const fn badge(&self) -> (&'static str, &'static str) {
     match self {
@@ -92,16 +102,55 @@ impl EvaluationStatus {
   }
 }
 
+impl std::str::FromStr for EvaluationStatus {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "pending" => Ok(Self::Pending),
+      "running" => Ok(Self::Running),
+      "completed" => Ok(Self::Completed),
+      "failed" => Ok(Self::Failed),
+      "cancelled" => Ok(Self::Cancelled),
+      "timed_out" => Ok(Self::TimedOut),
+      _ => Err(format!("invalid evaluation status '{s}'")),
+    }
+  }
+}
+
 #[derive(
-  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default,
+  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
 )]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "varchar", rename_all = "snake_case")]
 pub enum EvaluationTriggerKind {
   #[default]
   SourceChange,
   Manual,
   Interval,
+}
+
+impl EvaluationTriggerKind {
+  #[must_use]
+  pub const fn as_db_str(&self) -> &'static str {
+    match self {
+      Self::SourceChange => "source_change",
+      Self::Manual => "manual",
+      Self::Interval => "interval",
+    }
+  }
+}
+
+impl std::str::FromStr for EvaluationTriggerKind {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "source_change" => Ok(Self::SourceChange),
+      "manual" => Ok(Self::Manual),
+      "interval" => Ok(Self::Interval),
+      _ => Err(format!("invalid evaluation trigger kind '{s}'")),
+    }
+  }
 }
 
 /// Jobset scheduling state (Hydra-compatible).
@@ -111,10 +160,9 @@ pub enum EvaluationTriggerKind {
 /// - `OneShot`: Evaluated once, then automatically set to Disabled
 /// - `OneAtATime`: Only one build can run at a time for this jobset
 #[derive(
-  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default,
+  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
 )]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "varchar", rename_all = "snake_case")]
 pub enum JobsetState {
   Disabled,
   #[default]
@@ -147,6 +195,11 @@ impl JobsetState {
     }
   }
 
+  #[must_use]
+  pub const fn as_db_str(&self) -> &'static str {
+    self.as_str()
+  }
+
   /// Parses a state string from declarative config.
   /// Unrecognised values default to `Enabled`.
   #[must_use]
@@ -160,12 +213,25 @@ impl JobsetState {
   }
 }
 
+impl std::str::FromStr for JobsetState {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "disabled" => Ok(Self::Disabled),
+      "enabled" => Ok(Self::Enabled),
+      "one_shot" => Ok(Self::OneShot),
+      "one_at_a_time" => Ok(Self::OneAtATime),
+      _ => Err(format!("invalid jobset state '{s}'")),
+    }
+  }
+}
+
 /// How a jobset enters the evaluator.
 #[derive(
-  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default,
+  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
 )]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "varchar", rename_all = "snake_case")]
 pub enum JobsetTriggerMode {
   /// Rebuild when a source/manual trigger or polling discovers new inputs.
   #[default]
@@ -194,6 +260,11 @@ impl JobsetTriggerMode {
     }
   }
 
+  #[must_use]
+  pub const fn as_db_str(&self) -> &'static str {
+    self.as_str()
+  }
+
   /// Parses a trigger mode from declarative config.
   /// Unrecognised values default to `SourceChange`.
   #[must_use]
@@ -205,13 +276,25 @@ impl JobsetTriggerMode {
   }
 }
 
+impl std::str::FromStr for JobsetTriggerMode {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "source_change" => Ok(Self::SourceChange),
+      "interval" => Ok(Self::Interval),
+      _ => Err(format!("invalid jobset trigger mode '{s}'")),
+    }
+  }
+}
+
 /// Job-name prefix marking an intermediate dependency build synthesized by the
 /// evaluator from the derivation graph, as opposed to a top-level jobset job.
 /// These builds are internal scheduling artifacts and are excluded from
 /// user-facing notifications (commit statuses, webhooks, ...).
 pub const DEPENDENCY_JOB_PREFIX: &str = "drv:";
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[expect(
   clippy::struct_excessive_bools,
   reason = "Build is a database row matching a well-known schema; the bools \
@@ -368,7 +451,8 @@ impl BuildStatus {
     Self::try_from(code).ok()
   }
 
-  const fn db_str(self) -> &'static str {
+  #[must_use]
+  pub const fn as_db_str(self) -> &'static str {
     match self {
       Self::Pending => "pending",
       Self::Running => "running",
@@ -385,27 +469,6 @@ impl BuildStatus {
       Self::NarSizeLimitExceeded => "nar_size_limit_exceeded",
       Self::NonDeterministic => "non_deterministic",
       Self::OomKilled => "oom_killed",
-    }
-  }
-
-  fn from_db_str(status: &str) -> Option<Self> {
-    match status {
-      "pending" => Some(Self::Pending),
-      "running" => Some(Self::Running),
-      "succeeded" => Some(Self::Succeeded),
-      "failed" => Some(Self::Failed),
-      "dependency_failed" => Some(Self::DependencyFailed),
-      "aborted" => Some(Self::Aborted),
-      "cancelled" => Some(Self::Cancelled),
-      "failed_with_output" => Some(Self::FailedWithOutput),
-      "timeout" => Some(Self::Timeout),
-      "cached_failure" => Some(Self::CachedFailure),
-      "unsupported_system" => Some(Self::UnsupportedSystem),
-      "log_limit_exceeded" => Some(Self::LogLimitExceeded),
-      "nar_size_limit_exceeded" => Some(Self::NarSizeLimitExceeded),
-      "non_deterministic" => Some(Self::NonDeterministic),
-      "oom_killed" => Some(Self::OomKilled),
-      _ => None,
     }
   }
 
@@ -453,6 +516,31 @@ impl BuildStatus {
   }
 }
 
+impl std::str::FromStr for BuildStatus {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "pending" => Ok(Self::Pending),
+      "running" => Ok(Self::Running),
+      "succeeded" => Ok(Self::Succeeded),
+      "failed" => Ok(Self::Failed),
+      "dependency_failed" => Ok(Self::DependencyFailed),
+      "aborted" => Ok(Self::Aborted),
+      "cancelled" => Ok(Self::Cancelled),
+      "failed_with_output" => Ok(Self::FailedWithOutput),
+      "timeout" => Ok(Self::Timeout),
+      "cached_failure" => Ok(Self::CachedFailure),
+      "unsupported_system" => Ok(Self::UnsupportedSystem),
+      "log_limit_exceeded" => Ok(Self::LogLimitExceeded),
+      "nar_size_limit_exceeded" => Ok(Self::NarSizeLimitExceeded),
+      "non_deterministic" => Ok(Self::NonDeterministic),
+      "oom_killed" => Ok(Self::OomKilled),
+      _ => Err(format!("invalid build status '{s}'")),
+    }
+  }
+}
+
 impl std::fmt::Display for BuildStatus {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let s = match self {
@@ -473,41 +561,6 @@ impl std::fmt::Display for BuildStatus {
       Self::OomKilled => "oom killed",
     };
     write!(f, "{s}")
-  }
-}
-
-impl sqlx::Type<sqlx::Postgres> for BuildStatus {
-  fn type_info() -> sqlx::postgres::PgTypeInfo {
-    <String as sqlx::Type<sqlx::Postgres>>::type_info()
-  }
-
-  fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-    <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-  }
-}
-
-impl sqlx::Encode<'_, sqlx::Postgres> for BuildStatus {
-  fn encode_by_ref(
-    &self,
-    buf: &mut sqlx::postgres::PgArgumentBuffer,
-  ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-    <&str as sqlx::Encode<sqlx::Postgres>>::encode(self.db_str(), buf)
-  }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for BuildStatus {
-  fn decode(
-    value: sqlx::postgres::PgValueRef<'r>,
-  ) -> Result<Self, sqlx::error::BoxDynError> {
-    let status = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-    Self::from_db_str(status)
-      .ok_or_else(|| {
-        std::io::Error::new(
-          std::io::ErrorKind::InvalidData,
-          format!("unknown build status '{status}'"),
-        )
-      })
-      .map_err(Into::into)
   }
 }
 
@@ -555,7 +608,7 @@ mod build_status_tests {
   }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildProduct {
   pub id:           Uuid,
   pub build_id:     Uuid,
@@ -569,7 +622,7 @@ pub struct BuildProduct {
   pub created_at:   DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildStep {
   pub id:           Uuid,
   pub build_id:     Uuid,
@@ -582,14 +635,14 @@ pub struct BuildStep {
   pub exit_code:    Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildDependency {
   pub id:                  Uuid,
   pub build_id:            Uuid,
   pub dependency_build_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildMetric {
   pub id:           Uuid,
   pub build_id:     Uuid,
@@ -610,7 +663,7 @@ pub mod metric_units {
 }
 
 /// Active jobsets joined with project info.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveJobset {
   pub id:                Uuid,
   pub project_id:        Uuid,
@@ -634,7 +687,7 @@ pub struct ActiveJobset {
 }
 
 /// Build statistics from the `build_stats` view.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BuildStats {
   pub total_builds:         Option<i64>,
   pub completed_builds:     Option<i64>,
@@ -645,7 +698,7 @@ pub struct BuildStats {
 }
 
 /// API key for authentication.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
   pub id:           Uuid,
   pub name:         String,
@@ -661,7 +714,7 @@ pub struct ApiKey {
 /// `secret_hash` is a legacy column name. New values are encrypted webhook
 /// secrets: GitHub/Gitea/Forgejo need the original HMAC key, and GitLab needs
 /// the original bearer token, so this cannot be a one-way hash.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
   pub id:          Uuid,
   pub project_id:  Uuid,
@@ -674,7 +727,7 @@ pub struct WebhookConfig {
 }
 
 /// Notification configuration for a project.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationConfig {
   pub id:                Uuid,
   pub project_id:        Uuid,
@@ -685,7 +738,7 @@ pub struct NotificationConfig {
 }
 
 /// Jobset input definition.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobsetInput {
   pub id:         Uuid,
   pub jobset_id:  Uuid,
@@ -697,7 +750,7 @@ pub struct JobsetInput {
 }
 
 /// Tracks the latest "good" evaluation for a jobset.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
   pub id:                    Uuid,
   pub project_id:            Uuid,
@@ -709,7 +762,7 @@ pub struct Channel {
 }
 
 /// Remote builder for multi-machine / multi-arch builds.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteBuilder {
   pub id:                   Uuid,
   pub name:                 String,
@@ -746,7 +799,7 @@ pub struct RemoteBuilderParams<'a> {
 }
 
 /// User account for authentication and personalization
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
   pub id:               Uuid,
   pub username:         String,
@@ -764,8 +817,7 @@ pub struct User {
   pub last_login_at:    Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "varchar", rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserType {
   Local,
   Github,
@@ -773,8 +825,34 @@ pub enum UserType {
   Ldap,
 }
 
+impl UserType {
+  #[must_use]
+  pub const fn as_db_str(&self) -> &'static str {
+    match self {
+      Self::Local => "local",
+      Self::Github => "github",
+      Self::Google => "google",
+      Self::Ldap => "ldap",
+    }
+  }
+}
+
+impl std::str::FromStr for UserType {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "local" => Ok(Self::Local),
+      "github" => Ok(Self::Github),
+      "google" => Ok(Self::Google),
+      "ldap" => Ok(Self::Ldap),
+      _ => Err(format!("invalid user type '{s}'")),
+    }
+  }
+}
+
 /// Starred job for personalized dashboard
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StarredJob {
   pub id:         Uuid,
   pub user_id:    Uuid,
@@ -785,7 +863,7 @@ pub struct StarredJob {
 }
 
 /// Normalized build output (Hydra-compatible)
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildOutput {
   pub build: Uuid,
   pub name:  String,
@@ -793,7 +871,7 @@ pub struct BuildOutput {
 }
 
 /// Project membership for per-project permissions
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMember {
   pub id:         Uuid,
   pub project_id: Uuid,
@@ -803,7 +881,7 @@ pub struct ProjectMember {
 }
 
 /// User session for persistent authentication
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSession {
   pub id:                 Uuid,
   pub user_id:            Uuid,
@@ -814,7 +892,7 @@ pub struct UserSession {
 }
 
 /// Notification task for reliable delivery with retry
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationTask {
   pub id:                Uuid,
   pub notification_type: NotificationType,
@@ -828,16 +906,39 @@ pub struct NotificationTask {
   pub completed_at:      Option<DateTime<Utc>>,
 }
 
-#[derive(
-  Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "varchar", rename_all = "lowercase")]
 pub enum NotificationTaskStatus {
   Pending,
   Running,
   Completed,
   Failed,
+}
+
+impl NotificationTaskStatus {
+  #[must_use]
+  pub const fn as_db_str(&self) -> &'static str {
+    match self {
+      Self::Pending => "pending",
+      Self::Running => "running",
+      Self::Completed => "completed",
+      Self::Failed => "failed",
+    }
+  }
+}
+
+impl std::str::FromStr for NotificationTaskStatus {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "pending" => Ok(Self::Pending),
+      "running" => Ok(Self::Running),
+      "completed" => Ok(Self::Completed),
+      "failed" => Ok(Self::Failed),
+      _ => Err(format!("invalid notification task status '{s}'")),
+    }
+  }
 }
 
 // Pagination
@@ -1104,7 +1205,7 @@ pub struct UpdateProjectMember {
   pub role: Option<ProjectRole>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsItem {
   pub id:         Uuid,
   pub title:      String,

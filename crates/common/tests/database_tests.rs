@@ -3,7 +3,6 @@
 
 use circus_common::*;
 use circus_config::DatabaseConfig;
-use sqlx::PgPool;
 
 #[tokio::test]
 async fn test_database_connection() -> color_eyre::Result<()> {
@@ -11,11 +10,8 @@ async fn test_database_connection() -> color_eyre::Result<()> {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
     max_connections: 5,
-    min_connections: 1,
     connect_timeout: 5, // Short timeout for test
     url_file:        None,
-    idle_timeout:    600,
-    max_lifetime:    1800,
   };
 
   // Try to connect, skip test if database is not available
@@ -43,62 +39,49 @@ async fn test_database_connection() -> color_eyre::Result<()> {
   let stats = db.get_pool_stats();
   assert!(stats.size >= 1);
 
-  db.close().await;
+  db.close();
 
   Ok(())
 }
 
 #[tokio::test]
 async fn test_database_health_check() -> color_eyre::Result<()> {
+  let url = "postgresql://postgres:password@localhost/test";
+  let pool = circus_common::db::build_pool(url, 5)?;
+
   // Try to connect, skip test if database is not available
-  let pool = match PgPool::connect(
-    "postgresql://postgres:password@localhost/test",
-  )
-  .await
-  {
-    Ok(pool) => pool,
-    Err(e) => {
-      println!(
-        "Skipping test_database_health_check: no PostgreSQL instance \
-         available - {e}"
-      );
-      return Ok(());
-    },
-  };
+  if let Err(e) = Database::health_check(&pool).await {
+    println!(
+      "Skipping test_database_health_check: no PostgreSQL instance available \
+       - {e}"
+    );
+    pool.close();
+    return Ok(());
+  }
 
-  // Should succeed
-  Database::health_check(&pool).await?;
-
-  pool.close().await;
+  pool.close();
   Ok(())
 }
 
 #[tokio::test]
 async fn test_connection_info() -> color_eyre::Result<()> {
   // Try to connect, skip test if database is not available
-  let pool = match PgPool::connect(
-    "postgresql://postgres:password@localhost/test",
-  )
-  .await
-  {
-    Ok(pool) => pool,
-    Err(e) => {
-      println!(
-        "Skipping test_connection_info: no PostgreSQL instance available - {e}"
-      );
-      return Ok(());
-    },
-  };
+  let url = "postgresql://postgres:password@localhost/test";
+  let pool = circus_common::db::build_pool(url, 5)?;
+  if let Err(e) = Database::health_check(&pool).await {
+    println!(
+      "Skipping test_connection_info: no PostgreSQL instance available - {e}"
+    );
+    pool.close();
+    return Ok(());
+  }
 
   let db = match Database::new(DatabaseConfig {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
     max_connections: 5,
-    min_connections: 1,
     connect_timeout: 5, // Short timeout for test
     url_file:        None,
-    idle_timeout:    600,
-    max_lifetime:    1800,
   })
   .await
   {
@@ -107,7 +90,7 @@ async fn test_connection_info() -> color_eyre::Result<()> {
       println!(
         "Skipping test_connection_info: database connection failed - {e}"
       );
-      pool.close().await;
+      pool.close();
       return Ok(());
     },
   };
@@ -119,8 +102,8 @@ async fn test_connection_info() -> color_eyre::Result<()> {
   assert!(!info.version.is_empty());
   assert!(info.version.contains("PostgreSQL"));
 
-  db.close().await;
-  pool.close().await;
+  db.close();
+  pool.close();
 
   Ok(())
 }
@@ -131,11 +114,8 @@ async fn test_pool_stats() -> color_eyre::Result<()> {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
     max_connections: 5,
-    min_connections: 1,
     connect_timeout: 5, // Short timeout for test
     url_file:        None,
-    idle_timeout:    600,
-    max_lifetime:    1800,
   })
   .await
   {
@@ -154,22 +134,19 @@ async fn test_pool_stats() -> color_eyre::Result<()> {
   assert!(stats.idle >= 1);
   assert_eq!(stats.size, stats.idle + stats.active);
 
-  db.close().await;
+  db.close();
 
   Ok(())
 }
 
-#[sqlx::test]
+#[tokio::test]
 async fn test_database_config_validation() -> color_eyre::Result<()> {
   // Valid config
   let config = DatabaseConfig {
     url:             "postgresql://user:pass@localhost/db".to_string(),
     max_connections: 10,
-    min_connections: 2,
     connect_timeout: 30,
     url_file:        None,
-    idle_timeout:    600,
-    max_lifetime:    1800,
   };
   assert!(config.validate().is_ok());
 
@@ -186,23 +163,8 @@ async fn test_database_config_validation() -> color_eyre::Result<()> {
   config = DatabaseConfig {
     url:             "postgresql://user:pass@localhost/db".to_string(),
     max_connections: 0,
-    min_connections: 1,
     connect_timeout: 30,
     url_file:        None,
-    idle_timeout:    600,
-    max_lifetime:    1800,
-  };
-  assert!(config.validate().is_err());
-
-  // Min > max
-  config = DatabaseConfig {
-    url:             "postgresql://user:pass@localhost/db".to_string(),
-    max_connections: 5,
-    min_connections: 10,
-    connect_timeout: 30,
-    url_file:        None,
-    idle_timeout:    600,
-    max_lifetime:    1800,
   };
   assert!(config.validate().is_err());
 

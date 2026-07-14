@@ -17,10 +17,7 @@ async fn test_database_connection_full() -> color_eyre::Result<()> {
       .to_string(),
     url_file:        None,
     max_connections: 5,
-    min_connections: 1,
     connect_timeout: 5, // Short timeout for test
-    idle_timeout:    600,
-    max_lifetime:    1800,
   };
 
   // Try to connect, skip test if database is not available
@@ -44,7 +41,7 @@ async fn test_database_connection_full() -> color_eyre::Result<()> {
   assert!(stats.idle >= 1);
   assert_eq!(stats.size, stats.idle + stats.active);
 
-  db.close().await;
+  db.close();
 
   Ok(())
 }
@@ -57,7 +54,6 @@ fn test_config_loading() -> color_eyre::Result<()> {
 
   // Test that defaults are reasonable
   assert_eq!(config.database.max_connections, 20);
-  assert_eq!(config.database.min_connections, 5);
   assert_eq!(config.server.port, 3000);
   assert_eq!(config.evaluator.poll_interval, 60);
   assert_eq!(config.queue_runner.workers, 4);
@@ -86,10 +82,6 @@ fn test_config_validation() -> color_eyre::Result<()> {
   config.database.max_connections = 0;
   assert!(config.validate().is_err());
 
-  config.database.max_connections = 10;
-  config.database.min_connections = 15;
-  assert!(config.validate().is_err());
-
   // Test invalid evaluator settings
   let mut config = base_config;
   config.evaluator.poll_interval = 0;
@@ -116,12 +108,6 @@ fn test_database_config_validation() -> color_eyre::Result<()> {
   // Test zero max connections
   config = DatabaseConfig::default();
   config.max_connections = 0;
-  assert!(config.validate().is_err());
-
-  // Test min > max
-  config = DatabaseConfig::default();
-  config.max_connections = 5;
-  config.min_connections = 10;
   assert!(config.validate().is_err());
 
   Ok(())

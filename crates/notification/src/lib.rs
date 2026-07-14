@@ -16,13 +16,13 @@ use std::{
 
 pub use channel::NotificationChannel;
 use circus_common::{
+  PgPool,
   models::{Build, BuildStatus, NotificationType, Project},
   repo,
 };
 use circus_config::NotificationsConfig;
 pub use event::BuildEvent;
 use reqwest::Url;
-use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 /// Shared HTTP client for all notification dispatches.

@@ -1,12 +1,7 @@
 # Database Migrations
 
-This directory contains SQL migrations for the circus database.
-
-## Migration Files
-
-- `0001_schema.sql`: Full schema, all tables, indexes, triggers, and views.
-- `0002_example.sql`: Example stub for the next migration when we make a stable
-  release.
+Migration SQL lives in `crates/migrations/migrations`. New files must also be
+registered in `crates/migrations/src/lib.rs`; its tests enforce an exact match.
 
 ## Running Migrations
 

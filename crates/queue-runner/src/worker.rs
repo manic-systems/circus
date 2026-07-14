@@ -6,6 +6,7 @@ use std::{
 };
 
 use circus_common::{
+  PgPool,
   alerts::AlertManager,
   gc_roots::GcRoots,
   log_storage::LogStorage,
@@ -34,7 +35,6 @@ use circus_config::{
   SigningConfig,
 };
 use dashmap::DashMap;
-use sqlx::PgPool;
 use tokio::{
   fs,
   process::Command,
@@ -599,7 +599,6 @@ fn cache_args_for_build(
         ),
         project
           .cache_upstreams
-          .0
           .0
           .iter()
           .map(|upstream| {
@@ -1219,10 +1218,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   tracing::info!(build_id = %build.id, job = %build.job_name, "Starting build");
 
   // Clear stale steps from a prior requeued attempt.
-  sqlx::query("DELETE FROM build_steps WHERE build_id = $1")
-    .bind(build.id)
-    .execute(pool)
-    .await?;
+  repo::build_steps::delete_for_build(pool, build.id).await?;
 
   // Create a build step record
   let step = repo::build_steps::create(pool, CreateBuildStep {
@@ -1494,12 +1490,11 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 
           // Update the build product with GC root path if registered
           if gc_root_path.is_some() {
-            sqlx::query(
-              "UPDATE build_products SET gc_root_path = $1 WHERE id = $2",
+            repo::build_products::set_gc_root_path(
+              pool,
+              product.id,
+              gc_root_path.as_deref(),
             )
-            .bind(&gc_root_path)
-            .bind(product.id)
-            .execute(pool)
             .await?;
           }
         }
@@ -1597,14 +1592,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
               max = build.max_retries,
               "Build failed, scheduling retry"
           );
-          sqlx::query(
-            "UPDATE builds SET status = 'pending', started_at = NULL, \
-             retry_count = retry_count + 1, completed_at = NULL, \
-             effective_features = NULL WHERE id = $1",
-          )
-          .bind(build.id)
-          .execute(pool)
-          .await?;
+          repo::builds::retry(pool, build.id).await?;
           if let Err(e) = fs::remove_file(&live_log_path).await {
             tracing::debug!(build_id = %build.id, "Failed to remove retry live log: {e}");
           }
@@ -1694,7 +1682,6 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 mod tests {
   use circus_common::models::{BinaryCacheUpstream, BinaryCacheUpstreams};
   use circus_config::{CacheUploadConfig, S3CacheConfig};
-  use sqlx::types::Json;
 
   use super::*;
 
@@ -1765,16 +1752,10 @@ mod tests {
       return;
     };
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
-      .max_connections(5)
-      .connect(&url)
-      .await
-      .expect("failed to connect");
-
-    sqlx::migrate!("../migrations/migrations")
-      .run(&pool)
+    circus_migrations::run_migrations(&url)
       .await
       .expect("migration failed");
+    let pool = circus_common::build_pool(&url, 5).expect("failed to connect");
 
     let project = repo::projects::create(&pool, circus_common::CreateProject {
       name:            format!("closure-cache-{}", Uuid::new_v4().simple()),
@@ -1840,10 +1821,9 @@ mod tests {
     let key_file = temp_dir.join("signing.key");
     let fake_nix = temp_dir.join("nix");
 
-    let signing_key = {
-      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-      format!("circus-test-1:{}", B64.encode([1u8; 64]))
-    };
+    let signing_key = "circus-test-1:\
+                       OlzHrxDxaOpPjkL5uNXF77Xq4VRiz6Zy0LqlK6GCNqRX90gxFy2HSr/\
+                       hxqdpc2VMU2UIlDOAEBv842MCsbPfgQ==";
     tokio::fs::write(&key_file, signing_key)
       .await
       .expect("write signing key");
@@ -1972,10 +1952,10 @@ mod tests {
       cache_url:       Some(
         "https://ci.example.org/projects/project-a/nix-cache/".to_string(),
       ),
-      cache_upstreams: Json(BinaryCacheUpstreams(vec![BinaryCacheUpstream {
+      cache_upstreams: BinaryCacheUpstreams(vec![BinaryCacheUpstream {
         url:        "https://cache.nixos.org/".to_string(),
         public_key: Some("cache.nixos.org-1:key".to_string()),
-      }])),
+      }]),
       created_at:      chrono::Utc::now(),
       updated_at:      chrono::Utc::now(),
     };
@@ -2009,7 +1989,7 @@ mod tests {
       repository_url:  "https://example.org/project-a.git".to_string(),
       cache_enabled:   true,
       cache_url:       None,
-      cache_upstreams: Json(BinaryCacheUpstreams::default()),
+      cache_upstreams: BinaryCacheUpstreams::default(),
       created_at:      chrono::Utc::now(),
       updated_at:      chrono::Utc::now(),
     };
@@ -2043,10 +2023,10 @@ mod tests {
       cache_url:       Some(
         "https://ci.example.org/projects/project-a/nix-cache/".to_string(),
       ),
-      cache_upstreams: Json(BinaryCacheUpstreams(vec![BinaryCacheUpstream {
+      cache_upstreams: BinaryCacheUpstreams(vec![BinaryCacheUpstream {
         url:        "https://cache.nixos.org/".to_string(),
         public_key: Some("cache.nixos.org-1:key".to_string()),
-      }])),
+      }]),
       created_at:      chrono::Utc::now(),
       updated_at:      chrono::Utc::now(),
     };

@@ -1,14 +1,29 @@
 //! Project members repository - for per-project permissions
 
+use circus_codegen::queries::project_members as q;
 use circus_config::DeclarativeProjectMember;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{CreateProjectMember, ProjectMember, UpdateProjectMember},
   roles::ProjectRole,
 };
+
+impl TryFrom<q::ProjectMemberRow> for ProjectMember {
+  type Error = CiError;
+
+  fn try_from(r: q::ProjectMemberRow) -> Result<Self> {
+    Ok(Self {
+      id:         r.id,
+      project_id: r.project_id,
+      user_id:    r.user_id,
+      role:       r.role.parse().map_err(CiError::Internal)?,
+      created_at: r.created_at,
+    })
+  }
+}
 
 /// Add a member to a project with role validation
 ///
@@ -20,18 +35,21 @@ pub async fn create(
   project_id: Uuid,
   data: &CreateProjectMember,
 ) -> Result<ProjectMember> {
-  sqlx::query_as::<_, ProjectMember>(
-    "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, \
-     $3) RETURNING *",
-  )
-  .bind(project_id)
-  .bind(data.user_id)
-  .bind(data.role)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    "User is already a member of this project".to_string()
-  })
+  let client = pool.get().await?;
+  let row = q::create()
+    .bind(&client, &project_id, &data.user_id, &data.role.as_str())
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(
+          "User is already a member of this project".to_string(),
+        )
+      } else {
+        CiError::Database(e)
+      }
+    })?;
+  row.try_into()
 }
 
 /// Get a project member by ID
@@ -40,20 +58,13 @@ pub async fn create(
 ///
 /// Returns error if database query fails or member not found.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<ProjectMember> {
-  sqlx::query_as::<_, ProjectMember>(
-    "SELECT * FROM project_members WHERE id = $1",
-  )
-  .bind(id)
-  .fetch_one(pool)
-  .await
-  .map_err(|e| {
-    match e {
-      sqlx::Error::RowNotFound => {
-        CiError::NotFound(format!("Project member {id} not found"))
-      },
-      _ => CiError::Database(e),
-    }
-  })
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &id)
+    .opt()
+    .await?
+    .ok_or_else(|| CiError::NotFound(format!("Project member {id} not found")))?
+    .try_into()
 }
 
 /// Get a project member by project and user
@@ -66,15 +77,13 @@ pub async fn get_by_project_and_user(
   project_id: Uuid,
   user_id: Uuid,
 ) -> Result<Option<ProjectMember>> {
-  Ok(
-    sqlx::query_as::<_, ProjectMember>(
-      "SELECT * FROM project_members WHERE project_id = $1 AND user_id = $2",
-    )
-    .bind(project_id)
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  q::get_by_project_and_user()
+    .bind(&client, &project_id, &user_id)
+    .opt()
+    .await?
+    .map(ProjectMember::try_from)
+    .transpose()
 }
 
 /// List all members of a project
@@ -86,14 +95,12 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<ProjectMember>> {
-  Ok(
-    sqlx::query_as::<_, ProjectMember>(
-      "SELECT * FROM project_members WHERE project_id = $1 ORDER BY created_at",
-    )
-    .bind(project_id)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_for_project()
+    .bind(&client, &project_id)
+    .all()
+    .await?;
+  rows.into_iter().map(ProjectMember::try_from).collect()
 }
 
 /// List all projects a user is a member of
@@ -105,14 +112,9 @@ pub async fn list_for_user(
   pool: &PgPool,
   user_id: Uuid,
 ) -> Result<Vec<ProjectMember>> {
-  Ok(
-    sqlx::query_as::<_, ProjectMember>(
-      "SELECT * FROM project_members WHERE user_id = $1 ORDER BY created_at",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_for_user().bind(&client, &user_id).all().await?;
+  rows.into_iter().map(ProjectMember::try_from).collect()
 }
 
 /// Update a project member's role with validation
@@ -126,21 +128,15 @@ pub async fn update(
   data: &UpdateProjectMember,
 ) -> Result<ProjectMember> {
   if let Some(role) = data.role {
-    sqlx::query_as::<_, ProjectMember>(
-      "UPDATE project_members SET role = $1 WHERE id = $2 RETURNING *",
-    )
-    .bind(role)
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-      match e {
-        sqlx::Error::RowNotFound => {
-          CiError::NotFound(format!("Project member {id} not found"))
-        },
-        _ => CiError::Database(e),
-      }
-    })
+    let client = pool.get().await?;
+    q::update()
+      .bind(&client, &role.as_str(), &id)
+      .opt()
+      .await?
+      .ok_or_else(|| {
+        CiError::NotFound(format!("Project member {id} not found"))
+      })?
+      .try_into()
   } else {
     get(pool, id).await
   }
@@ -152,11 +148,9 @@ pub async fn update(
 ///
 /// Returns error if database delete fails or member not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM project_members WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("Project member {id} not found")));
   }
   Ok(())
@@ -172,14 +166,11 @@ pub async fn delete_by_project_and_user(
   project_id: Uuid,
   user_id: Uuid,
 ) -> Result<()> {
-  let result = sqlx::query(
-    "DELETE FROM project_members WHERE project_id = $1 AND user_id = $2",
-  )
-  .bind(project_id)
-  .bind(user_id)
-  .execute(pool)
-  .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete_by_project_and_user()
+    .bind(&client, &project_id, &user_id)
+    .await?;
+  if affected == 0 {
     return Err(CiError::NotFound(
       "User is not a member of this project".to_string(),
     ));
@@ -214,18 +205,12 @@ pub async fn upsert(
   user_id: Uuid,
   role: ProjectRole,
 ) -> Result<ProjectMember> {
-  Ok(
-    sqlx::query_as::<_, ProjectMember>(
-      "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, \
-       $2, $3) ON CONFLICT (project_id, user_id) DO UPDATE SET role = \
-       EXCLUDED.role RETURNING *",
-    )
-    .bind(project_id)
-    .bind(user_id)
-    .bind(role)
-    .fetch_one(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let row = q::upsert()
+    .bind(&client, &project_id, &user_id, &role.as_str())
+    .one()
+    .await?;
+  row.try_into()
 }
 
 /// Sync project members from declarative config.
@@ -247,14 +232,12 @@ pub async fn sync_for_project(
     .collect();
 
   // Delete members not in declarative config
-  sqlx::query(
-    "DELETE FROM project_members WHERE project_id = $1 AND user_id != \
-     ALL($2::uuid[])",
-  )
-  .bind(project_id)
-  .bind(&user_ids)
-  .execute(pool)
-  .await?;
+  {
+    let client = pool.get().await?;
+    q::sync_delete_removed()
+      .bind(&client, &project_id, &user_ids)
+      .await?;
+  }
 
   // Upsert each member
   for member in members {

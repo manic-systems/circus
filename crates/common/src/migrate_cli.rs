@@ -68,8 +68,8 @@ pub async fn run_command(command: Commands) -> color_eyre::Result<()> {
     },
     Commands::Validate { database_url } => {
       info!("Validating database schema");
-      let pool = sqlx::PgPool::connect(&database_url).await?;
-      crate::validate_schema(&pool).await?;
+      let client = circus_migrations::tls::connect_once(&database_url).await?;
+      crate::validate_schema(&client).await?;
       info!("Schema validation passed");
     },
     Commands::Create { name, output_dir } => {
@@ -117,7 +117,7 @@ pub fn create_migration(
   output_dir: &Path,
   name: &str,
 ) -> color_eyre::Result<PathBuf> {
-  use std::fs;
+  use std::{fs, io::Write as _};
 
   use chrono::Utc;
 
@@ -126,18 +126,21 @@ pub fn create_migration(
   fs::create_dir_all(output_dir)?;
 
   let now = Utc::now();
-  let timestamp = now.format("%Y%m%d_%H%M%S");
+  let timestamp = now.format("%Y%m%d%H%M%S");
   let filename = format!("{timestamp}_{name}.sql");
   let filepath = output_dir.join(&filename);
 
   let content = format!(
-    "-- Migration: {}\n-- Created: {}\n\n-- Add your migration SQL here\n\n-- \
-     Uncomment below for rollback SQL\n-- ROLLBACK;\n",
+    "-- Migration: {}\n-- Created: {}\n\n-- Write migration SQL here.\n",
     name,
     now.to_rfc3339()
   );
 
-  fs::write(&filepath, content)?;
+  fs::OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .open(&filepath)?
+    .write_all(content.as_bytes())?;
 
   Ok(filepath)
 }
@@ -248,11 +251,13 @@ mod tests {
       filename.ends_with("_add_foo.sql"),
       "unexpected filename: {filename}"
     );
-    assert!(filename.starts_with(|c: char| c.is_ascii_digit()));
+    let version = filename.split('_').next().expect("version prefix");
+    assert_eq!(version.len(), 14);
+    assert!(version.parse::<i64>().is_ok());
 
     let body = std::fs::read_to_string(&path).expect("read");
     assert!(body.contains("-- Migration: add_foo"));
-    assert!(body.contains("ROLLBACK"));
+    assert!(body.contains("-- Write migration SQL here."));
   }
 
   #[test]

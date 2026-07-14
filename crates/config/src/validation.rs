@@ -45,10 +45,6 @@ impl DatabaseConfig {
       bail!("Max database connections must be greater than 0");
     }
 
-    if self.min_connections > self.max_connections {
-      bail!("Min database connections cannot exceed max connections");
-    }
-
     Ok(())
   }
 }
@@ -74,10 +70,6 @@ impl Config {
     // Validate connection pool settings
     if self.database.max_connections == 0 {
       bail!("Max database connections must be greater than 0");
-    }
-
-    if self.database.min_connections > self.database.max_connections {
-      bail!("Min database connections cannot exceed max connections");
     }
 
     // Validate server settings

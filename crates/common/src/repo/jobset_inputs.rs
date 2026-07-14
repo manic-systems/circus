@@ -1,11 +1,29 @@
+use circus_codegen::queries::jobset_inputs as q;
 use circus_config::DeclarativeJobsetInput;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{InputType, JobsetInput},
 };
+
+impl TryFrom<q::JobsetInputRow> for JobsetInput {
+  type Error = CiError;
+
+  fn try_from(r: q::JobsetInputRow) -> Result<Self> {
+    let input_type = r.input_type.parse().map_err(CiError::Internal)?;
+    Ok(Self {
+      id: r.id,
+      jobset_id: r.jobset_id,
+      name: r.name,
+      input_type,
+      value: r.value,
+      revision: r.revision,
+      created_at: r.created_at,
+    })
+  }
+}
 
 /// Create a new jobset input.
 ///
@@ -24,20 +42,28 @@ pub async fn create(
     name, input_type, value, revision,
   )
   .map_err(CiError::Validation)?;
-  sqlx::query_as::<_, JobsetInput>(
-    "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, revision) \
-     VALUES ($1, $2, $3, $4, $5) RETURNING *",
-  )
-  .bind(jobset_id)
-  .bind(name)
-  .bind(input_type)
-  .bind(value)
-  .bind(revision)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    format!("Input '{name}' already exists in this jobset")
-  })
+  let client = pool.get().await?;
+  q::create()
+    .bind(
+      &client,
+      &jobset_id,
+      &name,
+      &input_type.as_str(),
+      &value,
+      &revision,
+    )
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(format!(
+          "Input '{name}' already exists in this jobset"
+        ))
+      } else {
+        CiError::Database(e)
+      }
+    })?
+    .try_into()
 }
 
 /// List all inputs for a jobset.
@@ -49,14 +75,9 @@ pub async fn list_for_jobset(
   pool: &PgPool,
   jobset_id: Uuid,
 ) -> Result<Vec<JobsetInput>> {
-  Ok(
-    sqlx::query_as::<_, JobsetInput>(
-      "SELECT * FROM jobset_inputs WHERE jobset_id = $1 ORDER BY name ASC",
-    )
-    .bind(jobset_id)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_for_jobset().bind(&client, &jobset_id).all().await?;
+  rows.into_iter().map(JobsetInput::try_from).collect()
 }
 
 /// Delete a jobset input.
@@ -65,11 +86,9 @@ pub async fn list_for_jobset(
 ///
 /// Returns error if database delete fails or input not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM jobset_inputs WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("Jobset input {id} not found")));
   }
   Ok(())
@@ -92,21 +111,19 @@ pub async fn upsert(
     name, input_type, value, revision,
   )
   .map_err(CiError::Validation)?;
-  Ok(
-    sqlx::query_as::<_, JobsetInput>(
-      "INSERT INTO jobset_inputs (jobset_id, name, input_type, value, \
-       revision) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (jobset_id, name) DO \
-       UPDATE SET input_type = EXCLUDED.input_type, value = EXCLUDED.value, \
-       revision = EXCLUDED.revision RETURNING *",
+  let client = pool.get().await?;
+  q::upsert()
+    .bind(
+      &client,
+      &jobset_id,
+      &name,
+      &input_type.as_str(),
+      &value,
+      &revision,
     )
-    .bind(jobset_id)
-    .bind(name)
-    .bind(input_type)
-    .bind(value)
-    .bind(revision)
-    .fetch_one(pool)
-    .await?,
-  )
+    .one()
+    .await?
+    .try_into()
 }
 
 /// Sync jobset inputs from declarative config.
@@ -124,14 +141,12 @@ pub async fn sync_for_jobset(
   let names: Vec<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
 
   // Delete inputs not in declarative config
-  sqlx::query(
-    "DELETE FROM jobset_inputs WHERE jobset_id = $1 AND name != \
-     ALL($2::text[])",
-  )
-  .bind(jobset_id)
-  .bind(&names)
-  .execute(pool)
-  .await?;
+  {
+    let client = pool.get().await?;
+    q::sync_for_jobset_delete()
+      .bind(&client, &jobset_id, &names)
+      .await?;
+  }
 
   // Upsert each input
   for input in inputs {

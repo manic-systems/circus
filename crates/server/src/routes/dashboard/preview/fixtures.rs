@@ -9,7 +9,6 @@ use circus_common::models::{
   Project,
 };
 use circus_config::UiConfig;
-use sqlx::types::Json as SqlxJson;
 use uuid::Uuid;
 
 use super::super::{
@@ -66,7 +65,7 @@ pub(super) fn project_fixture() -> Project {
     repository_url:  "https://github.com/manic-systems/circus".into(),
     cache_enabled:   true,
     cache_url:       Some("https://cache.example.invalid".into()),
-    cache_upstreams: SqlxJson(BinaryCacheUpstreams::default()),
+    cache_upstreams: BinaryCacheUpstreams::default(),
     created_at:      Utc::now() - Duration::days(30),
     updated_at:      Utc::now() - Duration::minutes(5),
   }

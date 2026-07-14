@@ -216,7 +216,7 @@ where
     .await?;
 
   tracing::info!("Server shutting down, closing database pool");
-  db.close().await;
+  db.close();
 
   Ok(())
 }

@@ -17,24 +17,33 @@ use axum::{
 use circus_common::models::*;
 use tower::ServiceExt;
 
-async fn get_pool() -> Option<sqlx::PgPool> {
+async fn get_pool() -> Option<circus_common::PgPool> {
+  static CRYPTO: std::sync::Once = std::sync::Once::new();
+  CRYPTO.call_once(|| {
+    circus_common::install_crypto_provider()
+      .expect("install ring crypto provider");
+  });
+
   let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
     println!("Skipping E2E test: TEST_DATABASE_URL not set");
     return None;
   };
 
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
+  // Each test process gets its own database so suite runs cannot pollute
+  // data-sensitive tests. nextest runs one process per test.
+  let url = per_process_database_url(&url)?;
+  circus_migrations::run_migrations(&url)
     .await
-    .ok()?;
+    .expect("test database migration failed");
 
-  sqlx::migrate!("../common/migrations")
-    .run(&pool)
-    .await
-    .ok()?;
+  circus_common::db::build_pool(&url, 5).ok()
+}
 
-  Some(pool)
+fn per_process_database_url(url: &str) -> Option<String> {
+  let mut parsed = url::Url::parse(url).ok()?;
+  let dbname = parsed.path().trim_start_matches('/').to_owned();
+  parsed.set_path(&format!("/{dbname}_p{}", std::process::id()));
+  Some(parsed.to_string())
 }
 
 #[tokio::test]
@@ -293,8 +302,10 @@ async fn test_e2e_project_eval_build_flow() {
     .expect("list channels");
   assert!(channels.iter().any(|c| c.id == channel.id));
 
-  // 16. Test the HTTP API layer
-  let config = circus_config::Config::default();
+  // 16. Test the HTTP API layer with open reads since auth policy has its
+  // own dedicated tests
+  let mut config = circus_config::Config::default();
+  config.server.require_api_key_for_reads = false;
   let state = circus_server::state::AppState {
     pool:             pool.clone(),
     nix_store:        circus_server::state::NixStore::new(
@@ -313,6 +324,15 @@ async fn test_e2e_project_eval_build_flow() {
   let app = circus_server::routes::router(state, &config);
 
   // GET /health
+  for service in [
+    circus_common::service_heartbeat::SERVICE_EVALUATOR,
+    circus_common::service_heartbeat::SERVICE_QUEUE_RUNNER,
+  ] {
+    circus_common::service_heartbeat::record(&pool, service, 60, None)
+      .await
+      .expect("seed heartbeat");
+  }
+
   let resp = app
     .clone()
     .oneshot(

@@ -18,13 +18,8 @@ pub mod validation;
 #[derive(
   Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
 )]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[serde(rename_all = "kebab-case")]
-#[cfg_attr(
-  feature = "sqlx",
-  sqlx(type_name = "varchar", rename_all = "kebab-case")
-)]
 #[cfg_attr(feature = "clap", value(rename_all = "kebab-case"))]
 pub enum GlobalRole {
   Admin,
@@ -87,13 +82,8 @@ impl FromStr for GlobalRole {
   Deserialize,
   Default,
 )]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(
-  feature = "sqlx",
-  sqlx(type_name = "varchar", rename_all = "lowercase")
-)]
 #[cfg_attr(feature = "clap", value(rename_all = "lowercase"))]
 pub enum ProjectRole {
   #[default]
@@ -138,12 +128,7 @@ impl FromStr for ProjectRole {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(
-  feature = "sqlx",
-  sqlx(type_name = "varchar", rename_all = "lowercase")
-)]
 pub enum AuthKind {
   Token,
   Oidc,
@@ -178,12 +163,7 @@ impl FromStr for AuthKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(
-  feature = "sqlx",
-  sqlx(type_name = "varchar", rename_all = "lowercase")
-)]
 pub enum ForgeType {
   Github,
   Gitea,
@@ -224,12 +204,7 @@ impl FromStr for ForgeType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
 #[serde(rename_all = "snake_case")]
-#[cfg_attr(
-  feature = "sqlx",
-  sqlx(type_name = "varchar", rename_all = "snake_case")
-)]
 pub enum NotificationType {
   GithubStatus,
   GiteaStatus,
@@ -293,12 +268,7 @@ impl FromStr for NotificationType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(
-  feature = "sqlx",
-  sqlx(type_name = "varchar", rename_all = "lowercase")
-)]
 pub enum InputType {
   Git,
   String,

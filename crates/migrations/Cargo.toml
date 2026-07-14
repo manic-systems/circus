@@ -7,13 +7,18 @@ repository.workspace = true
 description          = "Database migrations for Circus"
 
 [dependencies]
-color-eyre.workspace = true
-sqlx.workspace       = true
-tokio.workspace      = true
-tracing.workspace    = true
-
-[dev-dependencies]
-tempfile.workspace = true
+circus-codegen.workspace        = true
+color-eyre.workspace            = true
+crc.workspace                   = true
+rustls.workspace                = true
+sha2.workspace                  = true
+tokio.workspace                 = true
+tokio-postgres.workspace        = true
+tokio-postgres-rustls.workspace = true
+tracing.workspace               = true
+url.workspace                   = true
+urlencoding.workspace           = true
+webpki-roots.workspace          = true
 
 [lints]
 workspace = true

@@ -9,13 +9,11 @@ description          = "Shared type definitions for Circus"
 [features]
 clap    = [ "dep:clap" ]
 default = [  ]
-sqlx    = [ "dep:sqlx" ]
 
 [dependencies]
 clap            = { workspace = true, optional = true }
 regex.workspace = true
 serde.workspace = true
-sqlx            = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

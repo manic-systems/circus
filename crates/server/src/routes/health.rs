@@ -32,8 +32,7 @@ struct HealthResponse {
 }
 
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
-  let db_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
-    .fetch_one(&state.pool)
+  let db_ok = circus_common::Database::health_check(&state.pool)
     .await
     .is_ok();
 

@@ -73,10 +73,6 @@ mod tests {
     let mut config = Config::default();
     config.database.max_connections = 0;
     assert!(config.validate().is_err());
-
-    config.database.max_connections = 10;
-    config.database.min_connections = 15;
-    assert!(config.validate().is_err());
   }
 
   #[test]

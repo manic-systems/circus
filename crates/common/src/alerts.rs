@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use circus_config::AlertConfig;
-use sqlx::PgPool;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::repo::build_metrics;
+use crate::{db::PgPool, repo::build_metrics};
 
 #[derive(Debug, Clone)]
 pub struct AlertState {

@@ -25,6 +25,35 @@ use circus_config::{
 };
 use circus_queue_runner::caps::RunnerCaps;
 
+/// Migrate the test database and build a pool, or skip when
+/// `TEST_DATABASE_URL` is unset.
+async fn get_pool(max_size: usize) -> Option<circus_common::PgPool> {
+  static CRYPTO: std::sync::Once = std::sync::Once::new();
+  CRYPTO.call_once(|| {
+    circus_common::install_crypto_provider()
+      .expect("install ring crypto provider");
+  });
+
+  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+    println!("Skipping: TEST_DATABASE_URL not set");
+    return None;
+  };
+  // Each test process gets its own database so suite runs cannot pollute
+  // data-sensitive tests. nextest runs one process per test.
+  let url = per_process_database_url(&url)?;
+  circus_migrations::run_migrations(&url)
+    .await
+    .expect("migration failed");
+  Some(circus_common::build_pool(&url, max_size).expect("failed to connect"))
+}
+
+fn per_process_database_url(url: &str) -> Option<String> {
+  let mut parsed = url::Url::parse(url).ok()?;
+  let dbname = parsed.path().trim_start_matches('/').to_owned();
+  parsed.set_path(&format!("/{dbname}_p{}", std::process::id()));
+  Some(parsed.to_string())
+}
+
 #[test]
 fn test_parse_nix_log_start() {
   let line =
@@ -86,16 +115,9 @@ fn test_parse_nix_log_empty_line() {
 #[tokio::test]
 async fn test_worker_pool_drain_stops_dispatch() {
   // Create a minimal worker pool
-  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
-    println!("Skipping: TEST_DATABASE_URL not set");
+  let Some(pool) = get_pool(1).await else {
     return;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(1)
-    .connect(&url)
-    .await
-    .expect("failed to connect");
 
   let hot_config = Arc::new(tokio::sync::RwLock::new(HotConfig {
     poll_interval:           std::time::Duration::from_secs(1),
@@ -213,16 +235,9 @@ async fn test_cancellation_token_aborts_select() {
 
 #[tokio::test]
 async fn test_worker_pool_active_builds_cancel() {
-  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
-    println!("Skipping: TEST_DATABASE_URL not set");
+  let Some(pool) = get_pool(1).await else {
     return;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(1)
-    .connect(&url)
-    .await
-    .expect("failed to connect");
 
   let hot_config = Arc::new(tokio::sync::RwLock::new(HotConfig {
     poll_interval:           std::time::Duration::from_secs(1),
@@ -283,21 +298,9 @@ async fn test_worker_pool_active_builds_cancel() {
 
 #[tokio::test]
 async fn test_fair_share_scheduling() {
-  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
-    println!("Skipping: TEST_DATABASE_URL not set");
+  let Some(pool) = get_pool(5).await else {
     return;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
-    .await
-    .expect("failed to connect");
-
-  sqlx::migrate!("../common/migrations")
-    .run(&pool)
-    .await
-    .expect("migration failed");
 
   // Create two projects with different scheduling shares
   let project_hi = circus_common::repo::projects::create(
@@ -539,21 +542,9 @@ async fn test_fair_share_scheduling() {
 
 #[tokio::test]
 async fn test_atomic_build_claiming() {
-  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
-    println!("Skipping: TEST_DATABASE_URL not set");
+  let Some(pool) = get_pool(5).await else {
     return;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
-    .await
-    .expect("failed to connect");
-
-  sqlx::migrate!("../common/migrations")
-    .run(&pool)
-    .await
-    .expect("migration failed");
 
   // Create a project -> jobset -> evaluation -> build chain
   let project = circus_common::repo::projects::create(
@@ -643,21 +634,9 @@ async fn test_atomic_build_claiming() {
 
 #[tokio::test]
 async fn test_orphan_build_reset() {
-  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
-    println!("Skipping: TEST_DATABASE_URL not set");
+  let Some(pool) = get_pool(5).await else {
     return;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
-    .await
-    .expect("failed to connect");
-
-  sqlx::migrate!("../common/migrations")
-    .run(&pool)
-    .await
-    .expect("migration failed");
 
   let project = circus_common::repo::projects::create(
     &pool,
@@ -732,14 +711,15 @@ async fn test_orphan_build_reset() {
   // Simulate the build being stuck for a while by manually backdating
   // started_at
   // Truly a genius way to test.
-  sqlx::query(
-    "UPDATE builds SET started_at = NOW() - INTERVAL '10 minutes' WHERE id = \
-     $1",
-  )
-  .bind(build.id)
-  .execute(&pool)
-  .await
-  .expect("backdate build");
+  let client = pool.get().await.expect("get backdate client");
+  client
+    .execute(
+      "UPDATE builds SET started_at = NOW() - INTERVAL '10 minutes' WHERE id \
+       = $1",
+      &[&build.id],
+    )
+    .await
+    .expect("backdate build");
 
   // Reset orphaned builds (older than 5 minutes)
   let count = circus_common::repo::builds::reset_orphaned(&pool, 300)
@@ -762,21 +742,9 @@ async fn test_orphan_build_reset() {
 
 #[tokio::test]
 async fn test_get_cancelled_among() {
-  let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
-    println!("Skipping: TEST_DATABASE_URL not set");
+  let Some(pool) = get_pool(5).await else {
     return;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
-    .await
-    .expect("failed to connect");
-
-  sqlx::migrate!("../common/migrations")
-    .run(&pool)
-    .await
-    .expect("migration failed");
 
   let project = circus_common::repo::projects::create(
     &pool,

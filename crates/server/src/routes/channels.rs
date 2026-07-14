@@ -173,7 +173,7 @@ fn intermediate_paths(job_name: &str) -> Vec<String> {
 /// table; if it's empty (older rows or aggregates) falls back to a
 /// synthetic `{"out": build_output_path}`.
 async fn collect_outputs(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   build: &circus_common::models::Build,
 ) -> std::collections::BTreeMap<String, String> {
   use std::collections::BTreeMap;
@@ -218,7 +218,7 @@ async fn collect_outputs(
 /// Returns `NotFound` when the evaluation has no succeeded builds, or
 /// a `Build` error if archive construction fails.
 pub async fn build_nixexprs_tarball(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   channel_name: &str,
   evaluation_id: Uuid,
 ) -> Result<Vec<u8>, ApiError> {

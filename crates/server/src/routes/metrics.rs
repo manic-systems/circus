@@ -72,56 +72,28 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
     return StatusCode::INTERNAL_SERVER_ERROR.into_response();
   };
 
-  let eval_count: i64 =
-    sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM evaluations")
-      .fetch_one(&state.pool)
+  let eval_count =
+    circus_common::repo::build_metrics::count_evaluations(&state.pool)
       .await
-      .ok()
-      .map_or(0, |row| row.0);
-
-  let eval_by_status: Vec<(String, i64)> = sqlx::query_as(
-    "SELECT status::text, COUNT(*) FROM evaluations GROUP BY status",
-  )
-  .fetch_all(&state.pool)
-  .await
-  .unwrap_or_default();
-
-  let (project_count, channel_count, builder_count): (i64, i64, i64) =
-    sqlx::query_as(
-      "SELECT (SELECT COUNT(*) FROM projects), (SELECT COUNT(*) FROM \
-       channels), (SELECT COUNT(*) FROM remote_builders WHERE enabled = true)",
+      .unwrap_or(0);
+  let eval_by_status =
+    circus_common::repo::build_metrics::evaluations_by_status(&state.pool)
+      .await
+      .unwrap_or_default();
+  let overview_counts =
+    circus_common::repo::build_metrics::overview_counts(&state.pool)
+      .await
+      .unwrap_or_default();
+  let per_project =
+    circus_common::repo::build_metrics::per_project_build_counts(&state.pool)
+      .await
+      .unwrap_or_default();
+  let duration_percentiles =
+    circus_common::repo::build_metrics::duration_percentiles_overall(
+      &state.pool,
     )
-    .fetch_one(&state.pool)
     .await
-    .unwrap_or((0, 0, 0));
-
-  // Per-project build counts
-  let per_project: Vec<(String, i64, i64)> = sqlx::query_as(
-    "SELECT p.name, COUNT(*) FILTER (WHERE b.status = 'succeeded'), COUNT(*) \
-     FILTER (WHERE b.status = 'failed') FROM builds b JOIN evaluations e ON \
-     b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id JOIN \
-     projects p ON j.project_id = p.id GROUP BY p.name",
-  )
-  .fetch_all(&state.pool)
-  .await
-  .unwrap_or_default();
-
-  // Build duration percentiles (single query)
-  let (duration_p50, duration_p95, duration_p99): (
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-  ) = sqlx::query_as(
-    "SELECT (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM \
-     (completed_at - started_at)))), (PERCENTILE_CONT(0.95) WITHIN GROUP \
-     (ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)))), \
-     (PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM \
-     (completed_at - started_at)))) FROM builds WHERE completed_at IS NOT \
-     NULL AND started_at IS NOT NULL",
-  )
-  .fetch_one(&state.pool)
-  .await
-  .unwrap_or((None, None, None));
+    .unwrap_or_default();
 
   let mut output = String::with_capacity(2048);
 
@@ -167,23 +139,24 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
     build_stats.avg_duration_seconds.unwrap_or(0.0)
   );
 
+  // Build duration percentiles
   output.push_str(
     "\n# HELP circus_builds_duration_seconds Build duration percentiles\n",
   );
   output.push_str("# TYPE circus_builds_duration_seconds gauge\n");
-  if let Some(p50) = duration_p50 {
+  if let Some(p50) = duration_percentiles.p50 {
     let _ = writeln!(
       output,
       "circus_builds_duration_seconds{{quantile=\"0.5\"}} {p50:.2}"
     );
   }
-  if let Some(p95) = duration_p95 {
+  if let Some(p95) = duration_percentiles.p95 {
     let _ = writeln!(
       output,
       "circus_builds_duration_seconds{{quantile=\"0.95\"}} {p95:.2}"
     );
   }
-  if let Some(p99) = duration_p99 {
+  if let Some(p99) = duration_percentiles.p99 {
     let _ = writeln!(
       output,
       "circus_builds_duration_seconds{{quantile=\"0.99\"}} {p99:.2}"
@@ -200,10 +173,12 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
   output
     .push_str("\n# HELP circus_evaluations_by_status Evaluations by status\n");
   output.push_str("# TYPE circus_evaluations_by_status gauge\n");
-  for (status, count) in &eval_by_status {
+  for item in &eval_by_status {
     let _ = writeln!(
       output,
-      "circus_evaluations_by_status{{status=\"{status}\"}} {count}"
+      "circus_evaluations_by_status{{status=\"{}\"}} {}",
+      escape_prometheus_label(&item.status),
+      item.count
     );
   }
 
@@ -221,17 +196,29 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
   // Infrastructure
   output.push_str("\n# HELP circus_projects_total Total number of projects\n");
   output.push_str("# TYPE circus_projects_total gauge\n");
-  let _ = writeln!(output, "circus_projects_total {project_count}");
+  let _ = writeln!(
+    output,
+    "circus_projects_total {}",
+    overview_counts.project_count
+  );
 
   output.push_str("\n# HELP circus_channels_total Total number of channels\n");
   output.push_str("# TYPE circus_channels_total gauge\n");
-  let _ = writeln!(output, "circus_channels_total {channel_count}");
+  let _ = writeln!(
+    output,
+    "circus_channels_total {}",
+    overview_counts.channel_count
+  );
 
   output.push_str(
     "\n# HELP circus_remote_builders_active Active remote builders\n",
   );
   output.push_str("# TYPE circus_remote_builders_active gauge\n");
-  let _ = writeln!(output, "circus_remote_builders_active {builder_count}");
+  let _ = writeln!(
+    output,
+    "circus_remote_builders_active {}",
+    overview_counts.builder_count
+  );
 
   // Per-project build counts
   if !per_project.is_empty() {
@@ -239,22 +226,24 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
       "\n# HELP circus_project_builds_completed Completed builds per project\n",
     );
     output.push_str("# TYPE circus_project_builds_completed gauge\n");
-    for (name, completed, _) in &per_project {
-      let escaped = escape_prometheus_label(name);
+    for item in &per_project {
+      let escaped = escape_prometheus_label(&item.name);
       let _ = writeln!(
         output,
-        "circus_project_builds_completed{{project=\"{escaped}\"}} {completed}"
+        "circus_project_builds_completed{{project=\"{escaped}\"}} {}",
+        item.succeeded_count
       );
     }
     output.push_str(
       "\n# HELP circus_project_builds_failed Failed builds per project\n",
     );
     output.push_str("# TYPE circus_project_builds_failed gauge\n");
-    for (name, _, failed) in &per_project {
-      let escaped = escape_prometheus_label(name);
+    for item in &per_project {
+      let escaped = escape_prometheus_label(&item.name);
       let _ = writeln!(
         output,
-        "circus_project_builds_failed{{project=\"{escaped}\"}} {failed}"
+        "circus_project_builds_failed{{project=\"{escaped}\"}} {}",
+        item.failed_count
       );
     }
   }

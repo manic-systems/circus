@@ -180,10 +180,7 @@ configuration or the Nix store.
 | `database`           | `url`                                                  | `postgresql://circus:password@localhost/circus`     | PostgreSQL connection URL                                                 |
 | `database`           | `url_file`                                             | none                                                | File containing the PostgreSQL URL                                        |
 | `database`           | `max_connections`                                      | `20`                                                | Maximum connection pool size                                              |
-| `database`           | `min_connections`                                      | `5`                                                 | Minimum idle connections                                                  |
 | `database`           | `connect_timeout`                                      | `30`                                                | Connection timeout (seconds)                                              |
-| `database`           | `idle_timeout`                                         | `600`                                               | Idle connection timeout (seconds)                                         |
-| `database`           | `max_lifetime`                                         | `1800`                                              | Maximum connection lifetime (seconds)                                     |
 | `server`             | `host`                                                 | `127.0.0.1`                                         | HTTP listen address                                                       |
 | `server`             | `port`                                                 | `3000`                                              | HTTP listen port                                                          |
 | `server`             | `request_timeout`                                      | `30`                                                | Per-request timeout (seconds)                                             |

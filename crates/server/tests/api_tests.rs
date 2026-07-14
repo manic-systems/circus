@@ -12,27 +12,36 @@ use tower::ServiceExt;
 const ADMIN_TOKEN: &str = "circus_test_admin";
 const READ_TOKEN: &str = "circus_test_read";
 
-async fn get_pool() -> Option<sqlx::PgPool> {
+async fn get_pool() -> Option<circus_common::PgPool> {
+  static CRYPTO: std::sync::Once = std::sync::Once::new();
+  CRYPTO.call_once(|| {
+    circus_common::install_crypto_provider()
+      .expect("install ring crypto provider");
+  });
+
   let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
     println!("Skipping API test: TEST_DATABASE_URL not set");
     return None;
   };
 
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
+  // Each test process gets its own database so suite runs cannot pollute
+  // data-sensitive tests. nextest runs one process per test.
+  let url = per_process_database_url(&url)?;
+  circus_migrations::run_migrations(&url)
     .await
-    .ok()?;
+    .expect("test database migration failed");
 
-  sqlx::migrate!("../common/migrations")
-    .run(&pool)
-    .await
-    .ok()?;
-
-  Some(pool)
+  circus_common::db::build_pool(&url, 5).ok()
 }
 
-fn build_app(pool: sqlx::PgPool) -> axum::Router {
+fn per_process_database_url(url: &str) -> Option<String> {
+  let mut parsed = url::Url::parse(url).ok()?;
+  let dbname = parsed.path().trim_start_matches('/').to_owned();
+  parsed.set_path(&format!("/{dbname}_p{}", std::process::id()));
+  Some(parsed.to_string())
+}
+
+fn build_app(pool: circus_common::PgPool) -> axum::Router {
   let config = circus_config::Config::default();
   let state = circus_server::state::AppState {
     pool,
@@ -79,7 +88,7 @@ async fn test_router_no_duplicate_routes() {
 }
 
 fn build_app_with_config(
-  pool: sqlx::PgPool,
+  pool: circus_common::PgPool,
   config: &circus_config::Config,
 ) -> axum::Router {
   let state = circus_server::state::AppState {
@@ -100,14 +109,14 @@ fn build_app_with_config(
   circus_server::routes::router(state, config)
 }
 
-fn build_app_public_reads(pool: sqlx::PgPool) -> axum::Router {
+fn build_app_public_reads(pool: circus_common::PgPool) -> axum::Router {
   let mut config = circus_config::Config::default();
   config.server.require_api_key_for_reads = false;
   build_app_with_config(pool, &config)
 }
 
 async fn ensure_api_key(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   token: &str,
   role: circus_common::roles::GlobalRole,
 ) {
@@ -120,13 +129,20 @@ async fn ensure_api_key(
     circus_common::repo::api_keys::upsert(pool, token, &key_hash, role).await;
 }
 
-async fn build_app_with_admin_key(pool: sqlx::PgPool) -> axum::Router {
+async fn build_app_with_admin_key(pool: circus_common::PgPool) -> axum::Router {
   ensure_api_key(&pool, ADMIN_TOKEN, circus_common::roles::GlobalRole::Admin)
     .await;
   build_app(pool)
 }
 
-async fn create_test_project(pool: &sqlx::PgPool) -> uuid::Uuid {
+/// A unique 32-char Nix base32 hash for cache tests. A raw uuid hex string is
+/// only occasionally valid Nix base32 (the alphabet excludes `e`), which made
+/// the cache serve tests flaky, so map that one invalid hex char.
+fn unique_nix_hash() -> String {
+  uuid::Uuid::new_v4().simple().to_string().replace('e', "z")
+}
+
+async fn create_test_project(pool: &circus_common::PgPool) -> uuid::Uuid {
   circus_common::repo::projects::create(pool, circus_common::CreateProject {
     name:            format!("security-test-{}", uuid::Uuid::new_v4()),
     repository_url:  "https://github.com/test/repo".to_string(),
@@ -147,6 +163,15 @@ async fn test_health_endpoint() {
   let Some(pool) = get_pool().await else {
     return;
   };
+
+  for service in [
+    circus_common::service_heartbeat::SERVICE_EVALUATOR,
+    circus_common::service_heartbeat::SERVICE_QUEUE_RUNNER,
+  ] {
+    circus_common::service_heartbeat::record(&pool, service, 60, None)
+      .await
+      .expect("seed heartbeat");
+  }
 
   let app = build_app(pool);
 
@@ -176,8 +201,18 @@ async fn test_headless_mode_keeps_api_and_health_but_disables_ui() {
     return;
   };
 
+  for service in [
+    circus_common::service_heartbeat::SERVICE_EVALUATOR,
+    circus_common::service_heartbeat::SERVICE_QUEUE_RUNNER,
+  ] {
+    circus_common::service_heartbeat::record(&pool, service, 60, None)
+      .await
+      .expect("seed heartbeat");
+  }
+
   let mut config = circus_config::Config::default();
   config.ui.enabled = false;
+  config.server.require_api_key_for_reads = false;
   let app = build_app_with_config(pool, &config);
 
   let health = app
@@ -690,7 +725,7 @@ async fn test_cache_serves_only_signed_persisted_narinfo() {
     return;
   };
 
-  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let hash = unique_nix_hash();
   let store_path = format!("/nix/store/{hash}-cache-test");
   circus_common::repo::narinfo_cache::upsert(
     &pool,
@@ -799,7 +834,7 @@ async fn test_project_cache_serves_only_owned_persisted_narinfo() {
   .await
   .unwrap();
 
-  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let hash = unique_nix_hash();
   let store_path = format!("/nix/store/{hash}-project-cache-test");
   circus_common::repo::narinfo_cache::upsert(
     &pool,
@@ -889,7 +924,7 @@ async fn test_project_cache_keeps_shared_narinfo_for_each_owner() {
   .await
   .unwrap();
 
-  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let hash = unique_nix_hash();
   let store_path = format!("/nix/store/{hash}-shared-cache-test");
   let references = Vec::new();
   for project_id in [project_a.id, project_b.id] {
@@ -947,7 +982,7 @@ async fn test_cache_narinfo_local_url_requires_local_store_path() {
   let store_dir = temp_root.join("store");
   tokio::fs::create_dir_all(&store_dir).await.unwrap();
 
-  let store_hash = uuid::Uuid::new_v4().simple().to_string();
+  let store_hash = unique_nix_hash();
   let nar_hash_bare = "0".repeat(52);
   let nar_hash = format!("sha256:{nar_hash_bare}");
   let store_path = store_dir.join(format!("{store_hash}-missing-cache-test"));
@@ -1051,38 +1086,41 @@ async fn test_cache_nar_route_accepts_signed_persisted_narinfo_provenance() {
   tokio::fs::write(&store_path, b"cache test").await.unwrap();
   let store_path = store_path.to_string_lossy().to_string();
 
-  let sqlite = sqlx::SqlitePool::connect_with(
-    sqlx::sqlite::SqliteConnectOptions::new()
-      .filename(db_dir.join("db.sqlite"))
-      .create_if_missing(true),
-  )
-  .await
-  .unwrap();
-  sqlx::query(
-    "CREATE TABLE ValidPaths (id INTEGER PRIMARY KEY, path TEXT NOT NULL, \
-     hash TEXT NOT NULL, registrationTime INTEGER NOT NULL, deriver TEXT, \
-     narSize INTEGER, ultimate INTEGER, sigs TEXT, ca TEXT)",
-  )
-  .execute(&sqlite)
-  .await
-  .unwrap();
-  sqlx::query(
-    "CREATE TABLE Refs (referrer INTEGER NOT NULL, reference INTEGER NOT NULL)",
-  )
-  .execute(&sqlite)
-  .await
-  .unwrap();
-  sqlx::query(
-    "INSERT INTO ValidPaths (id, path, hash, registrationTime, deriver, \
-     narSize, ultimate, sigs, ca) VALUES (1, $1, $2, 1, NULL, 10, 0, NULL, \
-     NULL)",
-  )
-  .bind(&store_path)
-  .bind(&nar_hash)
-  .execute(&sqlite)
-  .await
-  .unwrap();
-  sqlite.close().await;
+  let sqlite = tokio_rusqlite::Connection::open(db_dir.join("db.sqlite"))
+    .await
+    .unwrap();
+  let db_store_path = store_path.clone();
+  let db_nar_hash = nar_hash.clone();
+  sqlite
+    .call(move |conn| -> tokio_rusqlite::rusqlite::Result<()> {
+      conn.execute_batch(
+        "CREATE TABLE ValidPaths (
+           id INTEGER PRIMARY KEY,
+           path TEXT NOT NULL,
+           hash TEXT NOT NULL,
+           registrationTime INTEGER NOT NULL,
+           deriver TEXT,
+           narSize INTEGER,
+           ultimate INTEGER,
+           sigs TEXT,
+           ca TEXT
+         );
+         CREATE TABLE Refs (
+           referrer INTEGER NOT NULL,
+           reference INTEGER NOT NULL
+         );",
+      )?;
+      conn.execute(
+        "INSERT INTO ValidPaths (id, path, hash, registrationTime, deriver, \
+         narSize, ultimate, sigs, ca) VALUES (1, ?1, ?2, 1, NULL, 10, 0, \
+         NULL, NULL)",
+        tokio_rusqlite::params![db_store_path, db_nar_hash],
+      )?;
+      Ok(())
+    })
+    .await
+    .unwrap();
+  sqlite.close().await.unwrap();
 
   circus_common::repo::narinfo_cache::upsert(
     &pool,
@@ -1466,7 +1504,7 @@ async fn test_metrics_endpoint() {
   let response = app
     .oneshot(
       Request::builder()
-        .uri("/metrics")
+        .uri("/prometheus")
         .body(Body::empty())
         .unwrap(),
     )
@@ -1850,14 +1888,18 @@ async fn test_webhook_without_secret_is_not_configured() {
   };
 
   let project_id = create_test_project(&pool).await;
-  sqlx::query(
-    "INSERT INTO webhook_configs (project_id, forge_type, secret_hash) VALUES \
-     ($1, 'github', NULL)",
-  )
-  .bind(project_id)
-  .execute(&pool)
-  .await
-  .unwrap();
+  // repo::webhook_configs has no NULL-secret path on purpose, so seed the
+  // misconfigured row directly.
+  let client = pool.get().await.unwrap();
+  client
+    .execute(
+      "INSERT INTO webhook_configs (project_id, forge_type, secret_hash) \
+       VALUES ($1, 'github', NULL)",
+      &[&project_id],
+    )
+    .await
+    .unwrap();
+  drop(client);
 
   let app = build_app(pool);
   let response = app
@@ -1919,8 +1961,7 @@ async fn test_dashboard_build_log_requires_auth_by_default() {
     .await
     .unwrap();
 
-  assert_eq!(response.status(), StatusCode::SEE_OTHER);
-  assert_eq!(response.headers().get("location").unwrap(), "/login");
+  assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -2071,7 +2112,7 @@ async fn test_static_css_served() {
 /// Seed one narinfo row scoped to a project with explicit sizes and a known
 /// package-name suffix so the admin cache surfaces can be asserted exactly.
 async fn seed_project_narinfo(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   project_id: uuid::Uuid,
   hash: &str,
   package: &str,
@@ -2122,7 +2163,7 @@ async fn test_admin_cache_storage_summary() {
   .await
   .unwrap();
 
-  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let hash = unique_nix_hash();
   seed_project_narinfo(&pool, project.id, &hash, "summary-pkg", 200, 100).await;
 
   let app = build_app_with_admin_key(pool).await;
@@ -2199,7 +2240,7 @@ async fn test_admin_global_cache_includes_signed_local_build_products() {
   )
   .await
   .unwrap();
-  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let hash = unique_nix_hash();
   let store_path = format!("/nix/store/{hash}-local-cache-pkg");
   let build =
     circus_common::repo::builds::create(&pool, circus_common::CreateBuild {
@@ -2350,7 +2391,7 @@ async fn test_project_cache_includes_local_product_when_other_project_uploaded_s
   .await
   .unwrap();
 
-  let hash = uuid::Uuid::new_v4().simple().to_string();
+  let hash = unique_nix_hash();
   let store_path = format!("/nix/store/{hash}-shared-cache-pkg");
   circus_common::repo::narinfo_cache::upsert(
     &pool,

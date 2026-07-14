@@ -1,11 +1,35 @@
+use circus_codegen::queries::remote_builders as q;
 use circus_config::{BuilderSchedulingStrategy, DeclarativeRemoteBuilder};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{CreateRemoteBuilder, RemoteBuilder},
 };
+
+impl From<q::RemoteBuilderRow> for RemoteBuilder {
+  fn from(r: q::RemoteBuilderRow) -> Self {
+    Self {
+      id:                   r.id,
+      name:                 r.name,
+      ssh_uri:              r.ssh_uri,
+      systems:              r.systems,
+      max_jobs:             r.max_jobs,
+      speed_factor:         r.speed_factor,
+      supported_features:   r.supported_features,
+      mandatory_features:   r.mandatory_features,
+      enabled:              r.enabled,
+      public_host_key:      r.public_host_key,
+      ssh_key_file:         r.ssh_key_file,
+      created_at:           r.created_at,
+      consecutive_failures: r.consecutive_failures,
+      disabled_until:       r.disabled_until,
+      last_failure:         r.last_failure,
+      cpu_cores:            r.cpu_cores,
+    }
+  }
+}
 
 /// Create a new remote builder.
 ///
@@ -16,25 +40,37 @@ pub async fn create(
   pool: &PgPool,
   input: CreateRemoteBuilder,
 ) -> Result<RemoteBuilder> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "INSERT INTO remote_builders (name, ssh_uri, systems, max_jobs, \
-     speed_factor, supported_features, mandatory_features, public_host_key, \
-     ssh_key_file) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
-  )
-  .bind(&input.name)
-  .bind(&input.ssh_uri)
-  .bind(&input.systems)
-  .bind(input.max_jobs.unwrap_or(1))
-  .bind(input.speed_factor.unwrap_or(1))
-  .bind(input.supported_features.as_deref().unwrap_or(&[]))
-  .bind(input.mandatory_features.as_deref().unwrap_or(&[]))
-  .bind(&input.public_host_key)
-  .bind(&input.ssh_key_file)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    format!("Remote builder '{}' already exists", input.name)
-  })
+  let client = pool.get().await?;
+  let max_jobs = input.max_jobs.unwrap_or(1);
+  let speed_factor = input.speed_factor.unwrap_or(1);
+  let supported_features = input.supported_features.unwrap_or_default();
+  let mandatory_features = input.mandatory_features.unwrap_or_default();
+  q::create()
+    .bind(
+      &client,
+      &input.name,
+      &input.ssh_uri,
+      &input.systems,
+      &max_jobs,
+      &speed_factor,
+      &supported_features,
+      &mandatory_features,
+      &input.public_host_key,
+      &input.ssh_key_file,
+    )
+    .one()
+    .await
+    .map(RemoteBuilder::from)
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(format!(
+          "Remote builder '{}' already exists",
+          input.name
+        ))
+      } else {
+        CiError::Database(e)
+      }
+    })
 }
 
 /// Get a remote builder by ID.
@@ -43,13 +79,13 @@ pub async fn create(
 ///
 /// Returns error if database query fails or builder not found.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<RemoteBuilder> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "SELECT * FROM remote_builders WHERE id = $1",
-  )
-  .bind(id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &id)
+    .opt()
+    .await?
+    .map(RemoteBuilder::from)
+    .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
 }
 
 /// List all remote builders.
@@ -58,13 +94,9 @@ pub async fn get(pool: &PgPool, id: Uuid) -> Result<RemoteBuilder> {
 ///
 /// Returns error if database query fails.
 pub async fn list(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
-  Ok(
-    sqlx::query_as::<_, RemoteBuilder>(
-      "SELECT * FROM remote_builders ORDER BY speed_factor DESC, name",
-    )
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list().bind(&client).all().await?;
+  Ok(rows.into_iter().map(RemoteBuilder::from).collect())
 }
 
 /// List all enabled remote builders.
@@ -73,14 +105,9 @@ pub async fn list(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
 ///
 /// Returns error if database query fails.
 pub async fn list_enabled(pool: &PgPool) -> Result<Vec<RemoteBuilder>> {
-  Ok(
-    sqlx::query_as::<_, RemoteBuilder>(
-      "SELECT * FROM remote_builders WHERE enabled = true ORDER BY \
-       speed_factor DESC, name",
-    )
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_enabled().bind(&client).all().await?;
+  Ok(rows.into_iter().map(RemoteBuilder::from).collect())
 }
 
 /// Find a suitable builder for the given system.
@@ -95,33 +122,28 @@ pub async fn find_for_system(
   system: &str,
   strategy: &BuilderSchedulingStrategy,
 ) -> Result<Vec<RemoteBuilder>> {
-  let query = match strategy {
+  let client = pool.get().await?;
+  let rows = match strategy {
     BuilderSchedulingStrategy::SpeedFactorOnly => {
-      "SELECT * FROM remote_builders WHERE enabled = true AND $1 = \
-       ANY(systems) AND (disabled_until IS NULL OR disabled_until < NOW()) \
-       ORDER BY speed_factor DESC"
+      q::find_for_system_speed_factor()
+        .bind(&client, &system)
+        .all()
+        .await?
     },
     BuilderSchedulingStrategy::CpuCoreCountWithSpeedFactor => {
-      "SELECT * FROM remote_builders WHERE enabled = true AND $1 = \
-       ANY(systems) AND (disabled_until IS NULL OR disabled_until < NOW()) \
-       ORDER BY COALESCE(cpu_cores, 1) * speed_factor DESC"
+      q::find_for_system_cpu_weighted()
+        .bind(&client, &system)
+        .all()
+        .await?
     },
     BuilderSchedulingStrategy::Dynamic => {
-      "SELECT r.* FROM remote_builders r LEFT JOIN (SELECT builder_id, \
-       COUNT(*) AS cnt FROM builds WHERE status = 'running' GROUP BY \
-       builder_id) active ON active.builder_id = r.id WHERE r.enabled = true \
-       AND $1 = ANY(r.systems) AND (r.disabled_until IS NULL OR \
-       r.disabled_until < NOW()) ORDER BY (r.max_jobs - COALESCE(active.cnt, \
-       0)) * r.speed_factor DESC"
+      q::find_for_system_dynamic()
+        .bind(&client, &system)
+        .all()
+        .await?
     },
   };
-
-  Ok(
-    sqlx::query_as::<_, RemoteBuilder>(query)
-      .bind(system)
-      .fetch_all(pool)
-      .await?,
-  )
+  Ok(rows.into_iter().map(RemoteBuilder::from).collect())
 }
 
 /// Record a build failure for a remote builder.
@@ -134,17 +156,13 @@ pub async fn find_for_system(
 ///
 /// Returns error if database update fails or builder not found.
 pub async fn record_failure(pool: &PgPool, id: Uuid) -> Result<RemoteBuilder> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "UPDATE remote_builders SET consecutive_failures = \
-     LEAST(consecutive_failures + 1, 4), last_failure = NOW(), disabled_until \
-     = NOW() + make_interval(secs => 60.0 * power(3, \
-     LEAST(consecutive_failures + 1, 4) - 1) + (random() * 30)::int ) WHERE \
-     id = $1 RETURNING *",
-  )
-  .bind(id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
+  let client = pool.get().await?;
+  q::record_failure()
+    .bind(&client, &id)
+    .opt()
+    .await?
+    .map(RemoteBuilder::from)
+    .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
 }
 
 /// Record a build success for a remote builder.
@@ -154,14 +172,13 @@ pub async fn record_failure(pool: &PgPool, id: Uuid) -> Result<RemoteBuilder> {
 ///
 /// Returns error if database update fails or builder not found.
 pub async fn record_success(pool: &PgPool, id: Uuid) -> Result<RemoteBuilder> {
-  sqlx::query_as::<_, RemoteBuilder>(
-    "UPDATE remote_builders SET consecutive_failures = 0, disabled_until = \
-     NULL WHERE id = $1 RETURNING *",
-  )
-  .bind(id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
+  let client = pool.get().await?;
+  q::record_success()
+    .bind(&client, &id)
+    .opt()
+    .await?
+    .map(RemoteBuilder::from)
+    .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
 }
 
 /// Update a remote builder with partial fields.
@@ -175,29 +192,26 @@ pub async fn update(
   input: crate::models::UpdateRemoteBuilder,
 ) -> Result<RemoteBuilder> {
   // Dynamic update using COALESCE pattern
-  sqlx::query_as::<_, RemoteBuilder>(
-    "UPDATE remote_builders SET name = COALESCE($1, name), ssh_uri = \
-     COALESCE($2, ssh_uri), systems = COALESCE($3, systems), max_jobs = \
-     COALESCE($4, max_jobs), speed_factor = COALESCE($5, speed_factor), \
-     supported_features = COALESCE($6, supported_features), \
-     mandatory_features = COALESCE($7, mandatory_features), enabled = \
-     COALESCE($8, enabled), public_host_key = COALESCE($9, public_host_key), \
-     ssh_key_file = COALESCE($10, ssh_key_file) WHERE id = $11 RETURNING *",
-  )
-  .bind(&input.name)
-  .bind(&input.ssh_uri)
-  .bind(&input.systems)
-  .bind(input.max_jobs)
-  .bind(input.speed_factor)
-  .bind(&input.supported_features)
-  .bind(&input.mandatory_features)
-  .bind(input.enabled)
-  .bind(&input.public_host_key)
-  .bind(&input.ssh_key_file)
-  .bind(id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
+  let client = pool.get().await?;
+  q::update()
+    .bind(
+      &client,
+      &input.name,
+      &input.ssh_uri,
+      &input.systems,
+      &input.max_jobs,
+      &input.speed_factor,
+      &input.supported_features,
+      &input.mandatory_features,
+      &input.enabled,
+      &input.public_host_key,
+      &input.ssh_key_file,
+      &id,
+    )
+    .opt()
+    .await?
+    .map(RemoteBuilder::from)
+    .ok_or_else(|| CiError::NotFound(format!("Remote builder {id} not found")))
 }
 
 /// Delete a remote builder.
@@ -206,11 +220,9 @@ pub async fn update(
 ///
 /// Returns error if database delete fails or builder not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM remote_builders WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("Remote builder {id} not found")));
   }
   Ok(())
@@ -222,10 +234,8 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
 ///
 /// Returns error if database query fails.
 pub async fn count(pool: &PgPool) -> Result<i64> {
-  let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM remote_builders")
-    .fetch_one(pool)
-    .await?;
-  Ok(row.0)
+  let client = pool.get().await?;
+  Ok(q::count().bind(&client).one().await?)
 }
 
 /// Upsert a remote builder (insert or update on conflict by name).
@@ -237,33 +247,25 @@ pub async fn upsert(
   pool: &PgPool,
   params: &crate::models::RemoteBuilderParams<'_>,
 ) -> Result<RemoteBuilder> {
+  let client = pool.get().await?;
   Ok(
-    sqlx::query_as::<_, RemoteBuilder>(
-      "INSERT INTO remote_builders (name, ssh_uri, systems, max_jobs, \
-       speed_factor, supported_features, mandatory_features, enabled, \
-       public_host_key, ssh_key_file) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-       $9, $10) ON CONFLICT (name) DO UPDATE SET ssh_uri = EXCLUDED.ssh_uri, \
-       systems = EXCLUDED.systems, max_jobs = EXCLUDED.max_jobs, speed_factor \
-       = EXCLUDED.speed_factor, supported_features = \
-       EXCLUDED.supported_features, mandatory_features = \
-       EXCLUDED.mandatory_features, enabled = EXCLUDED.enabled, \
-       public_host_key = COALESCE(EXCLUDED.public_host_key, \
-       remote_builders.public_host_key), ssh_key_file = \
-       COALESCE(EXCLUDED.ssh_key_file, remote_builders.ssh_key_file) \
-       RETURNING *",
-    )
-    .bind(params.name)
-    .bind(params.ssh_uri)
-    .bind(params.systems)
-    .bind(params.max_jobs)
-    .bind(params.speed_factor)
-    .bind(params.supported_features)
-    .bind(params.mandatory_features)
-    .bind(params.enabled)
-    .bind(params.public_host_key)
-    .bind(params.ssh_key_file)
-    .fetch_one(pool)
-    .await?,
+    q::upsert()
+      .bind(
+        &client,
+        &params.name,
+        &params.ssh_uri,
+        &params.systems,
+        &params.max_jobs,
+        &params.speed_factor,
+        &params.supported_features,
+        &params.mandatory_features,
+        &params.enabled,
+        &params.public_host_key,
+        &params.ssh_key_file,
+      )
+      .one()
+      .await
+      .map(RemoteBuilder::from)?,
   )
 }
 
@@ -281,10 +283,10 @@ pub async fn sync_all(
   let names: Vec<&str> = builders.iter().map(|b| b.name.as_str()).collect();
 
   // Delete builders not in declarative config
-  sqlx::query("DELETE FROM remote_builders WHERE name != ALL($1::text[])")
-    .bind(&names)
-    .execute(pool)
-    .await?;
+  {
+    let client = pool.get().await?;
+    q::sync_all_delete().bind(&client, &names).await?;
+  }
 
   // Upsert each builder
   for builder in builders {
