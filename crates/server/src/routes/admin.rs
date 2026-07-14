@@ -186,37 +186,25 @@ async fn system_status(
 ) -> Result<Json<SystemStatus>, ApiError> {
   let pool = &state.pool;
 
-  let projects: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM projects")
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
-  let jobsets: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobsets")
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
-  let evaluations: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM evaluations")
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+  let projects = circus_common::repo::projects::count(pool).await?;
+  let jobsets = circus_common::repo::jobsets::count(pool).await?;
+  let evaluations = circus_common::repo::evaluations::count(pool).await?;
 
   let build_stats = circus_common::repo::builds::get_stats(pool).await?;
   let builders = circus_common::repo::remote_builders::count(pool).await?;
 
-  let channels: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM channels")
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+  let channels = circus_common::repo::channels::count(pool).await?;
 
   Ok(Json(SystemStatus {
-    projects_count:    projects.0,
-    jobsets_count:     jobsets.0,
-    evaluations_count: evaluations.0,
+    projects_count:    projects,
+    jobsets_count:     jobsets,
+    evaluations_count: evaluations,
     builds_pending:    build_stats.pending_builds.unwrap_or(0),
     builds_running:    build_stats.running_builds.unwrap_or(0),
     builds_completed:  build_stats.completed_builds.unwrap_or(0),
     builds_failed:     build_stats.failed_builds.unwrap_or(0),
     remote_builders:   builders,
-    channels_count:    channels.0,
+    channels_count:    channels,
   }))
 }
 

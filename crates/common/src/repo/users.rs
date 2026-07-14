@@ -1,11 +1,14 @@
 //! User repository - CRUD operations and authentication
 
+use std::str::FromStr;
+
+use circus_codegen::queries::users as q;
 use regex::Regex;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{CreateUser, LoginCredentials, UpdateUser, User, UserType},
   roles::GlobalRole,
   validation::{
@@ -15,6 +18,40 @@ use crate::{
     validate_username,
   },
 };
+
+impl TryFrom<q::UserRow> for User {
+  type Error = CiError;
+
+  fn try_from(r: q::UserRow) -> Result<Self> {
+    let user_type = UserType::from_str(&r.user_type).map_err(|_| {
+      CiError::Internal(format!(
+        "user {} has unknown user_type '{}' in the database",
+        r.id, r.user_type
+      ))
+    })?;
+    let role = GlobalRole::from_str(&r.role).map_err(|_| {
+      CiError::Internal(format!(
+        "user {} has unknown role '{}' in the database",
+        r.id, r.role
+      ))
+    })?;
+    Ok(Self {
+      id: r.id,
+      username: r.username,
+      email: r.email,
+      full_name: r.full_name,
+      password_hash: r.password_hash,
+      user_type,
+      role,
+      enabled: r.enabled,
+      email_verified: r.email_verified,
+      public_dashboard: r.public_dashboard,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      last_login_at: r.last_login_at,
+    })
+  }
+}
 
 /// Hash a password using argon2id
 ///
@@ -84,18 +121,26 @@ pub async fn create(
 
   let password_hash = hash_password(&data.password)?;
 
-  sqlx::query_as::<_, User>(
-    "INSERT INTO users (username, email, full_name, password_hash, role) \
-     VALUES ($1, $2, $3, $4, $5) RETURNING *",
-  )
-  .bind(&data.username)
-  .bind(&data.email)
-  .bind(&data.full_name)
-  .bind(&password_hash)
-  .bind(role)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| "Username or email already exists".to_string())
+  let client = pool.get().await?;
+  let row = q::create()
+    .bind(
+      &client,
+      &data.username,
+      &data.email,
+      &data.full_name,
+      &password_hash,
+      &role.as_str(),
+    )
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict("Username or email already exists".to_string())
+      } else {
+        CiError::Database(e)
+      }
+    })?;
+  User::try_from(row)
 }
 
 /// Authenticate a user with username and password
@@ -107,23 +152,20 @@ pub async fn authenticate(
   pool: &PgPool,
   creds: &LoginCredentials,
 ) -> Result<User> {
-  let user = sqlx::query_as::<_, User>(
-    "SELECT * FROM users WHERE username = $1 AND enabled = true",
-  )
-  .bind(&creds.username)
-  .fetch_one(pool)
-  .await
-  .map_err(|_| CiError::Unauthorized("Invalid credentials".to_string()))?;
+  let client = pool.get().await?;
+  let user = q::authenticate_fetch()
+    .bind(&client, &creds.username)
+    .opt()
+    .await
+    .map_err(|_| CiError::Unauthorized("Invalid credentials".to_string()))?
+    .map(User::try_from)
+    .transpose()?
+    .ok_or_else(|| CiError::Unauthorized("Invalid credentials".to_string()))?;
 
   if let Some(ref hash) = user.password_hash {
     if verify_password(&creds.password, hash)? {
       // Update last login time
-      if let Err(e) =
-        sqlx::query("UPDATE users SET last_login_at = NOW() WHERE id = $1")
-          .bind(user.id)
-          .execute(pool)
-          .await
-      {
+      if let Err(e) = q::authenticate_touch().bind(&client, &user.id).await {
         tracing::warn!(user_id = %user.id, "Failed to update last_login_at: {e}");
       }
       Ok(user)
@@ -143,18 +185,14 @@ pub async fn authenticate(
 ///
 /// Returns error if database query fails or user not found.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<User> {
-  sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-      match e {
-        sqlx::Error::RowNotFound => {
-          CiError::NotFound(format!("User {id} not found"))
-        },
-        _ => CiError::Database(e),
-      }
-    })
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &id)
+    .opt()
+    .await?
+    .map(User::try_from)
+    .transpose()?
+    .ok_or_else(|| CiError::NotFound(format!("User {id} not found")))
 }
 
 /// Get a user by username
@@ -166,12 +204,13 @@ pub async fn get_by_username(
   pool: &PgPool,
   username: &str,
 ) -> Result<Option<User>> {
-  Ok(
-    sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
-      .bind(username)
-      .fetch_optional(pool)
-      .await?,
-  )
+  let client = pool.get().await?;
+  q::get_by_username()
+    .bind(&client, &username)
+    .opt()
+    .await?
+    .map(User::try_from)
+    .transpose()
 }
 
 /// Get a user by email
@@ -180,12 +219,13 @@ pub async fn get_by_username(
 ///
 /// Returns error if database query fails.
 pub async fn get_by_email(pool: &PgPool, email: &str) -> Result<Option<User>> {
-  Ok(
-    sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
-      .bind(email)
-      .fetch_optional(pool)
-      .await?,
-  )
+  let client = pool.get().await?;
+  q::get_by_email()
+    .bind(&client, &email)
+    .opt()
+    .await?
+    .map(User::try_from)
+    .transpose()
 }
 
 /// List all users with pagination
@@ -194,15 +234,9 @@ pub async fn get_by_email(pool: &PgPool, email: &str) -> Result<Option<User>> {
 ///
 /// Returns error if database query fails.
 pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<User>> {
-  Ok(
-    sqlx::query_as::<_, User>(
-      "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list().bind(&client, &limit, &offset).all().await?;
+  rows.into_iter().map(User::try_from).collect()
 }
 
 /// Count total users
@@ -211,10 +245,8 @@ pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<User>> {
 ///
 /// Returns error if database query fails.
 pub async fn count(pool: &PgPool) -> Result<i64> {
-  let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-    .fetch_one(pool)
-    .await?;
-  Ok(count)
+  let client = pool.get().await?;
+  Ok(q::count().bind(&client).one().await?)
 }
 
 /// Update a user with the provided data
@@ -273,14 +305,19 @@ pub async fn update_email(
 ) -> Result<User> {
   validate_email(email, email_regex)?;
 
-  sqlx::query_as::<_, User>(
-    "UPDATE users SET email = $1 WHERE id = $2 RETURNING *",
-  )
-  .bind(email)
-  .bind(id)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| "Email already in use".to_string())
+  let client = pool.get().await?;
+  let row = q::update_email()
+    .bind(&client, &email, &id)
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict("Email already in use".to_string())
+      } else {
+        CiError::Database(e)
+      }
+    })?;
+  User::try_from(row)
 }
 
 /// Update user full name with validation
@@ -297,11 +334,8 @@ pub async fn update_full_name(
     validate_full_name(name)?;
   }
 
-  sqlx::query("UPDATE users SET full_name = $1 WHERE id = $2")
-    .bind(full_name)
-    .bind(id)
-    .execute(pool)
-    .await?;
+  let client = pool.get().await?;
+  q::update_full_name().bind(&client, &full_name, &id).await?;
   Ok(())
 }
 
@@ -318,11 +352,8 @@ pub async fn update_password(
   validate_password(password)?;
 
   let hash = hash_password(password)?;
-  sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
-    .bind(&hash)
-    .bind(id)
-    .execute(pool)
-    .await?;
+  let client = pool.get().await?;
+  q::update_password().bind(&client, &hash, &id).await?;
   Ok(())
 }
 
@@ -336,11 +367,8 @@ pub async fn update_role(
   id: Uuid,
   role: GlobalRole,
 ) -> Result<()> {
-  sqlx::query("UPDATE users SET role = $1 WHERE id = $2")
-    .bind(role)
-    .bind(id)
-    .execute(pool)
-    .await?;
+  let client = pool.get().await?;
+  q::update_role().bind(&client, &role.as_str(), &id).await?;
   Ok(())
 }
 
@@ -350,11 +378,8 @@ pub async fn update_role(
 ///
 /// Returns error if database update fails.
 pub async fn set_enabled(pool: &PgPool, id: Uuid, enabled: bool) -> Result<()> {
-  sqlx::query("UPDATE users SET enabled = $1 WHERE id = $2")
-    .bind(enabled)
-    .bind(id)
-    .execute(pool)
-    .await?;
+  let client = pool.get().await?;
+  q::set_enabled().bind(&client, &enabled, &id).await?;
   Ok(())
 }
 
@@ -368,10 +393,9 @@ pub async fn set_public_dashboard(
   id: Uuid,
   public: bool,
 ) -> Result<()> {
-  sqlx::query("UPDATE users SET public_dashboard = $1 WHERE id = $2")
-    .bind(public)
-    .bind(id)
-    .execute(pool)
+  let client = pool.get().await?;
+  q::set_public_dashboard()
+    .bind(&client, &public, &id)
     .await?;
   Ok(())
 }
@@ -382,11 +406,9 @@ pub async fn set_public_dashboard(
 ///
 /// Returns error if database delete fails or user not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM users WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("User {id} not found")));
   }
   Ok(())
@@ -411,55 +433,50 @@ pub async fn upsert_oauth_user(
   let unique_username = format!("{username}_{oauth_provider_id}");
 
   // Check if user exists by OAuth provider ID pattern
-  let existing =
-    sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
-      .bind(&unique_username)
-      .fetch_optional(pool)
-      .await?;
+  let existing = {
+    let client = pool.get().await?;
+    q::upsert_oauth_user_fetch()
+      .bind(&client, &unique_username)
+      .opt()
+      .await?
+      .map(User::try_from)
+      .transpose()?
+  };
 
   if let Some(user) = existing {
     // Update existing user
-    if let Some(e) = email {
-      // Validate email before updating
-      validate_email(e, email_regex)?;
-      sqlx::query(
-        "UPDATE users SET email = $1, last_login_at = NOW(), updated_at = \
-         NOW() WHERE id = $2",
-      )
-      .bind(e)
-      .bind(user.id)
-      .execute(pool)
-      .await?;
-    } else {
-      sqlx::query(
-        "UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id \
-         = $1",
-      )
-      .bind(user.id)
-      .execute(pool)
-      .await?;
+    {
+      let client = pool.get().await?;
+      if let Some(e) = email {
+        // Validate email before updating
+        validate_email(e, email_regex)?;
+        q::upsert_oauth_user_update_email()
+          .bind(&client, &e, &user.id)
+          .await?;
+      } else {
+        q::upsert_oauth_user_touch().bind(&client, &user.id).await?;
+      }
     }
     return get(pool, user.id).await;
   }
 
   // Create new user
-  let user_type_str = match user_type {
-    UserType::Local => "local",
-    UserType::Github => "github",
-    UserType::Google => "google",
-    UserType::Ldap => "ldap",
-  };
+  let fallback_email = format!("{unique_username}@oauth.local");
+  let email = email.unwrap_or(&fallback_email);
 
-  sqlx::query_as::<_, User>(
-    "INSERT INTO users (username, email, user_type, password_hash, role) \
-     VALUES ($1, $2, $3, NULL, 'read-only') RETURNING *",
-  )
-  .bind(&unique_username)
-  .bind(email.unwrap_or(&format!("{unique_username}@oauth.local")))
-  .bind(user_type_str)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| "Username or email already in use".to_string())
+  let client = pool.get().await?;
+  let row = q::upsert_oauth_user_insert()
+    .bind(&client, &unique_username, &email, &user_type.as_db_str())
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict("Username or email already in use".to_string())
+      } else {
+        CiError::Database(e)
+      }
+    })?;
+  User::try_from(row)
 }
 
 /// Create a new session for a user. Returns (`session_token`, `session_id`).
@@ -480,17 +497,13 @@ pub async fn create_session(
   // Session expires in 7 days
   let expires_at = chrono::Utc::now() + chrono::Duration::days(7);
 
-  let session_id: (Uuid,) = sqlx::query_as(
-    "INSERT INTO user_sessions (user_id, session_token_hash, expires_at) \
-     VALUES ($1, $2, $3) RETURNING id",
-  )
-  .bind(user_id)
-  .bind(&token_hash)
-  .bind(expires_at)
-  .fetch_one(pool)
-  .await?;
+  let client = pool.get().await?;
+  let session_id = q::create_session()
+    .bind(&client, &user_id, &token_hash, &expires_at)
+    .one()
+    .await?;
 
-  Ok((token, session_id.0))
+  Ok((token, session_id))
 }
 
 /// Validate a session token and return the associated user if valid.
@@ -506,23 +519,17 @@ pub async fn validate_session(
 
   let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-  let result = sqlx::query_as::<_, User>(
-    "SELECT u.* FROM users u JOIN user_sessions s ON u.id = s.user_id WHERE \
-     s.session_token_hash = $1 AND s.expires_at > NOW() AND u.enabled = true",
-  )
-  .bind(&token_hash)
-  .fetch_optional(pool)
-  .await?;
+  let client = pool.get().await?;
+  let result = q::validate_session_fetch()
+    .bind(&client, &token_hash)
+    .opt()
+    .await?
+    .map(User::try_from)
+    .transpose()?;
 
   // Update last_used_at
   if result.is_some()
-    && let Err(e) = sqlx::query(
-      "UPDATE user_sessions SET last_used_at = NOW() WHERE session_token_hash \
-       = $1",
-    )
-    .bind(&token_hash)
-    .execute(pool)
-    .await
+    && let Err(e) = q::validate_session_touch().bind(&client, &token_hash).await
   {
     tracing::warn!("Failed to update session last_used_at: {e}");
   }
@@ -539,11 +546,8 @@ pub async fn delete_session(pool: &PgPool, token: &str) -> Result<bool> {
   use sha2::{Digest, Sha256};
 
   let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-  let result =
-    sqlx::query("DELETE FROM user_sessions WHERE session_token_hash = $1")
-      .bind(&token_hash)
-      .execute(pool)
-      .await?;
+  let client = pool.get().await?;
+  let deleted = q::delete_session().bind(&client, &token_hash).await?;
 
-  Ok(result.rows_affected() > 0)
+  Ok(deleted > 0)
 }

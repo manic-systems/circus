@@ -2,10 +2,7 @@
 # This file contains default configuration for all circus components
 [database]
 connect_timeout = 30
-idle_timeout    = 600
 max_connections = 20
-max_lifetime    = 1800
-min_connections = 5
 url             = "postgresql://circus:password@localhost/circus"
 
 [server]

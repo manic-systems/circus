@@ -8,14 +8,17 @@
 //! See `crates/migrations/migrations/0012_builder_sessions.sql`.
 
 use chrono::{DateTime, Utc};
+use circus_codegen::queries::builder_sessions as q;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::error::{CiError, Result};
+use crate::{
+  db::PgPool,
+  error::{CiError, Result},
+};
 
 /// One row in `builder_sessions`.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuilderSession {
   pub machine_id:           Uuid,
   pub name:                 String,
@@ -53,19 +56,53 @@ pub struct BuilderSession {
   pub updated_at:           DateTime<Utc>,
 }
 
+impl From<q::BuilderSessionRow> for BuilderSession {
+  fn from(r: q::BuilderSessionRow) -> Self {
+    Self {
+      machine_id:           r.machine_id,
+      name:                 r.name,
+      hostname:             r.hostname,
+      systems:              r.systems,
+      supported_features:   r.supported_features,
+      mandatory_features:   r.mandatory_features,
+      speed_factor:         r.speed_factor,
+      cpu_count:            r.cpu_count,
+      max_jobs:             r.max_jobs,
+      proto_version:        r.proto_version,
+      last_seen:            r.last_seen,
+      current_jobs:         r.current_jobs,
+      load1:                r.load1,
+      load5:                r.load5,
+      load15:               r.load15,
+      mem_total:            r.mem_total,
+      mem_used:             r.mem_used,
+      store_free:           r.store_free,
+      build_dir_free:       r.build_dir_free,
+      cpu_psi_avg10:        r.cpu_psi_avg10,
+      mem_psi_avg10:        r.mem_psi_avg10,
+      io_psi_avg10:         r.io_psi_avg10,
+      connected:            r.connected,
+      builds_succeeded:     r.builds_succeeded,
+      builds_failed:        r.builds_failed,
+      consecutive_failures: r.consecutive_failures,
+      disabled_until:       r.disabled_until,
+      ephemeral:            r.ephemeral,
+      auth_kind:            r.auth_kind,
+      created_at:           r.created_at,
+      updated_at:           r.updated_at,
+    }
+  }
+}
+
 /// All recorded agent sessions, newest activity first.
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn list(pool: &PgPool) -> Result<Vec<BuilderSession>> {
-  Ok(
-    sqlx::query_as::<_, BuilderSession>(
-      "SELECT * FROM builder_sessions ORDER BY connected DESC, updated_at DESC",
-    )
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list().bind(&client).all().await?;
+  Ok(rows.into_iter().map(BuilderSession::from).collect())
 }
 
 /// Only the sessions that are currently connected (the in-memory
@@ -74,16 +111,11 @@ pub async fn list(pool: &PgPool) -> Result<Vec<BuilderSession>> {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn list_connected(pool: &PgPool) -> Result<Vec<BuilderSession>> {
-  Ok(
-    sqlx::query_as::<_, BuilderSession>(
-      "SELECT * FROM builder_sessions WHERE connected = TRUE ORDER BY \
-       updated_at DESC",
-    )
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_connected().bind(&client).all().await?;
+  Ok(rows.into_iter().map(BuilderSession::from).collect())
 }
 
 /// One session by its stable `machine_id`.
@@ -91,17 +123,17 @@ pub async fn list_connected(pool: &PgPool) -> Result<Vec<BuilderSession>> {
 /// # Errors
 ///
 /// `CiError::NotFound` when no row matches, `CiError::Database` for
-/// underlying sqlx errors.
+/// underlying database errors.
 pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
-  sqlx::query_as::<_, BuilderSession>(
-    "SELECT * FROM builder_sessions WHERE machine_id = $1",
-  )
-  .bind(machine_id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| {
-    CiError::NotFound(format!("Builder session {machine_id} not found"))
-  })
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &machine_id)
+    .opt()
+    .await?
+    .map(BuilderSession::from)
+    .ok_or_else(|| {
+      CiError::NotFound(format!("Builder session {machine_id} not found"))
+    })
 }
 
 /// Record a final outcome of a build dispatched to a connected agent.
@@ -110,26 +142,24 @@ pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn record_outcome(
   pool: &PgPool,
   machine_id: Uuid,
   succeeded: bool,
 ) -> Result<()> {
-  let sql = if succeeded {
-    "UPDATE builder_sessions SET builds_succeeded = builds_succeeded + 1, \
-     consecutive_failures = 0, disabled_until = NULL, updated_at = NOW() WHERE \
-     machine_id = $1"
+  let client = pool.get().await?;
+  if succeeded {
+    q::record_outcome_succeeded()
+      .bind(&client, &machine_id)
+      .await?;
   } else {
     // Exponential backoff matches the SSH path:
     // 60 * 3^(min(consecutive_failures + 1, 4) - 1) seconds + jitter.
-    "UPDATE builder_sessions SET builds_failed = builds_failed + 1, \
-     consecutive_failures = LEAST(consecutive_failures + 1, 4), disabled_until \
-     = NOW() + make_interval(secs => 60.0 * power(3, \
-     LEAST(consecutive_failures + 1, 4) - 1) + (random() * 30)::int), \
-     updated_at = NOW() WHERE machine_id = $1"
-  };
-  sqlx::query(sql).bind(machine_id).execute(pool).await?;
+    q::record_outcome_failed()
+      .bind(&client, &machine_id)
+      .await?;
+  }
   Ok(())
 }
 
@@ -140,16 +170,11 @@ pub async fn record_outcome(
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
-  let row = sqlx::query_as::<_, (bool,)>(
-    "SELECT disabled_until IS NULL OR disabled_until <= NOW() FROM \
-     builder_sessions WHERE machine_id = $1",
-  )
-  .bind(machine_id)
-  .fetch_optional(pool)
-  .await?;
-  Ok(row.is_some_and(|(schedulable,)| schedulable))
+  let client = pool.get().await?;
+  let row = q::is_schedulable().bind(&client, &machine_id).opt().await?;
+  Ok(row.is_some_and(|schedulable| schedulable))
 }
 
 /// Delete stale ephemeral sessions. A force-killed runner never flips
@@ -159,21 +184,14 @@ pub async fn is_schedulable(pool: &PgPool, machine_id: Uuid) -> Result<bool> {
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn prune_stale_ephemeral(
   pool: &PgPool,
   ttl_secs: i64,
 ) -> Result<u64> {
-  let res = sqlx::query(
-    "DELETE FROM builder_sessions WHERE ephemeral = TRUE AND ((connected = \
-     FALSE AND (last_seen IS NULL OR last_seen < NOW() - make_interval(secs \
-     => $1))) OR (connected = TRUE AND last_seen IS NOT NULL AND last_seen < \
-     NOW() - make_interval(secs => $1)))",
-  )
-  .bind(ttl_secs as f64)
-  .execute(pool)
-  .await?;
-  Ok(res.rows_affected())
+  let client = pool.get().await?;
+  let ttl = ttl_secs as f64;
+  Ok(q::prune_stale_ephemeral().bind(&client, &ttl).await?)
 }
 
 /// Mark every row disconnected. Called on runner startup to clean up
@@ -181,12 +199,119 @@ pub async fn prune_stale_ephemeral(
 ///
 /// # Errors
 ///
-/// Returns the underlying sqlx error.
+/// Returns the underlying database error.
 pub async fn reset_all_connected(pool: &PgPool) -> Result<u64> {
-  let res = sqlx::query(
-    "UPDATE builder_sessions SET connected = FALSE WHERE connected = TRUE",
-  )
-  .execute(pool)
-  .await?;
-  Ok(res.rows_affected())
+  let client = pool.get().await?;
+  Ok(q::reset_all_connected().bind(&client).await?)
+}
+
+/// Everything an agent reports at registration time.
+pub struct RegisterSession<'a> {
+  pub machine_id:         Uuid,
+  pub name:               &'a str,
+  pub hostname:           &'a str,
+  pub systems:            &'a [String],
+  pub supported_features: &'a [String],
+  pub mandatory_features: &'a [String],
+  pub speed_factor:       f32,
+  pub cpu_count:          i32,
+  pub max_jobs:           i32,
+  pub proto_version:      &'a str,
+  pub ephemeral:          bool,
+  pub auth_kind:          &'a str,
+}
+
+/// Upsert an agent's session on register, marking it connected.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn register(
+  pool: &PgPool,
+  session: RegisterSession<'_>,
+) -> Result<()> {
+  let client = pool.get().await?;
+  q::register()
+    .bind(
+      &client,
+      &session.machine_id,
+      &session.name,
+      &session.hostname,
+      &session.systems,
+      &session.supported_features,
+      &session.mandatory_features,
+      &session.speed_factor,
+      &session.cpu_count,
+      &session.max_jobs,
+      &session.proto_version,
+      &session.ephemeral,
+      &session.auth_kind,
+    )
+    .await?;
+  Ok(())
+}
+
+/// Flip an agent's session to disconnected when its RPC connection drops.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn mark_disconnected(pool: &PgPool, machine_id: Uuid) -> Result<()> {
+  let client = pool.get().await?;
+  q::mark_disconnected().bind(&client, &machine_id).await?;
+  Ok(())
+}
+
+/// Refresh a session's liveness timestamp when work is dispatched to it.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn touch(pool: &PgPool, machine_id: Uuid) -> Result<()> {
+  let client = pool.get().await?;
+  q::touch().bind(&client, &machine_id).await?;
+  Ok(())
+}
+
+/// The metrics an agent reports on every heartbeat ping.
+pub struct Heartbeat {
+  pub machine_id:     Uuid,
+  pub load1:          f32,
+  pub load5:          f32,
+  pub load15:         f32,
+  pub cpu_psi_avg10:  f32,
+  pub mem_psi_avg10:  f32,
+  pub io_psi_avg10:   f32,
+  pub current_jobs:   i32,
+  pub mem_total:      i64,
+  pub mem_used:       i64,
+  pub store_free:     i64,
+  pub build_dir_free: i64,
+}
+
+/// Persist an agent's heartbeat metrics and bump its liveness timestamps.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn heartbeat(pool: &PgPool, hb: Heartbeat) -> Result<()> {
+  let client = pool.get().await?;
+  q::heartbeat()
+    .bind(
+      &client,
+      &hb.load1,
+      &hb.load5,
+      &hb.load15,
+      &hb.cpu_psi_avg10,
+      &hb.mem_psi_avg10,
+      &hb.io_psi_avg10,
+      &hb.current_jobs,
+      &hb.mem_total,
+      &hb.mem_used,
+      &hb.store_free,
+      &hb.build_dir_free,
+      &hb.machine_id,
+    )
+    .await?;
+  Ok(())
 }

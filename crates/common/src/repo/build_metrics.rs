@@ -1,10 +1,9 @@
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use circus_codegen::queries::build_metrics as q;
+use rust_decimal::prelude::ToPrimitive;
 use uuid::Uuid;
 
-use crate::{error::Result, models::BuildMetric};
-
-type PercentileRow = (DateTime<Utc>, Option<f64>, Option<f64>, Option<f64>);
+use crate::{db::PgPool, error::Result, models::BuildMetric};
 
 /// Time-series data point for metrics visualization.
 #[derive(Debug, Clone)]
@@ -31,6 +30,50 @@ pub struct DurationPercentiles {
   pub p99:         Option<f64>,
 }
 
+/// Evaluation count grouped by status.
+#[derive(Debug, Clone)]
+pub struct EvaluationStatusCount {
+  pub status: String,
+  pub count:  i64,
+}
+
+/// Small global counters used by Prometheus exposition.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OverviewCounts {
+  pub project_count: i64,
+  pub channel_count: i64,
+  pub builder_count: i64,
+}
+
+/// Build success/failure counters grouped by project name.
+#[derive(Debug, Clone)]
+pub struct ProjectBuildCounts {
+  pub name:            String,
+  pub succeeded_count: i64,
+  pub failed_count:    i64,
+}
+
+/// Overall build duration percentiles.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OverallDurationPercentiles {
+  pub p50: Option<f64>,
+  pub p95: Option<f64>,
+  pub p99: Option<f64>,
+}
+
+impl From<q::BuildMetricRow> for BuildMetric {
+  fn from(r: q::BuildMetricRow) -> Self {
+    Self {
+      id:           r.id,
+      build_id:     r.build_id,
+      metric_name:  r.metric_name,
+      metric_value: r.metric_value,
+      unit:         r.unit,
+      collected_at: r.collected_at,
+    }
+  }
+}
+
 /// Insert or update a build metric.
 ///
 /// # Errors
@@ -43,19 +86,13 @@ pub async fn upsert(
   metric_value: f64,
   unit: &str,
 ) -> Result<BuildMetric> {
+  let client = pool.get().await?;
   Ok(
-    sqlx::query_as::<_, BuildMetric>(
-      "INSERT INTO build_metrics (build_id, metric_name, metric_value, unit) \
-       VALUES ($1, $2, $3, $4) ON CONFLICT (build_id, metric_name) DO UPDATE \
-       SET metric_value = EXCLUDED.metric_value, collected_at = NOW() \
-       RETURNING *",
-    )
-    .bind(build_id)
-    .bind(metric_name)
-    .bind(metric_value)
-    .bind(unit)
-    .fetch_one(pool)
-    .await?,
+    q::upsert()
+      .bind(&client, &build_id, &metric_name, &metric_value, &unit)
+      .one()
+      .await
+      .map(BuildMetric::from)?,
   )
 }
 
@@ -70,27 +107,18 @@ pub async fn calculate_failure_rate(
   jobset_id: Option<Uuid>,
   window_minutes: i64,
 ) -> Result<f64> {
-  let rows: Vec<(Uuid, String)> = sqlx::query_as(
-    "SELECT b.id, b.status::text FROM builds b JOIN evaluations e ON \
-     b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE \
-     ($1::uuid IS NULL OR j.project_id = $1) AND ($2::uuid IS NULL OR j.id = \
-     $2) AND b.completed_at > NOW() - (INTERVAL '1 minute' * $3) ORDER BY \
-     b.completed_at DESC",
-  )
-  .bind(project_id)
-  .bind(jobset_id)
-  .bind(window_minutes)
-  .fetch_all(pool)
-  .await?;
+  let client = pool.get().await?;
+  let window_minutes = window_minutes as f64;
+  let rows = q::calculate_failure_rate()
+    .bind(&client, &project_id, &jobset_id, &window_minutes)
+    .all()
+    .await?;
 
   if rows.is_empty() {
     return Ok(0.0);
   }
 
-  let failed_count = rows
-    .iter()
-    .filter(|(_, status)| *status == "Failed")
-    .count();
+  let failed_count = rows.iter().filter(|r| r.status == "Failed").count();
   Ok((failed_count as f64) / (rows.len() as f64) * 100.0)
 }
 
@@ -107,40 +135,22 @@ pub async fn get_build_stats_timeseries(
   hours: i32,
   bucket_minutes: i32,
 ) -> Result<Vec<BuildStatsBucket>> {
-  let rows: Vec<(DateTime<Utc>, i64, i64, Option<f64>)> = sqlx::query_as(
-    "SELECT 
-      date_trunc('minute', b.completed_at) + 
-        (EXTRACT(MINUTE FROM b.completed_at)::int / $4) * INTERVAL '1 minute' \
-     * $4 AS bucket_time,
-      COUNT(*) AS total_builds,
-      COUNT(*) FILTER (WHERE b.status = 'failed') AS failed_builds,
-      AVG(EXTRACT(EPOCH FROM (b.completed_at - b.started_at))) AS avg_duration
-    FROM builds b
-    JOIN evaluations e ON b.evaluation_id = e.id
-    JOIN jobsets j ON e.jobset_id = j.id
-    WHERE b.completed_at IS NOT NULL
-      AND b.completed_at > NOW() - (INTERVAL '1 hour' * $1)
-      AND ($2::uuid IS NULL OR j.project_id = $2)
-      AND ($3::uuid IS NULL OR j.id = $3)
-    GROUP BY bucket_time
-    ORDER BY bucket_time ASC",
-  )
-  .bind(hours)
-  .bind(project_id)
-  .bind(jobset_id)
-  .bind(bucket_minutes)
-  .fetch_all(pool)
-  .await?;
+  let client = pool.get().await?;
+  let hours = f64::from(hours);
+  let rows = q::get_build_stats_timeseries()
+    .bind(&client, &bucket_minutes, &hours, &project_id, &jobset_id)
+    .all()
+    .await?;
 
   Ok(
     rows
       .into_iter()
-      .map(|(bucket_time, total_builds, failed_builds, avg_duration)| {
+      .map(|r| {
         BuildStatsBucket {
-          bucket_time,
-          total_builds,
-          failed_builds,
-          avg_duration,
+          bucket_time:   r.bucket_time,
+          total_builds:  r.total_builds,
+          failed_builds: r.failed_builds,
+          avg_duration:  r.avg_duration.and_then(|d| d.to_f64()),
         }
       })
       .collect(),
@@ -159,44 +169,22 @@ pub async fn get_duration_percentiles_timeseries(
   hours: i32,
   bucket_minutes: i32,
 ) -> Result<Vec<DurationPercentiles>> {
-  let rows: Vec<PercentileRow> = sqlx::query_as(
-    "SELECT 
-      date_trunc('minute', b.completed_at) + 
-        (EXTRACT(MINUTE FROM b.completed_at)::int / $4) * INTERVAL '1 minute' \
-     * $4 AS bucket_time,
-      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM \
-     (b.completed_at - b.started_at))) AS p50,
-      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM \
-     (b.completed_at - b.started_at))) AS p95,
-      PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM \
-     (b.completed_at - b.started_at))) AS p99
-    FROM builds b
-    JOIN evaluations e ON b.evaluation_id = e.id
-    JOIN jobsets j ON e.jobset_id = j.id
-    WHERE b.completed_at IS NOT NULL
-      AND b.started_at IS NOT NULL
-      AND b.completed_at > NOW() - (INTERVAL '1 hour' * $1)
-      AND ($2::uuid IS NULL OR j.project_id = $2)
-      AND ($3::uuid IS NULL OR j.id = $3)
-    GROUP BY bucket_time
-    ORDER BY bucket_time ASC",
-  )
-  .bind(hours)
-  .bind(project_id)
-  .bind(jobset_id)
-  .bind(bucket_minutes)
-  .fetch_all(pool)
-  .await?;
+  let client = pool.get().await?;
+  let hours = f64::from(hours);
+  let rows = q::get_duration_percentiles_timeseries()
+    .bind(&client, &bucket_minutes, &hours, &project_id, &jobset_id)
+    .all()
+    .await?;
 
   Ok(
     rows
       .into_iter()
-      .map(|(bucket_time, p50, p95, p99)| {
+      .map(|r| {
         DurationPercentiles {
-          bucket_time,
-          p50,
-          p95,
-          p99,
+          bucket_time: r.bucket_time,
+          p50:         r.p50,
+          p95:         r.p95,
+          p99:         r.p99,
         }
       })
       .collect(),
@@ -215,29 +203,20 @@ pub async fn get_queue_depth_timeseries(
 ) -> Result<Vec<TimeseriesPoint>> {
   // Since we don't have historical queue depth, we'll sample current pending
   // builds and use build creation times to approximate queue depth over time
-  let rows: Vec<(DateTime<Utc>, i64)> = sqlx::query_as(
-    "SELECT 
-      date_trunc('minute', created_at) + 
-        (EXTRACT(MINUTE FROM created_at)::int / $2) * INTERVAL '1 minute' * $2 \
-     AS bucket_time,
-      COUNT(*) FILTER (WHERE status = 'pending') AS pending_count
-    FROM builds
-    WHERE created_at > NOW() - (INTERVAL '1 hour' * $1)
-    GROUP BY bucket_time
-    ORDER BY bucket_time ASC",
-  )
-  .bind(hours)
-  .bind(bucket_minutes)
-  .fetch_all(pool)
-  .await?;
+  let client = pool.get().await?;
+  let hours = f64::from(hours);
+  let rows = q::get_queue_depth_timeseries()
+    .bind(&client, &bucket_minutes, &hours)
+    .all()
+    .await?;
 
   Ok(
     rows
       .into_iter()
-      .map(|(timestamp, value)| {
+      .map(|r| {
         TimeseriesPoint {
-          timestamp,
-          value: value as f64,
+          timestamp: r.bucket_time,
+          value:     r.pending_count as f64,
         }
       })
       .collect(),
@@ -254,22 +233,109 @@ pub async fn get_system_distribution(
   project_id: Option<Uuid>,
   hours: i32,
 ) -> Result<Vec<(String, i64)>> {
+  let client = pool.get().await?;
+  let hours = f64::from(hours);
+  let rows = q::get_system_distribution()
+    .bind(&client, &hours, &project_id)
+    .all()
+    .await?;
+
   Ok(
-    sqlx::query_as(
-      "SELECT 
-      COALESCE(b.system, 'unknown') AS system,
-      COUNT(*) AS build_count
-    FROM builds b
-    JOIN evaluations e ON b.evaluation_id = e.id
-    JOIN jobsets j ON e.jobset_id = j.id
-    WHERE b.completed_at > NOW() - (INTERVAL '1 hour' * $1)
-      AND ($2::uuid IS NULL OR j.project_id = $2)
-    GROUP BY b.system
-    ORDER BY build_count DESC",
-    )
-    .bind(hours)
-    .bind(project_id)
-    .fetch_all(pool)
-    .await?,
+    rows
+      .into_iter()
+      .map(|r| (r.system, r.build_count))
+      .collect(),
   )
+}
+
+/// Count all evaluations.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn count_evaluations(pool: &PgPool) -> Result<i64> {
+  let client = pool.get().await?;
+  Ok(q::count_evaluations().bind(&client).one().await?)
+}
+
+/// Count evaluations grouped by status.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn evaluations_by_status(
+  pool: &PgPool,
+) -> Result<Vec<EvaluationStatusCount>> {
+  let client = pool.get().await?;
+  let rows = q::evaluations_by_status().bind(&client).all().await?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|r| {
+        EvaluationStatusCount {
+          status: r.status,
+          count:  r.count,
+        }
+      })
+      .collect(),
+  )
+}
+
+/// Global entity counters for metrics output.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn overview_counts(pool: &PgPool) -> Result<OverviewCounts> {
+  let client = pool.get().await?;
+  let row = q::overview_counts().bind(&client).one().await?;
+  Ok(OverviewCounts {
+    project_count: row.project_count,
+    channel_count: row.channel_count,
+    builder_count: row.builder_count,
+  })
+}
+
+/// Count succeeded and failed builds grouped by project.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn per_project_build_counts(
+  pool: &PgPool,
+) -> Result<Vec<ProjectBuildCounts>> {
+  let client = pool.get().await?;
+  let rows = q::per_project_build_counts().bind(&client).all().await?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|r| {
+        ProjectBuildCounts {
+          name:            r.name,
+          succeeded_count: r.succeeded_count,
+          failed_count:    r.failed_count,
+        }
+      })
+      .collect(),
+  )
+}
+
+/// Overall build duration percentiles.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn duration_percentiles_overall(
+  pool: &PgPool,
+) -> Result<OverallDurationPercentiles> {
+  let client = pool.get().await?;
+  let row = q::duration_percentiles_overall()
+    .bind(&client)
+    .one()
+    .await?;
+  Ok(OverallDurationPercentiles {
+    p50: row.duration_p50,
+    p95: row.duration_p95,
+    p99: row.duration_p99,
+  })
 }

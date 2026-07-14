@@ -5,8 +5,7 @@
 
 use std::{collections::BTreeSet, path::Path};
 
-use circus_common::{models::Build, repo};
-use sqlx::PgPool;
+use circus_common::{PgPool, models::Build, repo};
 use tokio::{process::Command, sync::Semaphore};
 
 /// Cap dry-run fan-out on a cold queue.

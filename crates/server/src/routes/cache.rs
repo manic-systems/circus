@@ -30,8 +30,13 @@ use circus_binary_cache::{
   fmt::Any as AnyHashFmt,
   format_narinfo_txt,
 };
+use circus_common::{PgPool, repo::cache::PersistedNarinfoSig};
 use serde::Deserialize;
-use sqlx::{FromRow, PgPool, SqlitePool};
+use tokio_rusqlite::{
+  Connection as SqliteConnection,
+  OptionalExtension,
+  rusqlite,
+};
 use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
@@ -39,16 +44,12 @@ use crate::{error::ApiError, state::AppState};
 const S3_GET_PRESIGN_EXPIRY: Duration = Duration::from_hours(1);
 const MAX_NAR_OBJECT_NAME_LEN: usize = 512;
 
-#[derive(FromRow)]
 struct ValidPathRow {
   id:                i64,
   path:              String,
-  #[sqlx(rename = "hash")]
   nar_hash:          String,
-  #[sqlx(rename = "registrationTime")]
   registration_time: i64,
   deriver:           Option<String>,
-  #[sqlx(rename = "narSize")]
   nar_size:          Option<i64>,
   ultimate:          Option<i32>,
   sigs:              Option<String>,
@@ -120,7 +121,15 @@ fn cache_data_error(error: impl std::fmt::Display) -> ApiError {
   )))
 }
 
-async fn open_nix_store_db(state: &AppState) -> Option<&SqlitePool> {
+/// The local Nix store DB is sqlite, so its errors cannot flow through
+/// `CiError::Database` (which wraps tokio-postgres errors).
+fn nix_store_db_error(error: impl std::fmt::Display) -> ApiError {
+  ApiError(circus_common::CiError::Internal(format!(
+    "local Nix store DB query failed: {error}"
+  )))
+}
+
+async fn open_nix_store_db(state: &AppState) -> Option<&SqliteConnection> {
   match state.nix_store.open_db().await {
     Ok(db) => db,
     Err(e) => {
@@ -219,21 +228,54 @@ async fn local_narinfo_row_is_servable(
 async fn query_binary_cache_path_info(
   hash: &str,
   store_dir: &StoreDir,
-  nix_store_db: &SqlitePool,
+  nix_store_db: &SqliteConnection,
 ) -> Result<Option<ValidPathInfo>, ApiError> {
   let Ok(hash) = StorePathHash::decode_digest(hash.as_bytes()) else {
     return Ok(None);
   };
   let prefix = format!("{store_dir}/{hash}");
+  let query_prefix = prefix.clone();
 
-  let Some(row) = sqlx::query_as::<_, ValidPathRow>(
-    "SELECT id, path, hash, registrationTime, deriver, narSize, ultimate, \
-     sigs, ca FROM ValidPaths WHERE path >= ?1 ORDER BY path ASC LIMIT 1",
-  )
-  .bind(&prefix)
-  .fetch_optional(nix_store_db)
-  .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?
+  let Some((row, references)) = nix_store_db
+    .call(
+      move |conn| -> rusqlite::Result<Option<(ValidPathRow, Vec<String>)>> {
+        let row = conn
+          .query_row(
+            "SELECT id, path, hash, registrationTime, deriver, narSize, \
+             ultimate, sigs, ca FROM ValidPaths WHERE path >= ?1 ORDER BY \
+             path ASC LIMIT 1",
+            [&query_prefix],
+            |row| {
+              Ok(ValidPathRow {
+                id:                row.get(0)?,
+                path:              row.get(1)?,
+                nar_hash:          row.get(2)?,
+                registration_time: row.get(3)?,
+                deriver:           row.get(4)?,
+                nar_size:          row.get(5)?,
+                ultimate:          row.get(6)?,
+                sigs:              row.get(7)?,
+                ca:                row.get(8)?,
+              })
+            },
+          )
+          .optional()?;
+        let Some(row) = row else {
+          return Ok(None);
+        };
+
+        let mut statement = conn.prepare(
+          "SELECT v.path FROM Refs r JOIN ValidPaths v ON r.reference = v.id \
+           WHERE r.referrer = ?1",
+        )?;
+        let references = statement
+          .query_map([row.id], |row| row.get(0))?
+          .collect::<Result<Vec<String>, _>>()?;
+        Ok(Some((row, references)))
+      },
+    )
+    .await
+    .map_err(nix_store_db_error)?
   else {
     return Ok(None);
   };
@@ -242,17 +284,10 @@ async fn query_binary_cache_path_info(
     return Ok(None);
   }
 
-  let references = sqlx::query_scalar::<_, String>(
-    "SELECT v.path FROM Refs r JOIN ValidPaths v ON r.reference = v.id WHERE \
-     r.referrer = ?1",
-  )
-  .bind(row.id)
-  .fetch_all(nix_store_db)
-  .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?
-  .into_iter()
-  .filter_map(|path| store_dir.parse(&path).ok())
-  .collect::<BTreeSet<_>>();
+  let references = references
+    .into_iter()
+    .filter_map(|path| store_dir.parse(&path).ok())
+    .collect::<BTreeSet<_>>();
 
   let Ok(path) = store_dir.parse::<StorePath>(&row.path) else {
     return Ok(None);
@@ -301,27 +336,11 @@ async fn has_circus_build_product(
   store_path: &str,
   project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-  sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM build_products bp JOIN builds b ON b.id = \
-     bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j \
-     ON j.id = e.jobset_id WHERE bp.path = $1 AND ($2::uuid IS NULL OR \
-     j.project_id = $2) UNION ALL SELECT 1 FROM builds b JOIN evaluations e \
-     ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE \
-     b.build_output_path = $1 AND ($2::uuid IS NULL OR j.project_id = $2))",
+  circus_common::repo::cache::has_circus_build_product(
+    pool, store_path, project_id,
   )
-  .bind(store_path)
-  .bind(project_id)
-  .fetch_one(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
-}
-
-#[derive(FromRow)]
-struct PersistedNarinfoSig {
-  nar_hash:   String,
-  nar_size:   i64,
-  references: Vec<String>,
-  sig:        Option<String>,
+  .map_err(ApiError)
 }
 
 /// Whether a persisted narinfo's signature verifies under our own public key.
@@ -334,18 +353,11 @@ async fn has_signed_persisted_narinfo(
   project_id: Option<Uuid>,
   public_key: Option<&PublicKey>,
 ) -> Result<bool, ApiError> {
-  let row = sqlx::query_as::<_, PersistedNarinfoSig>(
-    "SELECT nar_hash, nar_size, \"references\", sig FROM narinfo_cache n \
-     WHERE n.store_path = $1 AND n.sig IS NOT NULL AND btrim(n.sig) != '' AND \
-     ($2::uuid IS NULL OR n.project_id = $2 OR EXISTS (SELECT 1 FROM \
-     narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND \
-     ncp.project_id = $2))",
+  let row = circus_common::repo::cache::signed_persisted_narinfo(
+    pool, store_path, project_id,
   )
-  .bind(store_path)
-  .bind(project_id)
-  .fetch_optional(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+  .map_err(ApiError)?;
   let Some(public_key) = public_key else {
     return Ok(row.is_some());
   };
@@ -384,20 +396,11 @@ async fn has_circus_signed_build_product(
   store_path: &str,
   project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-  sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM build_products bp JOIN builds b ON b.id = \
-     bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j \
-     ON j.id = e.jobset_id WHERE bp.path = $1 AND b.signed = true AND \
-     ($2::uuid IS NULL OR j.project_id = $2) UNION ALL SELECT 1 FROM builds b \
-     JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = \
-     e.jobset_id WHERE b.build_output_path = $1 AND b.signed = true AND \
-     ($2::uuid IS NULL OR j.project_id = $2))",
+  circus_common::repo::cache::has_circus_signed_build_product(
+    pool, store_path, project_id,
   )
-  .bind(store_path)
-  .bind(project_id)
-  .fetch_one(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+  .map_err(ApiError)
 }
 
 async fn has_circus_derivation_path(
@@ -405,53 +408,50 @@ async fn has_circus_derivation_path(
   store_path: &str,
   project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-  sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM builds b JOIN evaluations e ON e.id = \
-     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.drv_path = \
-     $1 AND ($2::uuid IS NULL OR j.project_id = $2))",
+  circus_common::repo::cache::has_circus_derivation_path(
+    pool, store_path, project_id,
   )
-  .bind(store_path)
-  .bind(project_id)
-  .fetch_one(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+  .map_err(ApiError)
 }
 
 async fn has_circus_derivation_direct_reference(
   pool: &PgPool,
-  nix_store_db: &SqlitePool,
+  nix_store_db: &SqliteConnection,
   store_path: &str,
   project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-  let referrer_drvs = sqlx::query_scalar::<_, String>(
-    "SELECT referrer.path FROM Refs r JOIN ValidPaths requested ON \
-     r.reference = requested.id JOIN ValidPaths referrer ON r.referrer = \
-     referrer.id WHERE requested.path = ?1 AND referrer.path LIKE '%.drv'",
-  )
-  .bind(store_path)
-  .fetch_all(nix_store_db)
-  .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))?;
+  let store_path = store_path.to_owned();
+  let referrer_drvs = nix_store_db
+    .call(move |conn| -> rusqlite::Result<Vec<String>> {
+      let mut statement = conn.prepare(
+        "SELECT referrer.path FROM Refs r JOIN ValidPaths requested ON \
+         r.reference = requested.id JOIN ValidPaths referrer ON r.referrer = \
+         referrer.id WHERE requested.path = ?1 AND referrer.path LIKE '%.drv'",
+      )?;
+      statement
+        .query_map([store_path], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()
+    })
+    .await
+    .map_err(nix_store_db_error)?;
 
   if referrer_drvs.is_empty() {
     return Ok(false);
   }
 
-  sqlx::query_scalar::<_, bool>(
-    "SELECT EXISTS(SELECT 1 FROM builds b JOIN evaluations e ON e.id = \
-     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.drv_path = \
-     ANY($1) AND ($2::uuid IS NULL OR j.project_id = $2))",
+  circus_common::repo::cache::has_circus_derivation_path_any(
+    pool,
+    &referrer_drvs,
+    project_id,
   )
-  .bind(referrer_drvs)
-  .bind(project_id)
-  .fetch_one(pool)
   .await
-  .map_err(|e| ApiError(circus_common::CiError::Database(e)))
+  .map_err(ApiError)
 }
 
 async fn is_servable_binary_cache_path(
   pool: &PgPool,
-  nix_store_db: &SqlitePool,
+  nix_store_db: &SqliteConnection,
   info: &ValidPathInfo,
   scope: CacheScope,
   public_key: Option<&PublicKey>,

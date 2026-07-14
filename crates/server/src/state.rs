@@ -9,6 +9,7 @@ use std::{
 
 use circus_binary_cache::StoreDir;
 use circus_common::{
+  PgPool,
   models::{ApiKey, User},
   roles::GlobalRole,
 };
@@ -17,8 +18,8 @@ use dashmap::DashMap;
 use hmac::KeyInit;
 use moka::sync::Cache;
 use regex::Regex;
-use sqlx::{ConnectOptions as _, PgPool, SqlitePool};
 use tokio::sync::OnceCell;
+use tokio_rusqlite::{Connection as SqliteConnection, OpenFlags};
 
 /// How often the background cleanup task runs (every 5 minutes).
 const SESSION_CLEANUP_INTERVAL: std::time::Duration =
@@ -118,7 +119,7 @@ pub type NarinfoCache = Cache<String, String>;
 pub struct NixStore {
   store_dir_path: PathBuf,
   store_dir:      StoreDir,
-  db:             Arc<OnceCell<SqlitePool>>,
+  db:             Arc<OnceCell<SqliteConnection>>,
 }
 
 impl NixStore {
@@ -157,9 +158,10 @@ impl NixStore {
   ///
   /// # Errors
   ///
-  /// Returns a [`sqlx::Error`] if the database file exists but cannot be
-  /// opened (e.g. due to permissions or corruption).
-  pub async fn open_db(&self) -> Result<Option<&SqlitePool>, sqlx::Error> {
+  /// Returns an error if the database file exists but cannot be opened.
+  pub async fn open_db(
+    &self,
+  ) -> Result<Option<&SqliteConnection>, tokio_rusqlite::rusqlite::Error> {
     let Some(db_path) = self.db_path() else {
       return Ok(None);
     };
@@ -167,15 +169,12 @@ impl NixStore {
       return Ok(None);
     }
 
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-      .filename(&db_path)
-      .read_only(true)
-      .create_if_missing(false)
-      .disable_statement_logging();
+    let flags =
+      OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
     self
       .db
-      .get_or_try_init(|| async { SqlitePool::connect_with(options).await })
+      .get_or_try_init(|| SqliteConnection::open_with_flags(db_path, flags))
       .await
       .map(Some)
   }

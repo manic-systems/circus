@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use circus_common::alerts::AlertManager;
+use circus_common::{PgPool, alerts::AlertManager};
 use circus_config::{
   BuilderSchedulingStrategy,
   CacheConfig,
@@ -10,7 +10,6 @@ use circus_config::{
   NotificationsConfig,
   SigningConfig,
 };
-use sqlx::PgPool;
 use tokio::sync::Semaphore;
 
 use crate::{caps::RunnerCaps, psi::PsiCache, rpc::AgentPool};

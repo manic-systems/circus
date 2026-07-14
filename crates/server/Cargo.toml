@@ -31,13 +31,13 @@ serde.workspace               = true
 serde_json.workspace          = true
 serde_path_to_error.workspace = true
 sha2.workspace                = true
-sqlx                          = { workspace = true, features = [ "sqlite" ] }
 strip-ansi-escapes.workspace  = true
 subtle.workspace              = true
 tar.workspace                 = true
 thiserror.workspace           = true
 time.workspace                = true
 tokio.workspace               = true
+tokio-rusqlite.workspace      = true
 tokio-util.workspace          = true
 toml.workspace                = true
 tower.workspace               = true
@@ -59,8 +59,10 @@ cognos.workspace = true
 regex.workspace  = true
 
 [dev-dependencies]
-serde_urlencoded = "0.7"
-tower.workspace  = true
+circus-migrations.workspace = true
+serde_urlencoded            = "0.7"
+tower.workspace             = true
+url.workspace               = true
 
 [lints]
 workspace = true

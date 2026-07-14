@@ -16,6 +16,7 @@ use std::{
 
 use capnp::capability::Promise;
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
+use circus_common::{PgPool, repo};
 use circus_proto::{
   PROTO_VERSION,
   agent_session,
@@ -27,7 +28,6 @@ use circus_proto::{
 };
 use color_eyre::eyre::{Context as _, bail};
 use sha2::{Digest as _, Sha256};
-use sqlx::PgPool;
 use subtle::ConstantTimeEq as _;
 use tokio::{
   net::TcpListener,
@@ -95,19 +95,6 @@ struct ExpectedUpload {
   nar_size:    u64,
   compression: String,
   nar_path:    String,
-}
-
-async fn project_id_for_build(
-  pool: &PgPool,
-  build_id: Uuid,
-) -> Result<Option<Uuid>, sqlx::Error> {
-  sqlx::query_scalar(
-    "SELECT j.project_id FROM builds b JOIN evaluations e ON e.id = \
-     b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.id = $1",
-  )
-  .bind(build_id)
-  .fetch_optional(pool)
-  .await
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,7 +315,9 @@ async fn serve_one(
       .remove_if_connection(&machine_id, registered.connection_id)
       .is_some()
     {
-      if let Err(e) = mark_disconnected(&db_pool, machine_id).await {
+      if let Err(e) =
+        repo::builder_sessions::mark_disconnected(&db_pool, machine_id).await
+      {
         tracing::warn!(%machine_id, "failed to mark disconnected: {e}");
       }
       tracing::info!(%machine_id, "agent connection closed");
@@ -518,19 +507,22 @@ impl runner::Server for RunnerImpl {
         });
       }
 
-      if let Err(e) = upsert_session(
+      if let Err(e) = repo::builder_sessions::register(
         &db_pool,
-        machine_id,
-        &name,
-        &hostname,
-        &systems,
-        &supported,
-        &mandatory,
-        speed,
-        cpu as i32,
-        maxj as i32,
-        ephemeral,
-        auth_kind.as_str(),
+        repo::builder_sessions::RegisterSession {
+          machine_id,
+          name: &name,
+          hostname: &hostname,
+          systems: &systems,
+          supported_features: &supported,
+          mandatory_features: &mandatory,
+          speed_factor: speed,
+          cpu_count: cpu as i32,
+          max_jobs: maxj as i32,
+          proto_version: PROTO_VERSION,
+          ephemeral,
+          auth_kind: auth_kind.as_str(),
+        },
       )
       .await
       {
@@ -835,14 +827,11 @@ impl runner::Server for RunnerImpl {
       let file_hash_opt = Some(verified.file_hash.as_str());
       let file_size_opt =
         (compression != "none").then_some(verified.file_size as i64);
-      let project_id =
-        project_id_for_build(&db_pool, build_id)
-          .await
-          .map_err(|e| {
-            capnp::Error::failed(format!(
-              "failed to resolve build project: {e}"
-            ))
-          })?;
+      let project_id = repo::builds::project_id_for_build(&db_pool, build_id)
+        .await
+        .map_err(|e| {
+          capnp::Error::failed(format!("failed to resolve build project: {e}"))
+        })?;
 
       // Sign over the canonical Nix fingerprint (store path, nar hash, nar
       // size, refs) with the nar hash in sha256 base32. Never persist an
@@ -1226,66 +1215,6 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
     }
   }
   matched == 1
-}
-
-#[expect(clippy::too_many_arguments, reason = "DB upsert needs all fields")]
-async fn upsert_session(
-  pool: &PgPool,
-  machine_id: Uuid,
-  name: &str,
-  hostname: &str,
-  systems: &[String],
-  supported: &[String],
-  mandatory: &[String],
-  speed: f32,
-  cpu: i32,
-  max_jobs: i32,
-  ephemeral: bool,
-  auth_kind: &str,
-) -> Result<(), sqlx::Error> {
-  sqlx::query(
-    "INSERT INTO builder_sessions (machine_id, name, hostname, systems, \
-     supported_features, mandatory_features, speed_factor, cpu_count, \
-     max_jobs, proto_version, ephemeral, auth_kind, connected, last_seen, \
-     updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-     TRUE, NOW(), NOW()) ON CONFLICT (machine_id) DO UPDATE SET name = \
-     EXCLUDED.name, hostname = EXCLUDED.hostname, systems = EXCLUDED.systems, \
-     supported_features = EXCLUDED.supported_features, mandatory_features = \
-     EXCLUDED.mandatory_features, speed_factor = EXCLUDED.speed_factor, \
-     cpu_count = EXCLUDED.cpu_count, max_jobs = EXCLUDED.max_jobs, \
-     proto_version = EXCLUDED.proto_version, ephemeral = EXCLUDED.ephemeral, \
-     auth_kind = EXCLUDED.auth_kind, connected = TRUE, last_seen = NOW(), \
-     updated_at = NOW()",
-  )
-  .bind(machine_id)
-  .bind(name)
-  .bind(hostname)
-  .bind(systems)
-  .bind(supported)
-  .bind(mandatory)
-  .bind(speed)
-  .bind(cpu)
-  .bind(max_jobs)
-  .bind(PROTO_VERSION)
-  .bind(ephemeral)
-  .bind(auth_kind)
-  .execute(pool)
-  .await?;
-  Ok(())
-}
-
-async fn mark_disconnected(
-  pool: &PgPool,
-  machine_id: Uuid,
-) -> Result<(), sqlx::Error> {
-  sqlx::query(
-    "UPDATE builder_sessions SET connected = FALSE, updated_at = NOW() WHERE \
-     machine_id = $1",
-  )
-  .bind(machine_id)
-  .execute(pool)
-  .await?;
-  Ok(())
 }
 
 #[cfg(test)]

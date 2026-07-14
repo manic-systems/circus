@@ -1,11 +1,14 @@
-//! Advanced search functionality for circus
+//! Advanced search over projects, jobsets, evaluations, and builds. Optional
+//! filters are NULL-guarded predicates and the sorts are CASE ladders, so
+//! every query stays static and generated.
 
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use circus_codegen::queries::search as q;
 use uuid::Uuid;
 
 use crate::{
-  error::Result,
-  models::{Build, Evaluation, Jobset, Project},
+  db::PgPool,
+  error::{CiError, Result},
+  models::{Build, BuildStatus, Evaluation, Jobset, Project},
 };
 
 /// Search entity types
@@ -38,7 +41,6 @@ pub enum BuildSortField {
 pub enum ProjectSortField {
   Name,
   CreatedAt,
-  LastEvaluation,
 }
 
 /// Build status filter
@@ -58,20 +60,42 @@ pub enum BuildStatusFilter {
   LogLimitExceeded,
   NarSizeLimitExceeded,
   NonDeterministic,
+  OomKilled,
+}
+
+impl BuildStatusFilter {
+  const fn as_str(self) -> &'static str {
+    match self {
+      Self::Pending => "pending",
+      Self::Running => "running",
+      Self::Succeeded => "succeeded",
+      Self::Failed => "failed",
+      Self::Cancelled => "cancelled",
+      Self::DependencyFailed => "dependency_failed",
+      Self::Aborted => "aborted",
+      Self::FailedWithOutput => "failed_with_output",
+      Self::Timeout => "timeout",
+      Self::CachedFailure => "cached_failure",
+      Self::UnsupportedSystem => "unsupported_system",
+      Self::LogLimitExceeded => "log_limit_exceeded",
+      Self::NarSizeLimitExceeded => "nar_size_limit_exceeded",
+      Self::NonDeterministic => "non_deterministic",
+      Self::OomKilled => "oom_killed",
+    }
+  }
 }
 
 /// Search filters for builds
 #[derive(Debug, Clone, Default)]
 pub struct BuildSearchFilters {
-  pub status:          Option<BuildStatusFilter>,
-  pub project_id:      Option<Uuid>,
-  pub jobset_id:       Option<Uuid>,
-  pub evaluation_id:   Option<Uuid>,
-  pub created_after:   Option<chrono::DateTime<chrono::Utc>>,
-  pub created_before:  Option<chrono::DateTime<chrono::Utc>>,
-  pub min_priority:    Option<i32>,
-  pub max_priority:    Option<i32>,
-  pub has_substitutes: Option<bool>,
+  pub status:         Option<BuildStatusFilter>,
+  pub project_id:     Option<Uuid>,
+  pub jobset_id:      Option<Uuid>,
+  pub evaluation_id:  Option<Uuid>,
+  pub created_after:  Option<chrono::DateTime<chrono::Utc>>,
+  pub created_before: Option<chrono::DateTime<chrono::Utc>>,
+  pub min_priority:   Option<i32>,
+  pub max_priority:   Option<i32>,
 }
 
 /// Search filters for projects
@@ -98,119 +122,6 @@ pub struct EvaluationSearchFilters {
   pub has_builds:      Option<bool>,
   pub finished_after:  Option<chrono::DateTime<chrono::Utc>>,
   pub finished_before: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl BuildStatusFilter {
-  const fn as_str(self) -> &'static str {
-    match self {
-      Self::Pending => "pending",
-      Self::Running => "running",
-      Self::Succeeded => "succeeded",
-      Self::Failed => "failed",
-      Self::Cancelled => "cancelled",
-      Self::DependencyFailed => "dependency_failed",
-      Self::Aborted => "aborted",
-      Self::FailedWithOutput => "failed_with_output",
-      Self::Timeout => "timeout",
-      Self::CachedFailure => "cached_failure",
-      Self::UnsupportedSystem => "unsupported_system",
-      Self::LogLimitExceeded => "log_limit_exceeded",
-      Self::NarSizeLimitExceeded => "nar_size_limit_exceeded",
-      Self::NonDeterministic => "non_deterministic",
-    }
-  }
-}
-
-impl BuildSearchFilters {
-  fn apply_to(&self, builder: &mut QueryBuilder<Postgres>) {
-    if let Some(status) = self.status {
-      builder.push(" AND status = ");
-      builder.push_bind(status.as_str());
-    }
-    if let Some(project_id) = self.project_id {
-      builder.push(" AND project_id = ");
-      builder.push_bind(project_id);
-    }
-    if let Some(jobset_id) = self.jobset_id {
-      builder.push(" AND jobset_id = ");
-      builder.push_bind(jobset_id);
-    }
-    if let Some(evaluation_id) = self.evaluation_id {
-      builder.push(" AND evaluation_id = ");
-      builder.push_bind(evaluation_id);
-    }
-    if let Some(after) = self.created_after {
-      builder.push(" AND created_at >= ");
-      builder.push_bind(after);
-    }
-    if let Some(before) = self.created_before {
-      builder.push(" AND created_at <= ");
-      builder.push_bind(before);
-    }
-    if let Some(min) = self.min_priority {
-      builder.push(" AND priority >= ");
-      builder.push_bind(min);
-    }
-    if let Some(max) = self.max_priority {
-      builder.push(" AND priority <= ");
-      builder.push_bind(max);
-    }
-    if let Some(has) = self.has_substitutes {
-      builder.push(" AND has_substitutes = ");
-      builder.push_bind(has);
-    }
-  }
-}
-
-impl JobsetSearchFilters {
-  fn apply_to(&self, builder: &mut QueryBuilder<Postgres>) {
-    if let Some(project_id) = self.project_id {
-      builder.push(" AND project_id = ");
-      builder.push_bind(project_id);
-    }
-    if let Some(enabled) = self.enabled {
-      builder.push(" AND enabled = ");
-      builder.push_bind(enabled);
-    }
-    if let Some(flake_mode) = self.flake_mode {
-      builder.push(" AND flake_mode = ");
-      builder.push_bind(flake_mode);
-    }
-  }
-}
-
-impl EvaluationSearchFilters {
-  fn apply_to(&self, builder: &mut QueryBuilder<Postgres>) {
-    if let Some(project_id) = self.project_id {
-      builder.push(" AND project_id = ");
-      builder.push_bind(project_id);
-    }
-    if let Some(jobset_id) = self.jobset_id {
-      builder.push(" AND jobset_id = ");
-      builder.push_bind(jobset_id);
-    }
-    if let Some(has_builds) = self.has_builds {
-      if has_builds {
-        builder.push(
-          " AND EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
-           evaluations.id)",
-        );
-      } else {
-        builder.push(
-          " AND NOT EXISTS (SELECT 1 FROM builds WHERE builds.evaluation_id = \
-           evaluations.id)",
-        );
-      }
-    }
-    if let Some(after) = self.finished_after {
-      builder.push(" AND finished_at >= ");
-      builder.push_bind(after);
-    }
-    if let Some(before) = self.finished_before {
-      builder.push(" AND finished_at <= ");
-      builder.push_bind(before);
-    }
-  }
 }
 
 /// Search parameters
@@ -256,6 +167,148 @@ pub struct SearchResults {
   pub total_jobsets:     i64,
   pub total_evaluations: i64,
   pub total_builds:      i64,
+}
+
+const fn project_sort_key(
+  sort: Option<(ProjectSortField, SortOrder)>,
+) -> Option<&'static str> {
+  match sort {
+    None => None,
+    Some((ProjectSortField::Name, SortOrder::Asc)) => Some("name_asc"),
+    Some((ProjectSortField::Name, SortOrder::Desc)) => Some("name_desc"),
+    Some((ProjectSortField::CreatedAt, SortOrder::Asc)) => {
+      Some("created_at_asc")
+    },
+    Some((ProjectSortField::CreatedAt, SortOrder::Desc)) => {
+      Some("created_at_desc")
+    },
+  }
+}
+
+const fn build_sort_key(
+  sort: Option<(BuildSortField, SortOrder)>,
+) -> Option<&'static str> {
+  match sort {
+    None => None,
+    Some((BuildSortField::CreatedAt, SortOrder::Asc)) => Some("created_at_asc"),
+    Some((BuildSortField::CreatedAt, SortOrder::Desc)) => {
+      Some("created_at_desc")
+    },
+    Some((BuildSortField::JobName, SortOrder::Asc)) => Some("job_name_asc"),
+    Some((BuildSortField::JobName, SortOrder::Desc)) => Some("job_name_desc"),
+    Some((BuildSortField::Status, SortOrder::Asc)) => Some("status_asc"),
+    Some((BuildSortField::Status, SortOrder::Desc)) => Some("status_desc"),
+    Some((BuildSortField::Priority, SortOrder::Asc)) => Some("priority_asc"),
+    Some((BuildSortField::Priority, SortOrder::Desc)) => Some("priority_desc"),
+  }
+}
+
+fn like_pattern(query: &str) -> String {
+  if query.is_empty() {
+    "%".to_string()
+  } else {
+    format!("%{query}%")
+  }
+}
+
+fn parse_build_status(status: &str, id: Uuid) -> Result<BuildStatus> {
+  status.parse().map_err(|e| {
+    CiError::Internal(format!("build {id} in the database has {e}"))
+  })
+}
+
+fn project_from_quick_search_row(
+  row: q::ProjectQuickSearchRow,
+) -> Result<Project> {
+  Ok(Project {
+    id:              row.id,
+    name:            row.name,
+    description:     row.description,
+    repository_url:  row.repository_url,
+    cache_enabled:   row.cache_enabled,
+    cache_url:       row.cache_url,
+    cache_upstreams: serde_json::from_value(row.cache_upstreams)?,
+    created_at:      row.created_at,
+    updated_at:      row.updated_at,
+  })
+}
+
+fn jobset_from_search_row(row: q::JobsetSearchRow) -> Result<Jobset> {
+  Ok(Jobset {
+    id:                row.id,
+    project_id:        row.project_id,
+    name:              row.name,
+    nix_expression:    row.nix_expression,
+    enabled:           row.enabled,
+    flake_mode:        row.flake_mode,
+    check_interval:    row.check_interval,
+    trigger_mode:      row.trigger_mode.parse().map_err(CiError::Internal)?,
+    branch:            row.branch,
+    branch_pattern:    row.branch_pattern,
+    tag_pattern:       row.tag_pattern,
+    scheduling_shares: row.scheduling_shares,
+    created_at:        row.created_at,
+    updated_at:        row.updated_at,
+    state:             row.state.parse().map_err(CiError::Internal)?,
+    last_checked_at:   row.last_checked_at,
+    keep_nr:           row.keep_nr,
+  })
+}
+
+fn evaluation_from_search_row(
+  row: q::EvaluationSearchRow,
+) -> Result<Evaluation> {
+  Ok(Evaluation {
+    id:              row.id,
+    jobset_id:       row.jobset_id,
+    commit_hash:     row.commit_hash,
+    evaluation_time: row.evaluation_time,
+    status:          row.status.parse().map_err(CiError::Internal)?,
+    error_message:   row.error_message,
+    inputs_hash:     row.inputs_hash,
+    trigger_kind:    row.trigger_kind.parse().map_err(CiError::Internal)?,
+    hidden:          row.hidden,
+    pr_number:       row.pr_number,
+    pr_head_branch:  row.pr_head_branch,
+    pr_base_branch:  row.pr_base_branch,
+    pr_action:       row.pr_action,
+  })
+}
+
+fn build_from_quick_search_row(row: q::BuildQuickSearchRow) -> Result<Build> {
+  Ok(Build {
+    id:                         row.id,
+    evaluation_id:              row.evaluation_id,
+    job_name:                   row.job_name,
+    drv_path:                   row.drv_path,
+    status:                     parse_build_status(&row.status, row.id)?,
+    started_at:                 row.started_at,
+    completed_at:               row.completed_at,
+    log_path:                   row.log_path,
+    build_output_path:          row.build_output_path,
+    error_message:              row.error_message,
+    system:                     row.system,
+    priority:                   row.priority,
+    retry_count:                row.retry_count,
+    max_retries:                row.max_retries,
+    notification_pending_since: row.notification_pending_since,
+    created_at:                 row.created_at,
+    outputs:                    row.outputs,
+    is_aggregate:               row.is_aggregate,
+    constituents:               row.constituents,
+    builder_id:                 row.builder_id,
+    agent_machine_id:           row.agent_machine_id,
+    signed:                     row.signed,
+    keep:                       row.keep,
+    is_fod:                     row.is_fod,
+    fod_hash:                   row.fod_hash,
+    meta_description:           row.meta_description,
+    meta_license:               row.meta_license,
+    meta_homepage:              row.meta_homepage,
+    meta_maintainers:           row.meta_maintainers,
+    required_features:          row.required_features,
+    effective_features:         row.effective_features,
+  })
 }
 
 /// Execute a comprehensive search across all entities
@@ -311,89 +364,39 @@ async fn search_projects(
   pool: &PgPool,
   params: &SearchParams,
 ) -> Result<(Vec<Project>, i64)> {
-  let pattern = if params.query.is_empty() {
-    "%".to_string()
-  } else {
-    format!("%{}%", params.query)
-  };
+  let pattern = like_pattern(&params.query);
+  let f = params.project_filters.clone().unwrap_or_default();
+  let sort = project_sort_key(params.project_sort);
 
-  let mut query_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT * FROM projects WHERE (name ILIKE ");
-  query_builder.push_bind(&pattern);
-  query_builder.push(" OR description ILIKE ");
-  query_builder.push_bind(&pattern);
-  query_builder.push(")");
-
-  // Apply filters
-  if let Some(ref filters) = params.project_filters {
-    if let Some(after) = filters.created_after {
-      query_builder.push(" AND created_at >= ");
-      query_builder.push_bind(after);
-    }
-    if let Some(before) = filters.created_before {
-      query_builder.push(" AND created_at <= ");
-      query_builder.push_bind(before);
-    }
-    if let Some(has_jobsets) = filters.has_jobsets {
-      if has_jobsets {
-        query_builder.push(
-          " AND EXISTS (SELECT 1 FROM jobsets WHERE jobsets.project_id = \
-           projects.id)",
-        );
-      } else {
-        query_builder.push(
-          " AND NOT EXISTS (SELECT 1 FROM jobsets WHERE jobsets.project_id = \
-           projects.id)",
-        );
-      }
-    }
-  }
-
-  // Get total count
-  let (total,): (i64,) = if pattern == "%" {
-    sqlx::query_as("SELECT COUNT(*) FROM projects")
-      .fetch_one(pool)
-      .await?
-  } else {
-    sqlx::query_as(
-      "SELECT COUNT(*) FROM projects WHERE name ILIKE $1 OR description ILIKE \
-       $1",
+  let client = pool.get().await?;
+  let rows = q::search_projects()
+    .bind(
+      &client,
+      &pattern,
+      &f.created_after,
+      &f.created_before,
+      &f.has_jobsets,
+      &sort,
+      &params.limit,
+      &params.offset,
     )
-    .bind(&pattern)
-    .fetch_one(pool)
-    .await?
-  };
-
-  // Apply sorting
-  query_builder.push(" ORDER BY ");
-  if let Some((field, order)) = &params.project_sort {
-    let field_str = match field {
-      ProjectSortField::Name => "name",
-      ProjectSortField::CreatedAt => "created_at",
-      ProjectSortField::LastEvaluation => "last_evaluation_at",
-    };
-    let order_str = match order {
-      SortOrder::Asc => "ASC",
-      SortOrder::Desc => "DESC",
-    };
-    query_builder.push(field_str);
-    query_builder.push(" ");
-    query_builder.push(order_str);
-  } else {
-    query_builder.push("name ASC");
-  }
-
-  // Apply pagination
-  query_builder.push(" LIMIT ");
-  query_builder.push_bind(params.limit);
-  query_builder.push(" OFFSET ");
-  query_builder.push_bind(params.offset);
-
-  let projects = query_builder
-    .build_query_as::<Project>()
-    .fetch_all(pool)
+    .all()
+    .await?;
+  let total = q::count_projects()
+    .bind(
+      &client,
+      &pattern,
+      &f.created_after,
+      &f.created_before,
+      &f.has_jobsets,
+    )
+    .one()
     .await?;
 
+  let projects = rows
+    .into_iter()
+    .map(project_from_quick_search_row)
+    .collect::<Result<_>>()?;
   Ok((projects, total))
 }
 
@@ -402,41 +405,31 @@ async fn search_jobsets(
   pool: &PgPool,
   params: &SearchParams,
 ) -> Result<(Vec<Jobset>, i64)> {
-  let pattern = if params.query.is_empty() {
-    "%".to_string()
-  } else {
-    format!("%{}%", params.query)
-  };
+  let pattern = like_pattern(&params.query);
+  let f = params.jobset_filters.clone().unwrap_or_default();
 
-  let mut query_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT * FROM jobsets WHERE name ILIKE ");
-  query_builder.push_bind(&pattern);
-
-  // Apply filters
-  if let Some(ref filters) = params.jobset_filters {
-    filters.apply_to(&mut query_builder);
-  }
-
-  // Count query mirrors the data query filters.
-  let mut count_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT COUNT(*) FROM jobsets WHERE name ILIKE ");
-  count_builder.push_bind(&pattern);
-  if let Some(ref filters) = params.jobset_filters {
-    filters.apply_to(&mut count_builder);
-  }
-  let (total,): (i64,) = count_builder.build_query_as().fetch_one(pool).await?;
-
-  // Apply sorting
-  query_builder.push(" ORDER BY name ASC LIMIT ");
-  query_builder.push_bind(params.limit);
-  query_builder.push(" OFFSET ");
-  query_builder.push_bind(params.offset);
-
-  let jobsets = query_builder
-    .build_query_as::<Jobset>()
-    .fetch_all(pool)
+  let client = pool.get().await?;
+  let rows = q::search_jobsets()
+    .bind(
+      &client,
+      &pattern,
+      &f.project_id,
+      &f.enabled,
+      &f.flake_mode,
+      &params.limit,
+      &params.offset,
+    )
+    .all()
+    .await?;
+  let total = q::count_jobsets()
+    .bind(&client, &pattern, &f.project_id, &f.enabled, &f.flake_mode)
+    .one()
     .await?;
 
+  let jobsets = rows
+    .into_iter()
+    .map(jobset_from_search_row)
+    .collect::<Result<_>>()?;
   Ok((jobsets, total))
 }
 
@@ -445,33 +438,38 @@ async fn search_evaluations(
   pool: &PgPool,
   params: &SearchParams,
 ) -> Result<(Vec<Evaluation>, i64)> {
-  let mut query_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT * FROM evaluations WHERE 1=1");
+  let f = params.evaluation_filters.clone().unwrap_or_default();
 
-  // Apply filters
-  if let Some(ref filters) = params.evaluation_filters {
-    filters.apply_to(&mut query_builder);
-  }
-
-  // Count query mirrors the data query filters.
-  let mut count_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT COUNT(*) FROM evaluations WHERE 1=1");
-  if let Some(ref filters) = params.evaluation_filters {
-    filters.apply_to(&mut count_builder);
-  }
-  let (total,): (i64,) = count_builder.build_query_as().fetch_one(pool).await?;
-
-  // Apply sorting and pagination
-  query_builder.push(" ORDER BY created_at DESC LIMIT ");
-  query_builder.push_bind(params.limit);
-  query_builder.push(" OFFSET ");
-  query_builder.push_bind(params.offset);
-
-  let evaluations = query_builder
-    .build_query_as::<Evaluation>()
-    .fetch_all(pool)
+  let client = pool.get().await?;
+  let rows = q::search_evaluations()
+    .bind(
+      &client,
+      &f.project_id,
+      &f.jobset_id,
+      &f.has_builds,
+      &f.finished_after,
+      &f.finished_before,
+      &params.limit,
+      &params.offset,
+    )
+    .all()
+    .await?;
+  let total = q::count_evaluations()
+    .bind(
+      &client,
+      &f.project_id,
+      &f.jobset_id,
+      &f.has_builds,
+      &f.finished_after,
+      &f.finished_before,
+    )
+    .one()
     .await?;
 
+  let evaluations = rows
+    .into_iter()
+    .map(evaluation_from_search_row)
+    .collect::<Result<_>>()?;
   Ok((evaluations, total))
 }
 
@@ -480,71 +478,54 @@ async fn search_builds(
   pool: &PgPool,
   params: &SearchParams,
 ) -> Result<(Vec<Build>, i64)> {
-  let pattern = if params.query.is_empty() {
-    "%".to_string()
-  } else {
-    format!("%{}%", params.query)
-  };
+  let pattern = like_pattern(&params.query);
+  let f = params.build_filters.clone().unwrap_or_default();
+  let status = f.status.map(BuildStatusFilter::as_str);
+  let sort = build_sort_key(params.build_sort);
 
-  let mut query_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT * FROM builds WHERE (job_name ILIKE ");
-  query_builder.push_bind(&pattern);
-  query_builder.push(" OR drv_path ILIKE ");
-  query_builder.push_bind(&pattern);
-  query_builder.push(")");
-
-  // Apply filters
-  if let Some(ref filters) = params.build_filters {
-    filters.apply_to(&mut query_builder);
-  }
-
-  // Count query mirrors the data query filters.
-  let mut count_builder: QueryBuilder<Postgres> =
-    QueryBuilder::new("SELECT COUNT(*) FROM builds WHERE (job_name ILIKE ");
-  count_builder.push_bind(&pattern);
-  count_builder.push(" OR drv_path ILIKE ");
-  count_builder.push_bind(&pattern);
-  count_builder.push(")");
-  if let Some(ref filters) = params.build_filters {
-    filters.apply_to(&mut count_builder);
-  }
-  let (total,): (i64,) = count_builder.build_query_as().fetch_one(pool).await?;
-
-  // Apply sorting
-  query_builder.push(" ORDER BY ");
-  if let Some((field, order)) = &params.build_sort {
-    let field_str = match field {
-      BuildSortField::CreatedAt => "created_at",
-      BuildSortField::JobName => "job_name",
-      BuildSortField::Status => "status",
-      BuildSortField::Priority => "priority",
-    };
-    let order_str = match order {
-      SortOrder::Asc => "ASC",
-      SortOrder::Desc => "DESC",
-    };
-    query_builder.push(field_str);
-    query_builder.push(" ");
-    query_builder.push(order_str);
-  } else {
-    query_builder.push("created_at DESC");
-  }
-
-  // Apply pagination
-  query_builder.push(" LIMIT ");
-  query_builder.push_bind(params.limit);
-  query_builder.push(" OFFSET ");
-  query_builder.push_bind(params.offset);
-
-  let builds = query_builder
-    .build_query_as::<Build>()
-    .fetch_all(pool)
+  let client = pool.get().await?;
+  let rows = q::search_builds()
+    .bind(
+      &client,
+      &pattern,
+      &status,
+      &f.project_id,
+      &f.jobset_id,
+      &f.evaluation_id,
+      &f.created_after,
+      &f.created_before,
+      &f.min_priority,
+      &f.max_priority,
+      &sort,
+      &params.limit,
+      &params.offset,
+    )
+    .all()
+    .await?;
+  let total = q::count_builds()
+    .bind(
+      &client,
+      &pattern,
+      &status,
+      &f.project_id,
+      &f.jobset_id,
+      &f.evaluation_id,
+      &f.created_after,
+      &f.created_before,
+      &f.min_priority,
+      &f.max_priority,
+    )
+    .one()
     .await?;
 
+  let builds = rows
+    .into_iter()
+    .map(build_from_quick_search_row)
+    .collect::<Result<_>>()?;
   Ok((builds, total))
 }
 
-/// Quick search - simple text search across entities
+/// Quick search, a simple text match across projects and builds.
 ///
 /// # Errors
 ///
@@ -555,24 +536,25 @@ pub async fn quick_search(
   limit: i64,
 ) -> Result<(Vec<Project>, Vec<Build>)> {
   let pattern = format!("%{query}%");
+  let client = pool.get().await?;
 
-  let projects = sqlx::query_as::<_, Project>(
-    "SELECT * FROM projects WHERE name ILIKE $1 OR description ILIKE $1 ORDER \
-     BY name LIMIT $2",
-  )
-  .bind(&pattern)
-  .bind(limit)
-  .fetch_all(pool)
-  .await?;
+  let project_rows = q::quick_projects()
+    .bind(&client, &pattern, &limit)
+    .all()
+    .await?;
+  let build_rows = q::quick_builds()
+    .bind(&client, &pattern, &limit)
+    .all()
+    .await?;
 
-  let builds = sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds WHERE job_name ILIKE $1 OR drv_path ILIKE $1 ORDER \
-     BY created_at DESC LIMIT $2",
-  )
-  .bind(&pattern)
-  .bind(limit)
-  .fetch_all(pool)
-  .await?;
+  let projects = project_rows
+    .into_iter()
+    .map(project_from_quick_search_row)
+    .collect::<Result<_>>()?;
+  let builds = build_rows
+    .into_iter()
+    .map(build_from_quick_search_row)
+    .collect::<Result<_>>()?;
 
   Ok((projects, builds))
 }

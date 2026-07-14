@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use circus_common::{
+  PgPool,
   error::{CiError, check_disk_space},
   models::{
     ActiveJobset,
@@ -19,7 +20,6 @@ use circus_common::{
 use circus_config::{DeclarativeJobset, EvaluatorConfig, NotificationsConfig};
 use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
-use sqlx::PgPool;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::info;

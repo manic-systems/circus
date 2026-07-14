@@ -1,11 +1,27 @@
+use circus_codegen::queries::webhook_configs as q;
 use circus_config::DeclarativeWebhook;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{CreateWebhookConfig, ForgeType, WebhookConfig},
 };
+
+impl TryFrom<q::WebhookConfigRow> for WebhookConfig {
+  type Error = CiError;
+
+  fn try_from(r: q::WebhookConfigRow) -> Result<Self> {
+    Ok(Self {
+      id:          r.id,
+      project_id:  r.project_id,
+      forge_type:  r.forge_type.parse().map_err(CiError::Internal)?,
+      secret_hash: r.secret_hash,
+      enabled:     r.enabled,
+      created_at:  r.created_at,
+    })
+  }
+}
 
 /// Create a new webhook config.
 ///
@@ -25,21 +41,27 @@ pub async fn create(
   let secret = secret
     .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
     .transpose()?;
-  sqlx::query_as::<_, WebhookConfig>(
-    "INSERT INTO webhook_configs (project_id, forge_type, secret_hash) VALUES \
-     ($1, $2, $3) RETURNING *",
-  )
-  .bind(input.project_id)
-  .bind(input.forge_type)
-  .bind(secret)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    format!(
-      "Webhook config for forge '{}' already exists for this project",
-      input.forge_type
+  let client = pool.get().await?;
+  q::create()
+    .bind(
+      &client,
+      &input.project_id,
+      &input.forge_type.as_str(),
+      &secret,
     )
-  })
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(format!(
+          "Webhook config for forge '{}' already exists for this project",
+          input.forge_type
+        ))
+      } else {
+        CiError::Database(e)
+      }
+    })?
+    .try_into()
 }
 
 /// Get a webhook config by ID.
@@ -48,13 +70,14 @@ pub async fn create(
 ///
 /// Returns error if database query fails or config not found.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<WebhookConfig> {
-  sqlx::query_as::<_, WebhookConfig>(
-    "SELECT * FROM webhook_configs WHERE id = $1",
-  )
-  .bind(id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Webhook config {id} not found")))
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &id)
+    .opt()
+    .await?
+    .map(WebhookConfig::try_from)
+    .transpose()?
+    .ok_or_else(|| CiError::NotFound(format!("Webhook config {id} not found")))
 }
 
 /// List all webhook configs for a project.
@@ -66,15 +89,12 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<WebhookConfig>> {
-  Ok(
-    sqlx::query_as::<_, WebhookConfig>(
-      "SELECT * FROM webhook_configs WHERE project_id = $1 ORDER BY \
-       created_at DESC",
-    )
-    .bind(project_id)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_for_project()
+    .bind(&client, &project_id)
+    .all()
+    .await?;
+  rows.into_iter().map(WebhookConfig::try_from).collect()
 }
 
 /// Get a webhook config by project and forge type.
@@ -88,14 +108,13 @@ pub async fn get_by_project_and_forge(
   forge_type: ForgeType,
   encryption_key: Option<&str>,
 ) -> Result<Option<WebhookConfig>> {
-  let mut config = sqlx::query_as::<_, WebhookConfig>(
-    "SELECT * FROM webhook_configs WHERE project_id = $1 AND forge_type = $2 \
-     AND enabled = true",
-  )
-  .bind(project_id)
-  .bind(forge_type)
-  .fetch_optional(pool)
-  .await?;
+  let client = pool.get().await?;
+  let mut config = q::get_by_project_and_forge()
+    .bind(&client, &project_id, &forge_type.as_str())
+    .opt()
+    .await?
+    .map(WebhookConfig::try_from)
+    .transpose()?;
 
   if let Some(config) = config.as_mut()
     && let Some(secret) = config.secret_hash.as_deref()
@@ -115,11 +134,9 @@ pub async fn get_by_project_and_forge(
 ///
 /// Returns error if database delete fails or config not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM webhook_configs WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("Webhook config {id} not found")));
   }
   Ok(())
@@ -144,20 +161,18 @@ pub async fn upsert(
   let secret = secret
     .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
     .transpose()?;
-  Ok(
-    sqlx::query_as::<_, WebhookConfig>(
-      "INSERT INTO webhook_configs (project_id, forge_type, secret_hash, \
-       enabled) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, forge_type) \
-       DO UPDATE SET secret_hash = COALESCE(EXCLUDED.secret_hash, \
-       webhook_configs.secret_hash), enabled = EXCLUDED.enabled RETURNING *",
+  let client = pool.get().await?;
+  q::upsert()
+    .bind(
+      &client,
+      &project_id,
+      &forge_type.as_str(),
+      &secret,
+      &enabled,
     )
-    .bind(project_id)
-    .bind(forge_type)
-    .bind(secret)
-    .bind(enabled)
-    .fetch_one(pool)
-    .await?,
-  )
+    .one()
+    .await?
+    .try_into()
 }
 
 /// Sync webhook configs from declarative config.
@@ -178,14 +193,12 @@ pub async fn sync_for_project(
     webhooks.iter().map(|w| w.forge_type.as_str()).collect();
 
   // Delete webhook configs not in declarative config
-  sqlx::query(
-    "DELETE FROM webhook_configs WHERE project_id = $1 AND forge_type != \
-     ALL($2::text[])",
-  )
-  .bind(project_id)
-  .bind(&type_strings)
-  .execute(pool)
-  .await?;
+  {
+    let client = pool.get().await?;
+    q::sync_for_project_delete()
+      .bind(&client, &project_id, &type_strings)
+      .await?;
+  }
 
   // Upsert each webhook config
   for webhook in webhooks {

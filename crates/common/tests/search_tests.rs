@@ -2,25 +2,19 @@
 //! Requires `TEST_DATABASE_URL` to be set to a `PostgreSQL` connection string.
 #![expect(clippy::expect_used, clippy::print_stdout, reason = "Fine in tests")]
 
-use circus_common::{BuildStatus, models::*, repo, repo::search::*};
+use circus_common::{BuildStatus, PgPool, models::*, repo, repo::search::*};
 use uuid::Uuid;
 
-async fn get_pool() -> Option<sqlx::PgPool> {
+async fn get_pool() -> Option<PgPool> {
   let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
     println!("Skipping search test: TEST_DATABASE_URL not set");
     return None;
   };
 
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
-    .await
-    .ok()?;
-
   // Run migrations
-  sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+  circus_migrations::run_migrations(&url).await.ok()?;
 
-  Some(pool)
+  circus_common::db::build_pool(&url, 5).ok()
 }
 
 #[tokio::test]
@@ -88,6 +82,50 @@ async fn test_project_search() {
   let results = search(&pool, &params).await.expect("search");
   assert_eq!(results.projects.len(), 2);
   assert_eq!(results.total_projects, 2);
+
+  let jobset = repo::jobsets::create(&pool, CreateJobset {
+    project_id:        project1.id,
+    name:              "filtered".to_string(),
+    nix_expression:    "packages".to_string(),
+    enabled:           Some(true),
+    flake_mode:        None,
+    check_interval:    None,
+    trigger_mode:      None,
+    branch:            None,
+    branch_pattern:    None,
+    tag_pattern:       None,
+    scheduling_shares: None,
+    state:             None,
+    keep_nr:           None,
+  })
+  .await
+  .expect("create jobset");
+  repo::evaluations::create(&pool, CreateEvaluation {
+    jobset_id:      jobset.id,
+    commit_hash:    format!("filter{}", Uuid::new_v4().simple()),
+    pr_number:      None,
+    pr_head_branch: None,
+    pr_base_branch: None,
+    pr_action:      None,
+  })
+  .await
+  .expect("create evaluation");
+
+  let filtered = search(&pool, &SearchParams {
+    query: "testing".to_string(),
+    entities: vec![SearchEntity::Projects],
+    project_filters: Some(ProjectSearchFilters {
+      has_jobsets: Some(true),
+      ..Default::default()
+    }),
+    project_sort: Some((ProjectSortField::CreatedAt, SortOrder::Desc)),
+    ..Default::default()
+  })
+  .await
+  .expect("filtered project search");
+  assert_eq!(filtered.projects.len(), 1);
+  assert_eq!(filtered.projects[0].id, project1.id);
+  assert_eq!(filtered.total_projects, 1);
 
   // Cleanup
   let _ = repo::projects::delete(&pool, project1.id).await;
@@ -188,6 +226,15 @@ async fn test_build_search_with_filters() {
   .await
   .expect("create build 2");
 
+  repo::build_outputs::create(
+    &pool,
+    build1.id,
+    "out",
+    Some(&format!("/nix/store/{}-hello", Uuid::new_v4().simple())),
+  )
+  .await
+  .expect("create build output");
+
   // Complete build2 as failed
   repo::builds::start(&pool, build2.id)
     .await
@@ -228,15 +275,14 @@ async fn test_build_search_with_filters() {
     limit:              10,
     offset:             0,
     build_filters:      Some(BuildSearchFilters {
-      status:          Some(BuildStatusFilter::Succeeded),
-      project_id:      None,
-      jobset_id:       None,
-      evaluation_id:   None,
-      created_after:   None,
-      created_before:  None,
-      min_priority:    None,
-      max_priority:    None,
-      has_substitutes: None,
+      status:         Some(BuildStatusFilter::Succeeded),
+      project_id:     Some(project.id),
+      jobset_id:      Some(jobset.id),
+      evaluation_id:  None,
+      created_after:  None,
+      created_before: None,
+      min_priority:   None,
+      max_priority:   None,
     }),
     project_filters:    None,
     jobset_filters:     None,
@@ -246,7 +292,30 @@ async fn test_build_search_with_filters() {
   };
 
   let results = search(&pool, &params).await.expect("search");
-  assert!(results.builds.iter().any(|b| b.id == build1.id));
+  assert_eq!(results.builds.len(), 1);
+  assert_eq!(results.builds[0].id, build1.id);
+  assert_eq!(results.total_builds, 1);
+
+  let evaluations = search(&pool, &SearchParams {
+    entities: vec![SearchEntity::Evaluations],
+    evaluation_filters: Some(EvaluationSearchFilters {
+      project_id:      Some(project.id),
+      jobset_id:       Some(jobset.id),
+      has_builds:      Some(true),
+      finished_after:  Some(
+        evaluation.evaluation_time - chrono::Duration::minutes(1),
+      ),
+      finished_before: Some(
+        evaluation.evaluation_time + chrono::Duration::minutes(1),
+      ),
+    }),
+    ..Default::default()
+  })
+  .await
+  .expect("filtered evaluation search");
+  assert_eq!(evaluations.evaluations.len(), 1);
+  assert_eq!(evaluations.evaluations[0].id, evaluation.id);
+  assert_eq!(evaluations.total_evaluations, 1);
 
   // Cleanup - cascades to jobsets, evaluations, builds
   let _ = repo::projects::delete(&pool, project.id).await;

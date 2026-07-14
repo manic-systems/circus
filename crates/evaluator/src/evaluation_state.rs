@@ -1,8 +1,8 @@
 use circus_common::{
+  PgPool,
   models::{Evaluation, EvaluationStatus},
   repo,
 };
-use sqlx::PgPool;
 
 pub enum ExistingEvaluationClaim {
   Claimed(Evaluation),

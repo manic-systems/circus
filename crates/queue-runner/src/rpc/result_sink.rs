@@ -8,9 +8,8 @@
 use std::sync::Arc;
 
 use capnp::capability::Promise;
-use circus_common::repo;
+use circus_common::{PgPool, repo};
 use circus_proto::{BuildOutcome, result_sink};
-use sqlx::PgPool;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 

@@ -4,11 +4,10 @@ use std::{
   time::{Duration, Instant},
 };
 
-use circus_common::models::Build;
+use circus_common::{PgPool, repo};
 use circus_config::{EphemeralPoolConfig, GithubActionsPoolConfig};
 use color_eyre::eyre::{Context as _, bail};
 use serde::Serialize;
-use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -173,9 +172,10 @@ impl Autoscaler {
   }
 
   async fn demand(&self) -> color_eyre::Result<Demand> {
-    let builds = pending_builds_for_systems(&self.pool, &self.cfg.systems)
-      .await
-      .context("load pending builds for GHA autoscaler")?;
+    let builds =
+      repo::builds::list_pending_for_systems(&self.pool, &self.cfg.systems)
+        .await
+        .context("load pending builds for GHA autoscaler")?;
     let mut eligible_requirements = Vec::new();
     let mut trusted_cache: HashMap<uuid::Uuid, Option<Option<String>>> =
       HashMap::new();
@@ -354,20 +354,6 @@ async fn load_token(
   Ok(token.to_owned())
 }
 
-async fn pending_builds_for_systems(
-  pool: &PgPool,
-  systems: &[String],
-) -> circus_common::error::Result<Vec<Build>> {
-  sqlx::query_as::<_, Build>(
-    "SELECT * FROM builds WHERE status = 'pending' AND system = ANY($1) ORDER \
-     BY priority DESC, created_at ASC LIMIT 512",
-  )
-  .bind(systems)
-  .fetch_all(pool)
-  .await
-  .map_err(circus_common::CiError::Database)
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -386,8 +372,11 @@ mod tests {
       },
       token:          "token".into(),
       http:           test_http_client(),
-      pool:           PgPool::connect_lazy("postgres://localhost/circus")
-        .expect("lazy pool should construct"),
+      pool:           circus_common::build_pool(
+        "postgres://localhost/circus",
+        1,
+      )
+      .expect("lazy pool should construct"),
       agent_pool:     AgentPool::new(),
       inflight:       VecDeque::from([InflightLaunch {
         launched_at: Instant::now()
@@ -410,8 +399,11 @@ mod tests {
       },
       token:          "token".into(),
       http:           test_http_client(),
-      pool:           PgPool::connect_lazy("postgres://localhost/circus")
-        .expect("lazy pool should construct"),
+      pool:           circus_common::build_pool(
+        "postgres://localhost/circus",
+        1,
+      )
+      .expect("lazy pool should construct"),
       agent_pool:     AgentPool::new(),
       inflight:       VecDeque::new(),
       last_scale_up:  Some(Instant::now()),

@@ -14,11 +14,11 @@ use BuilderSchedulingStrategy::{
   SpeedFactorOnly,
 };
 use circus_common::{
+  PgPool,
   models::{Build, Evaluation, EvaluationTriggerKind, Jobset},
   repo,
 };
 use circus_config::BuilderSchedulingStrategy;
-use sqlx::PgPool;
 use tokio::{
   process::Command,
   sync::{OwnedSemaphorePermit, oneshot},
@@ -489,13 +489,7 @@ pub async fn run_on_agent(
     return None;
   }
 
-  if let Err(e) = sqlx::query(
-    "UPDATE builder_sessions SET updated_at = NOW() WHERE machine_id = $1",
-  )
-  .bind(meta.machine_id)
-  .execute(pool)
-  .await
-  {
+  if let Err(e) = repo::builder_sessions::touch(pool, meta.machine_id).await {
     tracing::debug!(name = %snap.name, "builder_sessions touch failed: {e}");
   }
   if let Err(e) = repo::builds::set_agent(pool, build.id, meta.machine_id).await

@@ -20,6 +20,7 @@ in
         root = s;
         fileset = fs.unions [
           (s + /crates)
+          (s + /db/circus-codegen)
           (s + /Cargo.toml)
           (s + /Cargo.lock)
         ];

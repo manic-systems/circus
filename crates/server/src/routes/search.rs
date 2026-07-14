@@ -58,7 +58,7 @@ struct SearchRequest {
   offset: i64,
 
   // Build filters
-  /// Filter builds by status: pending, running, succeeded, failed, cancelled
+  /// Filter builds by database status name.
   #[serde(rename = "build_status")]
   build_status: Option<String>,
 
@@ -290,6 +290,7 @@ async fn advanced_search_handler(
           Some(BuildStatusFilter::NarSizeLimitExceeded)
         },
         "non_deterministic" => Some(BuildStatusFilter::NonDeterministic),
+        "oom_killed" => Some(BuildStatusFilter::OomKilled),
         _ => None,
       }
     });
@@ -303,7 +304,6 @@ async fn advanced_search_handler(
       created_before: params.build_before,
       min_priority: params.build_min_priority,
       max_priority: params.build_max_priority,
-      has_substitutes: None, // Not exposed in API yet
     })
   } else {
     None

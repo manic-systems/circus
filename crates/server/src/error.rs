@@ -77,6 +77,14 @@ impl IntoResponse for ApiError {
           msg.clone(),
         )
       },
+      CiError::Pool(e) => {
+        tracing::error!(error = %e, "Database pool error in API handler");
+        (
+          StatusCode::SERVICE_UNAVAILABLE,
+          "DATABASE_UNAVAILABLE",
+          "database connection pool exhausted or unavailable".to_string(),
+        )
+      },
       CiError::Database(e) => {
         tracing::error!(error = %e, "Database error in API handler");
 

@@ -4,10 +4,10 @@ use std::{
 };
 
 use circus_common::{
+  PgPool,
   models::{CreateBuild, EvaluationStatus, JobsetInput},
   repo,
 };
-use sqlx::PgPool;
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -268,17 +268,16 @@ pub(crate) async fn create_builds_from_eval(
     });
   }
 
-  let mut tx = pool.begin().await?;
-  if !repo::evaluations::lock_running(&mut tx, eval_id).await? {
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  if !repo::evaluations::lock_running(&tx, eval_id).await? {
     return Ok(false);
   }
 
   for build in builds {
     let drv_path = build.drv_path.clone();
     let job_name = build.job_name.clone();
-    let id = repo::builds::create_in_transaction(&mut tx, build)
-      .await?
-      .id;
+    let id = repo::builds::create_in_transaction(&tx, build).await?.id;
 
     drv_to_build.insert(drv_path, id);
     name_to_build.insert(job_name, id);
@@ -298,7 +297,7 @@ pub(crate) async fn create_builds_from_eval(
           && dep_build_id != build_id
         {
           repo::build_dependencies::create_in_transaction(
-            &mut tx,
+            &tx,
             build_id,
             dep_build_id,
           )
@@ -314,7 +313,7 @@ pub(crate) async fn create_builds_from_eval(
           && dep_build_id != build_id
         {
           repo::build_dependencies::create_in_transaction(
-            &mut tx,
+            &tx,
             build_id,
             dep_build_id,
           )
@@ -325,7 +324,7 @@ pub(crate) async fn create_builds_from_eval(
   }
 
   if !repo::evaluations::finish_running_in_transaction(
-    &mut tx,
+    &tx,
     eval_id,
     EvaluationStatus::Completed,
     None,

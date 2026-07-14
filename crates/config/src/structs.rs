@@ -66,10 +66,7 @@ pub struct DatabaseConfig {
   /// contains credentials.
   pub url_file:        Option<PathBuf>,
   pub max_connections: u32,
-  pub min_connections: u32,
   pub connect_timeout: u64,
-  pub idle_timeout:    u64,
-  pub max_lifetime:    u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -733,10 +730,7 @@ impl Default for DatabaseConfig {
         .to_string(),
       url_file:        None,
       max_connections: 20,
-      min_connections: 5,
       connect_timeout: 30,
-      idle_timeout:    600,
-      max_lifetime:    1800,
     }
   }
 }

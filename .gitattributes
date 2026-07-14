@@ -1,0 +1,2 @@
+db/circus-codegen/** linguist-generated=true
+db/circus-codegen/** -diff

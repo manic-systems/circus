@@ -7,7 +7,10 @@ use crate::validation::ValidationError;
 #[derive(Error, Debug)]
 pub enum CiError {
   #[error("Database error: {0}")]
-  Database(#[from] sqlx::Error),
+  Database(#[from] tokio_postgres::Error),
+
+  #[error("Connection pool error: {0}")]
+  Pool(#[from] deadpool_postgres::PoolError),
 
   #[error("Git error: {0}")]
   Git(#[from] git2::Error),
@@ -85,41 +88,9 @@ impl From<circus_nix::Error> for CiError {
   }
 }
 
-pub trait SqlxResultExt<T> {
-  /// # Errors
-  ///
-  /// Returns `CiError::Conflict` for unique-constraint violations and
-  /// `CiError::Database` for other `SQLx` errors.
-  fn on_unique_violation(self, msg: impl FnOnce() -> String) -> Result<T>;
-}
-
-impl<T> SqlxResultExt<T> for std::result::Result<T, sqlx::Error> {
-  fn on_unique_violation(self, msg: impl FnOnce() -> String) -> Result<T> {
-    self.map_err(|e| {
-      match &e {
-        sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-          CiError::Conflict(msg())
-        },
-        _ => CiError::Database(e),
-      }
-    })
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn sqlx_result_ext_preserves_non_unique_errors() {
-    let result = Err::<(), _>(sqlx::Error::RowNotFound)
-      .on_unique_violation(|| "conflict".to_string());
-
-    assert!(matches!(
-      result,
-      Err(CiError::Database(sqlx::Error::RowNotFound))
-    ));
-  }
 
   #[test]
   fn circus_nix_errors_map_to_ci_errors() {

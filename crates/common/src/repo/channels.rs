@@ -1,11 +1,26 @@
+use circus_codegen::queries::channels as q;
 use circus_config::DeclarativeChannel;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{Channel, CreateChannel},
 };
+
+impl From<q::ChannelRow> for Channel {
+  fn from(r: q::ChannelRow) -> Self {
+    Self {
+      id:                    r.id,
+      project_id:            r.project_id,
+      name:                  r.name,
+      jobset_id:             r.jobset_id,
+      current_evaluation_id: r.current_evaluation_id,
+      created_at:            r.created_at,
+      updated_at:            r.updated_at,
+    }
+  }
+}
 
 /// Create a release channel.
 ///
@@ -13,18 +28,22 @@ use crate::{
 ///
 /// Returns error if database insert fails or channel already exists.
 pub async fn create(pool: &PgPool, input: CreateChannel) -> Result<Channel> {
-  sqlx::query_as::<_, Channel>(
-    "INSERT INTO channels (project_id, name, jobset_id) VALUES ($1, $2, $3) \
-     RETURNING *",
-  )
-  .bind(input.project_id)
-  .bind(&input.name)
-  .bind(input.jobset_id)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    format!("Channel '{}' already exists for this project", input.name)
-  })
+  let client = pool.get().await?;
+  q::create()
+    .bind(&client, &input.project_id, &input.name, &input.jobset_id)
+    .one()
+    .await
+    .map(Channel::from)
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(format!(
+          "Channel '{}' already exists for this project",
+          input.name
+        ))
+      } else {
+        CiError::Database(e)
+      }
+    })
 }
 
 /// Get a channel by ID.
@@ -33,10 +52,12 @@ pub async fn create(pool: &PgPool, input: CreateChannel) -> Result<Channel> {
 ///
 /// Returns error if database query fails or channel not found.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Channel> {
-  sqlx::query_as::<_, Channel>("SELECT * FROM channels WHERE id = $1")
-    .bind(id)
-    .fetch_optional(pool)
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &id)
+    .opt()
     .await?
+    .map(Channel::from)
     .ok_or_else(|| CiError::NotFound(format!("Channel {id} not found")))
 }
 
@@ -49,14 +70,12 @@ pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<Channel>> {
-  Ok(
-    sqlx::query_as::<_, Channel>(
-      "SELECT * FROM channels WHERE project_id = $1 ORDER BY name",
-    )
-    .bind(project_id)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_for_project()
+    .bind(&client, &project_id)
+    .all()
+    .await?;
+  Ok(rows.into_iter().map(Channel::from).collect())
 }
 
 /// List all channels.
@@ -65,11 +84,19 @@ pub async fn list_for_project(
 ///
 /// Returns error if database query fails.
 pub async fn list_all(pool: &PgPool) -> Result<Vec<Channel>> {
-  Ok(
-    sqlx::query_as::<_, Channel>("SELECT * FROM channels ORDER BY name")
-      .fetch_all(pool)
-      .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_all().bind(&client).all().await?;
+  Ok(rows.into_iter().map(Channel::from).collect())
+}
+
+/// Count all channels.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn count(pool: &PgPool) -> Result<i64> {
+  let client = pool.get().await?;
+  Ok(q::count().bind(&client).one().await?)
 }
 
 /// Look up a channel by name. Names are unique within a project, but channel
@@ -80,14 +107,13 @@ pub async fn list_all(pool: &PgPool) -> Result<Vec<Channel>> {
 ///
 /// Returns error if the database query fails or no channel matches.
 pub async fn get_by_name(pool: &PgPool, name: &str) -> Result<Channel> {
-  sqlx::query_as::<_, Channel>(
-    "SELECT * FROM channels WHERE name = $1 ORDER BY created_at DESC, id DESC \
-     LIMIT 1",
-  )
-  .bind(name)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Channel '{name}' not found")))
+  let client = pool.get().await?;
+  q::get_by_name()
+    .bind(&client, &name)
+    .opt()
+    .await?
+    .map(Channel::from)
+    .ok_or_else(|| CiError::NotFound(format!("Channel '{name}' not found")))
 }
 
 /// Promote an evaluation to a channel (set it as the current evaluation).
@@ -100,15 +126,13 @@ pub async fn promote(
   channel_id: Uuid,
   evaluation_id: Uuid,
 ) -> Result<Channel> {
-  sqlx::query_as::<_, Channel>(
-    "UPDATE channels SET current_evaluation_id = $1, updated_at = NOW() WHERE \
-     id = $2 RETURNING *",
-  )
-  .bind(evaluation_id)
-  .bind(channel_id)
-  .fetch_optional(pool)
-  .await?
-  .ok_or_else(|| CiError::NotFound(format!("Channel {channel_id} not found")))
+  let client = pool.get().await?;
+  q::promote()
+    .bind(&client, &evaluation_id, &channel_id)
+    .opt()
+    .await?
+    .map(Channel::from)
+    .ok_or_else(|| CiError::NotFound(format!("Channel {channel_id} not found")))
 }
 
 /// Delete a channel.
@@ -117,11 +141,9 @@ pub async fn promote(
 ///
 /// Returns error if database delete fails or channel not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM channels WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("Channel {id} not found")));
   }
   Ok(())
@@ -138,17 +160,13 @@ pub async fn upsert(
   name: &str,
   jobset_id: Uuid,
 ) -> Result<Channel> {
+  let client = pool.get().await?;
   Ok(
-    sqlx::query_as::<_, Channel>(
-      "INSERT INTO channels (project_id, name, jobset_id) VALUES ($1, $2, $3) \
-       ON CONFLICT (project_id, name) DO UPDATE SET jobset_id = \
-       EXCLUDED.jobset_id RETURNING *",
-    )
-    .bind(project_id)
-    .bind(name)
-    .bind(jobset_id)
-    .fetch_one(pool)
-    .await?,
+    q::upsert()
+      .bind(&client, &project_id, &name, &jobset_id)
+      .one()
+      .await
+      .map(Channel::from)?,
   )
 }
 
@@ -168,13 +186,12 @@ pub async fn sync_for_project(
   let names: Vec<&str> = channels.iter().map(|c| c.name.as_str()).collect();
 
   // Delete channels not in declarative config
-  sqlx::query(
-    "DELETE FROM channels WHERE project_id = $1 AND name != ALL($2::text[])",
-  )
-  .bind(project_id)
-  .bind(&names)
-  .execute(pool)
-  .await?;
+  {
+    let client = pool.get().await?;
+    q::sync_for_project_delete()
+      .bind(&client, &project_id, &names)
+      .await?;
+  }
 
   // Upsert each channel
   for channel in channels {
@@ -203,26 +220,29 @@ pub async fn auto_promote_if_complete(
   jobset_id: Uuid,
   evaluation_id: Uuid,
 ) -> Result<()> {
-  // Check if all builds for this evaluation are completed
-  let row: (i64, i64) = sqlx::query_as(
-    "SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'succeeded') FROM \
-     builds WHERE evaluation_id = $1",
-  )
-  .bind(evaluation_id)
-  .fetch_one(pool)
-  .await?;
-
-  let (total, completed) = row;
-  if total == 0 || total != completed {
-    return Ok(());
-  }
-
-  // All builds completed, promote to any channels tracking this jobset
-  let channels =
-    sqlx::query_as::<_, Channel>("SELECT * FROM channels WHERE jobset_id = $1")
-      .bind(jobset_id)
-      .fetch_all(pool)
+  let channels = {
+    let client = pool.get().await?;
+    // Check if all builds for this evaluation are completed
+    let counts = q::auto_promote_count()
+      .bind(&client, &evaluation_id)
+      .one()
       .await?;
+
+    let total = counts.total.unwrap_or(0);
+    let completed = counts.completed.unwrap_or(0);
+    if total == 0 || total != completed {
+      return Ok(());
+    }
+
+    // All builds completed, promote to any channels tracking this jobset
+    q::auto_promote_channels()
+      .bind(&client, &jobset_id)
+      .all()
+      .await?
+      .into_iter()
+      .map(Channel::from)
+      .collect::<Vec<_>>()
+  };
 
   for channel in channels {
     match promote(pool, channel.id, evaluation_id).await {

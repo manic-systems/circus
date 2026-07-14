@@ -7,28 +7,75 @@
   reason = "Fine in tests"
 )]
 
-use circus_common::{models::*, repo};
+use std::time::Duration;
 
-async fn get_pool() -> Option<sqlx::PgPool> {
+use circus_common::{
+  ForgeType,
+  GlobalRole,
+  InputType,
+  NotificationType,
+  ProjectRole,
+  models::*,
+  repo,
+};
+use circus_config::{
+  DeclarativeChannel,
+  DeclarativeJobsetInput,
+  DeclarativeNotification,
+  DeclarativeProjectMember,
+  DeclarativeRemoteBuilder,
+  DeclarativeWebhook,
+};
+
+static REPO_TEST_LOCK: tokio::sync::Mutex<()> =
+  tokio::sync::Mutex::const_new(());
+
+struct TestPool {
+  pool:   circus_common::PgPool,
+  _guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl std::ops::Deref for TestPool {
+  type Target = circus_common::PgPool;
+
+  fn deref(&self) -> &Self::Target {
+    &self.pool
+  }
+}
+
+async fn get_pool() -> Option<TestPool> {
+  get_pool_with_size(5).await
+}
+
+async fn get_pool_with_size(max_size: usize) -> Option<TestPool> {
+  let guard = REPO_TEST_LOCK.lock().await;
   let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
     println!("Skipping repo test: TEST_DATABASE_URL not set");
     return None;
   };
-
-  let pool = sqlx::postgres::PgPoolOptions::new()
-    .max_connections(5)
-    .connect(&url)
-    .await
-    .ok()?;
+  let url = per_process_database_url(&url)?;
 
   // Run migrations
-  sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+  circus_migrations::run_migrations(&url).await.ok()?;
 
-  Some(pool)
+  Some(TestPool {
+    pool:   circus_common::db::build_pool(&url, max_size).ok()?,
+    _guard: guard,
+  })
+}
+
+fn per_process_database_url(url: &str) -> Option<String> {
+  let mut parsed = url::Url::parse(url).ok()?;
+  let dbname = parsed.path().trim_start_matches('/').to_owned();
+  parsed.set_path(&format!("/{dbname}_p{}", std::process::id()));
+  Some(parsed.to_string())
 }
 
 /// Helper: create a project with a unique name.
-async fn create_test_project(pool: &sqlx::PgPool, prefix: &str) -> Project {
+async fn create_test_project(
+  pool: &circus_common::PgPool,
+  prefix: &str,
+) -> Project {
   repo::projects::create(pool, CreateProject {
     name:            format!("{prefix}-{}", uuid::Uuid::new_v4()),
     description:     Some("Test project".to_string()),
@@ -43,7 +90,7 @@ async fn create_test_project(pool: &sqlx::PgPool, prefix: &str) -> Project {
 
 /// Helper: create a jobset for a project.
 async fn create_test_jobset(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   project_id: uuid::Uuid,
 ) -> Jobset {
   repo::jobsets::create(pool, CreateJobset {
@@ -67,7 +114,7 @@ async fn create_test_jobset(
 
 /// Helper: create an evaluation for a jobset.
 async fn create_test_eval(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   jobset_id: uuid::Uuid,
 ) -> Evaluation {
   repo::evaluations::create(pool, CreateEvaluation {
@@ -84,7 +131,7 @@ async fn create_test_eval(
 
 /// Helper: create a build for an evaluation.
 async fn create_test_build(
-  pool: &sqlx::PgPool,
+  pool: &circus_common::PgPool,
   eval_id: uuid::Uuid,
   job_name: &str,
   drv_path: &str,
@@ -99,6 +146,216 @@ async fn create_test_build(
   })
   .await
   .expect("create build")
+}
+
+#[tokio::test]
+async fn composite_operations_work_with_one_pool_connection() {
+  let Some(pool) = get_pool_with_size(1).await else {
+    return;
+  };
+
+  let (project_id, user_id, oauth_user_id) =
+    tokio::time::timeout(Duration::from_secs(10), async {
+      let project = create_test_project(&pool, "single-connection").await;
+      let jobset = create_test_jobset(&pool, project.id).await;
+      let evaluation = create_test_eval(&pool, jobset.id).await;
+
+      let builder_name = format!("builder-{}", uuid::Uuid::new_v4());
+      repo::remote_builders::sync_all(&pool, &[DeclarativeRemoteBuilder {
+        name:               builder_name,
+        ssh_uri:            "ssh://builder.example".to_string(),
+        systems:            vec!["x86_64-linux".to_string()],
+        max_jobs:           1,
+        speed_factor:       1,
+        supported_features: Vec::new(),
+        mandatory_features: Vec::new(),
+        ssh_key_file:       None,
+        public_host_key:    None,
+        enabled:            true,
+      }])
+      .await?;
+
+      repo::jobset_inputs::sync_for_jobset(&pool, jobset.id, &[
+        DeclarativeJobsetInput {
+          name:       "message".to_string(),
+          input_type: InputType::String,
+          value:      "hello".to_string(),
+          revision:   None,
+        },
+      ])
+      .await?;
+
+      repo::channels::sync_for_project(
+        &pool,
+        project.id,
+        &[DeclarativeChannel {
+          name:        "latest".to_string(),
+          jobset_name: jobset.name.clone(),
+        }],
+        |name| (name == jobset.name).then_some(jobset.id),
+      )
+      .await?;
+
+      repo::notification_configs::sync_for_project(&pool, project.id, &[
+        DeclarativeNotification {
+          notification_type: NotificationType::Email,
+          config:            serde_json::json!({}),
+          enabled:           true,
+        },
+      ])
+      .await?;
+
+      repo::webhook_configs::sync_for_project(
+        &pool,
+        project.id,
+        &[DeclarativeWebhook {
+          forge_type:  ForgeType::Github,
+          secret:      None,
+          secret_file: None,
+          enabled:     true,
+        }],
+        |_| None,
+        None,
+      )
+      .await?;
+
+      let username =
+        format!("single-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+      let user = repo::users::create(
+        &pool,
+        &CreateUser {
+          username:  username.clone(),
+          email:     format!("{username}@example.com"),
+          full_name: None,
+          password:  "Secure_password_123".to_string(),
+          role:      Some(GlobalRole::ReadOnly),
+        },
+        None,
+      )
+      .await?;
+      repo::project_members::sync_for_project(
+        &pool,
+        project.id,
+        &[DeclarativeProjectMember {
+          username: username.clone(),
+          role:     ProjectRole::Member,
+        }],
+        |candidate| (candidate == username).then_some(user.id),
+      )
+      .await?;
+
+      let provider_id =
+        uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+      let oauth = repo::users::upsert_oauth_user(
+        &pool,
+        "oauth",
+        Some(&format!("oauth-{provider_id}@example.com")),
+        UserType::Github,
+        &provider_id,
+        None,
+      )
+      .await?;
+      let updated_oauth = repo::users::upsert_oauth_user(
+        &pool,
+        "oauth",
+        Some(&format!("updated-oauth-{provider_id}@example.com")),
+        UserType::Github,
+        &provider_id,
+        None,
+      )
+      .await?;
+      assert_eq!(updated_oauth.id, oauth.id);
+
+      let completed = create_test_build(
+        &pool,
+        evaluation.id,
+        "completed",
+        &format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple()),
+        None,
+      )
+      .await;
+      repo::builds::complete(
+        &pool,
+        completed.id,
+        BuildStatus::Succeeded,
+        None,
+        None,
+        None,
+      )
+      .await?;
+      repo::channels::auto_promote_if_complete(&pool, jobset.id, evaluation.id)
+        .await?;
+
+      let channels =
+        repo::channels::list_for_project(&pool, project.id).await?;
+      assert_eq!(channels[0].current_evaluation_id, Some(evaluation.id));
+
+      repo::builds::restart(&pool, completed.id).await?;
+
+      Ok::<_, circus_common::CiError>((project.id, user.id, oauth.id))
+    })
+    .await
+    .expect("composite operation deadlocked")
+    .expect("composite operation failed");
+
+  repo::projects::delete(&pool, project_id)
+    .await
+    .expect("delete project");
+  repo::users::delete(&pool, user_id)
+    .await
+    .expect("delete user");
+  repo::users::delete(&pool, oauth_user_id)
+    .await
+    .expect("delete OAuth user");
+}
+
+#[tokio::test]
+async fn runtime_enum_values_are_accepted_by_database_constraints() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "runtime-enums").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let evaluation = create_test_eval(&pool, jobset.id).await;
+  let build = create_test_build(
+    &pool,
+    evaluation.id,
+    "oom",
+    &format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple()),
+    None,
+  )
+  .await;
+
+  let build = repo::builds::complete(
+    &pool,
+    build.id,
+    BuildStatus::OomKilled,
+    None,
+    None,
+    Some("out of memory"),
+  )
+  .await
+  .expect("persist OOM status");
+  assert_eq!(build.status, BuildStatus::OomKilled);
+
+  for notification_type in
+    [NotificationType::ForgejoStatus, NotificationType::Slack]
+  {
+    let task = repo::notification_tasks::create(
+      &pool,
+      notification_type,
+      serde_json::json!({}),
+      1,
+    )
+    .await
+    .expect("persist notification task");
+    assert_eq!(task.notification_type, notification_type);
+  }
+
+  repo::projects::delete(&pool, project.id)
+    .await
+    .expect("delete project");
 }
 
 // CRUD and lifecycle tests
@@ -421,7 +678,17 @@ async fn test_evaluation_and_build_lifecycle() {
   .expect("update evaluation status");
   assert!(matches!(updated.status, EvaluationStatus::Running));
 
-  // Get latest
+  // get_latest only reports completed evaluations
+  let completed = repo::evaluations::update_status(
+    &pool,
+    eval.id,
+    EvaluationStatus::Completed,
+    None,
+  )
+  .await
+  .expect("complete evaluation");
+  assert!(matches!(completed.status, EvaluationStatus::Completed));
+
   let latest = repo::evaluations::get_latest(&pool, jobset.id)
     .await
     .expect("get latest");
@@ -567,14 +834,15 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
   )
   .await
   .expect("fail evaluation");
-  sqlx::query(
-    "UPDATE evaluations SET evaluation_time = NOW() - INTERVAL '1 hour' WHERE \
-     id = $1",
-  )
-  .bind(eval.id)
-  .execute(&pool)
-  .await
-  .expect("backdate evaluation");
+  let client = pool.get().await.expect("get backdating client");
+  client
+    .execute(
+      "UPDATE evaluations SET evaluation_time = NOW() - INTERVAL '1 hour' \
+       WHERE id = $1",
+      &[&eval.id],
+    )
+    .await
+    .expect("backdate evaluation");
   repo::jobsets::mark_one_shot_complete(&pool, jobset.id)
     .await
     .expect("complete one-shot");
@@ -610,9 +878,11 @@ async fn test_restart_rejects_a_manually_disabled_jobset() {
   )
   .await
   .expect("fail evaluation");
-  sqlx::query("UPDATE jobsets SET enabled = false WHERE id = $1")
-    .bind(jobset.id)
-    .execute(&pool)
+  let client = pool.get().await.expect("get disabling client");
+  client
+    .execute("UPDATE jobsets SET enabled = false WHERE id = $1", &[
+      &jobset.id,
+    ])
     .await
     .expect("disable jobset");
 
@@ -649,9 +919,13 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
   .await
   .expect("start evaluation");
 
-  let mut tx = pool.begin().await.expect("begin result transaction");
+  let mut tx_client = pool.get().await.expect("get result client");
+  let tx = tx_client
+    .transaction()
+    .await
+    .expect("begin result transaction");
   assert!(
-    repo::evaluations::lock_running(&mut tx, eval.id)
+    repo::evaluations::lock_running(&tx, eval.id)
       .await
       .expect("lock evaluation")
   );
@@ -665,7 +939,7 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
       .is_err(),
     "cancellation must wait for the result transaction"
   );
-  repo::builds::create_in_transaction(&mut tx, CreateBuild {
+  repo::builds::create_in_transaction(&tx, CreateBuild {
     evaluation_id: eval.id,
     job_name: "build".to_string(),
     drv_path: format!("/nix/store/{}.drv", uuid::Uuid::new_v4()),
@@ -675,7 +949,7 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
   .expect("persist build");
   assert!(
     repo::evaluations::finish_running_in_transaction(
-      &mut tx,
+      &tx,
       eval.id,
       EvaluationStatus::Completed,
       None,
@@ -721,10 +995,13 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
       .expect("cancel before persistence")
       .is_some()
   );
-  let mut cancelled_tx =
-    pool.begin().await.expect("begin cancelled transaction");
+  let mut cancelled_client = pool.get().await.expect("get cancelled client");
+  let cancelled_tx = cancelled_client
+    .transaction()
+    .await
+    .expect("begin cancelled transaction");
   assert!(
-    !repo::evaluations::lock_running(&mut cancelled_tx, cancelled.id)
+    !repo::evaluations::lock_running(&cancelled_tx, cancelled.id)
       .await
       .expect("check cancelled evaluation")
   );
@@ -734,6 +1011,10 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
       .expect("count cancelled builds"),
     0
   );
+
+  // Otherwise, this pending build leaks into sibling tests' `list_pending`
+  // assertions.
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -1141,7 +1422,7 @@ async fn test_list_filtered_with_job_name_filter() {
 }
 
 #[tokio::test]
-async fn test_reset_orphaned_batch_limit() {
+async fn test_reset_orphaned() {
   let Some(pool) = get_pool().await else {
     return;
   };
@@ -1158,13 +1439,14 @@ async fn test_reset_orphaned_batch_limit() {
   repo::builds::start(&pool, build.id).await.unwrap();
 
   // Set started_at to 2 hours ago to make it look orphaned
-  sqlx::query(
-    "UPDATE builds SET started_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
-  )
-  .bind(build.id)
-  .execute(&pool)
-  .await
-  .unwrap();
+  let client = pool.get().await.unwrap();
+  client
+    .execute(
+      "UPDATE builds SET started_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
+      &[&build.id],
+    )
+    .await
+    .unwrap();
 
   // Reset orphaned with 1 hour threshold
   let reset_count = repo::builds::reset_orphaned(&pool, 3600)
@@ -1202,14 +1484,15 @@ async fn test_reset_orphaned_excludes_active_builds() {
   repo::builds::start(&pool, orphan.id).await.unwrap();
 
   let old_ids = vec![active.id, orphan.id];
-  sqlx::query(
-    "UPDATE builds SET started_at = NOW() - INTERVAL '2 hours' WHERE id = \
-     ANY($1)",
-  )
-  .bind(&old_ids)
-  .execute(&pool)
-  .await
-  .unwrap();
+  let client = pool.get().await.unwrap();
+  client
+    .execute(
+      "UPDATE builds SET started_at = NOW() - INTERVAL '2 hours' WHERE id = \
+       ANY($1)",
+      &[&old_ids],
+    )
+    .await
+    .unwrap();
 
   let reset_count =
     repo::builds::reset_orphaned_excluding(&pool, 3600, &[active.id])
@@ -1245,7 +1528,7 @@ async fn test_reset_orphaned_excludes_active_builds() {
 
 #[tokio::test]
 async fn test_build_cancel_cascade() {
-  let Some(pool) = get_pool().await else {
+  let Some(pool) = get_pool_with_size(1).await else {
     return;
   };
 
@@ -1265,9 +1548,13 @@ async fn test_build_cancel_cascade() {
     .expect("create dep");
 
   // Cancel parent should cascade to child
-  let cancelled = repo::builds::cancel_cascade(&pool, parent.id)
-    .await
-    .expect("cancel cascade");
+  let cancelled = tokio::time::timeout(
+    Duration::from_secs(2),
+    repo::builds::cancel_cascade(&pool, parent.id),
+  )
+  .await
+  .expect("cancel cascade deadlocked")
+  .expect("cancel cascade");
 
   assert!(!cancelled.is_empty());
 

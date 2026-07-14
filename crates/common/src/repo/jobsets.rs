@@ -1,11 +1,66 @@
-use sqlx::PgPool;
+use circus_codegen::queries::jobsets as q;
 use uuid::Uuid;
 
 use crate::{
-  error::{CiError, Result, SqlxResultExt},
+  db::{PgPool, is_unique_violation},
+  error::{CiError, Result},
   models::{ActiveJobset, CreateJobset, Jobset, JobsetState, UpdateJobset},
   validate::Validate,
 };
+
+impl TryFrom<q::JobsetRow> for Jobset {
+  type Error = CiError;
+
+  fn try_from(r: q::JobsetRow) -> Result<Self> {
+    Ok(Self {
+      id:                r.id,
+      project_id:        r.project_id,
+      name:              r.name,
+      nix_expression:    r.nix_expression,
+      enabled:           r.enabled,
+      flake_mode:        r.flake_mode,
+      check_interval:    r.check_interval,
+      trigger_mode:      r.trigger_mode.parse().map_err(CiError::Internal)?,
+      branch:            r.branch,
+      branch_pattern:    r.branch_pattern,
+      tag_pattern:       r.tag_pattern,
+      scheduling_shares: r.scheduling_shares,
+      created_at:        r.created_at,
+      updated_at:        r.updated_at,
+      state:             r.state.parse().map_err(CiError::Internal)?,
+      last_checked_at:   r.last_checked_at,
+      keep_nr:           r.keep_nr,
+    })
+  }
+}
+
+impl TryFrom<q::ActiveJobsetRow> for ActiveJobset {
+  type Error = CiError;
+
+  fn try_from(r: q::ActiveJobsetRow) -> Result<Self> {
+    Ok(Self {
+      id:                r.id,
+      project_id:        r.project_id,
+      name:              r.name,
+      nix_expression:    r.nix_expression,
+      enabled:           r.enabled,
+      flake_mode:        r.flake_mode,
+      check_interval:    r.check_interval,
+      trigger_mode:      r.trigger_mode.parse().map_err(CiError::Internal)?,
+      branch:            r.branch,
+      branch_pattern:    r.branch_pattern,
+      tag_pattern:       r.tag_pattern,
+      scheduling_shares: r.scheduling_shares,
+      created_at:        r.created_at,
+      updated_at:        r.updated_at,
+      state:             r.state.parse().map_err(CiError::Internal)?,
+      last_checked_at:   r.last_checked_at,
+      keep_nr:           r.keep_nr,
+      project_name:      r.project_name,
+      repository_url:    r.repository_url,
+    })
+  }
+}
 
 /// Create a new jobset with defaults applied.
 ///
@@ -28,30 +83,37 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
 
-  sqlx::query_as::<_, Jobset>(
-    "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-     flake_mode, check_interval, trigger_mode, branch, branch_pattern, \
-     tag_pattern, scheduling_shares, state, keep_nr) VALUES ($1, $2, $3, $4, \
-     $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *",
-  )
-  .bind(input.project_id)
-  .bind(&input.name)
-  .bind(&input.nix_expression)
-  .bind(enabled)
-  .bind(flake_mode)
-  .bind(check_interval)
-  .bind(trigger_mode.as_str())
-  .bind(&input.branch)
-  .bind(&input.branch_pattern)
-  .bind(&input.tag_pattern)
-  .bind(scheduling_shares)
-  .bind(state.as_str())
-  .bind(keep_nr)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    format!("Jobset '{}' already exists in this project", input.name)
-  })
+  let client = pool.get().await?;
+  let row = q::create()
+    .bind(
+      &client,
+      &input.project_id,
+      &input.name,
+      &input.nix_expression,
+      &enabled,
+      &flake_mode,
+      &check_interval,
+      &trigger_mode.as_str(),
+      &input.branch,
+      &input.branch_pattern,
+      &input.tag_pattern,
+      &scheduling_shares,
+      &state.as_str(),
+      &keep_nr,
+    )
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(format!(
+          "Jobset '{}' already exists in this project",
+          input.name
+        ))
+      } else {
+        CiError::Database(e)
+      }
+    })?;
+  Jobset::try_from(row)
 }
 
 /// Get a jobset by ID.
@@ -60,10 +122,13 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
 ///
 /// Returns error if database query fails or jobset not found.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Jobset> {
-  sqlx::query_as::<_, Jobset>("SELECT * FROM jobsets WHERE id = $1")
-    .bind(id)
-    .fetch_optional(pool)
+  let client = pool.get().await?;
+  q::get()
+    .bind(&client, &id)
+    .opt()
     .await?
+    .map(Jobset::try_from)
+    .transpose()?
     .ok_or_else(|| CiError::NotFound(format!("Jobset {id} not found")))
 }
 
@@ -78,17 +143,12 @@ pub async fn list_for_project(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Jobset>> {
-  Ok(
-    sqlx::query_as::<_, Jobset>(
-      "SELECT * FROM jobsets WHERE project_id = $1 ORDER BY created_at DESC \
-       LIMIT $2 OFFSET $3",
-    )
-    .bind(project_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_for_project()
+    .bind(&client, &project_id, &limit, &offset)
+    .all()
+    .await?;
+  rows.into_iter().map(Jobset::try_from).collect()
 }
 
 /// List all jobsets for a project without pagination. Used by webhook
@@ -102,14 +162,22 @@ pub async fn list_all_for_project(
   pool: &PgPool,
   project_id: Uuid,
 ) -> Result<Vec<Jobset>> {
-  Ok(
-    sqlx::query_as::<_, Jobset>(
-      "SELECT * FROM jobsets WHERE project_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(project_id)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_all_for_project()
+    .bind(&client, &project_id)
+    .all()
+    .await?;
+  rows.into_iter().map(Jobset::try_from).collect()
+}
+
+/// Count all jobsets.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn count(pool: &PgPool) -> Result<i64> {
+  let client = pool.get().await?;
+  Ok(q::count().bind(&client).one().await?)
 }
 
 /// Count jobsets for a project.
@@ -118,12 +186,13 @@ pub async fn list_all_for_project(
 ///
 /// Returns error if database query fails.
 pub async fn count_for_project(pool: &PgPool, project_id: Uuid) -> Result<i64> {
-  let row: (i64,) =
-    sqlx::query_as("SELECT COUNT(*) FROM jobsets WHERE project_id = $1")
-      .bind(project_id)
-      .fetch_one(pool)
-      .await?;
-  Ok(row.0)
+  let client = pool.get().await?;
+  Ok(
+    q::count_for_project()
+      .bind(&client, &project_id)
+      .one()
+      .await?,
+  )
 }
 
 /// Update a jobset with partial fields.
@@ -159,30 +228,36 @@ pub async fn update(
     .unwrap_or(existing.scheduling_shares);
   let keep_nr = input.keep_nr.unwrap_or(existing.keep_nr);
 
-  sqlx::query_as::<_, Jobset>(
-    "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, \
-     flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, \
-     branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = \
-     $11, keep_nr = $12 WHERE id = $13 RETURNING *",
-  )
-  .bind(&name)
-  .bind(&nix_expression)
-  .bind(enabled)
-  .bind(flake_mode)
-  .bind(check_interval)
-  .bind(trigger_mode.as_str())
-  .bind(&branch)
-  .bind(&branch_pattern)
-  .bind(&tag_pattern)
-  .bind(scheduling_shares)
-  .bind(state.as_str())
-  .bind(keep_nr)
-  .bind(id)
-  .fetch_one(pool)
-  .await
-  .on_unique_violation(|| {
-    format!("Jobset '{name}' already exists in this project")
-  })
+  let client = pool.get().await?;
+  let row = q::update()
+    .bind(
+      &client,
+      &name,
+      &nix_expression,
+      &enabled,
+      &flake_mode,
+      &check_interval,
+      &trigger_mode.as_str(),
+      &branch,
+      &branch_pattern,
+      &tag_pattern,
+      &scheduling_shares,
+      &state.as_str(),
+      &keep_nr,
+      &id,
+    )
+    .one()
+    .await
+    .map_err(|e| {
+      if is_unique_violation(&e) {
+        CiError::Conflict(format!(
+          "Jobset '{name}' already exists in this project"
+        ))
+      } else {
+        CiError::Database(e)
+      }
+    })?;
+  Jobset::try_from(row)
 }
 
 /// Delete a jobset.
@@ -191,15 +266,11 @@ pub async fn update(
 ///
 /// Returns error if database delete fails or jobset not found.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
-  let result = sqlx::query("DELETE FROM jobsets WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
-
-  if result.rows_affected() == 0 {
+  let client = pool.get().await?;
+  let affected = q::delete().bind(&client, &id).await?;
+  if affected == 0 {
     return Err(CiError::NotFound(format!("Jobset {id} not found")));
   }
-
   Ok(())
 }
 
@@ -224,36 +295,27 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
 
-  Ok(
-    sqlx::query_as::<_, Jobset>(
-      "INSERT INTO jobsets (project_id, name, nix_expression, enabled, \
-       flake_mode, check_interval, trigger_mode, branch, branch_pattern, \
-       tag_pattern, scheduling_shares, state, keep_nr) VALUES ($1, $2, $3, \
-       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (project_id, \
-       name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled \
-       = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = \
-       EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch \
-       = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, \
-       tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = \
-       EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = \
-       EXCLUDED.keep_nr RETURNING *",
+  let client = pool.get().await?;
+  let row = q::upsert()
+    .bind(
+      &client,
+      &input.project_id,
+      &input.name,
+      &input.nix_expression,
+      &enabled,
+      &flake_mode,
+      &check_interval,
+      &trigger_mode.as_str(),
+      &input.branch,
+      &input.branch_pattern,
+      &input.tag_pattern,
+      &scheduling_shares,
+      &state.as_str(),
+      &keep_nr,
     )
-    .bind(input.project_id)
-    .bind(&input.name)
-    .bind(&input.nix_expression)
-    .bind(enabled)
-    .bind(flake_mode)
-    .bind(check_interval)
-    .bind(trigger_mode.as_str())
-    .bind(&input.branch)
-    .bind(&input.branch_pattern)
-    .bind(&input.tag_pattern)
-    .bind(scheduling_shares)
-    .bind(state.as_str())
-    .bind(keep_nr)
-    .fetch_one(pool)
-    .await?,
-  )
+    .one()
+    .await?;
+  Jobset::try_from(row)
 }
 
 /// List all active jobsets with project info.
@@ -262,11 +324,9 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
 ///
 /// Returns error if database query fails.
 pub async fn list_active(pool: &PgPool) -> Result<Vec<ActiveJobset>> {
-  Ok(
-    sqlx::query_as::<_, ActiveJobset>("SELECT * FROM active_jobsets")
-      .fetch_all(pool)
-      .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_active().bind(&client).all().await?;
+  rows.into_iter().map(ActiveJobset::try_from).collect()
 }
 
 /// Mark a one-shot jobset as complete without losing its one-shot state.
@@ -275,12 +335,8 @@ pub async fn list_active(pool: &PgPool) -> Result<Vec<ActiveJobset>> {
 ///
 /// Returns error if database update fails.
 pub async fn mark_one_shot_complete(pool: &PgPool, id: Uuid) -> Result<()> {
-  sqlx::query(
-    "UPDATE jobsets SET enabled = false WHERE id = $1 AND state = 'one_shot'",
-  )
-  .bind(id)
-  .execute(pool)
-  .await?;
+  let client = pool.get().await?;
+  q::mark_one_shot_complete().bind(&client, &id).await?;
   Ok(())
 }
 
@@ -290,10 +346,8 @@ pub async fn mark_one_shot_complete(pool: &PgPool, id: Uuid) -> Result<()> {
 ///
 /// Returns error if database update fails.
 pub async fn update_last_checked(pool: &PgPool, id: Uuid) -> Result<()> {
-  sqlx::query("UPDATE jobsets SET last_checked_at = NOW() WHERE id = $1")
-    .bind(id)
-    .execute(pool)
-    .await?;
+  let client = pool.get().await?;
+  q::update_last_checked().bind(&client, &id).await?;
   Ok(())
 }
 
@@ -306,13 +360,11 @@ pub async fn has_running_builds(
   pool: &PgPool,
   jobset_id: Uuid,
 ) -> Result<bool> {
-  let (count,): (i64,) = sqlx::query_as(
-    "SELECT COUNT(*) FROM builds b JOIN evaluations e ON b.evaluation_id = \
-     e.id WHERE e.jobset_id = $1 AND b.status = 'running'",
-  )
-  .bind(jobset_id)
-  .fetch_one(pool)
-  .await?;
+  let client = pool.get().await?;
+  let count = q::has_running_builds()
+    .bind(&client, &jobset_id)
+    .one()
+    .await?;
   Ok(count > 0)
 }
 
@@ -325,14 +377,11 @@ pub async fn has_unfinished_work(
   pool: &PgPool,
   jobset_id: Uuid,
 ) -> Result<bool> {
-  let (count,): (i64,) = sqlx::query_as(
-    "SELECT COUNT(*) FROM evaluations e LEFT JOIN builds b ON b.evaluation_id \
-     = e.id WHERE e.jobset_id = $1 AND (e.status IN ('pending', 'running') OR \
-     b.status IN ('pending', 'running'))",
-  )
-  .bind(jobset_id)
-  .fetch_one(pool)
-  .await?;
+  let client = pool.get().await?;
+  let count = q::has_unfinished_work()
+    .bind(&client, &jobset_id)
+    .one()
+    .await?;
   Ok(count > 0)
 }
 
@@ -347,14 +396,7 @@ pub async fn list_due_for_eval(
   pool: &PgPool,
   limit: i64,
 ) -> Result<Vec<ActiveJobset>> {
-  Ok(
-    sqlx::query_as::<_, ActiveJobset>(
-      "SELECT * FROM active_jobsets WHERE last_checked_at IS NULL OR \
-       last_checked_at < NOW() - (check_interval || ' seconds')::interval \
-       ORDER BY last_checked_at NULLS FIRST LIMIT $1",
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await?,
-  )
+  let client = pool.get().await?;
+  let rows = q::list_due_for_eval().bind(&client, &limit).all().await?;
+  rows.into_iter().map(ActiveJobset::try_from).collect()
 }

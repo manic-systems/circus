@@ -1,8 +1,8 @@
 use circus_common::{
+  PgPool,
   models::{Build, EvaluationTriggerKind, Project},
   repo,
 };
-use sqlx::PgPool;
 
 pub async fn get_project_for_build(
   pool: &PgPool,

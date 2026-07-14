@@ -1,0 +1,20 @@
+destination = "db/circus-codegen"
+
+[types.mapping."pg_catalog.timestamptz"]
+rust-type = "chrono::DateTime<chrono::Utc>"
+
+[manifest.package]
+license = "MPL-2.0"
+name    = "circus-codegen"
+publish = false
+
+[manifest.dependencies]
+chrono = { version = "0.4", features = [ "serde" ] }
+postgres = { version = "0.19", features = [
+  "with-chrono-0_4",
+  "with-serde_json-1",
+  "with-uuid-1",
+], optional = true }
+serde_json = { version = "1", features = [ "raw_value" ] }
+tokio-postgres = { version = "0.7", features = [ "with-chrono-0_4", "with-serde_json-1", "with-uuid-1" ] }
+uuid = { version = "1", features = [ "serde" ] }

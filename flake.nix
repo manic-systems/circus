@@ -32,6 +32,7 @@
           root = s;
           fileset = fs.unions [
             (s + /crates)
+            (s + /db/circus-codegen)
             (s + /Cargo.lock)
             (s + /Cargo.toml)
           ];
@@ -47,6 +48,7 @@
             (s + /Cargo.lock)
             (s + /Cargo.toml)
             (fs.fileFilter (file: file.name == "Cargo.toml") (s + /crates))
+            (fs.fileFilter (file: file.name == "Cargo.toml") (s + /db/circus-codegen))
           ];
         };
 
@@ -59,7 +61,7 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs; [pkg-config capnproto];
-        buildInputs = with pkgs; [openssl nixVersions.nix_2_34.dev glibc.dev];
+        buildInputs = with pkgs; [openssl sqlite nixVersions.nix_2_34.dev glibc.dev];
         env = {
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
@@ -164,6 +166,7 @@
               root = s;
               fileset = fs.unions [
                 (s + /crates)
+                (s + /db/circus-codegen)
                 (s + /Cargo.lock)
                 (s + /Cargo.toml)
                 (s + /.deny.toml)
@@ -188,6 +191,35 @@
             }
             touch "$out"
           '';
+
+        # Keep checked-in bindings synchronized with queries and migrations.
+        codegen-up-to-date =
+          pkgs.runCommand "circus-codegen-up-to-date" {
+            nativeBuildInputs = [pkgs.postgresql_18 pkgs.cornucopia pkgs.rustfmt];
+          } ''
+            export PGDATA="$TMPDIR/pgdata"
+            export PGHOST="$TMPDIR/sock"
+            mkdir -p "$PGHOST"
+            initdb -D "$PGDATA" -U postgres --auth=trust --no-sync >/dev/null
+            pg_ctl -D "$PGDATA" \
+              -o "-k $PGHOST -c listen_addresses=''' -c fsync=off" -w start >/dev/null
+            createdb -h "$PGHOST" -U postgres circus_check
+            for f in ${./crates/migrations/migrations}/[0-9]*.sql; do
+              psql -v ON_ERROR_STOP=1 -h "$PGHOST" -U postgres -d circus_check -q -f "$f"
+            done
+            mkdir -p "$TMPDIR/work"
+            cp -r ${./queries} "$TMPDIR/work/queries"
+            cp ${./cornucopia.toml} "$TMPDIR/work/cornucopia.toml"
+            psql -v ON_ERROR_STOP=1 -h "$PGHOST" -U postgres -d circus_check -q -f ${./crates/migrations/bootstrap.sql}
+            (cd "$TMPDIR/work" && cornucopia live "host=$PGHOST user=postgres dbname=circus_check")
+            pg_ctl -D "$PGDATA" -m immediate stop >/dev/null || true
+            if ! diff -ru ${./db/circus-codegen} "$TMPDIR/work/db/circus-codegen"; then
+              echo "ERROR: db/circus-codegen/ is out of date relative to queries/ x migrations/." >&2
+              echo "Run scripts/codegen.sh and commit the regenerated db/circus-codegen/." >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
       });
 
     devShells = forAllSystems (system: let
@@ -202,6 +234,8 @@
           pkg-config
           openssl
           postgresql_18
+          # DB query codegen: `scripts/codegen.sh` runs `cornucopia live`.
+          cornucopia
 
           # circus-evaluator builds evix's Nix C bindings.
           nixVersions.nix_2_34.dev
@@ -240,14 +274,14 @@
           # Format Nix with Alejandra
           fd "$@" -t f -e nix -x alejandra -q '{}'
 
-          # Format TOML with Taplo
-          fd "$@" -t f -e toml -x taplo fmt '{}'
+          # Format TOML with Taplo, leaving the generated codegen crate verbatim
+          fd "$@" -t f -e toml -E db -x taplo fmt '{}'
 
           # Format CSS with Prettier
           fd "$@" -t f -e css -x prettier --write '{}'
 
-          # Format SQL with sql-format
-          fd "$@" -t f -e sql -x sql-formatter --fix '{}' -l postgresql
+          # Format SQL with sql-format, skipping cornucopia queries it cannot parse
+          fd "$@" -t f -e sql -E queries -x sql-formatter --fix '{}' -l postgresql
 
           # Format Markdown with Deno
           fd "$@" -t f -e md -E docs/API.md -x deno fmt -q '{}'

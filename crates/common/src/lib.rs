@@ -4,6 +4,7 @@ pub mod alerts;
 pub mod audit;
 pub mod crypto;
 pub mod database;
+pub mod db;
 pub mod error;
 pub mod gc_roots;
 pub mod glob;
@@ -33,6 +34,14 @@ pub use circus_types::{
 };
 pub use crypto::install_crypto_provider;
 pub use database::*;
+pub use db::{
+  DbClient,
+  DbTransaction,
+  GenericClient,
+  PgPool,
+  build_pool,
+  is_unique_violation,
+};
 pub use error::*;
 pub use migrate::*;
 pub use models::*;
