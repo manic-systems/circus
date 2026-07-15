@@ -269,15 +269,14 @@ pub async fn list_active(pool: &PgPool) -> Result<Vec<ActiveJobset>> {
   )
 }
 
-/// Mark a one-shot jobset as complete (set state to disabled).
+/// Mark a one-shot jobset as complete without losing its one-shot state.
 ///
 /// # Errors
 ///
 /// Returns error if database update fails.
 pub async fn mark_one_shot_complete(pool: &PgPool, id: Uuid) -> Result<()> {
   sqlx::query(
-    "UPDATE jobsets SET state = 'disabled', enabled = false WHERE id = $1 AND \
-     state = 'one_shot'",
+    "UPDATE jobsets SET enabled = false WHERE id = $1 AND state = 'one_shot'",
   )
   .bind(id)
   .execute(pool)

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -14,6 +14,25 @@ use crate::{
 ///
 /// Returns error if database insert fails or job already exists.
 pub async fn create(pool: &PgPool, input: CreateBuild) -> Result<Build> {
+  create_with(pool, input).await
+}
+
+/// Create a new build record within an existing transaction.
+///
+/// # Errors
+///
+/// Returns an error if database insert fails or job already exists.
+pub async fn create_in_transaction(
+  tx: &mut Transaction<'_, Postgres>,
+  input: CreateBuild,
+) -> Result<Build> {
+  create_with(&mut **tx, input).await
+}
+
+async fn create_with<'e, E>(executor: E, input: CreateBuild) -> Result<Build>
+where
+  E: Executor<'e, Database = Postgres>,
+{
   let is_aggregate = input.is_aggregate.unwrap_or(false);
   let is_fod = input.is_fod.unwrap_or(false);
   sqlx::query_as::<_, Build>(
@@ -37,7 +56,7 @@ pub async fn create(pool: &PgPool, input: CreateBuild) -> Result<Build> {
   .bind(&input.meta_homepage)
   .bind(&input.meta_maintainers)
   .bind(&input.required_features)
-  .fetch_one(pool)
+  .fetch_one(executor)
   .await
   .on_unique_violation(|| {
     format!(

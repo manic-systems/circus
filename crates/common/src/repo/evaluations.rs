@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -365,7 +365,8 @@ pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
   )
 }
 
-/// Requeue a cancelled or failed evaluation after discarding its stale builds.
+/// Requeue a cancelled, failed, or timed-out evaluation after discarding its
+/// stale builds. One-shot jobsets are re-enabled for the new attempt.
 ///
 /// # Errors
 ///
@@ -373,9 +374,9 @@ pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
 pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
   let mut tx = pool.begin().await?;
   let evaluation = sqlx::query_as::<_, Evaluation>(
-    "UPDATE evaluations SET status = 'pending', error_message = NULL, \
-     inputs_hash = NULL WHERE id = $1 AND status IN ('cancelled', 'failed') \
-     RETURNING *",
+    "UPDATE evaluations SET status = 'pending', evaluation_time = NOW(), \
+     error_message = NULL, inputs_hash = NULL WHERE id = $1 AND status IN \
+     ('cancelled', 'failed', 'timed_out') RETURNING *",
   )
   .bind(id)
   .fetch_optional(&mut *tx)
@@ -386,9 +387,62 @@ pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
       .bind(id)
       .execute(&mut *tx)
       .await?;
+    sqlx::query(
+      "UPDATE jobsets SET enabled = true WHERE id = (SELECT jobset_id FROM \
+       evaluations WHERE id = $1) AND state = 'one_shot'",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
   }
   tx.commit().await?;
   Ok(evaluation)
+}
+
+/// Lock a running evaluation before atomically persisting its result.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn lock_running(
+  tx: &mut Transaction<'_, Postgres>,
+  id: Uuid,
+) -> Result<bool> {
+  Ok(
+    sqlx::query_scalar::<_, Uuid>(
+      "SELECT id FROM evaluations WHERE id = $1 AND status = 'running' FOR \
+       UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .is_some(),
+  )
+}
+
+/// Finish a locked running evaluation within its result transaction.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn finish_running_in_transaction(
+  tx: &mut Transaction<'_, Postgres>,
+  id: Uuid,
+  status: EvaluationStatus,
+  error_message: Option<&str>,
+) -> Result<bool> {
+  Ok(
+    sqlx::query_scalar::<_, Uuid>(
+      "UPDATE evaluations SET status = $1, error_message = $2 WHERE id = $3 \
+       AND status = 'running' RETURNING id",
+    )
+    .bind(status)
+    .bind(error_message)
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .is_some(),
+  )
 }
 
 /// Return whether an evaluator should cancel its currently-running work.

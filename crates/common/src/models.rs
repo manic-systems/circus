@@ -67,8 +67,8 @@ pub struct Evaluation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum EvaluationStatus {
   Pending,
   Running,
@@ -513,7 +513,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for BuildStatus {
 
 #[cfg(test)]
 mod build_status_tests {
-  use super::BuildStatus;
+  use super::{BuildStatus, EvaluationStatus};
 
   #[test]
   fn build_status_i32_round_trips() {
@@ -543,6 +543,15 @@ mod build_status_tests {
   fn build_status_from_i32_preserves_unknown_fallback() {
     assert_eq!(BuildStatus::from_i32(-1), None);
     assert_eq!(BuildStatus::from_i32(15), None);
+  }
+
+  #[test]
+  fn timed_out_status_uses_database_spelling() {
+    assert_eq!(
+      serde_json::to_string(&EvaluationStatus::TimedOut)
+        .expect("EvaluationStatus serializes"),
+      "\"timed_out\""
+    );
   }
 }
 

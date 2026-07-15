@@ -24,7 +24,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::builds::{compute_inputs_hash, create_builds_from_eval};
+use crate::{
+  builds::{compute_inputs_hash, create_builds_from_eval},
+  evaluation_state::{ExistingEvaluationClaim, claim_existing},
+};
 
 /// Main evaluator loop. Polls jobsets and runs nix evaluations.
 ///
@@ -434,11 +437,6 @@ async fn run_nix_and_record_builds(
     tracing::warn!(eval_id = %eval.id, "Evaluation cancellation watcher stopped: {error}");
   }
 
-  if repo::evaluations::is_cancelled(pool, eval.id).await? {
-    tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
-    return Ok(());
-  }
-
   match result {
     Ok(eval_result) => {
       tracing::debug!(jobset = %jobset.name, job_count = eval_result.jobs.len(), "Nix evaluation returned");
@@ -449,7 +447,10 @@ async fn run_nix_and_record_builds(
           "Evaluation discovered jobs"
       );
 
-      create_builds_from_eval(pool, eval.id, &eval_result).await?;
+      if !create_builds_from_eval(pool, eval.id, &eval_result).await? {
+        tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
+        return Ok(());
+      }
 
       if notifications_config.enable_retry_queue {
         if let Ok(project) = repo::projects::get(pool, jobset.project_id).await
@@ -483,14 +484,6 @@ async fn run_nix_and_record_builds(
           );
         }
       }
-
-      repo::evaluations::finish_running(
-        pool,
-        eval.id,
-        EvaluationStatus::Completed,
-        None,
-      )
-      .await?;
     },
     Err(e) => {
       let msg = e.to_string();
@@ -727,25 +720,9 @@ async fn evaluate_jobset(
         )
       })?;
 
-      if existing.status == EvaluationStatus::Pending {
-        repo::evaluations::update_status(
-          pool,
-          existing.id,
-          EvaluationStatus::Running,
-          None,
-        )
-        .await?;
-      } else if existing.status == EvaluationStatus::Completed {
-        let build_count = repo::builds::count_filtered(
-          pool,
-          Some(existing.id),
-          None,
-          None,
-          None,
-        )
-        .await?;
-
-        if build_count > 0 {
+      match claim_existing(pool, existing).await? {
+        ExistingEvaluationClaim::Claimed(eval) => eval,
+        ExistingEvaluationClaim::Completed { build_count } => {
           info!(
             "Evaluation already completed with {} builds, skipping nix \
              evaluation jobset={} commit={}",
@@ -760,30 +737,29 @@ async fn evaluate_jobset(
             );
           }
           return Ok(());
-        }
-        info!(
-          "Evaluation completed but has 0 builds, re-running nix evaluation \
-           jobset={} commit={}",
-          jobset.name, commit_hash
-        );
-      } else if existing.status == EvaluationStatus::Running {
-        tracing::info!(
-          jobset = %jobset.name,
-          commit = %commit_hash,
-          eval_id = %existing.id,
-          "Evaluation is already running, skipping duplicate poll"
-        );
-        if let Err(e) =
-          repo::jobsets::update_last_checked(pool, jobset.id).await
-        {
-          tracing::warn!(
+        },
+        ExistingEvaluationClaim::Running => {
+          tracing::info!(
             jobset = %jobset.name,
-            "Failed to update last_checked_at: {e}"
+            commit = %commit_hash,
+            "Evaluation is already running, skipping duplicate poll"
           );
-        }
-        return Ok(());
+          if let Err(e) =
+            repo::jobsets::update_last_checked(pool, jobset.id).await
+          {
+            tracing::warn!(jobset = %jobset.name, "Failed to update last_checked_at: {e}");
+          }
+          return Ok(());
+        },
+        ExistingEvaluationClaim::Cancelled => {
+          tracing::info!(
+            jobset = %jobset.name,
+            commit = %commit_hash,
+            "Evaluation was cancelled, skipping duplicate poll"
+          );
+          return Ok(());
+        },
       }
-      existing
     },
     Err(e) => {
       return Err(color_eyre::eyre::eyre!(e)).with_context(|| {
