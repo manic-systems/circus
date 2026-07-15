@@ -4,7 +4,7 @@ use std::{
 };
 
 use circus_common::{
-  models::{CreateBuild, JobsetInput},
+  models::{CreateBuild, EvaluationStatus, JobsetInput},
   repo,
 };
 use sqlx::PgPool;
@@ -226,15 +226,16 @@ fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
   }
 }
 
-/// Create build records from evaluation results, resolving dependencies.
+/// Create build records and finish the evaluation while it is still running.
 pub(crate) async fn create_builds_from_eval(
   pool: &PgPool,
   eval_id: Uuid,
   eval_result: &crate::nix::EvalResult,
-) -> color_eyre::Result<()> {
+) -> color_eyre::Result<bool> {
   let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
   let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
   let jobs = expand_derivation_graph(&eval_result.jobs).await;
+  let mut builds = Vec::with_capacity(jobs.len());
 
   for job in &jobs {
     let outputs_json = job
@@ -249,7 +250,7 @@ pub(crate) async fn create_builds_from_eval(
 
     let (is_fod, fod_hash) = detect_fod(&job.drv_path);
     let required_features = read_required_features(&job.drv_path).await;
-    let build = repo::builds::create(pool, CreateBuild {
+    builds.push(CreateBuild {
       evaluation_id: eval_id,
       job_name: job.name.clone(),
       drv_path: job.drv_path.clone(),
@@ -264,11 +265,23 @@ pub(crate) async fn create_builds_from_eval(
       meta_homepage: job.meta.homepage.clone(),
       meta_maintainers: job.meta.maintainers.clone(),
       required_features,
-    })
-    .await?;
+    });
+  }
 
-    drv_to_build.insert(job.drv_path.clone(), build.id);
-    name_to_build.insert(job.name.clone(), build.id);
+  let mut tx = pool.begin().await?;
+  if !repo::evaluations::lock_running(&mut tx, eval_id).await? {
+    return Ok(false);
+  }
+
+  for build in builds {
+    let drv_path = build.drv_path.clone();
+    let job_name = build.job_name.clone();
+    let id = repo::builds::create_in_transaction(&mut tx, build)
+      .await?
+      .id;
+
+    drv_to_build.insert(drv_path, id);
+    name_to_build.insert(job_name, id);
   }
 
   // Resolve dependencies
@@ -283,10 +296,13 @@ pub(crate) async fn create_builds_from_eval(
       for dep_drv in input_drvs.keys() {
         if let Some(&dep_build_id) = drv_to_build.get(dep_drv)
           && dep_build_id != build_id
-          && let Err(e) =
-            repo::build_dependencies::create(pool, build_id, dep_build_id).await
         {
-          tracing::warn!(build_id = %build_id, dep = %dep_build_id, "Failed to create build dependency: {e}");
+          repo::build_dependencies::create_in_transaction(
+            &mut tx,
+            build_id,
+            dep_build_id,
+          )
+          .await?;
         }
       }
     }
@@ -296,16 +312,32 @@ pub(crate) async fn create_builds_from_eval(
       for constituent_name in constituents {
         if let Some(&dep_build_id) = name_to_build.get(constituent_name)
           && dep_build_id != build_id
-          && let Err(e) =
-            repo::build_dependencies::create(pool, build_id, dep_build_id).await
         {
-          tracing::warn!(build_id = %build_id, dep = %dep_build_id, "Failed to create constituent dependency: {e}");
+          repo::build_dependencies::create_in_transaction(
+            &mut tx,
+            build_id,
+            dep_build_id,
+          )
+          .await?;
         }
       }
     }
   }
 
-  Ok(())
+  if !repo::evaluations::finish_running_in_transaction(
+    &mut tx,
+    eval_id,
+    EvaluationStatus::Completed,
+    None,
+  )
+  .await?
+  {
+    return Err(color_eyre::eyre::eyre!(
+      "evaluation {eval_id} lost its running state while locked"
+    ));
+  }
+  tx.commit().await?;
+  Ok(true)
 }
 
 /// Compute a deterministic hash over the commit and all jobset inputs.

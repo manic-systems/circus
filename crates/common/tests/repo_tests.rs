@@ -535,6 +535,170 @@ async fn test_evaluation_and_build_lifecycle() {
 }
 
 #[tokio::test]
+async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "restart-one-shot").await;
+  let jobset = repo::jobsets::create(&pool, CreateJobset {
+    project_id:        project.id,
+    name:              format!("one-shot-{}", uuid::Uuid::new_v4()),
+    nix_expression:    "packages".to_string(),
+    enabled:           Some(true),
+    flake_mode:        None,
+    check_interval:    None,
+    trigger_mode:      None,
+    branch:            None,
+    branch_pattern:    None,
+    tag_pattern:       None,
+    scheduling_shares: None,
+    state:             Some(JobsetState::OneShot),
+    keep_nr:           None,
+  })
+  .await
+  .expect("create one-shot jobset");
+  let eval = create_test_eval(&pool, jobset.id).await;
+  repo::evaluations::update_status(
+    &pool,
+    eval.id,
+    EvaluationStatus::Failed,
+    Some("failed"),
+  )
+  .await
+  .expect("fail evaluation");
+  sqlx::query(
+    "UPDATE evaluations SET evaluation_time = NOW() - INTERVAL '1 hour' WHERE \
+     id = $1",
+  )
+  .bind(eval.id)
+  .execute(&pool)
+  .await
+  .expect("backdate evaluation");
+  repo::jobsets::mark_one_shot_complete(&pool, jobset.id)
+    .await
+    .expect("complete one-shot");
+
+  let restarted = repo::evaluations::restart(&pool, eval.id)
+    .await
+    .expect("restart evaluation")
+    .expect("failed evaluation can restart");
+  let restarted_jobset = repo::jobsets::get(&pool, jobset.id)
+    .await
+    .expect("get restarted jobset");
+
+  assert_eq!(restarted.status, EvaluationStatus::Pending);
+  assert!(restarted.evaluation_time > eval.evaluation_time);
+  assert!(restarted_jobset.enabled);
+  assert_eq!(restarted_jobset.state, JobsetState::OneShot);
+}
+
+#[tokio::test]
+async fn test_cancellation_cannot_interleave_build_persistence() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "cancel-persistence").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  repo::evaluations::update_status(
+    &pool,
+    eval.id,
+    EvaluationStatus::Running,
+    None,
+  )
+  .await
+  .expect("start evaluation");
+
+  let mut tx = pool.begin().await.expect("begin result transaction");
+  assert!(
+    repo::evaluations::lock_running(&mut tx, eval.id)
+      .await
+      .expect("lock evaluation")
+  );
+  let cancel_pool = pool.clone();
+  let mut cancel = tokio::spawn(async move {
+    repo::evaluations::cancel(&cancel_pool, eval.id).await
+  });
+  assert!(
+    tokio::time::timeout(std::time::Duration::from_millis(25), &mut cancel)
+      .await
+      .is_err(),
+    "cancellation must wait for the result transaction"
+  );
+  repo::builds::create_in_transaction(&mut tx, CreateBuild {
+    evaluation_id: eval.id,
+    job_name: "build".to_string(),
+    drv_path: format!("/nix/store/{}.drv", uuid::Uuid::new_v4()),
+    ..Default::default()
+  })
+  .await
+  .expect("persist build");
+  assert!(
+    repo::evaluations::finish_running_in_transaction(
+      &mut tx,
+      eval.id,
+      EvaluationStatus::Completed,
+      None,
+    )
+    .await
+    .expect("finish evaluation")
+  );
+  tx.commit().await.expect("commit result transaction");
+
+  assert!(
+    cancel
+      .await
+      .expect("join cancellation")
+      .expect("cancel evaluation")
+      .is_none()
+  );
+  assert_eq!(
+    repo::builds::count_filtered(&pool, Some(eval.id), None, None, None)
+      .await
+      .expect("count persisted builds"),
+    1
+  );
+  assert_eq!(
+    repo::evaluations::get(&pool, eval.id)
+      .await
+      .expect("get completed evaluation")
+      .status,
+    EvaluationStatus::Completed
+  );
+
+  let cancelled = create_test_eval(&pool, jobset.id).await;
+  repo::evaluations::update_status(
+    &pool,
+    cancelled.id,
+    EvaluationStatus::Running,
+    None,
+  )
+  .await
+  .expect("start cancelled evaluation");
+  assert!(
+    repo::evaluations::cancel(&pool, cancelled.id)
+      .await
+      .expect("cancel before persistence")
+      .is_some()
+  );
+  let mut cancelled_tx =
+    pool.begin().await.expect("begin cancelled transaction");
+  assert!(
+    !repo::evaluations::lock_running(&mut cancelled_tx, cancelled.id)
+      .await
+      .expect("check cancelled evaluation")
+  );
+  assert_eq!(
+    repo::builds::count_filtered(&pool, Some(cancelled.id), None, None, None)
+      .await
+      .expect("count cancelled builds"),
+    0
+  );
+}
+
+#[tokio::test]
 async fn test_start_blocks_duplicate_running_drv_path() {
   let Some(pool) = get_pool().await else {
     return;

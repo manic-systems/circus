@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -17,13 +17,37 @@ pub async fn create(
   build_id: Uuid,
   dependency_build_id: Uuid,
 ) -> Result<BuildDependency> {
+  create_with(pool, build_id, dependency_build_id).await
+}
+
+/// Create a build dependency relationship within an existing transaction.
+///
+/// # Errors
+///
+/// Returns an error if database insert fails or dependency already exists.
+pub async fn create_in_transaction(
+  tx: &mut Transaction<'_, Postgres>,
+  build_id: Uuid,
+  dependency_build_id: Uuid,
+) -> Result<BuildDependency> {
+  create_with(&mut **tx, build_id, dependency_build_id).await
+}
+
+async fn create_with<'e, E>(
+  executor: E,
+  build_id: Uuid,
+  dependency_build_id: Uuid,
+) -> Result<BuildDependency>
+where
+  E: Executor<'e, Database = Postgres>,
+{
   sqlx::query_as::<_, BuildDependency>(
     "INSERT INTO build_dependencies (build_id, dependency_build_id) VALUES \
      ($1, $2) RETURNING *",
   )
   .bind(build_id)
   .bind(dependency_build_id)
-  .fetch_one(pool)
+  .fetch_one(executor)
   .await
   .on_unique_violation(|| {
     format!(
