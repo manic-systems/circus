@@ -39,14 +39,18 @@
                 {% endif %}
             </form>
             {% if eval.status_class == "running" || eval.status_class == "pending" %}
-                <form class="inline" method="POST" action="/evaluation/{{ eval.id }}/cancel"
+                <form class="inline"
+                      method="POST"
+                      action="/evaluation/{{ eval.id }}/cancel"
                       onsubmit="return confirm('Cancel this evaluation?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button class="btn btn-small btn-danger" type="submit">Cancel Evaluation</button>
                 </form>
             {% endif %}
-            {% if eval.status_class == "failed" || eval.status_class == "cancelled" %}
-                <form class="inline" method="POST" action="/evaluation/{{ eval.id }}/restart"
+            {% if eval.status_class == "failed" || eval.status_class == "cancelled" || eval.status_class == "timed-out" %}
+                <form class="inline"
+                      method="POST"
+                      action="/evaluation/{{ eval.id }}/restart"
                       onsubmit="return confirm('Restart this evaluation and discard its current builds?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button class="btn btn-small btn-secondary" type="submit">Restart Evaluation</button>
@@ -71,7 +75,8 @@
                 <h2>Evaluation Error</h2>
                 <span>Nix diagnostics</span>
             </div>
-            <pre class="error-detail">{{ eval.error_message }}</pre>
+            <pre class="error-detail">
+{{ eval.error_message }}</pre>
         </section>
     {% endif %}
 

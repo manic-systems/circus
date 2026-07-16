@@ -594,6 +594,44 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
 }
 
 #[tokio::test]
+async fn test_restart_rejects_a_manually_disabled_jobset() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "restart-disabled").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  repo::evaluations::update_status(
+    &pool,
+    eval.id,
+    EvaluationStatus::Failed,
+    Some("failed"),
+  )
+  .await
+  .expect("fail evaluation");
+  sqlx::query("UPDATE jobsets SET enabled = false WHERE id = $1")
+    .bind(jobset.id)
+    .execute(&pool)
+    .await
+    .expect("disable jobset");
+
+  assert!(
+    repo::evaluations::restart(&pool, eval.id)
+      .await
+      .expect("attempt restart")
+      .is_none()
+  );
+  assert_eq!(
+    repo::evaluations::get(&pool, eval.id)
+      .await
+      .expect("get failed evaluation")
+      .status,
+    EvaluationStatus::Failed
+  );
+}
+
+#[tokio::test]
 async fn test_cancellation_cannot_interleave_build_persistence() {
   let Some(pool) = get_pool().await else {
     return;

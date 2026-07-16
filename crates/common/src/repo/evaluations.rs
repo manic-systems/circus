@@ -366,7 +366,8 @@ pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
 }
 
 /// Requeue a cancelled, failed, or timed-out evaluation after discarding its
-/// stale builds. One-shot jobsets are re-enabled for the new attempt.
+/// stale builds. A disabled jobset rejects the restart; a retained one-shot
+/// jobset is re-enabled for its new attempt.
 ///
 /// # Errors
 ///
@@ -374,9 +375,11 @@ pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
 pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
   let mut tx = pool.begin().await?;
   let evaluation = sqlx::query_as::<_, Evaluation>(
-    "UPDATE evaluations SET status = 'pending', evaluation_time = NOW(), \
-     error_message = NULL, inputs_hash = NULL WHERE id = $1 AND status IN \
-     ('cancelled', 'failed', 'timed_out') RETURNING *",
+    "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), \
+     error_message = NULL, inputs_hash = NULL FROM jobsets j WHERE e.id = $1 \
+     AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', \
+     'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN \
+     ('enabled', 'one_at_a_time'))) RETURNING e.*",
   )
   .bind(id)
   .fetch_optional(&mut *tx)
