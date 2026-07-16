@@ -770,7 +770,8 @@ pub(super) async fn evaluation_restart(
     .ok_or_else(|| {
       (
         StatusCode::CONFLICT,
-        "Only failed or cancelled evaluations can be restarted",
+        "Only failed, cancelled, or timed-out evaluations with active jobsets \
+         can be restarted",
       )
         .into_response()
     })?;
