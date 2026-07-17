@@ -9,6 +9,7 @@ use circus_common::{
     CreateJobset,
     Evaluation,
     EvaluationStatus,
+    EvaluationTriggerKind,
     JobsetInput,
     JobsetState,
     JobsetTriggerMode,
@@ -103,7 +104,7 @@ async fn run_cycle(
       continue;
     };
 
-    if jobset.trigger_mode.accepts_source_triggers() {
+    if accepts_pending_evaluation(jobset.trigger_mode, eval.trigger_kind) {
       pending_jobset_ids.insert(eval.jobset_id);
       pending_tasks.push((eval, jobset.clone()));
     } else {
@@ -219,6 +220,14 @@ async fn run_cycle(
   discover_projects_without_jobsets(pool, config, git_timeout).await;
 
   Ok(())
+}
+
+fn accepts_pending_evaluation(
+  trigger_mode: JobsetTriggerMode,
+  trigger_kind: EvaluationTriggerKind,
+) -> bool {
+  trigger_mode.accepts_source_triggers()
+    || trigger_kind == EvaluationTriggerKind::Interval
 }
 
 fn warn_on_disk_pressure(msg: &str) {
@@ -968,5 +977,24 @@ async fn discover_projects_without_jobsets(
     };
 
     sync_repo_declarative_config(pool, &repo_path, project.id).await;
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use circus_common::models::{EvaluationTriggerKind, JobsetTriggerMode};
+
+  use super::accepts_pending_evaluation;
+
+  #[test]
+  fn interval_restarts_are_accepted_by_pending_queue() {
+    assert!(accepts_pending_evaluation(
+      JobsetTriggerMode::Interval,
+      EvaluationTriggerKind::Interval,
+    ));
+    assert!(!accepts_pending_evaluation(
+      JobsetTriggerMode::Interval,
+      EvaluationTriggerKind::Manual,
+    ));
   }
 }
