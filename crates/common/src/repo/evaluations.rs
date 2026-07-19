@@ -270,6 +270,77 @@ pub async fn count_filtered_with_visibility(
   )
 }
 
+/// Filters for the dashboard evaluation list. Name filters match
+/// case-insensitive substrings (like the builds job filter); `commit` matches
+/// a hash prefix.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EvaluationListFilter<'a> {
+  pub project:        Option<&'a str>,
+  pub jobset:         Option<&'a str>,
+  pub commit:         Option<&'a str>,
+  pub status:         Option<&'a str>,
+  pub include_hidden: bool,
+}
+
+/// List evaluations for the dashboard list page, filtered by project/jobset
+/// name, commit prefix, and status.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_page_filtered(
+  pool: &PgPool,
+  filter: EvaluationListFilter<'_>,
+  limit: i64,
+  offset: i64,
+) -> Result<Vec<Evaluation>> {
+  Ok(
+    sqlx::query_as::<_, Evaluation>(
+      "SELECT e.* FROM evaluations e JOIN jobsets j ON j.id = e.jobset_id \
+       JOIN projects p ON p.id = j.project_id WHERE ($1::text IS NULL OR \
+       p.name ILIKE '%' || $1 || '%') AND ($2::text IS NULL OR j.name ILIKE \
+       '%' || $2 || '%') AND ($3::text IS NULL OR e.commit_hash LIKE $3 || \
+       '%') AND ($4::text IS NULL OR e.status = $4) AND ($5::boolean OR \
+       e.hidden = false) ORDER BY e.evaluation_time DESC LIMIT $6 OFFSET $7",
+    )
+    .bind(filter.project)
+    .bind(filter.jobset)
+    .bind(filter.commit)
+    .bind(filter.status)
+    .bind(filter.include_hidden)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?,
+  )
+}
+
+/// Count evaluations matching [`EvaluationListFilter`].
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn count_page_filtered(
+  pool: &PgPool,
+  filter: EvaluationListFilter<'_>,
+) -> Result<i64> {
+  let row: (i64,) = sqlx::query_as(
+    "SELECT COUNT(*) FROM evaluations e JOIN jobsets j ON j.id = e.jobset_id \
+     JOIN projects p ON p.id = j.project_id WHERE ($1::text IS NULL OR p.name \
+     ILIKE '%' || $1 || '%') AND ($2::text IS NULL OR j.name ILIKE '%' || $2 \
+     || '%') AND ($3::text IS NULL OR e.commit_hash LIKE $3 || '%') AND \
+     ($4::text IS NULL OR e.status = $4) AND ($5::boolean OR e.hidden = false)",
+  )
+  .bind(filter.project)
+  .bind(filter.jobset)
+  .bind(filter.commit)
+  .bind(filter.status)
+  .bind(filter.include_hidden)
+  .fetch_one(pool)
+  .await?;
+  Ok(row.0)
+}
+
 /// Hide or unhide an evaluation in dashboard listings.
 ///
 /// Hidden evaluations remain in the database and continue to count for build

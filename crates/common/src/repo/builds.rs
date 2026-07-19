@@ -343,9 +343,26 @@ pub async fn list_pending_in_scheduler_order(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Build>> {
+  list_pending_in_scheduler_order_filtered(pool, None, None, limit, offset)
+    .await
+}
+
+/// Pending builds in scheduler order, optionally narrowed by system and a
+/// case-insensitive job-name substring.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_pending_in_scheduler_order_filtered(
+  pool: &PgPool,
+  system: Option<&str>,
+  job_name: Option<&str>,
+  limit: i64,
+  offset: i64,
+) -> Result<Vec<Build>> {
   let client = pool.get().await?;
   let rows = q::list_pending_in_scheduler_order()
-    .bind(&client, &limit, &offset)
+    .bind(&client, &system, &job_name, &limit, &offset)
     .all()
     .await?;
   rows.into_iter().map(Build::try_from).collect()

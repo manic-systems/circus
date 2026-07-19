@@ -149,6 +149,8 @@ RETURNING *;
 SELECT *
 FROM builds
 WHERE status = 'pending'
+  AND (:system::text IS NULL OR system = :system)
+  AND (:job_name::text IS NULL OR job_name ILIKE '%' || :job_name || '%')
 ORDER BY
   priority DESC,
   cardinality(COALESCE(effective_features, required_features)) DESC,
