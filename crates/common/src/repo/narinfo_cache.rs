@@ -198,8 +198,8 @@ pub struct CacheStorageSummary {
   pub nar_count:          i64,
   /// Sum of uncompressed NAR sizes in bytes.
   pub uncompressed_bytes: i64,
-  /// Sum of on-disk (compressed) file sizes in bytes. NARs without a recorded
-  /// `file_size` contribute nothing.
+  /// Sum of on-disk file sizes in bytes. NARs without a recorded `file_size`
+  /// (stored uncompressed) contribute their `nar_size`.
   pub compressed_bytes:   i64,
 }
 
@@ -355,4 +355,60 @@ pub async fn touch_last_fetched(pool: &PgPool, store_path: &str) -> Result<()> {
   let client = pool.get().await?;
   q::touch_last_fetched().bind(&client, &store_path).await?;
   Ok(())
+}
+
+/// A cache entry removed by [`delete_stale`]: what the caller needs to delete
+/// the backing object and report reclaimed bytes.
+#[derive(Debug, Clone)]
+pub struct DeletedNar {
+  pub store_path: String,
+  /// Cache-relative object URL (`nar/...`).
+  pub url:        String,
+  /// On-disk bytes reclaimed (`file_size`, falling back to `nar_size`).
+  pub bytes:      i64,
+}
+
+impl From<q::DeletedNarRow> for DeletedNar {
+  fn from(r: q::DeletedNarRow) -> Self {
+    Self {
+      store_path: r.store_path,
+      url: r.url,
+      bytes: r.bytes,
+    }
+  }
+}
+
+/// Delete cache entries for a scope. With a `cutoff`, only entries neither
+/// fetched nor created since that instant are removed. `project_id = None`
+/// operates on the global scope and removes matching entries outright; a
+/// concrete id removes the project's association and drops only entries no
+/// other project still references.
+///
+/// # Returns
+///
+/// The removed entries, so the caller can delete their backing objects.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn delete_stale(
+  pool: &PgPool,
+  project_id: Option<Uuid>,
+  cutoff: Option<DateTime<Utc>>,
+) -> Result<Vec<DeletedNar>> {
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  let rows = if let Some(project_id) = project_id {
+    q::delete_stale_project_owners()
+      .bind(&tx, &project_id, &cutoff)
+      .await?;
+    q::delete_stale_for_project()
+      .bind(&tx, &project_id, &cutoff)
+      .all()
+      .await?
+  } else {
+    q::delete_stale_global().bind(&tx, &cutoff).all().await?
+  };
+  tx.commit().await?;
+  Ok(rows.into_iter().map(DeletedNar::from).collect())
 }

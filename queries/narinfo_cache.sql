@@ -1,5 +1,6 @@
 -- Project visibility includes direct and shared ownership.
 --: NarinfoCacheRow(file_hash?, file_size?, deriver?, sig?, ca?, build_id?, project_id?, last_fetched_at?)
+--: DeletedNarRow()
 
 --! upsert (file_hash?, file_size?, deriver?, sig?, ca?, build_id?, project_id?)
 INSERT INTO
@@ -108,7 +109,7 @@ inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local)
 SELECT
   COUNT(*) AS nar_count,
   COALESCE(SUM(nar_size), 0)::bigint AS uncompressed_bytes,
-  COALESCE(SUM(file_size), 0)::bigint AS compressed_bytes
+  COALESCE(SUM(COALESCE(file_size, nar_size)), 0)::bigint AS compressed_bytes
 FROM inventory;
 
 --! storage_extremes (project_id?) : (last_uploaded?, oldest_fetched?)
@@ -258,3 +259,28 @@ WHERE (:hash_prefix::text IS NULL
 
 --! touch_last_fetched
 UPDATE narinfo_cache SET last_fetched_at = NOW() WHERE store_path = :store_path;
+
+--! delete_stale_project_owners (cutoff?)
+DELETE FROM narinfo_cache_projects ncp
+USING narinfo_cache n
+WHERE ncp.project_id = :project_id
+  AND n.store_path = ncp.store_path
+  AND (:cutoff::timestamptz IS NULL
+    OR COALESCE(n.last_fetched_at, n.created_at) < :cutoff);
+
+--! delete_stale_for_project (cutoff?) : DeletedNarRow
+DELETE FROM narinfo_cache n
+WHERE n.project_id = :project_id
+  AND (:cutoff::timestamptz IS NULL
+    OR COALESCE(n.last_fetched_at, n.created_at) < :cutoff)
+  AND NOT EXISTS (
+    SELECT 1 FROM narinfo_cache_projects ncp
+    WHERE ncp.store_path = n.store_path
+  )
+RETURNING store_path, url, COALESCE(file_size, nar_size)::bigint AS bytes;
+
+--! delete_stale_global (cutoff?) : DeletedNarRow
+DELETE FROM narinfo_cache
+WHERE :cutoff::timestamptz IS NULL
+  OR COALESCE(last_fetched_at, created_at) < :cutoff
+RETURNING store_path, url, COALESCE(file_size, nar_size)::bigint AS bytes;
