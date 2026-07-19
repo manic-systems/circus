@@ -57,6 +57,16 @@ pub struct CountFilteredParams<T1: crate::StringSql, T2: crate::StringSql> {
     pub hash_prefix: Option<T1>,
     pub package_query: Option<T2>,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct DeleteStaleProjectOwnersParams {
+    pub project_id: uuid::Uuid,
+    pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct DeleteStaleForProjectParams {
+    pub project_id: uuid::Uuid,
+    pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct NarinfoCacheRow {
     pub store_path: String,
@@ -185,6 +195,32 @@ impl<'a> From<ListFilteredBorrowed<'a>> for ListFiltered {
             compression: compression.into(),
             created_at,
             last_fetched_at,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeletedNarRow {
+    pub store_path: String,
+    pub url: String,
+    pub bytes: i64,
+}
+pub struct DeletedNarRowBorrowed<'a> {
+    pub store_path: &'a str,
+    pub url: &'a str,
+    pub bytes: i64,
+}
+impl<'a> From<DeletedNarRowBorrowed<'a>> for DeletedNarRow {
+    fn from(
+        DeletedNarRowBorrowed {
+            store_path,
+            url,
+            bytes,
+        }: DeletedNarRowBorrowed<'a>,
+    ) -> Self {
+        Self {
+            store_path: store_path.into(),
+            url: url.into(),
+            bytes,
         }
     }
 }
@@ -472,6 +508,73 @@ where
         mapper: fn(ListFilteredBorrowed) -> R,
     ) -> ListFilteredQuery<'c, 'a, 's, C, R, N> {
         ListFilteredQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct DeletedNarRowQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<DeletedNarRowBorrowed, tokio_postgres::Error>,
+    mapper: fn(DeletedNarRowBorrowed) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> DeletedNarRowQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(
+        self,
+        mapper: fn(DeletedNarRowBorrowed) -> R,
+    ) -> DeletedNarRowQuery<'c, 'a, 's, C, R, N> {
+        DeletedNarRowQuery {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -912,7 +1015,7 @@ impl CountStmt {
 pub struct StorageSummaryStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn storage_summary() -> StorageSummaryStmt {
     StorageSummaryStmt(
-        "WITH uploaded AS ( SELECT store_path, nar_size, file_size FROM narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ), local AS ( SELECT DISTINCT ON (path) path AS store_path, COALESCE(file_size, 0) AS nar_size, NULL::bigint AS file_size FROM ( SELECT bp.path, bp.file_size, bp.created_at FROM build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, NULL::bigint AS file_size, COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = $1) ) candidates WHERE NOT EXISTS ( SELECT 1 FROM narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ) ORDER BY path, created_at DESC ), inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT COUNT(*) AS nar_count, COALESCE(SUM(nar_size), 0)::bigint AS uncompressed_bytes, COALESCE(SUM(file_size), 0)::bigint AS compressed_bytes FROM inventory",
+        "WITH uploaded AS ( SELECT store_path, nar_size, file_size FROM narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ), local AS ( SELECT DISTINCT ON (path) path AS store_path, COALESCE(file_size, 0) AS nar_size, NULL::bigint AS file_size FROM ( SELECT bp.path, bp.file_size, bp.created_at FROM build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, NULL::bigint AS file_size, COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = $1) ) candidates WHERE NOT EXISTS ( SELECT 1 FROM narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ) ORDER BY path, created_at DESC ), inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT COUNT(*) AS nar_count, COALESCE(SUM(nar_size), 0)::bigint AS uncompressed_bytes, COALESCE(SUM(COALESCE(file_size, nar_size)), 0)::bigint AS compressed_bytes FROM inventory",
         None,
     )
 }
@@ -1128,5 +1231,144 @@ impl TouchLastFetchedStmt {
         store_path: &'a T1,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[store_path]).await
+    }
+}
+pub struct DeleteStaleProjectOwnersStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_stale_project_owners() -> DeleteStaleProjectOwnersStmt {
+    DeleteStaleProjectOwnersStmt(
+        "DELETE FROM narinfo_cache_projects ncp USING narinfo_cache n WHERE ncp.project_id = $1 AND n.store_path = ncp.store_path AND ($2::timestamptz IS NULL OR COALESCE(n.last_fetched_at, n.created_at) < $2)",
+        None,
+    )
+}
+impl DeleteStaleProjectOwnersStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        project_id: &'a uuid::Uuid,
+        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[project_id, cutoff]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        DeleteStaleProjectOwnersParams,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for DeleteStaleProjectOwnersStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a DeleteStaleProjectOwnersParams,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.project_id, &params.cutoff))
+    }
+}
+pub struct DeleteStaleForProjectStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_stale_for_project() -> DeleteStaleForProjectStmt {
+    DeleteStaleForProjectStmt(
+        "DELETE FROM narinfo_cache n WHERE n.project_id = $1 AND ($2::timestamptz IS NULL OR COALESCE(n.last_fetched_at, n.created_at) < $2) AND NOT EXISTS ( SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path ) RETURNING store_path, url, COALESCE(file_size, nar_size)::bigint AS bytes",
+        None,
+    )
+}
+impl DeleteStaleForProjectStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        project_id: &'a uuid::Uuid,
+        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+    ) -> DeletedNarRowQuery<'c, 'a, 's, C, DeletedNarRow, 2> {
+        DeletedNarRowQuery {
+            client,
+            params: [project_id, cutoff],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<DeletedNarRowBorrowed, tokio_postgres::Error> {
+                    Ok(DeletedNarRowBorrowed {
+                        store_path: row.try_get(0)?,
+                        url: row.try_get(1)?,
+                        bytes: row.try_get(2)?,
+                    })
+                },
+            mapper: |it| DeletedNarRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        DeleteStaleForProjectParams,
+        DeletedNarRowQuery<'c, 'a, 's, C, DeletedNarRow, 2>,
+        C,
+    > for DeleteStaleForProjectStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a DeleteStaleForProjectParams,
+    ) -> DeletedNarRowQuery<'c, 'a, 's, C, DeletedNarRow, 2> {
+        self.bind(client, &params.project_id, &params.cutoff)
+    }
+}
+pub struct DeleteStaleGlobalStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_stale_global() -> DeleteStaleGlobalStmt {
+    DeleteStaleGlobalStmt(
+        "DELETE FROM narinfo_cache WHERE $1::timestamptz IS NULL OR COALESCE(last_fetched_at, created_at) < $1 RETURNING store_path, url, COALESCE(file_size, nar_size)::bigint AS bytes",
+        None,
+    )
+}
+impl DeleteStaleGlobalStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+    ) -> DeletedNarRowQuery<'c, 'a, 's, C, DeletedNarRow, 1> {
+        DeletedNarRowQuery {
+            client,
+            params: [cutoff],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<DeletedNarRowBorrowed, tokio_postgres::Error> {
+                    Ok(DeletedNarRowBorrowed {
+                        store_path: row.try_get(0)?,
+                        url: row.try_get(1)?,
+                        bytes: row.try_get(2)?,
+                    })
+                },
+            mapper: |it| DeletedNarRow::from(it),
+        }
     }
 }
