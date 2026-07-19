@@ -182,19 +182,21 @@ async fn eval_fatal_parse_error_returns_cierror_nixeval() {
 
 #[tokio::test]
 #[ignore = "requires nix in PATH with flakes enabled"]
-async fn eval_timeout_returns_cierror_timeout() {
+async fn eval_zero_timeout_returns_cierror_timeout() {
   let dir = TempDir::new().unwrap();
-  // A flake that loops forever to trigger the timeout path.
   fs::write(
     dir.path().join("flake.nix"),
-    r"{
+    r#"{
   outputs = { self }: let
     system = builtins.currentSystem;
-    loop = x: loop x;
   in {
-    packages.${system}.hang = loop null;
+    packages.${system}.test = derivation {
+      name = "circus-timeout-test";
+      inherit system;
+      builder = "/bin/sh";
+    };
   };
-}",
+}"#,
   )
   .unwrap();
   let commit = git_stage(dir.path());
@@ -204,7 +206,7 @@ async fn eval_timeout_returns_cierror_timeout() {
     &commit,
     "packages",
     true,
-    Duration::from_millis(500),
+    Duration::ZERO,
     &permissive_config(),
     &[],
     &CancellationToken::new(),
@@ -212,7 +214,7 @@ async fn eval_timeout_returns_cierror_timeout() {
   )
   .await;
 
-  assert!(result.is_err(), "infinite loop should time out");
+  assert!(result.is_err(), "a zero timeout must expire");
   let err = result.unwrap_err();
   assert!(
     matches!(err, circus_common::CiError::Timeout(_)),
