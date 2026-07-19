@@ -137,20 +137,21 @@ pub(super) struct EvaluationsTemplate {
 #[derive(Template)]
 #[template(path = "evaluation.html")]
 pub(super) struct EvaluationTemplate {
-  pub(super) ui:              UiTemplateConfig,
-  pub(super) eval:            EvalView,
-  pub(super) builds:          Vec<BuildView>,
-  pub(super) project_name:    String,
-  pub(super) project_id:      Uuid,
-  pub(super) jobset_name:     String,
-  pub(super) jobset_id:       Uuid,
-  pub(super) succeeded_count: i64,
-  pub(super) failed_count:    i64,
-  pub(super) running_count:   i64,
-  pub(super) pending_count:   i64,
-  pub(super) is_admin:        bool,
-  pub(super) auth_name:       String,
-  pub(super) csrf_token:      String,
+  pub(super) ui:                 UiTemplateConfig,
+  pub(super) eval:               EvalView,
+  pub(super) builds:             Vec<BuildView>,
+  pub(super) failed_derivations: Vec<BuildView>,
+  pub(super) project_name:       String,
+  pub(super) project_id:         Uuid,
+  pub(super) jobset_name:        String,
+  pub(super) jobset_id:          Uuid,
+  pub(super) succeeded_count:    i64,
+  pub(super) failed_count:       i64,
+  pub(super) running_count:      i64,
+  pub(super) pending_count:      i64,
+  pub(super) is_admin:           bool,
+  pub(super) auth_name:          String,
+  pub(super) csrf_token:         String,
 }
 
 #[derive(Template)]
