@@ -9,6 +9,7 @@
 use std::{fs, path::Path, process::Command, time::Duration};
 
 use circus_config::EvaluatorConfig;
+use futures::StreamExt;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
@@ -17,14 +18,19 @@ fn git_stage(dir: &Path) -> String {
     &["init", "-q"][..],
     &["config", "user.email", "test@circus"],
     &["config", "user.name", "Circus Test"],
+    &["config", "commit.gpgsign", "false"],
     &["add", "."],
     &["commit", "-qm", "fixture"],
   ] {
-    Command::new("git")
-      .args(args)
-      .current_dir(dir)
-      .status()
-      .expect("git command failed");
+    assert!(
+      Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .expect("git command failed")
+        .success(),
+      "git {args:?} failed"
+    );
   }
   String::from_utf8(
     Command::new("git")
@@ -45,6 +51,47 @@ fn permissive_config() -> EvaluatorConfig {
     allow_ifd: true,
     ..EvaluatorConfig::default()
   }
+}
+
+#[tokio::test]
+#[ignore = "requires nix in PATH with flakes enabled"]
+async fn evaluator_binary_runs_evix_worker_for_root_flake() {
+  let dir = TempDir::new().unwrap();
+  fs::write(
+    dir.path().join("flake.nix"),
+    r#"{
+  outputs = { self }: let
+    system = builtins.currentSystem;
+  in {
+    packages.${system}.test = derivation {
+      name = "circus-worker-smoke-test";
+      inherit system;
+      builder = "/bin/sh";
+    };
+  };
+}"#,
+  )
+  .unwrap();
+  let commit = git_stage(dir.path());
+  let mut url = url::Url::from_file_path(dir.path()).unwrap();
+  url.query_pairs_mut().append_pair("rev", &commit);
+
+  let session = evix::Session::open(evix::Config {
+    input: evix::Input::Flake(format!("git+{url}")),
+    force_recurse: true,
+    worker_exe: Some(env!("CARGO_BIN_EXE_circus-evaluator").into()),
+    ..evix::Config::default()
+  })
+  .await
+  .expect("evaluator binary should complete the Evix worker handshake");
+  let events = session.stream().collect::<Vec<_>>().await;
+
+  assert!(
+    events
+      .iter()
+      .any(|event| matches!(event, Ok(evix::Event::Derivation(_)))),
+    "root flake evaluation should emit a derivation: {events:?}"
+  );
 }
 
 #[tokio::test]

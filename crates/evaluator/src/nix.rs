@@ -192,15 +192,7 @@ pub async fn evaluate(
   // Strip a flake-style attribute prefix the user may have typed (".#packages"
   // or "#packages"). The flake ref already adds the '#' separator, so leaving
   // it in produces an attribute path like "#packages".
-  let normalized = nix_expression
-    .strip_prefix(".#")
-    .or_else(|| nix_expression.strip_prefix('#'))
-    .unwrap_or(nix_expression);
-  let nix_expression = if normalized.is_empty() {
-    nix_expression
-  } else {
-    normalized
-  };
+  let nix_expression = normalize_flake_expression(nix_expression);
 
   if flake_mode {
     evaluate_flake(
@@ -217,6 +209,14 @@ pub async fn evaluate(
     evaluate_legacy(repo_path, nix_expression, timeout, config, inputs, cancel)
       .await
   }
+}
+
+fn normalize_flake_expression(expression: &str) -> &str {
+  let expression = expression
+    .strip_prefix(".#")
+    .or_else(|| expression.strip_prefix('#'))
+    .unwrap_or(expression);
+  if expression == "." { "" } else { expression }
 }
 
 /// Evaluating a raw `nixosConfigurations.<name>` does not yield a buildable
@@ -356,7 +356,12 @@ fn git_flake_ref(
     ))
   })?;
   url.query_pairs_mut().append_pair("rev", commit_hash);
-  Ok(format!("git+{url}#{expression}"))
+  let mut reference = format!("git+{url}");
+  if !expression.is_empty() {
+    reference.push('#');
+    reference.push_str(expression);
+  }
+  Ok(reference)
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -928,6 +933,21 @@ mod meta_tests {
       .unwrap(),
       "git+file:///tmp/circus%20fixture?rev=0123456789abcdef#packages",
     );
+  }
+
+  #[test]
+  fn git_flake_ref_omits_an_empty_root_fragment() {
+    assert_eq!(
+      git_flake_ref(Path::new("/tmp/circus"), "0123456789abcdef", "").unwrap(),
+      "git+file:///tmp/circus?rev=0123456789abcdef",
+    );
+  }
+
+  #[test]
+  fn dot_flake_expression_selects_the_root() {
+    assert_eq!(normalize_flake_expression("."), "");
+    assert_eq!(normalize_flake_expression(".#"), "");
+    assert_eq!(normalize_flake_expression(".#packages"), "packages");
   }
 
   #[test]
