@@ -439,6 +439,7 @@ async fn run_nix_and_record_builds(
     config,
     inputs,
     &cancel,
+    None,
   )
   .await;
   cancel.cancel();

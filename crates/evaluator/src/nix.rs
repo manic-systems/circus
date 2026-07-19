@@ -184,6 +184,7 @@ pub async fn evaluate(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   // Validate nix expression before constructing any commands
   circus_nix::validate::validate_nix_expression(nix_expression)
@@ -203,11 +204,20 @@ pub async fn evaluate(
       config,
       inputs,
       cancel,
+      worker_exe,
     )
     .await
   } else {
-    evaluate_legacy(repo_path, nix_expression, timeout, config, inputs, cancel)
-      .await
+    evaluate_legacy(
+      repo_path,
+      nix_expression,
+      timeout,
+      config,
+      inputs,
+      cancel,
+      worker_exe,
+    )
+    .await
   }
 }
 
@@ -286,6 +296,7 @@ async fn evaluate_flake(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   if nix_expression == "nixosConfigurations" {
     return evaluate_all_nixos_configs(
@@ -338,6 +349,7 @@ async fn evaluate_flake(
     show_input_drvs: true,
     override_inputs,
     nix_options: policy.nix_options(),
+    worker_exe: worker_exe.map(Path::to_path_buf),
     ..evix::Config::default()
   };
 
@@ -486,6 +498,7 @@ async fn evaluate_legacy(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   let repo_path = repo_path.canonicalize().map_err(|e| {
     CiError::NixEval(format!("Failed to canonicalize repository path: {e}"))
@@ -548,6 +561,7 @@ async fn evaluate_legacy(
     show_input_drvs: true,
     override_inputs: Vec::new(),
     nix_options: NixEvalPolicy::from(config).nix_options(),
+    worker_exe: worker_exe.map(Path::to_path_buf),
     ..evix::Config::default()
   };
 

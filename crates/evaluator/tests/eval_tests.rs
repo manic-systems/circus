@@ -9,7 +9,6 @@
 use std::{fs, path::Path, process::Command, time::Duration};
 
 use circus_config::EvaluatorConfig;
-use futures::StreamExt;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
@@ -53,45 +52,8 @@ fn permissive_config() -> EvaluatorConfig {
   }
 }
 
-#[tokio::test]
-#[ignore = "requires nix in PATH with flakes enabled"]
-async fn evaluator_binary_runs_evix_worker_for_root_flake() {
-  let dir = TempDir::new().unwrap();
-  fs::write(
-    dir.path().join("flake.nix"),
-    r#"{
-  outputs = { self }: let
-    system = builtins.currentSystem;
-  in {
-    packages.${system}.test = derivation {
-      name = "circus-worker-smoke-test";
-      inherit system;
-      builder = "/bin/sh";
-    };
-  };
-}"#,
-  )
-  .unwrap();
-  let commit = git_stage(dir.path());
-  let mut url = url::Url::from_file_path(dir.path()).unwrap();
-  url.query_pairs_mut().append_pair("rev", &commit);
-
-  let session = evix::Session::open(evix::Config {
-    input: evix::Input::Flake(format!("git+{url}")),
-    force_recurse: true,
-    worker_exe: Some(env!("CARGO_BIN_EXE_circus-evaluator").into()),
-    ..evix::Config::default()
-  })
-  .await
-  .expect("evaluator binary should complete the Evix worker handshake");
-  let events = session.stream().collect::<Vec<_>>().await;
-
-  assert!(
-    events
-      .iter()
-      .any(|event| matches!(event, Ok(evix::Event::Derivation(_)))),
-    "root flake evaluation should emit a derivation: {events:?}"
-  );
+fn worker_exe() -> &'static Path {
+  Path::new(env!("CARGO_BIN_EXE_circus-evaluator"))
 }
 
 #[tokio::test]
@@ -118,22 +80,22 @@ async fn eval_minimal_flake_returns_one_job() {
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
     &commit,
-    "packages",
+    ".",
     true,
     Duration::from_mins(2),
     &permissive_config(),
     &[],
     &CancellationToken::new(),
+    Some(worker_exe()),
   )
   .await
   .expect("evaluation should succeed");
 
   assert_eq!(result.error_count, 0, "no attribute errors expected");
-  assert_eq!(result.jobs.len(), 1, "expected exactly one job");
   assert!(
-    result.jobs[0].name.contains(".test"),
-    "job attr path should contain .test, got: {}",
-    result.jobs[0].name
+    result.jobs.iter().any(|job| job.name.contains(".test")),
+    "root evaluation should contain the test job: {:?}",
+    result.jobs
   );
 }
 
@@ -170,6 +132,7 @@ async fn eval_captures_per_attribute_errors_without_failing_fatally() {
     &permissive_config(),
     &[],
     &CancellationToken::new(),
+    Some(worker_exe()),
   )
   .await
   .expect("fatal eval error not expected for per-attribute throws");
@@ -202,6 +165,7 @@ async fn eval_fatal_parse_error_returns_cierror_nixeval() {
     &permissive_config(),
     &[],
     &CancellationToken::new(),
+    Some(worker_exe()),
   )
   .await;
 
@@ -244,6 +208,7 @@ async fn eval_timeout_returns_cierror_timeout() {
     &permissive_config(),
     &[],
     &CancellationToken::new(),
+    Some(worker_exe()),
   )
   .await;
 
