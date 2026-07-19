@@ -372,8 +372,8 @@ impl From<q::DeletedNarRow> for DeletedNar {
   fn from(r: q::DeletedNarRow) -> Self {
     Self {
       store_path: r.store_path,
-      url: r.url,
-      bytes: r.bytes,
+      url:        r.url,
+      bytes:      r.bytes,
     }
   }
 }

@@ -139,6 +139,48 @@
             {% endif %}
         </div>
     </section>
+
+    {% if is_admin %}
+        <section class="panel cache-section">
+            <div class="panel-header">
+                <h2>Maintenance</h2>
+            </div>
+            <div class="panel-body">
+                {% if !gc_notice.is_empty() %}
+                    {% if gc_error %}
+                        <div class="flash-message flash-error">{{ gc_notice }}</div>
+                    {% else %}
+                        <div class="flash-message flash-success">{{ gc_notice }}</div>
+                    {% endif %}
+                {% endif %}
+                <form method="POST"
+                      action="/caches/{{ name }}/gc"
+                      class="filter-form"
+                      {% if is_global %}
+                          onsubmit="return confirm('Delete the matching NARs from the global cache and every project cache? This removes their shared entries and objects and cannot be undone.')"
+                      {% else %}
+                          onsubmit="return confirm('Delete the matching NARs from this cache? This cannot be undone.')"
+                      {% endif %}>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <label>
+                        Delete:
+                        <select name="mode">
+                            <option value="stale">NARs not fetched recently</option>
+                            <option value="all">All NARs</option>
+                        </select>
+                    </label>
+                    <label>
+                        Not fetched in (days): <input type="number" name="days" value="30" min="1" max="3650">
+                    </label>
+                    <button type="submit" class="btn btn-danger">Clean up</button>
+                </form>
+                <p class="empty-hint">
+                    Removes cache entries and their uploaded NAR objects. Store paths served from
+                    the local Nix store stay on disk until garbage collection runs (Admin &rsaquo; Run GC now).
+                </p>
+            </div>
+        </section>
+    {% endif %}
 {% endblock %}
 
 {% block scripts %}

@@ -217,18 +217,22 @@ pub(super) async fn jobset_jobs() -> Response {
 
 pub(super) async fn evaluations() -> Response {
   render(EvaluationsTemplate {
-    ui:          ui(),
-    evals:       evals_fixture(),
-    limit:       20,
-    has_prev:    false,
-    has_next:    false,
-    prev_offset: 0,
-    next_offset: 20,
-    page:        1,
-    total_pages: 1,
-    is_admin:    true,
-    auth_name:   "operator".into(),
-    csrf_token:  csrf(),
+    ui:             ui(),
+    evals:          evals_fixture(),
+    filter_project: String::new(),
+    filter_jobset:  String::new(),
+    filter_commit:  String::new(),
+    filter_status:  String::new(),
+    limit:          20,
+    has_prev:       false,
+    has_next:       false,
+    prev_offset:    0,
+    next_offset:    20,
+    page:           1,
+    total_pages:    1,
+    is_admin:       true,
+    auth_name:      "operator".into(),
+    csrf_token:     csrf(),
   })
 }
 
@@ -372,6 +376,11 @@ pub(super) async fn queue() -> Response {
     )],
     pending_count:  1,
     running_count:  1,
+    show_running:   true,
+    show_pending:   true,
+    filter_status:  String::new(),
+    filter_system:  String::new(),
+    filter_job:     String::new(),
     permissions:    permissions(),
     csrf_token:     csrf(),
     is_admin:       true,
@@ -500,6 +509,8 @@ pub(super) async fn admin() -> Response {
     config_contents:         "[server]\nport = 3000\n".into(),
     config_editable:         false,
     config_read_only_reason: "Preview mode does not edit configuration".into(),
+    gc_enabled:              true,
+    gc_requested:            false,
     is_admin:                true,
     auth_name:               "operator".into(),
     csrf_token:              csrf(),
@@ -637,6 +648,10 @@ pub(super) async fn cache_detail() -> Response {
       "substituters = https://cache.example.invalid\ntrusted-public-keys = \
        cache.example.invalid-1:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890+ab="
         .into(),
+    csrf_token:             csrf(),
+    gc_notice:              String::new(),
+    gc_error:               false,
+    is_global:              true,
   })
 }
 

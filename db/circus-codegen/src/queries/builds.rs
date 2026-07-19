@@ -55,8 +55,8 @@ pub struct CompleteParams<
 }
 #[derive(Debug)]
 pub struct ListPendingInSchedulerOrderParams<T1: crate::StringSql, T2: crate::StringSql> {
-    pub system: T1,
-    pub job_name: T2,
+    pub system: Option<T1>,
+    pub job_name: Option<T2>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -1452,8 +1452,8 @@ impl ListPendingInSchedulerOrderStmt {
     pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
         &'s self,
         client: &'c C,
-        system: &'a T1,
-        job_name: &'a T2,
+        system: &'a Option<T1>,
+        job_name: &'a Option<T2>,
         limit: &'a i64,
         offset: &'a i64,
     ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 4> {

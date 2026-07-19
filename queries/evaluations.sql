@@ -126,3 +126,24 @@ SELECT id FROM evaluations WHERE id = :id AND status = 'running' FOR UPDATE;
 
 --! status_of
 SELECT status FROM evaluations WHERE id = :id;
+--! list_page_filtered (project?, jobset?, commit?, status?) : EvaluationRow
+SELECT e.* FROM evaluations e
+JOIN jobsets j ON j.id = e.jobset_id
+JOIN projects p ON p.id = j.project_id
+WHERE (:project::text IS NULL OR p.name ILIKE '%' || :project || '%')
+  AND (:jobset::text IS NULL OR j.name ILIKE '%' || :jobset || '%')
+  AND (:commit::text IS NULL OR e.commit_hash ILIKE :commit || '%')
+  AND (:status::text IS NULL OR e.status = :status)
+  AND (:include_hidden OR e.hidden = false)
+ORDER BY e.evaluation_time DESC
+LIMIT :limit OFFSET :offset;
+
+--! count_page_filtered (project?, jobset?, commit?, status?)
+SELECT COUNT(*) FROM evaluations e
+JOIN jobsets j ON j.id = e.jobset_id
+JOIN projects p ON p.id = j.project_id
+WHERE (:project::text IS NULL OR p.name ILIKE '%' || :project || '%')
+  AND (:jobset::text IS NULL OR j.name ILIKE '%' || :jobset || '%')
+  AND (:commit::text IS NULL OR e.commit_hash ILIKE :commit || '%')
+  AND (:status::text IS NULL OR e.status = :status)
+  AND (:include_hidden OR e.hidden = false);

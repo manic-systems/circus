@@ -22,22 +22,25 @@
 
     <form method="get" action="/evaluations" class="filter-form">
         <label>
-            Project: <input type="text" name="project" placeholder="project name">
-        </label>
-        <label>
-            Jobset: <input type="text" name="jobset" placeholder="jobset name">
-        </label>
-        <label>
-            Commit: <input type="text" name="commit" placeholder="commit hash">
-        </label>
-        <label>
             Status:
             <select name="status">
                 <option value="">All</option>
-                <option value="running">Running</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
+                <option value="pending" {% if filter_status == "pending" %}selected{% endif %}>Pending</option>
+                <option value="running" {% if filter_status == "running" %}selected{% endif %}>Running</option>
+                <option value="completed" {% if filter_status == "completed" %}selected{% endif %}>Completed</option>
+                <option value="failed" {% if filter_status == "failed" %}selected{% endif %}>Failed</option>
+                <option value="cancelled" {% if filter_status == "cancelled" %}selected{% endif %}>Cancelled</option>
+                <option value="timed_out" {% if filter_status == "timed_out" %}selected{% endif %}>Timed out</option>
             </select>
+        </label>
+        <label>
+            Project: <input type="text" name="project" value="{{ filter_project }}" placeholder="project name">
+        </label>
+        <label>
+            Jobset: <input type="text" name="jobset" value="{{ filter_jobset }}" placeholder="jobset name">
+        </label>
+        <label>
+            Commit: <input type="text" name="commit" value="{{ filter_commit }}" placeholder="commit hash">
         </label>
         <button type="submit" class="btn btn-secondary">Filter</button>
     </form>
@@ -96,14 +99,14 @@
         {% if total_pages > 1 %}
             <nav class="pagination">
                 {% if has_prev %}
-                    <a href="/evaluations?offset={{ prev_offset }}&limit={{ limit }}"
+                    <a href="/evaluations?offset={{ prev_offset }}&limit={{ limit }}&status={{ filter_status }}&project={{ filter_project }}&jobset={{ filter_jobset }}&commit={{ filter_commit }}"
                        class="btn btn-small btn-secondary">
                         &laquo; Previous
                     </a>
                 {% endif %}
                 <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
                 {% if has_next %}
-                    <a href="/evaluations?offset={{ next_offset }}&limit={{ limit }}"
+                    <a href="/evaluations?offset={{ next_offset }}&limit={{ limit }}&status={{ filter_status }}&project={{ filter_project }}&jobset={{ filter_jobset }}&commit={{ filter_commit }}"
                        class="btn btn-small btn-secondary">
                         Next &raquo;
                     </a>

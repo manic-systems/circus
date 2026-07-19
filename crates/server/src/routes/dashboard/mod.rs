@@ -62,11 +62,13 @@ pub fn router() -> Router<AppState> {
     .route("/news", get(admin::news_page).post(admin::news_create))
     .route("/news/{id}/delete", post(admin::news_delete))
     .route("/admin", get(admin::admin_page))
+    .route("/admin/store-gc", post(admin::store_gc))
     .route("/users", get(admin::users_page))
     .route("/starred", get(pages::starred_page))
     .route("/metrics", get(pages::metrics_page))
     .route("/caches", get(pages::caches_page))
     .route("/caches/{name}", get(pages::cache_detail_page))
+    .route("/caches/{name}/gc", post(admin::cache_gc))
     .route("/caches/{name}/nars", get(pages::cache_nars_page))
 }
 

@@ -56,6 +56,7 @@ fn ui_config(state: &AppState) -> UiTemplateConfig {
 pub(super) struct AdminParams {
   agent_sort: Option<String>,
   agent_dir:  Option<String>,
+  gc:         Option<String>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -491,11 +492,170 @@ pub(super) async fn admin_page(
     config_contents,
     config_editable,
     config_read_only_reason,
+    gc_enabled: state.config.gc.enabled,
+    gc_requested: params.gc.as_deref() == Some("requested"),
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
     csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
+}
+
+/// Ask the queue runner to run a GC cycle now. The runner's GC loop listens
+/// on [`circus_common::pg_notify::CHANNEL_GC_REQUESTED`] and runs root
+/// cleanup plus `nix-collect-garbage`; results land in the runner's logs.
+pub(super) async fn store_gc(
+  State(state): State<AppState>,
+  ctx: DashboardContext,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e;
+  }
+  if !state.config.gc.enabled {
+    return (StatusCode::CONFLICT, "Garbage collection is disabled")
+      .into_response();
+  }
+  if let Err(e) = circus_common::pg_notify::notify(
+    &state.pool,
+    circus_common::pg_notify::CHANNEL_GC_REQUESTED,
+  )
+  .await
+  {
+    tracing::error!("Failed to request GC cycle: {e}");
+    return Redirect::to("/admin?gc=error").into_response();
+  }
+  tracing::info!("GC cycle requested from the dashboard");
+  Redirect::to("/admin?gc=requested").into_response()
+}
+
+/// Form for `POST /caches/{name}/gc`. `mode` is `all` or `stale`; `days`
+/// bounds staleness for `stale` (defaults to 30).
+#[derive(serde::Deserialize)]
+pub struct CacheGcForm {
+  pub mode:       String,
+  pub days:       Option<i64>,
+  pub csrf_token: String,
+}
+
+/// Delete cache entries (and their uploaded objects) for one cache scope.
+/// Store paths served from the local Nix store keep their bits until the
+/// runner's GC frees them; this removes them from the cache index.
+pub(super) async fn cache_gc(
+  State(state): State<AppState>,
+  Path(name): Path<String>,
+  ctx: DashboardContext,
+  Form(form): Form<CacheGcForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e;
+  }
+  let cache =
+    match crate::cache_overview::resolve_cache_ref(&state, &name).await {
+      Ok(Some(cache)) => cache,
+      Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+      Err(e) => {
+        tracing::error!(cache = %name, error = %e.0, "Failed to resolve cache");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+      },
+    };
+
+  let cutoff = if form.mode == "all" {
+    None
+  } else {
+    let days = form.days.unwrap_or(30).clamp(1, 3650);
+    Some(chrono::Utc::now() - chrono::Duration::days(days))
+  };
+
+  let deleted = match circus_common::repo::narinfo_cache::delete_stale(
+    &state.pool,
+    cache.scope,
+    cutoff,
+  )
+  .await
+  {
+    Ok(deleted) => deleted,
+    Err(e) => {
+      tracing::error!(cache = %name, "Cache cleanup failed: {e}");
+      return Redirect::to(&format!("/caches/{name}?gc=error")).into_response();
+    },
+  };
+  let freed: i64 = deleted.iter().map(|nar| nar.bytes.max(0)).sum();
+
+  // Delete the backing uploaded objects. Local-store NARs have no object;
+  // an S3 DELETE for a key that never existed is a successful no-op.
+  let mut object_failures = 0usize;
+  if let Some(presigner) =
+    crate::routes::cache::uploaded_nar_presigner(&state.config)
+  {
+    use futures::StreamExt as _;
+    let client = reqwest::Client::new();
+    // Collected first: a stream borrowing `deleted` makes this handler's
+    // future fail axum's higher-ranked `Handler` bound.
+    #[expect(clippy::needless_collect, reason = "see comment above")]
+    let requests: Vec<(String, String)> = deleted
+      .iter()
+      .map(|nar| {
+        (
+          nar.store_path.clone(),
+          presigner.presign_at(
+            "DELETE",
+            &nar.url,
+            std::time::Duration::from_mins(5),
+            std::time::SystemTime::now(),
+          ),
+        )
+      })
+      .collect();
+    let mut results =
+      futures::stream::iter(requests.into_iter().map(|(store_path, url)| {
+        let client = client.clone();
+        async move { (store_path, client.delete(&url).send().await) }
+      }))
+      .buffer_unordered(8);
+    while let Some((store_path, result)) = results.next().await {
+      match result {
+        Ok(resp)
+          if resp.status().is_success()
+            || resp.status() == reqwest::StatusCode::NOT_FOUND => {},
+        Ok(resp) => {
+          object_failures += 1;
+          tracing::warn!(
+            store_path = %store_path,
+            status = %resp.status(),
+            "Failed to delete cache object"
+          );
+        },
+        Err(e) => {
+          object_failures += 1;
+          tracing::warn!(
+            store_path = %store_path,
+            "Failed to delete cache object: {e}"
+          );
+        },
+      }
+    }
+  }
+
+  tracing::info!(
+    cache = %name,
+    deleted = deleted.len(),
+    freed,
+    object_failures,
+    "Cache cleanup completed"
+  );
+  Redirect::to(&format!(
+    "/caches/{name}?gc=done&gc_deleted={}&gc_freed={freed}&\
+     gc_failed={object_failures}",
+    deleted.len(),
+  ))
+  .into_response()
 }
 
 /// Render the user-management page at `/users`. Admin-only because the

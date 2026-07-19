@@ -158,6 +158,32 @@ pub(super) struct BuildFilterParams {
 }
 
 #[derive(serde::Deserialize)]
+pub(super) struct EvalFilterParams {
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  project: Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  jobset:  Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  commit:  Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  status:  Option<String>,
+  limit:   Option<i64>,
+  offset:  Option<i64>,
+}
+
+#[derive(serde::Deserialize)]
 pub(super) struct JobsetJobsParams {
   show_inactive: Option<String>,
 }
@@ -553,31 +579,31 @@ pub(super) async fn jobset_jobs_page(
 /// only for admins.
 pub(super) async fn evaluations_page(
   State(state): State<AppState>,
-  Query(params): Query<PageParams>,
+  Query(params): Query<EvalFilterParams>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Evaluations)?;
-  let include_hidden = ctx.is_admin;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = circus_common::repo::evaluations::list_filtered_with_visibility(
+  let filter = circus_common::repo::evaluations::EvaluationListFilter {
+    project:        params.project.as_deref(),
+    jobset:         params.jobset.as_deref(),
+    commit:         params.commit.as_deref(),
+    status:         params.status.as_deref(),
+    include_hidden: ctx.is_admin,
+  };
+  let items = circus_common::repo::evaluations::list_page_filtered(
     &state.pool,
-    None,
-    None,
+    filter,
     limit,
     offset,
-    include_hidden,
   )
   .await
   .unwrap_or_default();
-  let total = circus_common::repo::evaluations::count_filtered_with_visibility(
-    &state.pool,
-    None,
-    None,
-    include_hidden,
-  )
-  .await
-  .unwrap_or(0);
+  let total =
+    circus_common::repo::evaluations::count_page_filtered(&state.pool, filter)
+      .await
+      .unwrap_or(0);
 
   // Enrich evaluations with jobset/project names
   let mut enriched = Vec::new();
@@ -600,6 +626,10 @@ pub(super) async fn evaluations_page(
   let tmpl = EvaluationsTemplate {
     ui: ui_config(&state),
     evals: enriched,
+    filter_project: params.project.unwrap_or_default(),
+    filter_jobset: params.jobset.unwrap_or_default(),
+    filter_commit: params.commit.unwrap_or_default(),
+    filter_status: params.status.unwrap_or_default(),
     limit,
     has_prev: pagination.has_prev,
     has_next: pagination.has_next,

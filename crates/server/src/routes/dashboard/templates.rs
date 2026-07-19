@@ -120,18 +120,22 @@ pub(super) struct JobsetJobsTemplate {
 #[derive(Template)]
 #[template(path = "evaluations.html")]
 pub(super) struct EvaluationsTemplate {
-  pub(super) ui:          UiTemplateConfig,
-  pub(super) evals:       Vec<EvalView>,
-  pub(super) limit:       i64,
-  pub(super) has_prev:    bool,
-  pub(super) has_next:    bool,
-  pub(super) prev_offset: i64,
-  pub(super) next_offset: i64,
-  pub(super) page:        i64,
-  pub(super) total_pages: i64,
-  pub(super) is_admin:    bool,
-  pub(super) auth_name:   String,
-  pub(super) csrf_token:  String,
+  pub(super) ui:             UiTemplateConfig,
+  pub(super) evals:          Vec<EvalView>,
+  pub(super) filter_project: String,
+  pub(super) filter_jobset:  String,
+  pub(super) filter_commit:  String,
+  pub(super) filter_status:  String,
+  pub(super) limit:          i64,
+  pub(super) has_prev:       bool,
+  pub(super) has_next:       bool,
+  pub(super) prev_offset:    i64,
+  pub(super) next_offset:    i64,
+  pub(super) page:           i64,
+  pub(super) total_pages:    i64,
+  pub(super) is_admin:       bool,
+  pub(super) auth_name:      String,
+  pub(super) csrf_token:     String,
 }
 
 #[derive(Template)]
@@ -217,6 +221,11 @@ pub(super) struct QueueTemplate {
   pub(super) running_builds: Vec<QueueBuildView>,
   pub(super) pending_count:  i64,
   pub(super) running_count:  i64,
+  pub(super) show_running:   bool,
+  pub(super) show_pending:   bool,
+  pub(super) filter_status:  String,
+  pub(super) filter_system:  String,
+  pub(super) filter_job:     String,
   pub(super) permissions:    UiPermissions,
   pub(super) csrf_token:     String,
   pub(super) is_admin:       bool,
@@ -418,6 +427,10 @@ mod tests {
 
 #[derive(Template)]
 #[template(path = "admin.html")]
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "independent template render flags, not a state machine"
+)]
 pub(super) struct AdminTemplate {
   pub(super) ui:                      UiTemplateConfig,
   pub(super) status:                  SystemStatus,
@@ -433,6 +446,8 @@ pub(super) struct AdminTemplate {
   pub(super) config_contents:         String,
   pub(super) config_editable:         bool,
   pub(super) config_read_only_reason: String,
+  pub(super) gc_enabled:              bool,
+  pub(super) gc_requested:            bool,
   pub(super) is_admin:                bool,
   pub(super) auth_name:               String,
   pub(super) csrf_token:              String,
@@ -553,6 +568,10 @@ pub(super) struct CacheDetailTemplate {
   pub(super) public_key:             String,
   pub(super) has_snippet:            bool,
   pub(super) nix_conf_snippet:       String,
+  pub(super) csrf_token:             String,
+  pub(super) gc_notice:              String,
+  pub(super) gc_error:               bool,
+  pub(super) is_global:              bool,
 }
 
 /// One row in the per-cache NAR inventory.
