@@ -53,8 +53,10 @@ pub struct CompleteParams<
     pub error_message: Option<T4>,
     pub id: uuid::Uuid,
 }
-#[derive(Clone, Copy, Debug)]
-pub struct ListPendingInSchedulerOrderParams {
+#[derive(Debug)]
+pub struct ListPendingInSchedulerOrderParams<T1: crate::StringSql, T2: crate::StringSql> {
+    pub system: T1,
+    pub job_name: T2,
     pub limit: i64,
     pub offset: i64,
 }
@@ -1435,7 +1437,7 @@ impl<
 pub struct ListPendingInSchedulerOrderStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_pending_in_scheduler_order() -> ListPendingInSchedulerOrderStmt {
     ListPendingInSchedulerOrderStmt(
-        "SELECT * FROM builds WHERE status = 'pending' ORDER BY priority DESC, cardinality(COALESCE(effective_features, required_features)) DESC, created_at ASC, id ASC LIMIT $1 OFFSET $2",
+        "SELECT * FROM builds WHERE status = 'pending' AND ($1::text IS NULL OR system = $1) AND ($2::text IS NULL OR job_name ILIKE '%' || $2 || '%') ORDER BY priority DESC, cardinality(COALESCE(effective_features, required_features)) DESC, created_at ASC, id ASC LIMIT $3 OFFSET $4",
         None,
     )
 }
@@ -1447,15 +1449,17 @@ impl ListPendingInSchedulerOrderStmt {
         self.1 = Some(client.prepare(self.0).await?);
         Ok(self)
     }
-    pub fn bind<'c, 'a, 's, C: GenericClient>(
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
         &'s self,
         client: &'c C,
+        system: &'a T1,
+        job_name: &'a T2,
         limit: &'a i64,
         offset: &'a i64,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 4> {
         BuildRowQuery {
             client,
-            params: [limit, offset],
+            params: [system, job_name, limit, offset],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1499,22 +1503,28 @@ impl ListPendingInSchedulerOrderStmt {
         }
     }
 }
-impl<'c, 'a, 's, C: GenericClient>
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        ListPendingInSchedulerOrderParams,
-        BuildRowQuery<'c, 'a, 's, C, BuildRow, 2>,
+        ListPendingInSchedulerOrderParams<T1, T2>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 4>,
         C,
     > for ListPendingInSchedulerOrderStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a ListPendingInSchedulerOrderParams,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
-        self.bind(client, &params.limit, &params.offset)
+        params: &'a ListPendingInSchedulerOrderParams<T1, T2>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 4> {
+        self.bind(
+            client,
+            &params.system,
+            &params.job_name,
+            &params.limit,
+            &params.offset,
+        )
     }
 }
 pub struct ListPendingForSystemsStmt(&'static str, Option<tokio_postgres::Statement>);
