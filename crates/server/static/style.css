@@ -1751,11 +1751,6 @@ button:disabled {
   color: var(--status-failed);
 }
 
-.btn-danger {
-  color: var(--status-failed);
-  border-color: var(--status-failed);
-}
-
 .error-log-warn {
   color: var(--status-running);
 }
@@ -2383,7 +2378,11 @@ pre code {
 
 /* Modal dialogs */
 dialog {
-  margin: auto;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
   width: min(720px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   padding: 0;
