@@ -77,6 +77,28 @@ fn ui_config(state: &AppState) -> UiTemplateConfig {
   UiTemplateConfig::from_config(&state.config.ui)
 }
 
+fn is_job_name(name: &str) -> bool {
+  !name.starts_with(circus_common::models::DEPENDENCY_JOB_PREFIX)
+}
+
+fn is_failed_status(status: BuildStatus) -> bool {
+  status_badge(status).1 == "failed"
+}
+
+const fn is_failed_derivation_status(status: BuildStatus) -> bool {
+  matches!(
+    status,
+    BuildStatus::Failed
+      | BuildStatus::FailedWithOutput
+      | BuildStatus::Timeout
+      | BuildStatus::CachedFailure
+      | BuildStatus::LogLimitExceeded
+      | BuildStatus::NarSizeLimitExceeded
+      | BuildStatus::NonDeterministic
+      | BuildStatus::OomKilled
+  )
+}
+
 fn dashboard_system_filters(
   overview: &operator::OperatorOverview,
 ) -> Vec<String> {
@@ -344,7 +366,7 @@ pub(super) async fn jobset_page(
   .unwrap_or_default();
 
   let mut builds_by_eval: HashMap<Uuid, Vec<&Build>> = HashMap::new();
-  for b in &builds {
+  for b in builds.iter().filter(|build| is_job_name(&build.job_name)) {
     builds_by_eval.entry(b.evaluation_id).or_default().push(b);
   }
 
@@ -466,7 +488,10 @@ pub(super) async fn jobset_jobs_page(
 
   let mut builds_by_job: BTreeMap<String, HashMap<Uuid, Build>> =
     BTreeMap::new();
-  for build in builds {
+  for build in builds
+    .into_iter()
+    .filter(|build| is_job_name(&build.job_name))
+  {
     builds_by_job
       .entry(build.job_name.clone())
       .or_default()
@@ -617,62 +642,54 @@ pub(super) async fn evaluation_page(
     return Err(not_found("Project"));
   };
 
-  let builds = circus_common::repo::builds::list_filtered(
-    &state.pool,
-    Some(id),
-    None,
-    None,
-    None,
-    200,
-    0,
-  )
-  .await
-  .unwrap_or_default();
+  let builds =
+    circus_common::repo::builds::list_for_evaluation(&state.pool, id)
+      .await
+      .unwrap_or_default();
 
-  let succeeded = builds
+  let top_level_builds = builds
+    .iter()
+    .filter(|build| is_job_name(&build.job_name))
+    .collect::<Vec<_>>();
+  let failed_derivations = builds
+    .iter()
+    .filter(|build| is_failed_derivation_status(build.status))
+    .map(build_view)
+    .collect();
+
+  let succeeded = top_level_builds
     .iter()
     .filter(|b| b.status == BuildStatus::Succeeded)
     .count() as i64;
-  let failed = builds
+  let failed = top_level_builds
     .iter()
-    .filter(|b| {
-      matches!(
-        b.status,
-        BuildStatus::Failed
-          | BuildStatus::DependencyFailed
-          | BuildStatus::FailedWithOutput
-          | BuildStatus::Timeout
-          | BuildStatus::CachedFailure
-          | BuildStatus::LogLimitExceeded
-          | BuildStatus::NarSizeLimitExceeded
-          | BuildStatus::NonDeterministic
-      )
-    })
+    .filter(|b| is_failed_status(b.status))
     .count() as i64;
-  let running = builds
+  let running = top_level_builds
     .iter()
     .filter(|b| b.status == BuildStatus::Running)
     .count() as i64;
-  let pending = builds
+  let pending = top_level_builds
     .iter()
     .filter(|b| b.status == BuildStatus::Pending)
     .count() as i64;
 
   let tmpl = EvaluationTemplate {
-    ui:              ui_config(&state),
-    eval:            eval_view(&eval),
-    builds:          builds.iter().map(build_view).collect(),
-    project_name:    project.name,
-    project_id:      project.id,
-    jobset_name:     jobset.name,
-    jobset_id:       jobset.id,
+    ui: ui_config(&state),
+    eval: eval_view(&eval),
+    builds: top_level_builds.into_iter().map(build_view).collect(),
+    failed_derivations,
+    project_name: project.name,
+    project_id: project.id,
+    jobset_name: jobset.name,
+    jobset_id: jobset.id,
     succeeded_count: succeeded,
-    failed_count:    failed,
-    running_count:   running,
-    pending_count:   pending,
-    is_admin:        ctx.is_admin,
-    auth_name:       ctx.auth_name.clone(),
-    csrf_token:      ctx.csrf_token.clone(),
+    failed_count: failed,
+    running_count: running,
+    pending_count: pending,
+    is_admin: ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+    csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
 }
@@ -964,7 +981,14 @@ pub(super) async fn build_log(
 
 #[cfg(test)]
 mod tests {
-  use super::BuildFilterParams;
+  use circus_common::models::BuildStatus;
+
+  use super::{
+    BuildFilterParams,
+    is_failed_derivation_status,
+    is_failed_status,
+    is_job_name,
+  };
 
   #[test]
   fn blank_filter_params_deserialize_to_none() {
@@ -980,5 +1004,23 @@ mod tests {
     let kept = serde_urlencoded::from_str::<BuildFilterParams>("status=failed")
       .expect("deserialize query");
     assert_eq!(kept.status.as_deref(), Some("failed"));
+  }
+
+  #[test]
+  fn job_lists_exclude_synthetic_dependency_names() {
+    assert!(is_job_name("x86_64-linux.docs"));
+    assert!(!is_job_name("drv:0vdd2i8j-intermediate"));
+  }
+
+  #[test]
+  fn failed_derivations_exclude_dependency_failure_cascades() {
+    assert!(is_failed_derivation_status(BuildStatus::Failed));
+    assert!(is_failed_derivation_status(BuildStatus::OomKilled));
+    assert!(!is_failed_derivation_status(BuildStatus::DependencyFailed));
+    assert!(!is_failed_derivation_status(BuildStatus::Succeeded));
+    assert!(!is_failed_derivation_status(BuildStatus::Running));
+    assert!(!is_failed_derivation_status(BuildStatus::Cancelled));
+
+    assert!(is_failed_status(BuildStatus::DependencyFailed));
   }
 }

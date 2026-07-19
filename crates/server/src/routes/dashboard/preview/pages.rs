@@ -233,21 +233,31 @@ pub(super) async fn evaluations() -> Response {
 }
 
 pub(super) async fn evaluation() -> Response {
+  let failed_derivations = vec![
+    fixtures::build_view(
+      5,
+      "packages.aarch64-linux.circus-server",
+      "Failed",
+      "failed",
+    ),
+    fixtures::build_view(7, "drv:0vdd2i8j-intermediate", "Failed", "failed"),
+  ];
   render(EvaluationTemplate {
-    ui:              ui(),
-    eval:            fixtures::eval_view(3, "Completed", "completed"),
-    builds:          builds_fixture(),
-    project_name:    "circus".into(),
-    project_id:      id(1),
-    jobset_name:     "packages".into(),
-    jobset_id:       id(2),
+    ui: ui(),
+    eval: fixtures::eval_view(3, "Completed", "completed"),
+    builds: builds_fixture(),
+    failed_derivations,
+    project_name: "circus".into(),
+    project_id: id(1),
+    jobset_name: "packages".into(),
+    jobset_id: id(2),
     succeeded_count: 2,
-    failed_count:    1,
-    running_count:   1,
-    pending_count:   1,
-    is_admin:        true,
-    auth_name:       "operator".into(),
-    csrf_token:      csrf(),
+    failed_count: 1,
+    running_count: 1,
+    pending_count: 1,
+    is_admin: true,
+    auth_name: "operator".into(),
+    csrf_token: csrf(),
   })
 }
 
