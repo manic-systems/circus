@@ -58,6 +58,38 @@
     {% if is_admin %}
         <section class="panel">
             <div class="panel-header">
+                <h2>Store Maintenance</h2>
+            </div>
+            <div class="panel-body">
+                {% if gc_requested %}
+                    <div class="flash-message flash-success">
+                        GC cycle requested. The queue runner cleans up aged roots and runs
+                        <code>nix-collect-garbage</code>; results land in its logs.
+                    </div>
+                {% endif %}
+                {% if gc_enabled %}
+                    <form method="POST"
+                          action="/admin/store-gc"
+                          class="filter-form"
+                          onsubmit="return confirm('Run a GC cycle now? Unpinned roots older than the configured maximum age are removed and unreferenced store paths are deleted.')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-danger">Run GC now</button>
+                    </form>
+                    <p class="empty-hint">
+                        Ages out unpinned GC roots and runs <code>nix-collect-garbage</code> on the
+                        queue runner host. Pinned build outputs are kept.
+                    </p>
+                {% else %}
+                    <p class="empty-hint">
+                        GC is disabled in the configuration (<code>[gc] enabled = false</code>), so a
+                        manual cycle cannot be requested.
+                    </p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
                 <h2>Pinned Build Outputs</h2>
             </div>
             {% if pinned_outputs.is_empty() %}

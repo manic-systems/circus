@@ -243,7 +243,7 @@ where
               tracing::error!("Runner loop failed: {e}");
           }
       }
-      () = gc_loop(gc_config_for_loop, db.pool().clone()) => {}
+      () = gc_loop(gc_config_for_loop, database_url.clone(), db.pool().clone()) => {}
       () = failed_paths_cleanup_loop(db.pool().clone(), Arc::clone(&hot_config), failed_paths_cache) => {}
       () = cancel_checker_loop(db.pool().clone(), active_builds) => {}
       () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
@@ -338,7 +338,11 @@ async fn cleanup_stale_logs(log_dir: &Path) {
   }
 }
 
-async fn gc_loop(gc_config: GcConfig, pool: circus_common::PgPool) {
+async fn gc_loop(
+  gc_config: GcConfig,
+  database_url: String,
+  pool: circus_common::PgPool,
+) {
   if !gc_config.enabled {
     return pending().await;
   }
@@ -348,7 +352,7 @@ async fn gc_loop(gc_config: GcConfig, pool: circus_common::PgPool) {
   // Dashboard "Run GC now" requests arrive over PG NOTIFY and force a cycle.
   let manual_trigger = Arc::new(tokio::sync::Notify::new());
   circus_common::pg_notify::spawn_listener(
-    &pool,
+    &database_url,
     &[circus_common::pg_notify::CHANNEL_GC_REQUESTED],
     Arc::clone(&manual_trigger),
   );

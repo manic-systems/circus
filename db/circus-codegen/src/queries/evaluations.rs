@@ -69,6 +69,34 @@ pub struct FinishRunningParams<T1: crate::StringSql, T2: crate::StringSql> {
     pub error_message: Option<T2>,
     pub id: uuid::Uuid,
 }
+#[derive(Debug)]
+pub struct ListPageFilteredParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+> {
+    pub project: Option<T1>,
+    pub jobset: Option<T2>,
+    pub commit: Option<T3>,
+    pub status: Option<T4>,
+    pub include_hidden: bool,
+    pub limit: i64,
+    pub offset: i64,
+}
+#[derive(Debug)]
+pub struct CountPageFilteredParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+> {
+    pub project: Option<T1>,
+    pub jobset: Option<T2>,
+    pub commit: Option<T3>,
+    pub status: Option<T4>,
+    pub include_hidden: bool,
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvaluationRow {
     pub id: uuid::Uuid,
@@ -1703,5 +1731,188 @@ impl StatusOfStmt {
             extractor: |row| Ok(row.try_get(0)?),
             mapper: |it| it.into(),
         }
+    }
+}
+pub struct ListPageFilteredStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn list_page_filtered() -> ListPageFilteredStmt {
+    ListPageFilteredStmt(
+        "SELECT e.* FROM evaluations e JOIN jobsets j ON j.id = e.jobset_id JOIN projects p ON p.id = j.project_id WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%') AND ($2::text IS NULL OR j.name ILIKE '%' || $2 || '%') AND ($3::text IS NULL OR e.commit_hash ILIKE $3 || '%') AND ($4::text IS NULL OR e.status = $4) AND ($5 OR e.hidden = false) ORDER BY e.evaluation_time DESC LIMIT $6 OFFSET $7",
+        None,
+    )
+}
+impl ListPageFilteredStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+        T4: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        project: &'a Option<T1>,
+        jobset: &'a Option<T2>,
+        commit: &'a Option<T3>,
+        status: &'a Option<T4>,
+        include_hidden: &'a bool,
+        limit: &'a i64,
+        offset: &'a i64,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 7> {
+        EvaluationRowQuery {
+            client,
+            params: [
+                project,
+                jobset,
+                commit,
+                status,
+                include_hidden,
+                limit,
+                offset,
+            ],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
+                    Ok(EvaluationRowBorrowed {
+                        id: row.try_get(0)?,
+                        jobset_id: row.try_get(1)?,
+                        commit_hash: row.try_get(2)?,
+                        evaluation_time: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        error_message: row.try_get(5)?,
+                        inputs_hash: row.try_get(6)?,
+                        pr_number: row.try_get(7)?,
+                        pr_head_branch: row.try_get(8)?,
+                        pr_base_branch: row.try_get(9)?,
+                        pr_action: row.try_get(10)?,
+                        trigger_kind: row.try_get(11)?,
+                        hidden: row.try_get(12)?,
+                    })
+                },
+            mapper: |it| EvaluationRow::from(it),
+        }
+    }
+}
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ListPageFilteredParams<T1, T2, T3, T4>,
+        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 7>,
+        C,
+    > for ListPageFilteredStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ListPageFilteredParams<T1, T2, T3, T4>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 7> {
+        self.bind(
+            client,
+            &params.project,
+            &params.jobset,
+            &params.commit,
+            &params.status,
+            &params.include_hidden,
+            &params.limit,
+            &params.offset,
+        )
+    }
+}
+pub struct CountPageFilteredStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn count_page_filtered() -> CountPageFilteredStmt {
+    CountPageFilteredStmt(
+        "SELECT COUNT(*) FROM evaluations e JOIN jobsets j ON j.id = e.jobset_id JOIN projects p ON p.id = j.project_id WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%') AND ($2::text IS NULL OR j.name ILIKE '%' || $2 || '%') AND ($3::text IS NULL OR e.commit_hash ILIKE $3 || '%') AND ($4::text IS NULL OR e.status = $4) AND ($5 OR e.hidden = false)",
+        None,
+    )
+}
+impl CountPageFilteredStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+        T4: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        project: &'a Option<T1>,
+        jobset: &'a Option<T2>,
+        commit: &'a Option<T3>,
+        status: &'a Option<T4>,
+        include_hidden: &'a bool,
+    ) -> I64Query<'c, 'a, 's, C, i64, 5> {
+        I64Query {
+            client,
+            params: [project, jobset, commit, status, include_hidden],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        CountPageFilteredParams<T1, T2, T3, T4>,
+        I64Query<'c, 'a, 's, C, i64, 5>,
+        C,
+    > for CountPageFilteredStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a CountPageFilteredParams<T1, T2, T3, T4>,
+    ) -> I64Query<'c, 'a, 's, C, i64, 5> {
+        self.bind(
+            client,
+            &params.project,
+            &params.jobset,
+            &params.commit,
+            &params.status,
+            &params.include_hidden,
+        )
     }
 }

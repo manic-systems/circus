@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use axum::{
-  extract::State,
+  extract::{Query, State},
   response::{Html, Response},
 };
 use circus_common::models::Build;
@@ -23,29 +23,61 @@ use super::{
 };
 use crate::state::AppState;
 
+#[derive(serde::Deserialize)]
+pub(in crate::routes::dashboard) struct QueueFilterParams {
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  status:   Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  system:   Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  job_name: Option<String>,
+}
+
 pub(in crate::routes::dashboard) async fn queue_page(
   State(state): State<AppState>,
+  Query(params): Query<QueueFilterParams>,
   ctx: DashboardContext,
 ) -> Result<Html<String>, Response> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Queue)?;
-  let running = circus_common::repo::builds::list_filtered(
-    &state.pool,
-    None,
-    Some("running"),
-    None,
-    None,
-    100,
-    0,
-  )
-  .await
-  .unwrap_or_default();
-  let pending = circus_common::repo::builds::list_pending_in_scheduler_order(
-    &state.pool,
-    100,
-    0,
-  )
-  .await
-  .unwrap_or_default();
+  let show_running = params.status.as_deref() != Some("pending");
+  let show_pending = params.status.as_deref() != Some("running");
+  let running = if show_running {
+    circus_common::repo::builds::list_filtered(
+      &state.pool,
+      None,
+      Some("running"),
+      params.system.as_deref(),
+      params.job_name.as_deref(),
+      100,
+      0,
+    )
+    .await
+    .unwrap_or_default()
+  } else {
+    Vec::new()
+  };
+  let pending = if show_pending {
+    circus_common::repo::builds::list_pending_in_scheduler_order_filtered(
+      &state.pool,
+      params.system.as_deref(),
+      params.job_name.as_deref(),
+      100,
+      0,
+    )
+    .await
+    .unwrap_or_default()
+  } else {
+    Vec::new()
+  };
 
   let builders = circus_common::repo::remote_builders::list(&state.pool)
     .await
@@ -166,6 +198,11 @@ pub(in crate::routes::dashboard) async fn queue_page(
     running_builds,
     pending_count,
     running_count,
+    show_running,
+    show_pending,
+    filter_status: params.status.unwrap_or_default(),
+    filter_system: params.system.unwrap_or_default(),
+    filter_job: params.job_name.unwrap_or_default(),
     permissions: ctx.permissions,
     csrf_token: ctx.csrf_token.clone(),
     is_admin: ctx.is_admin,

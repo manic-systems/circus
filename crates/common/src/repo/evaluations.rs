@@ -294,25 +294,21 @@ pub async fn list_page_filtered(
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Evaluation>> {
-  Ok(
-    sqlx::query_as::<_, Evaluation>(
-      "SELECT e.* FROM evaluations e JOIN jobsets j ON j.id = e.jobset_id \
-       JOIN projects p ON p.id = j.project_id WHERE ($1::text IS NULL OR \
-       p.name ILIKE '%' || $1 || '%') AND ($2::text IS NULL OR j.name ILIKE \
-       '%' || $2 || '%') AND ($3::text IS NULL OR e.commit_hash LIKE $3 || \
-       '%') AND ($4::text IS NULL OR e.status = $4) AND ($5::boolean OR \
-       e.hidden = false) ORDER BY e.evaluation_time DESC LIMIT $6 OFFSET $7",
+  let client = pool.get().await?;
+  let rows = q::list_page_filtered()
+    .bind(
+      &client,
+      &filter.project,
+      &filter.jobset,
+      &filter.commit,
+      &filter.status,
+      &filter.include_hidden,
+      &limit,
+      &offset,
     )
-    .bind(filter.project)
-    .bind(filter.jobset)
-    .bind(filter.commit)
-    .bind(filter.status)
-    .bind(filter.include_hidden)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?,
-  )
+    .all()
+    .await?;
+  rows.into_iter().map(Evaluation::try_from).collect()
 }
 
 /// Count evaluations matching [`EvaluationListFilter`].
@@ -324,21 +320,20 @@ pub async fn count_page_filtered(
   pool: &PgPool,
   filter: EvaluationListFilter<'_>,
 ) -> Result<i64> {
-  let row: (i64,) = sqlx::query_as(
-    "SELECT COUNT(*) FROM evaluations e JOIN jobsets j ON j.id = e.jobset_id \
-     JOIN projects p ON p.id = j.project_id WHERE ($1::text IS NULL OR p.name \
-     ILIKE '%' || $1 || '%') AND ($2::text IS NULL OR j.name ILIKE '%' || $2 \
-     || '%') AND ($3::text IS NULL OR e.commit_hash LIKE $3 || '%') AND \
-     ($4::text IS NULL OR e.status = $4) AND ($5::boolean OR e.hidden = false)",
+  let client = pool.get().await?;
+  Ok(
+    q::count_page_filtered()
+      .bind(
+        &client,
+        &filter.project,
+        &filter.jobset,
+        &filter.commit,
+        &filter.status,
+        &filter.include_hidden,
+      )
+      .one()
+      .await?,
   )
-  .bind(filter.project)
-  .bind(filter.jobset)
-  .bind(filter.commit)
-  .bind(filter.status)
-  .bind(filter.include_hidden)
-  .fetch_one(pool)
-  .await?;
-  Ok(row.0)
 }
 
 /// Hide or unhide an evaluation in dashboard listings.

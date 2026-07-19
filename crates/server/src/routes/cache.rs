@@ -690,7 +690,7 @@ fn persisted_local_nar_row_matches(
     && nar_hash_part(&row.nar_hash) == Some(nar_hash)
 }
 
-fn uploaded_nar_presigner(
+pub(crate) fn uploaded_nar_presigner(
   config: &circus_config::Config,
 ) -> Option<circus_s3::Presigner> {
   let uri = config.cache_upload.store_uri.as_deref()?;

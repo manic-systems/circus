@@ -47,10 +47,14 @@ pub(in crate::routes::dashboard) async fn caches_page(
     .await
     .map_err(IntoResponse::into_response)?;
 
+  // The unscoped (global) summary already covers every NAR; summing the
+  // per-cache rows would double count project-scoped entries.
+  let totals =
+    circus_common::repo::narinfo_cache::storage_summary(&state.pool, None)
+      .await
+      .map_err(cache_db_err)?;
+
   let mut caches = Vec::with_capacity(refs.len());
-  let mut total_nars = 0i64;
-  let mut total_compressed = 0i64;
-  let mut total_uncompressed = 0i64;
   for cache in refs {
     let storage = circus_common::repo::narinfo_cache::storage_summary(
       &state.pool,
@@ -66,9 +70,6 @@ pub(in crate::routes::dashboard) async fn caches_page(
       .await
       .map_err(cache_db_err)?;
 
-    total_nars += storage.nar_count;
-    total_compressed += storage.compressed_bytes;
-    total_uncompressed += storage.uncompressed_bytes;
     caches.push(CacheRowView {
       detail_href: format!("/caches/{}", cache.name),
       scope_label: cache.scope_label().to_owned(),
@@ -84,18 +85,57 @@ pub(in crate::routes::dashboard) async fn caches_page(
     ui: ui_config(&state),
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name,
-    total_nars,
-    total_compressed: format_bytes(total_compressed),
-    total_uncompressed: format_bytes(total_uncompressed),
+    total_nars: totals.nar_count,
+    total_compressed: format_bytes(totals.compressed_bytes),
+    total_uncompressed: format_bytes(totals.uncompressed_bytes),
     caches,
   }
   .render_html_or_500()
+}
+
+/// Result banner state for a completed `POST /caches/{name}/gc` redirect.
+#[derive(Default, serde::Deserialize)]
+pub(in crate::routes::dashboard) struct CacheGcNoticeParams {
+  gc:         Option<String>,
+  gc_deleted: Option<i64>,
+  gc_freed:   Option<i64>,
+  gc_failed:  Option<i64>,
+}
+
+impl CacheGcNoticeParams {
+  fn notice(&self) -> (String, bool) {
+    match self.gc.as_deref() {
+      Some("error") => {
+        (
+          "Cache cleanup failed; see the server logs.".to_owned(),
+          true,
+        )
+      },
+      Some("done") => {
+        let deleted = self.gc_deleted.unwrap_or(0);
+        let freed = format_bytes(self.gc_freed.unwrap_or(0).max(0));
+        let failed = self.gc_failed.unwrap_or(0);
+        let mut notice = format!("Removed {deleted} cache entries ({freed}).");
+        if failed > 0 {
+          use std::fmt::Write as _;
+          let _ = write!(
+            notice,
+            " {failed} backing objects could not be deleted; see the server \
+             logs."
+          );
+        }
+        (notice, failed > 0)
+      },
+      _ => (String::new(), false),
+    }
+  }
 }
 
 pub(in crate::routes::dashboard) async fn cache_detail_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
   Path(name): Path<String>,
+  Query(gc_params): Query<CacheGcNoticeParams>,
 ) -> Result<Html<String>, Response> {
   enforce_page_access(&state.config, &ctx, DashboardPage::CacheDetail)?;
   let Some(cache) = crate::cache_overview::resolve_cache_ref(&state, &name)
@@ -126,6 +166,7 @@ pub(in crate::routes::dashboard) async fn cache_detail_page(
     substituter.as_deref(),
     public_key.as_deref(),
   );
+  let (gc_notice, gc_error) = gc_params.notice();
 
   CacheDetailTemplate {
     ui: ui_config(&state),
@@ -153,6 +194,10 @@ pub(in crate::routes::dashboard) async fn cache_detail_page(
     public_key: public_key.unwrap_or_default(),
     has_snippet: snippet.is_some(),
     nix_conf_snippet: snippet.unwrap_or_default(),
+    csrf_token: ctx.csrf_token.clone(),
+    gc_notice,
+    gc_error,
+    is_global: cache.scope.is_none(),
     name: cache.name,
   }
   .render_html_or_500()

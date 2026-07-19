@@ -145,7 +145,7 @@ SET status = :status, completed_at = NOW(), log_path = :log_path,
 WHERE id = :id
 RETURNING *;
 
---! list_pending_in_scheduler_order : BuildRow
+--! list_pending_in_scheduler_order (system?, job_name?) : BuildRow
 SELECT *
 FROM builds
 WHERE status = 'pending'
