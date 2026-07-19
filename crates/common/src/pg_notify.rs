@@ -27,6 +27,10 @@ pub async fn notify(pool: &PgPool, channel: &str) -> crate::error::Result<()> {
   Ok(())
 }
 
+/// Channel emitted when an operator requests an immediate GC cycle from the
+/// dashboard. The queue runner's GC loop wakes and runs a forced cycle.
+pub const CHANNEL_GC_REQUESTED: &str = "circus_gc_requested";
+
 /// Spawns a background task that listens on the given PG channels and signals
 /// `wakeup` on each notification. Uses `notify_one` so a notification arriving
 /// while the daemon is mid-cycle still wakes the next `.notified()` await.
@@ -132,7 +136,11 @@ mod tests {
 
   #[test]
   fn channel_names_are_valid_pg_identifiers() {
-    for name in [CHANNEL_BUILDS_CHANGED, CHANNEL_JOBSETS_CHANGED] {
+    for name in [
+      CHANNEL_BUILDS_CHANGED,
+      CHANNEL_JOBSETS_CHANGED,
+      CHANNEL_GC_REQUESTED,
+    ] {
       assert!(name.len() < 64, "channel name too long: {name}");
       assert!(!name.contains(' '), "channel name has spaces: {name}");
       assert!(
