@@ -98,7 +98,7 @@ pub(super) async fn run_eval(
 
   let session = evix::Session::open(config)
     .await
-    .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?;
+    .map_err(|e| evix_eval_failure(description, &error_chain(&e)))?;
 
   let collect = async {
     let mut events = session.stream();
@@ -107,7 +107,7 @@ pub(super) async fn run_eval(
 
     while let Some(event) = events.next().await {
       match event
-        .map_err(|e| evix_eval_failure(description, &format!("{e:#}")))?
+        .map_err(|e| evix_eval_failure(description, &error_chain(&e)))?
       {
         evix::Event::Derivation(drv) => {
           jobs.push(nix_job_from_derivation(&drv));
@@ -155,6 +155,25 @@ fn evix_eval_failure(description: &str, details: &str) -> CiError {
   CiError::NixEval(format!("{description} evix evaluation failed: {details}"))
 }
 
+/// Render an error and its full `source()` chain as a single `: `-separated
+/// line.
+///
+/// evix's `Error` stores the underlying cause behind `source()` while its
+/// `Display` prints only the outermost message, so formatting with `{e}` or
+/// `{e:#}` drops the actual Nix failure (e.g. the missing-attribute or
+/// restricted-eval message behind a `fragment attr` context).
+pub fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+  use std::fmt::Write as _;
+
+  let mut message = error.to_string();
+  let mut source = error.source();
+  while let Some(cause) = source {
+    let _ = write!(message, ": {cause}");
+    source = cause.source();
+  }
+  message
+}
+
 #[cfg(test)]
 mod policy_tests {
   use super::*;
@@ -197,6 +216,43 @@ mod policy_tests {
     assert!(message.contains("exit status: 1"));
     assert!(message.contains("locking flake"));
     assert!(!message.contains("worker closed stdout unexpectedly"));
+  }
+
+  #[test]
+  fn error_chain_includes_hidden_sources() {
+    #[derive(Debug)]
+    struct Layered {
+      message: &'static str,
+      source:  Option<Box<Self>>,
+    }
+
+    impl std::fmt::Display for Layered {
+      fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+      }
+    }
+
+    impl std::error::Error for Layered {
+      fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self
+          .source
+          .as_ref()
+          .map(|s| s.as_ref() as &(dyn std::error::Error + 'static))
+      }
+    }
+
+    let err = Layered {
+      message: r#"fragment attr "packages""#,
+      source:  Some(Box::new(Layered {
+        message: "Key not found: packages",
+        source:  None,
+      })),
+    };
+
+    assert_eq!(
+      error_chain(&err),
+      r#"fragment attr "packages": Key not found: packages"#
+    );
   }
 
   #[test]

@@ -10,6 +10,7 @@ mod eval_command;
 mod flake_lock;
 
 use eval_command::NixEvalPolicy;
+pub use eval_command::error_chain;
 
 /// Per-worker memory ceiling in MB; evix restarts a worker once it is exceeded.
 const EVAL_MAX_MEMORY_MB: usize = 4096;
