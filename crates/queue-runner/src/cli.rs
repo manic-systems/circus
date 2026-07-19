@@ -345,9 +345,22 @@ async fn gc_loop(gc_config: GcConfig, pool: circus_common::PgPool) {
   let interval = Duration::from_secs(gc_config.cleanup_interval);
   let max_age = Duration::from_secs(gc_config.max_age_days * 86400);
 
-  #[expect(clippy::infinite_loop, reason = "intentional background GC loop")]
+  // Dashboard "Run GC now" requests arrive over PG NOTIFY and force a cycle.
+  let manual_trigger = Arc::new(tokio::sync::Notify::new());
+  circus_common::pg_notify::spawn_listener(
+    &pool,
+    &[circus_common::pg_notify::CHANNEL_GC_REQUESTED],
+    Arc::clone(&manual_trigger),
+  );
+
   loop {
-    tokio::time::sleep(interval).await;
+    let forced = tokio::select! {
+      () = tokio::time::sleep(interval) => false,
+      () = manual_trigger.notified() => {
+        tracing::info!("Manual GC cycle requested from the dashboard");
+        true
+      },
+    };
 
     let pinned_build_ids = match repo::builds::list_pinned_ids(&pool).await {
       Ok(ids) => ids,
@@ -377,36 +390,43 @@ async fn gc_loop(gc_config: GcConfig, pool: circus_common::PgPool) {
         },
       };
 
-    match gc_roots::cleanup_old_roots(
+    let removed_roots = match gc_roots::cleanup_old_roots(
       &gc_config.gc_roots_dir,
       max_age,
       &pinned_build_ids,
       &pinned_root_paths,
       &pinned_output_paths,
     ) {
-      Ok(count) if count > 0 => {
-        tracing::info!(count, "Cleaned up old GC roots");
-        // Optionally run nix-collect-garbage
-        match tokio::process::Command::new("nix-collect-garbage")
-          .output()
-          .await
-        {
-          Ok(output) if output.status.success() => {
-            tracing::info!("nix-collect-garbage completed");
-          },
-          Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("nix-collect-garbage failed: {stderr}");
-          },
-          Err(e) => {
-            tracing::warn!("Failed to run nix-collect-garbage: {e}");
-          },
+      Ok(count) => {
+        if count > 0 {
+          tracing::info!(count, "Cleaned up old GC roots");
         }
+        count
       },
-      Ok(_) => {},
       Err(e) => {
         tracing::error!("GC cleanup failed: {e}");
+        0
       },
+    };
+
+    // A scheduled cycle only pays for nix-collect-garbage when roots aged
+    // out; a manual request always runs it.
+    if removed_roots > 0 || forced {
+      match tokio::process::Command::new("nix-collect-garbage")
+        .output()
+        .await
+      {
+        Ok(output) if output.status.success() => {
+          tracing::info!("nix-collect-garbage completed");
+        },
+        Ok(output) => {
+          let stderr = String::from_utf8_lossy(&output.stderr);
+          tracing::warn!("nix-collect-garbage failed: {stderr}");
+        },
+        Err(e) => {
+          tracing::warn!("Failed to run nix-collect-garbage: {e}");
+        },
+      }
     }
   }
 }
