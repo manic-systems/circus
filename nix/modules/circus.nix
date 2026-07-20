@@ -505,6 +505,9 @@ in {
             StateDirectory = "circus";
             WorkingDirectory = "/var/lib/circus";
             ReadWritePaths = ["/var/lib/circus"];
+            # A single Nix evaluator can keep more than systemd's default
+            # soft limit of 1024 files open while traversing a large flake.
+            LimitNOFILE = 65536;
 
             # Hardening
             ProtectSystem = "strict";
