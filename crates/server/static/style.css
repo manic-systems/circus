@@ -1755,6 +1755,34 @@ button:disabled {
   color: var(--status-running);
 }
 
+.ansi-bold {
+  font-weight: 700;
+}
+.ansi-fg-black {
+  color: #111827;
+}
+.ansi-fg-red {
+  color: var(--status-failed);
+}
+.ansi-fg-green {
+  color: var(--status-success);
+}
+.ansi-fg-yellow {
+  color: var(--status-running);
+}
+.ansi-fg-blue {
+  color: #3b82f6;
+}
+.ansi-fg-magenta {
+  color: #c026d3;
+}
+.ansi-fg-cyan {
+  color: #0891b2;
+}
+.ansi-fg-white {
+  color: var(--text);
+}
+
 .error-log-notice,
 .error-log-info {
   color: var(--text);
