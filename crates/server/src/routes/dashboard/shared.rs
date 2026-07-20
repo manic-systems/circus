@@ -566,19 +566,25 @@ fn parse_diagnostic_ansi(s: &str) -> Vec<DiagnosticSegment> {
 
   while let Some((start, prefix_len, end)) = next_sgr(rest) {
     if start > 0 {
-      segments.push(DiagnosticSegment {
-        text:  rest[..start].to_string(),
-        class: class.clone(),
-      });
+      let text =
+        String::from_utf8_lossy(&strip_ansi_escapes::strip(&rest[..start]))
+          .into_owned();
+      if !text.is_empty() {
+        segments.push(DiagnosticSegment {
+          text,
+          class: class.clone(),
+        });
+      }
     }
     apply_sgr(&rest[start + prefix_len..end], &mut class);
     rest = &rest[end + 1..];
   }
   if !rest.is_empty() {
-    segments.push(DiagnosticSegment {
-      text: rest.to_string(),
-      class,
-    });
+    let text =
+      String::from_utf8_lossy(&strip_ansi_escapes::strip(rest)).into_owned();
+    if !text.is_empty() {
+      segments.push(DiagnosticSegment { text, class });
+    }
   }
   segments
 }
@@ -651,10 +657,12 @@ mod diagnostic_tests {
   #[test]
   fn preserves_real_and_evix_stripped_nix_colors() {
     let segments = parse_diagnostic_ansi(
-      "opening \x1b[35;1m/nix/store/source/flake.nix\x1b[0m: [31;1merror[0m",
+      "opening \x1b[K\x1b[35;1m/nix/store/source/flake.nix\x1b[0m: \
+       [31;1merror[0m\x1b[K",
     );
 
     assert_eq!(segments.len(), 4);
+    assert_eq!(segments[0].text, "opening ");
     assert_eq!(segments[1].text, "/nix/store/source/flake.nix");
     assert_eq!(segments[1].class, "ansi-bold ansi-fg-magenta");
     assert_eq!(segments[3].text, "error");
