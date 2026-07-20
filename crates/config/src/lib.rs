@@ -39,7 +39,11 @@ pub fn project_cache_url(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Fine in tests")]
 mod tests {
-  use std::time::Duration;
+  use std::{
+    env,
+    fs,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+  };
 
   use circus_types::GlobalRole;
 
@@ -402,12 +406,27 @@ mod tests {
   }
 
   #[test]
+  fn evaluator_memory_limit_loads_from_toml() {
+    let toml_str = r#"
+      [evaluator]
+      memory_limit_mb = 3072
+    "#;
+
+    let mut table = toml::Value::try_from(Config::default()).unwrap();
+    let file_table: toml::Value = toml::from_str(toml_str).unwrap();
+    deep_merge(&mut table, file_table);
+
+    let config: Config = table.try_into().unwrap();
+    assert_eq!(config.evaluator.memory_limit_mb, Some(3072));
+  }
+
+  #[test]
   fn load_requires_explicit_config_path() {
-    let old = std::env::var_os("CIRCUS_CONFIG_FILE");
+    let old = env::var_os("CIRCUS_CONFIG_FILE");
     // SAFETY: tests in this module run single-threaded with respect to this
     // env var; no other thread reads or writes CIRCUS_CONFIG_FILE concurrently.
     unsafe {
-      std::env::remove_var("CIRCUS_CONFIG_FILE");
+      env::remove_var("CIRCUS_CONFIG_FILE");
     }
 
     let err = Config::load(None).unwrap_err().to_string();
@@ -416,26 +435,26 @@ mod tests {
     if let Some(value) = old {
       // SAFETY: see above; restoring the original value, still single-threaded.
       unsafe {
-        std::env::set_var("CIRCUS_CONFIG_FILE", value);
+        env::set_var("CIRCUS_CONFIG_FILE", value);
       }
     }
   }
 
   #[test]
   fn load_reads_explicit_config_path() {
-    let path = std::env::temp_dir().join(format!(
+    let path = env::temp_dir().join(format!(
       "circus-config-test-{}.toml",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+      SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos()
     ));
-    std::fs::write(&path, "[server]\nport = 4321\n").unwrap();
+    fs::write(&path, "[server]\nport = 4321\n").unwrap();
 
     let config = Config::load(Some(&path)).unwrap();
     assert_eq!(config.server.port, 4321);
 
-    let _ = std::fs::remove_file(path);
+    let _ = fs::remove_file(path);
   }
 
   #[test]

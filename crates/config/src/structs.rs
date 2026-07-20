@@ -254,6 +254,11 @@ pub struct EvaluatorConfig {
   /// initializes a full Nix evaluator, so higher counts increase parallelism
   /// at the cost of memory. Reduce this on memory-constrained hosts.
   pub eval_workers: usize,
+
+  /// Hard address-space limit, in MiB, for each Nix evaluator subprocess.
+  /// This applies independently to every evix worker and auxiliary `nix`
+  /// process. `None` disables the limit.
+  pub memory_limit_mb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -798,6 +803,7 @@ impl Default for EvaluatorConfig {
       require_locked_flake: false,
       strict_errors:        false,
       eval_workers:         4,
+      memory_limit_mb:      None,
     }
   }
 }

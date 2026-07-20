@@ -1,5 +1,5 @@
 #[cfg(not(unix))] use std::future::pending;
-use std::{ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 
 use circus_common::Database;
 use circus_config::Config;
@@ -20,7 +20,7 @@ struct Cli {
 /// Returns an error when worker startup, configuration, database setup, or the
 /// evaluator runtime fails.
 pub fn run() -> color_eyre::Result<()> {
-  run_from(std::env::args_os())
+  run_from(env::args_os())
 }
 
 /// Run the Circus evaluator CLI with explicit argv values.
@@ -36,15 +36,16 @@ where
 {
   // Cap Nix's GC heap. By default it sizes from total RAM and the reservation
   // fails on swapless low-memory hosts, killing the evix worker.
-  if std::env::var_os("GC_INITIAL_HEAP_SIZE").is_none() {
+  if env::var_os("GC_INITIAL_HEAP_SIZE").is_none() {
     // SAFETY: set at process start, before any threads spawn.
-    unsafe { std::env::set_var("GC_INITIAL_HEAP_SIZE", "268435456") };
+    unsafe { env::set_var("GC_INITIAL_HEAP_SIZE", "268435456") };
   }
 
   // evix evaluates Nix in worker subprocesses that re-execute this binary with
   // `EVIX_WORKER` set. When invoked that way, act purely as an evix worker and
   // do not start the evaluator service (tokio runtime, database, etc.).
-  if std::env::var_os(evix::WORKER_ENV).is_some() {
+  if env::var_os(evix::WORKER_ENV).is_some() {
+    crate::memory::limit_evix_worker_from_env()?;
     return evix::run_worker().map_err(|e| {
       color_eyre::eyre::eyre!(
         "evix worker failed: {}",
@@ -55,20 +56,29 @@ where
   color_eyre::install()?;
   circus_common::install_crypto_provider()?;
 
+  let cli = Cli::parse_from(args);
+  let config = Config::load(cli.config.as_deref())?;
+
+  // evix workers re-execute this binary and inherit its environment. Set the
+  // limit before the runtime creates threads and before any workers spawn.
+  if let Some(limit_mb) = config.evaluator.memory_limit_mb {
+    // SAFETY: no threads have been spawned at this point.
+    unsafe {
+      env::set_var(crate::memory::WORKER_LIMIT_ENV, limit_mb.to_string());
+    }
+  } else {
+    // Do not let a service-manager environment accidentally override config.
+    // SAFETY: no threads have been spawned at this point.
+    unsafe { env::remove_var(crate::memory::WORKER_LIMIT_ENV) };
+  }
+
   let runtime = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
     .build()?;
-  runtime.block_on(run_async(args))
+  runtime.block_on(run_async(config))
 }
 
-async fn run_async<I, T>(args: I) -> color_eyre::Result<()>
-where
-  I: IntoIterator<Item = T>,
-  T: Into<OsString> + Clone,
-{
-  let cli = Cli::parse_from(args);
-
-  let config = Config::load(cli.config.as_deref())?;
+async fn run_async(config: Config) -> color_eyre::Result<()> {
   circus_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Evaluator");

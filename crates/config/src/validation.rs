@@ -92,6 +92,9 @@ impl Config {
     if self.evaluator.poll_interval == 0 {
       bail!("Evaluator poll interval must be greater than 0");
     }
+    if self.evaluator.memory_limit_mb == Some(0) {
+      bail!("Evaluator memory limit must be greater than 0 MiB");
+    }
 
     if let Some(url) = self.cache.cache_url.as_deref() {
       validate_shared(validate_cache_url(url, "cache.cache_url"))?;
