@@ -887,6 +887,7 @@ dependencies = [
  "futures",
  "git2",
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha2 0.11.0",

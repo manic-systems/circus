@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{
+  collections::{BTreeMap, HashMap},
+  path::Path,
+  time::Duration,
+};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
@@ -12,8 +16,15 @@ mod flake_lock;
 use eval_command::NixEvalPolicy;
 pub use eval_command::error_chain;
 
-/// Per-worker memory ceiling in MB; evix restarts a worker once it is exceeded.
-const EVAL_MAX_MEMORY_MB: usize = 4096;
+fn evix_memory_limit(config: &EvaluatorConfig) -> Result<usize> {
+  config.memory_limit_mb.map_or(Ok(usize::MAX), |limit| {
+    usize::try_from(limit).map_err(|_| {
+      CiError::NixEval(format!(
+        "Evaluator memory limit {limit} MiB is too large for this platform"
+      ))
+    })
+  })
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct NixMeta {
@@ -345,7 +356,9 @@ async fn evaluate_flake(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
-    max_memory_size: EVAL_MAX_MEMORY_MB,
+    // evix uses this as a post-attribute recycle threshold; RLIMIT_AS is the
+    // corresponding hard ceiling while an attribute is still evaluating.
+    max_memory_size: evix_memory_limit(config)?,
     meta: true,
     show_input_drvs: true,
     override_inputs,
@@ -403,6 +416,11 @@ async fn evaluate_all_nixos_configs(
   NixEvalPolicy::from(config)
     .with_extra_allowed_uris(derived_uris)
     .apply_to(&mut cmd);
+  crate::memory::limit_command(&mut cmd, config.memory_limit_mb).map_err(
+    |e| {
+      CiError::NixEval(format!("Failed to apply evaluator memory limit: {e}"))
+    },
+  )?;
   let output = tokio::select! {
     output = cmd.output() => output,
     () = cancel.cancelled() => return Err(CiError::NixEval("Nix evaluation was cancelled".to_string())),
@@ -437,7 +455,7 @@ async fn evaluate_all_nixos_configs(
       "{}#nixosConfigurations.{name}.config.system.build.toplevel",
       repo_path.display()
     );
-    let shown = resolve_drv(&drv_ref).await;
+    let shown = resolve_drv(&drv_ref, config).await;
 
     let (drv_path, system, outputs, input_drvs) = if let Some(shown) = shown {
       (
@@ -473,13 +491,16 @@ async fn evaluate_all_nixos_configs(
   })
 }
 
-async fn resolve_drv(flake_ref: &str) -> Option<ShownDerivation> {
-  let out = Command::new("nix")
+async fn resolve_drv(
+  flake_ref: &str,
+  config: &EvaluatorConfig,
+) -> Option<ShownDerivation> {
+  let mut command = Command::new("nix");
+  command
     .args(["derivation", "show", flake_ref])
-    .kill_on_drop(true)
-    .output()
-    .await
-    .ok()?;
+    .kill_on_drop(true);
+  crate::memory::limit_command(&mut command, config.memory_limit_mb).ok()?;
+  let out = command.output().await.ok()?;
 
   if !out.status.success() {
     return None;
@@ -557,7 +578,7 @@ async fn evaluate_legacy(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
-    max_memory_size: EVAL_MAX_MEMORY_MB,
+    max_memory_size: evix_memory_limit(config)?,
     meta: true,
     show_input_drvs: true,
     override_inputs: Vec::new(),
@@ -614,7 +635,7 @@ fn flatten_attrs(
 
 fn is_store_drv_path(value: &str) -> bool {
   is_store_path(value)
-    && std::path::Path::new(value)
+    && Path::new(value)
       .extension()
       .is_some_and(|ext| ext.eq_ignore_ascii_case("drv"))
 }
@@ -1001,9 +1022,9 @@ mod meta_tests {
       name:          name.to_string(),
       system:        "x86_64-linux".to_string(),
       drv_path:      "/nix/store/abc-hello.drv".to_string(),
-      outputs:       std::collections::BTreeMap::new(),
+      outputs:       BTreeMap::new(),
       meta:          None,
-      input_drvs:    std::collections::BTreeMap::new(),
+      input_drvs:    BTreeMap::new(),
       constituents:  None,
       gc_root_error: None,
     }
