@@ -174,16 +174,23 @@ pub(super) struct QueueBuildView {
 }
 
 pub(super) struct EvalView {
-  pub(super) id:            Uuid,
-  pub(super) commit_hash:   String,
-  pub(super) commit_short:  String,
-  pub(super) status_text:   String,
-  pub(super) status_class:  String,
-  pub(super) time:          String,
-  pub(super) error_message: String,
-  pub(super) hidden:        bool,
-  pub(super) jobset_name:   String,
-  pub(super) project_name:  String,
+  pub(super) id:             Uuid,
+  pub(super) commit_hash:    String,
+  pub(super) commit_short:   String,
+  pub(super) status_text:    String,
+  pub(super) status_class:   String,
+  pub(super) time:           String,
+  pub(super) error_message:  String,
+  pub(super) error_segments: Vec<DiagnosticSegment>,
+  pub(super) hidden:         bool,
+  pub(super) jobset_name:    String,
+  pub(super) project_name:   String,
+}
+
+/// Text and presentation extracted from one ANSI SGR run.
+pub(super) struct DiagnosticSegment {
+  pub(super) text:  String,
+  pub(super) class: String,
 }
 
 pub(super) struct EvalSummaryView {
@@ -550,6 +557,111 @@ pub(super) fn strip_ansi(s: &str) -> String {
   strip_bare_csi_fragments(&stripped)
 }
 
+/// Preserve Nix's ANSI colours as CSS classes. Some errors cross the evix FFI
+/// boundary without the ESC byte, so accept both `ESC[` and bare `[` SGRs.
+fn parse_diagnostic_ansi(s: &str) -> Vec<DiagnosticSegment> {
+  let mut segments = Vec::new();
+  let mut rest = s;
+  let mut class = String::new();
+
+  while let Some((start, prefix_len, end)) = next_sgr(rest) {
+    if start > 0 {
+      segments.push(DiagnosticSegment {
+        text:  rest[..start].to_string(),
+        class: class.clone(),
+      });
+    }
+    apply_sgr(&rest[start + prefix_len..end], &mut class);
+    rest = &rest[end + 1..];
+  }
+  if !rest.is_empty() {
+    segments.push(DiagnosticSegment {
+      text: rest.to_string(),
+      class,
+    });
+  }
+  segments
+}
+
+fn next_sgr(s: &str) -> Option<(usize, usize, usize)> {
+  let bytes = s.as_bytes();
+  for start in 0..bytes.len() {
+    let prefix_len =
+      if bytes[start] == 0x1B && bytes.get(start + 1) == Some(&b'[') {
+        2
+      } else if bytes[start] == b'[' {
+        1
+      } else {
+        continue;
+      };
+    let mut end = start + prefix_len;
+    while bytes
+      .get(end)
+      .is_some_and(|b| b.is_ascii_digit() || *b == b';')
+    {
+      end += 1;
+    }
+    if end > start + prefix_len && bytes.get(end) == Some(&b'm') {
+      return Some((start, prefix_len, end));
+    }
+  }
+  None
+}
+
+fn apply_sgr(codes: &str, class: &mut String) {
+  let mut bold = class.split_whitespace().any(|part| part == "ansi-bold");
+  let mut color = class
+    .split_whitespace()
+    .find(|part| part.starts_with("ansi-fg-"));
+  for code in codes.split(';').filter_map(|code| code.parse::<u8>().ok()) {
+    match code {
+      0 => {
+        bold = false;
+        color = None;
+      },
+      1 => bold = true,
+      22 => bold = false,
+      30..=37 => {
+        color = Some(match code {
+          30 => "ansi-fg-black",
+          31 => "ansi-fg-red",
+          32 => "ansi-fg-green",
+          33 => "ansi-fg-yellow",
+          34 => "ansi-fg-blue",
+          35 => "ansi-fg-magenta",
+          36 => "ansi-fg-cyan",
+          _ => "ansi-fg-white",
+        });
+      },
+      39 => color = None,
+      _ => {},
+    }
+  }
+  *class = [bold.then_some("ansi-bold"), color]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+  use super::parse_diagnostic_ansi;
+
+  #[test]
+  fn preserves_real_and_evix_stripped_nix_colors() {
+    let segments = parse_diagnostic_ansi(
+      "opening \x1b[35;1m/nix/store/source/flake.nix\x1b[0m: [31;1merror[0m",
+    );
+
+    assert_eq!(segments.len(), 4);
+    assert_eq!(segments[1].text, "/nix/store/source/flake.nix");
+    assert_eq!(segments[1].class, "ansi-bold ansi-fg-magenta");
+    assert_eq!(segments[3].text, "error");
+    assert_eq!(segments[3].class, "ansi-bold ansi-fg-red");
+  }
+}
+
 fn strip_bare_csi_fragments(s: &str) -> String {
   let mut out = String::with_capacity(s.len());
   let mut chars = s.chars().peekable();
@@ -763,16 +875,21 @@ impl From<&Evaluation> for EvalView {
       e.commit_hash.clone()
     };
     Self {
-      id:            e.id,
-      commit_hash:   e.commit_hash.clone(),
-      commit_short:  short,
-      status_text:   text.to_string(),
-      status_class:  class.to_string(),
-      time:          e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
-      error_message: e.error_message.clone().unwrap_or_default(),
-      hidden:        e.hidden,
-      jobset_name:   String::new(),
-      project_name:  String::new(),
+      id:             e.id,
+      commit_hash:    e.commit_hash.clone(),
+      commit_short:   short,
+      status_text:    text.to_string(),
+      status_class:   class.to_string(),
+      time:           e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      error_message:  e.error_message.clone().unwrap_or_default(),
+      error_segments: e
+        .error_message
+        .as_deref()
+        .map(parse_diagnostic_ansi)
+        .unwrap_or_default(),
+      hidden:         e.hidden,
+      jobset_name:    String::new(),
+      project_name:   String::new(),
     }
   }
 }

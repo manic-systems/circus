@@ -75,8 +75,7 @@
                 <h2>Evaluation Error</h2>
                 <span>Nix diagnostics</span>
             </div>
-            <pre class="error-detail">
-{{ eval.error_message }}</pre>
+            <pre class="error-detail">{% for segment in eval.error_segments %}<span class="{{ segment.class }}">{{ segment.text }}</span>{% endfor %}</pre>
         </section>
     {% endif %}
 
