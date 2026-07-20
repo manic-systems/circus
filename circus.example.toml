@@ -40,6 +40,9 @@ auto_allowed_uris = true
 git_timeout       = 600
 nix_timeout       = 1800
 # max_eval_time      = 3600
+# Per Nix subprocess. Peak evaluator allowance is approximately this times
+# eval_workers times max_concurrent_evals, plus the Circus parent process.
+# memory_limit_mb     = 4096
 poll_interval        = 60
 require_locked_flake = false
 restrict_eval        = true

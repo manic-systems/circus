@@ -220,6 +220,8 @@ configuration or the Nix store.
 | `evaluator`          | `nix_timeout`                                          | `1800`                                              | Nix evaluation timeout (seconds)                                          |
 | `evaluator`          | `max_eval_time`                                        | none                                                | Optional total evaluation limit (seconds); timeout is recorded distinctly |
 | `evaluator`          | `max_concurrent_evals`                                 | `4`                                                 | Maximum concurrent evaluations                                            |
+| `evaluator`          | `eval_workers`                                         | `4`                                                 | Evix worker subprocesses per evaluation                                   |
+| `evaluator`          | `memory_limit_mb`                                      | none                                                | Hard address-space limit per Nix subprocess (MiB)                         |
 | `evaluator`          | `work_dir`                                             | `/tmp/circus-evaluator`                             | Working directory for clones                                              |
 | `evaluator`          | `restrict_eval`                                        | `true`                                              | Pass `--option restrict-eval true` to Nix                                 |
 | `evaluator`          | `allow_ifd`                                            | `false`                                             | Allow import-from-derivation                                              |
@@ -350,6 +352,14 @@ configuration or the Nix store.
 | `nix`                | `store_dir`                                            | `/nix/store`                                        | Nix store directory                                                       |
 
 <!-- markdownlint-enable MD013 -->
+
+`evaluator.memory_limit_mb` is enforced per Nix subprocess, not as one shared
+budget for the evaluator service. It covers evix workers and the auxiliary
+`nix eval`/`nix derivation show` processes used for `nixosConfigurations`. Evix
+also uses the same value as its post-attribute worker recycle threshold. Plan
+for up to `memory_limit_mb * eval_workers * max_concurrent_evals`, plus the
+comparatively small Circus parent process. Lower `eval_workers` or
+`max_concurrent_evals` when the resulting aggregate is too high for the host.
 
 ## Binary Cache Storage
 
