@@ -17,9 +17,8 @@ async fn read_required_features(
   drv_path: &str,
   memory_limit: MemoryLimit,
 ) -> Vec<String> {
-  let mut command = circus_nix::derivation::required_features_command(&[
-    drv_path.to_owned(),
-  ]);
+  let mut command =
+    circus_nix::derivation::required_features_command(&[drv_path.to_owned()]);
   command.kill_on_drop(true);
   if memory_limit.apply_to(&mut command).is_err() {
     return Vec::new();
@@ -131,14 +130,9 @@ async fn show_recursive_derivations(
 
 async fn output_available(path: &str, memory_limit: MemoryLimit) -> bool {
   let mut command = Command::new("nix-store");
-  command
-    .args(["--check-validity", path])
-    .kill_on_drop(true);
+  command.args(["--check-validity", path]).kill_on_drop(true);
   let valid = memory_limit.apply_to(&mut command).is_ok()
-    && command
-      .status()
-      .await
-      .is_ok_and(|status| status.success());
+    && command.status().await.is_ok_and(|status| status.success());
   if valid {
     return true;
   }
@@ -148,10 +142,7 @@ async fn output_available(path: &str, memory_limit: MemoryLimit) -> bool {
     .args(["path-info", "--json", path])
     .kill_on_drop(true);
   memory_limit.apply_to(&mut command).is_ok()
-    && command
-      .status()
-      .await
-      .is_ok_and(|status| status.success())
+    && command.status().await.is_ok_and(|status| status.success())
 }
 
 async fn should_enqueue_derivation(

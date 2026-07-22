@@ -407,10 +407,10 @@ mod tests {
 
   #[test]
   fn evaluator_memory_limit_loads_from_toml() {
-    let toml_str = r#"
+    let toml_str = r"
       [evaluator]
       memory_limit_mb = 3072
-    "#;
+    ";
 
     let mut table = toml::Value::try_from(Config::default()).unwrap();
     let file_table: toml::Value = toml::from_str(toml_str).unwrap();

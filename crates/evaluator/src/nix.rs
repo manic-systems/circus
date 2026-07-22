@@ -1,8 +1,4 @@
-use std::{
-  collections::{BTreeMap, HashMap},
-  path::Path,
-  time::Duration,
-};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
@@ -700,6 +696,8 @@ fn parse_derivation_show(value: &serde_json::Value) -> Option<ShownDerivation> {
 #[cfg(test)]
 mod meta_tests {
   #![expect(clippy::unwrap_used, reason = "fine in tests")]
+  use std::collections::BTreeMap;
+
   use super::*;
 
   #[test]
