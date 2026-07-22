@@ -11,9 +11,27 @@ use circus_common::{
 use tokio::process::Command;
 use uuid::Uuid;
 
-async fn read_required_features(drv_path: &str) -> Vec<String> {
-  circus_nix::derivation::show_required_features(&[drv_path.to_owned()])
-    .await
+use crate::memory::MemoryLimit;
+
+async fn read_required_features(
+  drv_path: &str,
+  memory_limit: MemoryLimit,
+) -> Vec<String> {
+  let mut command = circus_nix::derivation::required_features_command(&[
+    drv_path.to_owned(),
+  ]);
+  command.kill_on_drop(true);
+  if memory_limit.apply_to(&mut command).is_err() {
+    return Vec::new();
+  }
+  let Ok(output) = command.output().await else {
+    return Vec::new();
+  };
+  if !output.status.success() {
+    return Vec::new();
+  }
+  serde_json::from_slice(&output.stdout)
+    .map(|value| circus_nix::derivation::union_required_features(&value))
     .unwrap_or_default()
 }
 
@@ -79,18 +97,23 @@ fn parse_derivation_infos(
 
 async fn show_recursive_derivations(
   drv_paths: &[String],
+  memory_limit: MemoryLimit,
 ) -> HashMap<String, DerivationInfo> {
   if drv_paths.is_empty() {
     return HashMap::new();
   }
-  let output = Command::new("nix")
+  let mut command = Command::new("nix");
+  command
     .arg("derivation")
     .arg("show")
     .arg("--recursive")
     .args(drv_paths)
-    .kill_on_drop(true)
-    .output()
-    .await;
+    .kill_on_drop(true);
+  if let Err(error) = memory_limit.apply_to(&mut command) {
+    tracing::warn!(%error, "failed to apply evaluator memory limit");
+    return HashMap::new();
+  }
+  let output = command.output().await;
   let Ok(output) = output else {
     return HashMap::new();
   };
@@ -106,31 +129,40 @@ async fn show_recursive_derivations(
     .unwrap_or_default()
 }
 
-async fn output_available(path: &str) -> bool {
-  let valid = Command::new("nix-store")
+async fn output_available(path: &str, memory_limit: MemoryLimit) -> bool {
+  let mut command = Command::new("nix-store");
+  command
     .args(["--check-validity", path])
-    .kill_on_drop(true)
-    .status()
-    .await
-    .is_ok_and(|status| status.success());
+    .kill_on_drop(true);
+  let valid = memory_limit.apply_to(&mut command).is_ok()
+    && command
+      .status()
+      .await
+      .is_ok_and(|status| status.success());
   if valid {
     return true;
   }
 
-  Command::new("nix")
+  let mut command = Command::new("nix");
+  command
     .args(["path-info", "--json", path])
-    .kill_on_drop(true)
-    .status()
-    .await
-    .is_ok_and(|status| status.success())
+    .kill_on_drop(true);
+  memory_limit.apply_to(&mut command).is_ok()
+    && command
+      .status()
+      .await
+      .is_ok_and(|status| status.success())
 }
 
-async fn should_enqueue_derivation(info: &DerivationInfo) -> bool {
+async fn should_enqueue_derivation(
+  info: &DerivationInfo,
+  memory_limit: MemoryLimit,
+) -> bool {
   let Some(outputs) = &info.outputs else {
     return true;
   };
   for output in outputs.values() {
-    if !output_available(output).await {
+    if !output_available(output, memory_limit).await {
       return true;
     }
   }
@@ -148,12 +180,14 @@ fn dependency_job_name(drv_path: &str) -> String {
 
 async fn expand_derivation_graph(
   jobs: &[crate::nix::NixJob],
+  memory_limit: MemoryLimit,
 ) -> Vec<crate::nix::NixJob> {
   let top_level_drvs = jobs
     .iter()
     .map(|job| job.drv_path.clone())
     .collect::<Vec<_>>();
-  let derivations = show_recursive_derivations(&top_level_drvs).await;
+  let derivations =
+    show_recursive_derivations(&top_level_drvs, memory_limit).await;
   if derivations.is_empty() {
     return jobs.to_vec();
   }
@@ -177,7 +211,7 @@ async fn expand_derivation_graph(
     let Some(info) = derivations.get(&drv_path) else {
       continue;
     };
-    if !should_enqueue_derivation(info).await {
+    if !should_enqueue_derivation(info, memory_limit).await {
       continue;
     }
 
@@ -231,10 +265,11 @@ pub(crate) async fn create_builds_from_eval(
   pool: &PgPool,
   eval_id: Uuid,
   eval_result: &crate::nix::EvalResult,
+  memory_limit: MemoryLimit,
 ) -> color_eyre::Result<bool> {
   let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
   let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
-  let jobs = expand_derivation_graph(&eval_result.jobs).await;
+  let jobs = expand_derivation_graph(&eval_result.jobs, memory_limit).await;
   let mut builds = Vec::with_capacity(jobs.len());
 
   for job in &jobs {
@@ -249,7 +284,8 @@ pub(crate) async fn create_builds_from_eval(
     let is_aggregate = job.constituents.is_some();
 
     let (is_fod, fod_hash) = detect_fod(&job.drv_path);
-    let required_features = read_required_features(&job.drv_path).await;
+    let required_features =
+      read_required_features(&job.drv_path, memory_limit).await;
     builds.push(CreateBuild {
       evaluation_id: eval_id,
       job_name: job.name.clone(),

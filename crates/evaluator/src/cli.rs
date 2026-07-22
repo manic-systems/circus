@@ -61,16 +61,10 @@ where
 
   // evix workers re-execute this binary and inherit its environment. Set the
   // limit before the runtime creates threads and before any workers spawn.
-  if let Some(limit_mb) = config.evaluator.memory_limit_mb {
-    // SAFETY: no threads have been spawned at this point.
-    unsafe {
-      env::set_var(crate::memory::WORKER_LIMIT_ENV, limit_mb.to_string());
-    }
-  } else {
-    // Do not let a service-manager environment accidentally override config.
-    // SAFETY: no threads have been spawned at this point.
-    unsafe { env::remove_var(crate::memory::WORKER_LIMIT_ENV) };
-  }
+  let memory_limit =
+    crate::memory::MemoryLimit::new(config.evaluator.memory_limit_mb);
+  // SAFETY: no threads have been spawned at this point.
+  unsafe { memory_limit.export_worker_env() };
 
   let runtime = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
