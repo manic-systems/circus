@@ -16,16 +16,6 @@ mod flake_lock;
 use eval_command::NixEvalPolicy;
 pub use eval_command::error_chain;
 
-fn evix_memory_limit(config: &EvaluatorConfig) -> Result<usize> {
-  config.memory_limit_mb.map_or(Ok(usize::MAX), |limit| {
-    usize::try_from(limit).map_err(|_| {
-      CiError::NixEval(format!(
-        "Evaluator memory limit {limit} MiB is too large for this platform"
-      ))
-    })
-  })
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct NixMeta {
   pub description: Option<String>,
@@ -358,7 +348,9 @@ async fn evaluate_flake(
     workers: config.eval_workers,
     // evix uses this as a post-attribute recycle threshold; RLIMIT_AS is the
     // corresponding hard ceiling while an attribute is still evaluating.
-    max_memory_size: evix_memory_limit(config)?,
+    max_memory_size: crate::memory::MemoryLimit::from(config)
+      .evix_mb()
+      .map_err(|e| CiError::NixEval(e.to_string()))?,
     meta: true,
     show_input_drvs: true,
     override_inputs,
@@ -416,11 +408,11 @@ async fn evaluate_all_nixos_configs(
   NixEvalPolicy::from(config)
     .with_extra_allowed_uris(derived_uris)
     .apply_to(&mut cmd);
-  crate::memory::limit_command(&mut cmd, config.memory_limit_mb).map_err(
-    |e| {
+  crate::memory::MemoryLimit::from(config)
+    .apply_to(&mut cmd)
+    .map_err(|e| {
       CiError::NixEval(format!("Failed to apply evaluator memory limit: {e}"))
-    },
-  )?;
+    })?;
   let output = tokio::select! {
     output = cmd.output() => output,
     () = cancel.cancelled() => return Err(CiError::NixEval("Nix evaluation was cancelled".to_string())),
@@ -499,7 +491,9 @@ async fn resolve_drv(
   command
     .args(["derivation", "show", flake_ref])
     .kill_on_drop(true);
-  crate::memory::limit_command(&mut command, config.memory_limit_mb).ok()?;
+  crate::memory::MemoryLimit::from(config)
+    .apply_to(&mut command)
+    .ok()?;
   let out = command.output().await.ok()?;
 
   if !out.status.success() {
@@ -578,7 +572,9 @@ async fn evaluate_legacy(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
-    max_memory_size: evix_memory_limit(config)?,
+    max_memory_size: crate::memory::MemoryLimit::from(config)
+      .evix_mb()
+      .map_err(|e| CiError::NixEval(e.to_string()))?,
     meta: true,
     show_input_drvs: true,
     override_inputs: Vec::new(),

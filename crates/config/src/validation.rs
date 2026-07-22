@@ -95,6 +95,12 @@ impl Config {
     if self.evaluator.memory_limit_mb == Some(0) {
       bail!("Evaluator memory limit must be greater than 0 MiB");
     }
+    if self.evaluator.memory_limit_mb.is_some_and(|limit| {
+      usize::try_from(limit).is_err()
+        || limit.checked_mul(1024 * 1024).is_none()
+    }) {
+      bail!("Evaluator memory limit is too large for this platform");
+    }
 
     if let Some(url) = self.cache.cache_url.as_deref() {
       validate_shared(validate_cache_url(url, "cache.cache_url"))?;

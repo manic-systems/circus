@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 
+use tokio::process::Command;
+
 use crate::{Error, Result};
 
 fn features_of_structured(sa: &serde_json::Value, out: &mut BTreeSet<String>) {
@@ -78,14 +80,7 @@ pub fn union_required_features(parsed: &serde_json::Value) -> Vec<String> {
 pub async fn show_required_features(drvs: &[String]) -> Result<Vec<String>> {
   let mut features = BTreeSet::new();
   for chunk in drvs.chunks(1024) {
-    let out = tokio::process::Command::new("nix")
-      .args([
-        "--extra-experimental-features",
-        "nix-command",
-        "derivation",
-        "show",
-      ])
-      .args(chunk)
+    let out = required_features_command(chunk)
       .output()
       .await
       .map_err(|e| {
@@ -102,6 +97,22 @@ pub async fn show_required_features(drvs: &[String]) -> Result<Vec<String>> {
     features.extend(union_required_features(&parsed));
   }
   Ok(features.into_iter().collect())
+}
+
+/// Construct the canonical `nix derivation show` command used to inspect
+/// required system features.
+#[must_use]
+pub fn required_features_command(drvs: &[String]) -> Command {
+  let mut command = Command::new("nix");
+  command
+    .args([
+      "--extra-experimental-features",
+      "nix-command",
+      "derivation",
+      "show",
+    ])
+    .args(drvs);
+  command
 }
 
 #[cfg(test)]

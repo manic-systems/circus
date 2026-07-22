@@ -1,10 +1,73 @@
 #[cfg(unix)] use std::os::unix::process::CommandExt as _;
 use std::{env, io};
 
+use circus_config::EvaluatorConfig;
 use tokio::process::Command;
 
-pub(crate) const WORKER_LIMIT_ENV: &str =
+const DEFAULT_EVIX_MEMORY_MB: usize = 4096;
+const WORKER_LIMIT_ENV: &str =
   "CIRCUS_EVALUATOR_WORKER_MEMORY_LIMIT_MB";
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MemoryLimit(Option<u64>);
+
+impl MemoryLimit {
+  pub(crate) const fn new(limit_mb: Option<u64>) -> Self {
+    Self(limit_mb)
+  }
+
+  pub(crate) fn evix_mb(self) -> io::Result<usize> {
+    self.0.map_or(Ok(DEFAULT_EVIX_MEMORY_MB), |limit| {
+      usize::try_from(limit)
+        .map_err(|_| io::Error::other("evaluator memory limit is too large"))
+    })
+  }
+
+  pub(crate) fn apply_to(self, command: &mut Command) -> io::Result<()> {
+    let Some(limit_mb) = self.0 else {
+      return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+      let limit = bytes(limit_mb)?;
+      // SAFETY: the closure only calls async-signal-safe resource-limit
+      // syscalls.
+      unsafe {
+        command.pre_exec(move || set_address_space_limit(limit));
+      }
+      Ok(())
+    }
+
+    #[cfg(not(unix))]
+    Err(io::Error::new(
+      io::ErrorKind::Unsupported,
+      "evaluator memory limits require Unix",
+    ))
+  }
+
+  /// Export the limit inherited by evix worker re-executions.
+  ///
+  /// # Safety
+  ///
+  /// The process must still be single-threaded because environment mutation
+  /// is not thread-safe on every supported platform.
+  pub(crate) unsafe fn export_worker_env(self) {
+    if let Some(limit_mb) = self.0 {
+      // SAFETY: guaranteed by the caller.
+      unsafe { env::set_var(WORKER_LIMIT_ENV, limit_mb.to_string()) };
+    } else {
+      // SAFETY: guaranteed by the caller.
+      unsafe { env::remove_var(WORKER_LIMIT_ENV) };
+    }
+  }
+}
+
+impl From<&EvaluatorConfig> for MemoryLimit {
+  fn from(config: &EvaluatorConfig) -> Self {
+    Self::new(config.memory_limit_mb)
+  }
+}
 
 #[cfg(unix)]
 fn bytes(limit_mb: u64) -> io::Result<libc::rlim_t> {
@@ -12,31 +75,6 @@ fn bytes(limit_mb: u64) -> io::Result<libc::rlim_t> {
     .checked_mul(1024 * 1024)
     .and_then(|value| libc::rlim_t::try_from(value).ok())
     .ok_or_else(|| io::Error::other("evaluator memory limit is too large"))
-}
-
-pub(crate) fn limit_command(
-  command: &mut Command,
-  limit_mb: Option<u64>,
-) -> io::Result<()> {
-  let Some(limit_mb) = limit_mb else {
-    return Ok(());
-  };
-
-  #[cfg(unix)]
-  {
-    let limit = bytes(limit_mb)?;
-    // SAFETY: the closure only calls the async-signal-safe setrlimit syscall.
-    unsafe {
-      command.pre_exec(move || set_address_space_limit(limit));
-    }
-    Ok(())
-  }
-
-  #[cfg(not(unix))]
-  Err(io::Error::new(
-    io::ErrorKind::Unsupported,
-    "evaluator memory limits require Unix",
-  ))
 }
 
 pub(crate) fn limit_evix_worker_from_env() -> io::Result<()> {
@@ -92,12 +130,18 @@ mod tests {
     assert!(bytes(u64::MAX).is_err());
   }
 
+  #[test]
+  fn evix_keeps_legacy_default_without_a_hard_limit() {
+    assert_eq!(MemoryLimit::new(None).evix_mb().unwrap(), 4096);
+    assert_eq!(MemoryLimit::new(Some(512)).evix_mb().unwrap(), 512);
+  }
+
   #[cfg(unix)]
   #[tokio::test]
   async fn command_receives_address_space_limit() {
     let mut command = Command::new("sh");
     command.args(["-c", "ulimit -v"]);
-    limit_command(&mut command, Some(64)).unwrap();
+    MemoryLimit::new(Some(64)).apply_to(&mut command).unwrap();
 
     let output = command.output().await.unwrap();
     assert!(output.status.success());

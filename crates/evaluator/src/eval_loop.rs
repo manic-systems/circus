@@ -457,7 +457,14 @@ async fn run_nix_and_record_builds(
           "Evaluation discovered jobs"
       );
 
-      if !create_builds_from_eval(pool, eval.id, &eval_result).await? {
+      if !create_builds_from_eval(
+        pool,
+        eval.id,
+        &eval_result,
+        crate::memory::MemoryLimit::from(config),
+      )
+      .await?
+      {
         tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
         return Ok(());
       }

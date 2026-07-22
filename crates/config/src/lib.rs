@@ -421,6 +421,16 @@ mod tests {
   }
 
   #[test]
+  fn evaluator_memory_limit_rejects_invalid_values() {
+    let mut config = Config::default();
+    config.evaluator.memory_limit_mb = Some(0);
+    assert!(config.validate().is_err());
+
+    config.evaluator.memory_limit_mb = Some(u64::MAX);
+    assert!(config.validate().is_err());
+  }
+
+  #[test]
   fn load_requires_explicit_config_path() {
     let old = env::var_os("CIRCUS_CONFIG_FILE");
     // SAFETY: tests in this module run single-threaded with respect to this
