@@ -99,11 +99,25 @@ pub struct Agent {
   #[serde(default)]
   pub rootless_data_dir: Option<PathBuf>,
 
+  /// Opt-in configuration for post-build effects.
+  #[serde(default)]
+  pub effects: Option<EffectsConfig>,
+
   /// When present (or `--ephemeral`), run as a single-session builder: fresh
   /// machine ID, drain the queue, then exit instead of reconnecting. For CI
   /// runners such as GitHub Actions.
   #[serde(default)]
   pub ephemeral: Option<EphemeralConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EffectsConfig {
+  /// Hercules-format secret definitions kept on this agent.
+  pub secrets_file: PathBuf,
+
+  /// Permit effect assignments over unauthenticated plaintext RPC.
+  #[serde(default)]
+  pub allow_insecure_transport: bool,
 }
 
 /// Lifecycle bounds for an ephemeral (single-session) agent. In-flight builds

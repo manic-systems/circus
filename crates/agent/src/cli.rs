@@ -113,6 +113,10 @@ where
     cfg.agent.ephemeral = Some(EphemeralConfig::default());
   }
   let ephemeral = cfg.agent.ephemeral.is_some();
+  if !ephemeral && let Some(effects) = &cfg.agent.effects {
+    crate::effect::validate_runtime(effects, cfg.agent.rootless)?;
+  }
+  session::validate_effect_transport(&cfg.agent)?;
   tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
 
   let machine_id = resolve_machine_id(&cfg, ephemeral)?;
@@ -191,6 +195,7 @@ fn inline_config(cli: &Cli) -> Result<AgentConfig> {
       tls: None,
       rootless: false,
       rootless_data_dir: None,
+      effects: None,
       ephemeral: None,
     },
     tracing: TracingConfig::default(),

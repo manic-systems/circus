@@ -53,6 +53,9 @@ pub struct BuildOptions<'a> {
   pub cache_substituter: String,
   pub cache_public_key:  String,
   pub rootless:          bool,
+  pub collect_outputs:   bool,
+  pub nix_internal_json: bool,
+  pub redactions:        Vec<String>,
 }
 
 /// Everything needed to pull the assigned derivation from the runner. Kept
@@ -264,7 +267,7 @@ fn observe_exit(
   reason = "one supervision loop with !Send capnp futures on a \
             single-threaded runtime"
 )]
-async fn run_command(
+pub(crate) async fn run_command(
   mut cmd: Command,
   opts: &BuildOptions<'_>,
   tun: Tunables,
@@ -447,9 +450,16 @@ async fn run_command(
     let mut pending_read_err = Option::<String>::None;
     let mut next = Some(first);
     while let Some(line) = next.take() {
-      if let Some(nix_log::LogLine::Message { text, .. }) =
-        nix_log::parse_line(&line)
-      {
+      let line = redact_line(&line, &opts.redactions);
+      let recent = if opts.nix_internal_json {
+        match nix_log::parse_line(&line) {
+          Some(nix_log::LogLine::Message { text, .. }) => Some(text),
+          _ => None,
+        }
+      } else {
+        Some(line.clone())
+      };
+      if let Some(text) = recent {
         if recent_msgs.len() == 32 {
           recent_msgs.pop_front();
         }
@@ -665,7 +675,7 @@ async fn run_command(
     circus_proto::BuildOutcome::BuildFailure
   };
 
-  let outputs = if success {
+  let outputs = if success && opts.collect_outputs {
     query_outputs(opts.drv_path, opts.rootless).await
   } else {
     Vec::new()
@@ -678,6 +688,16 @@ async fn run_command(
     upload_time_ms: 0,
     outputs,
     error_message,
+  })
+}
+
+fn redact_line(line: &str, secrets: &[String]) -> String {
+  secrets.iter().fold(line.to_owned(), |redacted, secret| {
+    if secret.is_empty() || !redacted.contains(secret) {
+      redacted
+    } else {
+      redacted.replace(secret, "[REDACTED]")
+    }
   })
 }
 
@@ -901,6 +921,9 @@ mod tests {
       cache_substituter: String::new(),
       cache_public_key: String::new(),
       rootless: false,
+      collect_outputs: false,
+      nix_internal_json: false,
+      redactions: Vec::new(),
     }
   }
 
@@ -1015,6 +1038,34 @@ mod tests {
 
       assert_eq!(result.outcome, circus_proto::BuildOutcome::BuildFailure);
       assert!(result.error_message.contains("max-log-size exceeded"));
+    });
+  }
+
+  #[test]
+  fn secret_values_are_redacted_from_logs() {
+    run_local(async {
+      let h = harness(None);
+      let mut options = opts(u64::MAX, Duration::from_mins(1));
+      options.redactions = vec!["top-secret-value".into()];
+      let result = run_command(
+        sh("printf 'safe-1\\ntoken=top-secret-value\\nsafe-3\\n'"),
+        &options,
+        fast_tunables(),
+        h.sink,
+        CancellationToken::new(),
+      )
+      .await
+      .expect("run_command");
+
+      assert_eq!(result.outcome, circus_proto::BuildOutcome::Success);
+      let chunks = h.chunks.borrow();
+      let joined = chunks
+        .iter()
+        .map(|chunk| String::from_utf8_lossy(chunk))
+        .collect::<Vec<_>>()
+        .join("\n");
+      assert!(joined.contains("token=[REDACTED]"));
+      assert!(!joined.contains("top-secret-value"));
     });
   }
 }
