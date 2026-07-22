@@ -1,15 +1,13 @@
-#[cfg(unix)] use std::os::unix::process::CommandExt as _;
 use std::{env, io};
 
 use circus_config::EvaluatorConfig;
 use tokio::process::Command;
 
 const DEFAULT_EVIX_MEMORY_MB: usize = 4096;
-const WORKER_LIMIT_ENV: &str =
-  "CIRCUS_EVALUATOR_WORKER_MEMORY_LIMIT_MB";
+const WORKER_LIMIT_ENV: &str = "CIRCUS_EVALUATOR_WORKER_MEMORY_LIMIT_MB";
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemoryLimit(Option<u64>);
+pub struct MemoryLimit(Option<u64>);
 
 impl MemoryLimit {
   pub(crate) const fn new(limit_mb: Option<u64>) -> Self {
@@ -77,7 +75,7 @@ fn bytes(limit_mb: u64) -> io::Result<libc::rlim_t> {
     .ok_or_else(|| io::Error::other("evaluator memory limit is too large"))
 }
 
-pub(crate) fn limit_evix_worker_from_env() -> io::Result<()> {
+pub fn limit_evix_worker_from_env() -> io::Result<()> {
   let Some(value) = env::var_os(WORKER_LIMIT_ENV) else {
     return Ok(());
   };
@@ -106,13 +104,14 @@ fn set_address_space_limit(limit: libc::rlim_t) -> io::Result<()> {
     rlim_max: 0,
   };
   // SAFETY: resource_limit points to writable storage for a valid rlimit.
-  if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut resource_limit) } != 0 {
+  if unsafe { libc::getrlimit(libc::RLIMIT_AS, &raw mut resource_limit) } != 0 {
     return Err(io::Error::last_os_error());
   }
   resource_limit.rlim_cur = limit.min(resource_limit.rlim_max);
   // SAFETY: resource_limit contains the existing hard limit and a soft limit
   // no greater than it.
-  if unsafe { libc::setrlimit(libc::RLIMIT_AS, &resource_limit) } == 0 {
+  if unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const resource_limit) } == 0
+  {
     Ok(())
   } else {
     Err(io::Error::last_os_error())
@@ -121,6 +120,7 @@ fn set_address_space_limit(limit: libc::rlim_t) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+  #![expect(clippy::unwrap_used, reason = "fine in tests")]
   use super::*;
 
   #[cfg(unix)]

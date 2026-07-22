@@ -991,11 +991,11 @@ Circus exposes a Prometheus-compatible metrics endpoint at `/prometheus`.
 
 ```yaml
 scrape_configs:
-    - job_name: "circus-ci"
-      static_configs:
-          - targets: ["ci.example.org:3000"]
-      metrics_path: "/prometheus"
-      scrape_interval: 30s
+  - job_name: "circus-ci"
+    static_configs:
+      - targets: ["ci.example.org:3000"]
+    metrics_path: "/prometheus"
+    scrape_interval: 30s
 ```
 
 The `/health` endpoint reports database and service status. Administrative
