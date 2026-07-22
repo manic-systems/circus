@@ -239,6 +239,7 @@
         distributed = callTest ./nix/tests/distributed.nix;
         agent-dispatch = callTest ./nix/tests/agent-dispatch.nix;
         capability-scheduling = callTest ./nix/tests/capability-scheduling.nix;
+        effects = callTest ./nix/tests/effects.nix;
         s3-cache = callTest ./nix/tests/s3-cache.nix;
         caches = callTest ./nix/tests/caches.nix;
       };

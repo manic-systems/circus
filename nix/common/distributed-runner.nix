@@ -72,6 +72,7 @@ in {
           allow_plaintext = true;
           max_connections = 64;
           heartbeat_ttl_secs = 30;
+          api_base_url = "http://runner:3000";
           auth_tokens = [(builtins.hashString "sha256" "demo-agent-token-please-rotate")];
           cache_substituter = "http://runner:3000/nix-cache";
           cache_public_key = "circus-test-cache-1:umbC3dkmiWcreOM+p1+UWp0pJK4zOMcGqalT53h2PNw=";
