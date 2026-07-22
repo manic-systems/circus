@@ -318,6 +318,7 @@ pub async fn overview(
     Some("failed"),
     None,
     None,
+    None,
     12,
     0,
   )
@@ -400,6 +401,7 @@ pub async fn failures(state: &AppState) -> Result<Vec<OperatorBuild>> {
     &state.pool,
     None,
     Some("failed"),
+    None,
     None,
     None,
     50,

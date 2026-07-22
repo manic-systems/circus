@@ -5,7 +5,7 @@ use std::{
 
 use circus_common::{
   PgPool,
-  models::{CreateBuild, EvaluationStatus, JobsetInput},
+  models::{BuildKind, CreateBuild, EvaluationStatus, JobsetInput},
   repo,
   systems::system_allowed,
 };
@@ -377,6 +377,7 @@ pub(crate) async fn create_builds_from_eval(
       meta_homepage: job.meta.homepage.clone(),
       meta_maintainers: job.meta.maintainers.clone(),
       required_features,
+      kind: BuildKind::Build,
     });
   }
 

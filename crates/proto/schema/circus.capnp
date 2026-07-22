@@ -107,6 +107,7 @@ struct AgentInfo {
   protoVersion       @9  :Text;
   authToken          @10 :Text;       # bearer; runner compares to a hash
   ephemeral          @11 :Bool;       # single-session agent (CI runner); never reconnects
+  effects            @12 :Bool;       # opts in to running post-build effects
 }
 
 struct Heartbeat {
@@ -146,6 +147,23 @@ struct BuildAssignment {
   presignedUpload @8 :PresignedUploadOpts;
   cacheSubstituter @9 :Text;      # Cache to substitute the drv closure from
   cachePublicKey   @10 :Text;     # Key to trust for it
+  # Present when this assignment is a post-build effect. The agent then runs
+  # the derivation's builder impurely (network, secrets, no realisation)
+  # instead of building it. Absent (`hasField=false`) for regular builds.
+  effect @11 :EffectOpts;
+}
+
+# Job context for one effect run. The agent resolves its local secrets.json
+# against these fields; none of them are secret themselves.
+struct EffectOpts {
+  projectId       @0 :Text;
+  projectPath     @1 :Text;   # <forge>/<owner>/<repo>, e.g. github/acme/infra
+  apiBaseUrl      @2 :Text;   # Circus server URL, may be empty
+  owner           @3 :Text;
+  repo            @4 :Text;
+  branch          @5 :Text;   # empty when unknown (multi-ref jobsets)
+  tag             @6 :Text;   # empty when the evaluation is not for a tag
+  isDefaultBranch @7 :Bool;   # the jobset's configured branch counts as default
 }
 
 struct PresignedUploadOpts {

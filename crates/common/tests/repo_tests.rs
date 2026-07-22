@@ -26,6 +26,7 @@ use circus_config::{
   DeclarativeProjectMember,
   DeclarativeWebhook,
 };
+use uuid::Uuid;
 
 static REPO_TEST_LOCK: tokio::sync::Mutex<()> =
   tokio::sync::Mutex::const_new(());
@@ -190,6 +191,49 @@ async fn create_test_build(
   .expect("create build")
 }
 
+async fn create_test_effect(
+  pool: &circus_common::PgPool,
+  eval_id: uuid::Uuid,
+  job_name: &str,
+) -> Build {
+  repo::builds::create(pool, CreateBuild {
+    evaluation_id: eval_id,
+    job_name: job_name.to_owned(),
+    drv_path: format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple()),
+    system: Some("x86_64-linux".to_owned()),
+    kind: BuildKind::Effect,
+    ..Default::default()
+  })
+  .await
+  .expect("create effect")
+}
+
+async fn create_test_agent(pool: &circus_common::PgPool) -> Uuid {
+  let machine_id = Uuid::new_v4();
+  let name = format!("effect-agent-{machine_id}");
+  let systems = vec!["x86_64-linux".to_owned()];
+  repo::builder_sessions::register(
+    pool,
+    repo::builder_sessions::RegisterSession {
+      machine_id,
+      name: &name,
+      hostname: "effect-agent.test",
+      systems: &systems,
+      supported_features: &[],
+      mandatory_features: &[],
+      speed_factor: 1.0,
+      cpu_count: 1,
+      max_jobs: 1,
+      proto_version: "test",
+      ephemeral: false,
+      auth_kind: "token",
+    },
+  )
+  .await
+  .expect("register test effect agent");
+  machine_id
+}
+
 #[tokio::test]
 async fn composite_operations_work_with_one_pool_connection() {
   let Some(pool) = get_pool_with_size(1).await else {
@@ -310,6 +354,8 @@ async fn composite_operations_work_with_one_pool_connection() {
         None,
       )
       .await?;
+      let _pending_effect =
+        create_test_effect(&pool, evaluation.id, "deploy").await;
       repo::channels::auto_promote_if_complete(&pool, jobset.id, evaluation.id)
         .await?;
 
@@ -1001,10 +1047,18 @@ async fn test_evaluation_and_build_lifecycle() {
   assert_eq!(products.len(), 1);
 
   // Test filtered list
-  let filtered =
-    repo::builds::list_filtered(&pool, Some(eval.id), None, None, None, 50, 0)
-      .await
-      .expect("list filtered");
+  let filtered = repo::builds::list_filtered(
+    &pool,
+    Some(eval.id),
+    None,
+    None,
+    None,
+    None,
+    50,
+    0,
+  )
+  .await
+  .expect("list filtered");
   assert!(filtered.iter().any(|b| b.id == build.id));
 
   // Get stats
@@ -1192,7 +1246,7 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
       .is_none()
   );
   assert_eq!(
-    repo::builds::count_filtered(&pool, Some(eval.id), None, None, None)
+    repo::builds::count_filtered(&pool, Some(eval.id), None, None, None, None)
       .await
       .expect("count persisted builds"),
     1
@@ -1231,9 +1285,16 @@ async fn test_cancellation_cannot_interleave_build_persistence() {
       .expect("check cancelled evaluation")
   );
   assert_eq!(
-    repo::builds::count_filtered(&pool, Some(cancelled.id), None, None, None)
-      .await
-      .expect("count cancelled builds"),
+    repo::builds::count_filtered(
+      &pool,
+      Some(cancelled.id),
+      None,
+      None,
+      None,
+      None,
+    )
+    .await
+    .expect("count cancelled builds"),
     0
   );
 
@@ -1297,6 +1358,496 @@ async fn test_start_blocks_duplicate_running_drv_path() {
   assert!(claimed_second.is_some());
 
   // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_effect_start_serializes_across_project_evaluations() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-serialization").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval_a = create_test_eval(&pool, jobset.id).await;
+  let eval_b = create_test_eval(&pool, jobset.id).await;
+  let effect_a = create_test_effect(&pool, eval_a.id, "effect-a").await;
+  let effect_b = create_test_effect(&pool, eval_b.id, "effect-b").await;
+
+  let (started_a, started_b) = tokio::join!(
+    repo::builds::start(&pool, effect_a.id),
+    repo::builds::start(&pool, effect_b.id),
+  );
+  let started_a = started_a.expect("start effect a");
+  let started_b = started_b.expect("start effect b");
+  assert_ne!(started_a.is_some(), started_b.is_some());
+
+  let (running_eval, waiting_eval, waiting_effect, running_effect) =
+    if started_a.is_some() {
+      (eval_a.id, eval_b.id, effect_b.id, effect_a.id)
+    } else {
+      (eval_b.id, eval_a.id, effect_a.id, effect_b.id)
+    };
+  assert!(
+    repo::builds::project_has_running_effect(&pool, project.id, waiting_eval,)
+      .await
+      .expect("check cross-evaluation effect")
+  );
+  assert!(
+    !repo::builds::project_has_running_effect(&pool, project.id, running_eval,)
+      .await
+      .expect("check same-evaluation effect")
+  );
+  assert!(
+    repo::builds::start(&pool, waiting_effect)
+      .await
+      .expect("retry waiting effect")
+      .is_none()
+  );
+
+  let same_eval =
+    create_test_effect(&pool, running_eval, "same-evaluation-effect").await;
+  assert!(
+    repo::builds::start(&pool, same_eval.id)
+      .await
+      .expect("start same-evaluation effect")
+      .is_some()
+  );
+
+  let running_machine_id = create_test_agent(&pool).await;
+  repo::builds::set_agent(&pool, running_effect, running_machine_id)
+    .await
+    .expect("record running effect agent");
+  let running_attempt = repo::builds::get(&pool, running_effect)
+    .await
+    .expect("load running effect attempt")
+    .retry_count;
+  repo::builds::cancel(&pool, running_effect)
+    .await
+    .expect("cancel running effect");
+  assert!(
+    repo::builds::restart(&pool, running_effect).await.is_err(),
+    "cancelled effect must not restart before the agent acknowledges it \
+     stopped"
+  );
+  assert!(
+    repo::builds::project_has_active_effect_among(
+      &pool,
+      project.id,
+      waiting_eval,
+      &[running_effect],
+    )
+    .await
+    .expect("cancelled agent-active effect remains a barrier")
+  );
+  assert!(
+    !repo::builds::project_has_active_effect_among(
+      &pool,
+      project.id,
+      running_eval,
+      &[running_effect],
+    )
+    .await
+    .expect("same-evaluation active effect remains concurrent")
+  );
+  let outcome_unknown = circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR;
+  assert!(
+    repo::builds::quarantine_effect(
+      &pool,
+      running_effect,
+      running_machine_id,
+      running_attempt,
+      outcome_unknown,
+    )
+    .await
+    .expect("restore cancelled effect to quarantine")
+  );
+  let quarantined = repo::builds::get(&pool, running_effect)
+    .await
+    .expect("reload quarantined effect");
+  assert_eq!(quarantined.status, BuildStatus::Running);
+  assert_eq!(quarantined.error_message.as_deref(), Some(outcome_unknown));
+  assert!(
+    repo::builds::project_has_running_effect(&pool, project.id, waiting_eval,)
+      .await
+      .expect("quarantined effect blocks the newer evaluation")
+  );
+  repo::builds::cancel(&pool, running_effect)
+    .await
+    .expect("cancel quarantined effect");
+  assert!(
+    repo::builds::restart(&pool, running_effect).await.is_err(),
+    "an outcome-unknown effect must not bypass the generic restart guard"
+  );
+  let released = repo::builds::force_release_effect(&pool, running_effect)
+    .await
+    .expect("explicitly release outcome-unknown effect");
+  assert_eq!(released.status, BuildStatus::Cancelled);
+  assert_eq!(released.agent_machine_id, None);
+  assert_eq!(released.error_message.as_deref(), Some(outcome_unknown));
+  assert!(
+    !repo::builds::quarantine_effect(
+      &pool,
+      running_effect,
+      running_machine_id,
+      running_attempt,
+      outcome_unknown,
+    )
+    .await
+    .expect("late disconnect must not resurrect force-released effect")
+  );
+  let still_released = repo::builds::get(&pool, running_effect)
+    .await
+    .expect("reload force-released effect");
+  assert_eq!(still_released.status, BuildStatus::Cancelled);
+  assert_eq!(still_released.agent_machine_id, None);
+  let restarted = repo::builds::restart(&pool, running_effect)
+    .await
+    .expect("restart after explicit force release");
+  assert_eq!(restarted.status, BuildStatus::Pending);
+  let new_attempt =
+    repo::builds::start_with_agent(&pool, running_effect, running_machine_id)
+      .await
+      .expect("start a new attempt on the same agent")
+      .expect("claim restarted effect");
+  assert!(new_attempt.retry_count > running_attempt);
+  assert!(
+    !repo::builds::quarantine_effect(
+      &pool,
+      running_effect,
+      running_machine_id,
+      running_attempt,
+      outcome_unknown,
+    )
+    .await
+    .expect("late old-attempt disconnect is ignored")
+  );
+  let new_attempt = repo::builds::get(&pool, running_effect)
+    .await
+    .expect("reload new effect attempt");
+  assert_eq!(new_attempt.status, BuildStatus::Running);
+  assert!(new_attempt.error_message.is_none());
+  assert_eq!(new_attempt.agent_machine_id, Some(running_machine_id));
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_effect_restart_waits_for_agent_stop_acknowledgement() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-restart-ack").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let next_eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "effect").await;
+  let machine_id = create_test_agent(&pool).await;
+  let claimed = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start effect")
+    .expect("claim effect");
+  assert_eq!(claimed.agent_machine_id, Some(machine_id));
+  repo::builds::cancel(&pool, effect.id)
+    .await
+    .expect("cancel effect");
+
+  assert!(repo::builds::restart(&pool, effect.id).await.is_err());
+  assert!(
+    repo::builds::force_release_effect(&pool, effect.id)
+      .await
+      .is_err(),
+    "ordinary cancellation must not qualify for the dangerous force release"
+  );
+  assert!(
+    repo::builds::project_has_running_effect(&pool, project.id, next_eval.id)
+      .await
+      .expect("cancelled assigned effect remains a project barrier")
+  );
+  assert!(
+    repo::builds::acknowledge_effect_stopped(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+    )
+    .await
+    .expect("acknowledge stopped effect")
+  );
+  assert!(
+    !repo::builds::project_has_running_effect(&pool, project.id, next_eval.id)
+      .await
+      .expect("acknowledged effect releases project barrier")
+  );
+  let restarted = repo::builds::restart(&pool, effect.id)
+    .await
+    .expect("restart after acknowledgement");
+  assert_eq!(restarted.status, BuildStatus::Pending);
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_effect_success_racing_cancellation_persists_actual_outcome() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-cancel-result-race").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "effect").await;
+  let machine_id = create_test_agent(&pool).await;
+  let claimed = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start effect")
+    .expect("claim effect");
+  repo::builds::cancel(&pool, effect.id)
+    .await
+    .expect("scheduler cancellation");
+
+  assert!(
+    repo::builds::record_assigned_effect_outcome(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Succeeded,
+      Some("agent completed before abort"),
+    )
+    .await
+    .expect("persist actual agent outcome")
+  );
+  let completed = repo::builds::get(&pool, effect.id)
+    .await
+    .expect("reload effect");
+  assert_eq!(completed.status, BuildStatus::Succeeded);
+  assert_eq!(completed.agent_machine_id, Some(machine_id));
+  assert_eq!(
+    completed.error_message.as_deref(),
+    Some("agent completed before abort")
+  );
+  assert!(
+    repo::builds::release_terminal_effect_attempt(
+      &pool,
+      effect.id,
+      claimed.retry_count,
+    )
+    .await
+    .expect("release cancelled worker's terminal barrier")
+  );
+  assert_eq!(
+    repo::builds::restart(&pool, effect.id)
+      .await
+      .expect("restart after cancellation/result reconciliation")
+      .status,
+    BuildStatus::Pending
+  );
+
+  let result_first =
+    create_test_effect(&pool, eval.id, "result-before-cancel").await;
+  let second_machine = create_test_agent(&pool).await;
+  let second_claim =
+    repo::builds::start_with_agent(&pool, result_first.id, second_machine)
+      .await
+      .expect("start second effect")
+      .expect("claim second effect");
+  assert!(
+    repo::builds::record_assigned_effect_outcome(
+      &pool,
+      result_first.id,
+      second_machine,
+      second_claim.retry_count,
+      BuildStatus::Succeeded,
+      None,
+    )
+    .await
+    .expect("persist result before cancellation")
+  );
+  assert!(
+    repo::builds::cancel(&pool, result_first.id).await.is_err(),
+    "late cancellation must not replace a connection-owned terminal result"
+  );
+  let result_first = repo::builds::get(&pool, result_first.id)
+    .await
+    .expect("reload second effect");
+  assert_eq!(result_first.status, BuildStatus::Succeeded);
+  assert_eq!(result_first.agent_machine_id, Some(second_machine));
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_effect_worker_finalization_cannot_overwrite_a_new_attempt() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-finalize-cas").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "effect").await;
+  let machine_id = create_test_agent(&pool).await;
+  let first = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start first attempt")
+    .expect("claim first attempt");
+
+  assert!(
+    repo::builds::record_assigned_effect_outcome(
+      &pool,
+      effect.id,
+      machine_id,
+      first.retry_count,
+      BuildStatus::Timeout,
+      Some("effect timed out"),
+    )
+    .await
+    .expect("record authoritative timeout")
+  );
+  assert!(
+    repo::builds::restart(&pool, effect.id).await.is_err(),
+    "restart must wait until the old worker finishes its logs and steps"
+  );
+  assert!(
+    !repo::builds::finalize_assigned_effect_attempt(
+      &pool,
+      effect.id,
+      machine_id,
+      first.retry_count,
+      BuildStatus::Failed,
+      Some("/wrong-attempt.log"),
+      None,
+    )
+    .await
+    .expect("reject mismatched status"),
+    "worker metadata must match the connection-owned status"
+  );
+  assert!(
+    repo::builds::finalize_assigned_effect_attempt(
+      &pool,
+      effect.id,
+      machine_id,
+      first.retry_count,
+      BuildStatus::Timeout,
+      Some("/first-attempt.log"),
+      None,
+    )
+    .await
+    .expect("finalize exact attempt")
+  );
+
+  let restarted = repo::builds::restart(&pool, effect.id)
+    .await
+    .expect("restart after worker finalization");
+  let second = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start second attempt")
+    .expect("claim second attempt");
+  assert!(second.retry_count > first.retry_count);
+  assert!(
+    !repo::builds::finalize_assigned_effect_attempt(
+      &pool,
+      effect.id,
+      machine_id,
+      first.retry_count,
+      BuildStatus::Timeout,
+      Some("/late-old-worker.log"),
+      None,
+    )
+    .await
+    .expect("ignore late first-attempt finalizer")
+  );
+  let still_running = repo::builds::get(&pool, effect.id)
+    .await
+    .expect("reload second attempt");
+  assert_eq!(still_running.status, BuildStatus::Running);
+  assert_eq!(still_running.retry_count, restarted.retry_count);
+  assert!(still_running.log_path.is_none());
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_runner_restart_releases_known_terminal_effect_finalization() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-terminal-orphan").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "effect").await;
+  let machine_id = create_test_agent(&pool).await;
+  let claimed = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start effect")
+    .expect("claim effect");
+  assert!(
+    repo::builds::record_assigned_effect_outcome(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Succeeded,
+      None,
+    )
+    .await
+    .expect("record known result")
+  );
+
+  assert!(repo::builds::restart(&pool, effect.id).await.is_err());
+  assert_eq!(
+    repo::builds::release_orphaned_terminal_effects(&pool)
+      .await
+      .expect("release terminal worker barrier"),
+    1
+  );
+  let restarted = repo::builds::restart(&pool, effect.id)
+    .await
+    .expect("known terminal effect is safe to restart");
+  assert_eq!(restarted.status, BuildStatus::Pending);
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_cancel_before_agent_handoff_releases_persisted_assignment() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-pre-handoff-cancel").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "effect").await;
+  repo::builds::start_with_agent(
+    &pool,
+    effect.id,
+    create_test_agent(&pool).await,
+  )
+  .await
+  .expect("persist assignment before handoff")
+  .expect("claim effect");
+  repo::builds::cancel(&pool, effect.id)
+    .await
+    .expect("cancel before connection handoff");
+
+  assert!(
+    repo::builds::restart(&pool, effect.id).await.is_err(),
+    "assignment remains guarded before cleanup"
+  );
+  assert!(
+    repo::builds::release_unhanded_effect(&pool, effect.id)
+      .await
+      .expect("release pre-handoff assignment")
+  );
+  let restarted = repo::builds::restart(&pool, effect.id)
+    .await
+    .expect("restart after safe pre-handoff release");
+  assert_eq!(restarted.status, BuildStatus::Pending);
+
   let _ = repo::projects::delete(&pool, project.id).await;
 }
 
@@ -1703,6 +2254,7 @@ async fn test_list_filtered_with_system_filter() {
     None,
     Some("x86_64-linux"),
     None,
+    None,
     50,
     0,
   )
@@ -1722,6 +2274,7 @@ async fn test_list_filtered_with_system_filter() {
     None,
     Some("aarch64-linux"),
     None,
+    None,
     50,
     0,
   )
@@ -1740,6 +2293,7 @@ async fn test_list_filtered_with_system_filter() {
     Some(eval.id),
     None,
     Some("x86_64-linux"),
+    None,
     None,
   )
   .await
@@ -1775,6 +2329,7 @@ async fn test_list_filtered_with_job_name_filter() {
     None,
     None,
     Some("hello"),
+    None,
     50,
     0,
   )
@@ -1790,6 +2345,7 @@ async fn test_list_filtered_with_job_name_filter() {
     None,
     None,
     Some("goodbye"),
+    None,
     50,
     0,
   )
@@ -1804,12 +2360,81 @@ async fn test_list_filtered_with_job_name_filter() {
     None,
     None,
     Some("hello"),
+    None,
   )
   .await
   .expect("count hello");
   assert_eq!(count, 2);
 
   // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_list_filtered_with_kind_filter() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "filter-kind").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  create_test_build(&pool, eval.id, "build", &drv, None).await;
+  let effect = create_test_effect(&pool, eval.id, "effect").await;
+
+  let effects = repo::builds::list_filtered(
+    &pool,
+    Some(eval.id),
+    None,
+    None,
+    None,
+    Some("effect"),
+    50,
+    0,
+  )
+  .await
+  .expect("filter effects");
+  assert_eq!(effects.len(), 1);
+  assert_eq!(effects[0].id, effect.id);
+  assert_eq!(effects[0].kind, BuildKind::Effect);
+  assert!(
+    !repo::builds::list_pending_in_scheduler_order_filtered(
+      &pool,
+      None,
+      Some("effect"),
+      50,
+      0,
+    )
+    .await
+    .expect("list build queue")
+    .iter()
+    .any(|build| build.id == effect.id)
+  );
+  assert!(
+    !repo::builds::list_pending_for_systems(
+      &pool,
+      &["x86_64-linux".to_owned()],
+    )
+    .await
+    .expect("list autoscaler demand")
+    .iter()
+    .any(|build| build.id == effect.id)
+  );
+  assert_eq!(
+    repo::builds::count_filtered(
+      &pool,
+      Some(eval.id),
+      None,
+      None,
+      None,
+      Some("build"),
+    )
+    .await
+    .expect("count builds"),
+    1
+  );
+
   let _ = repo::projects::delete(&pool, project.id).await;
 }
 
@@ -1852,6 +2477,119 @@ async fn test_reset_orphaned() {
   assert!(build.started_at.is_none());
 
   // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_reset_orphaned_preserves_quarantined_effects() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "orphan-effect").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "orphan-effect").await;
+  let machine_id = create_test_agent(&pool).await;
+  let claimed = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start effect")
+    .expect("claim effect");
+
+  let client = pool.get().await.unwrap();
+  client
+    .execute(
+      "UPDATE builds SET started_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
+      &[&effect.id],
+    )
+    .await
+    .unwrap();
+  drop(client);
+
+  let message = circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR;
+  assert!(
+    repo::builds::quarantine_effect(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      message,
+    )
+    .await
+    .expect("quarantine effect")
+  );
+  repo::builds::reset_orphaned(&pool, 3600)
+    .await
+    .expect("reset regular orphans");
+
+  let effect = repo::builds::get(&pool, effect.id)
+    .await
+    .expect("reload quarantined effect");
+  assert_eq!(effect.status, BuildStatus::Running);
+  assert_eq!(effect.error_message.as_deref(), Some(message));
+  assert!(effect.started_at.is_some());
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_runner_restart_quarantines_orphaned_effect_assignments() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-runner-restart").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let running = create_test_effect(&pool, eval.id, "running").await;
+  let cancelled = create_test_effect(&pool, eval.id, "cancelled").await;
+  let still_active = create_test_effect(&pool, eval.id, "active").await;
+
+  for effect in [&running, &cancelled, &still_active] {
+    repo::builds::start_with_agent(
+      &pool,
+      effect.id,
+      create_test_agent(&pool).await,
+    )
+    .await
+    .expect("start effect")
+    .expect("claim effect");
+  }
+  repo::builds::cancel(&pool, cancelled.id)
+    .await
+    .expect("persist cancellation before simulated crash");
+
+  let quarantined =
+    repo::builds::quarantine_orphaned_effects(&pool, &[still_active.id])
+      .await
+      .expect("startup effect quarantine sweep");
+  assert_eq!(quarantined, 2);
+
+  for effect in [&running, &cancelled] {
+    let effect = repo::builds::get(&pool, effect.id)
+      .await
+      .expect("reload orphaned effect");
+    assert_eq!(
+      effect.error_message.as_deref(),
+      Some(circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR)
+    );
+    assert!(
+      effect.agent_machine_id.is_some(),
+      "quarantine must retain the persisted execution barrier"
+    );
+    let released = repo::builds::force_release_effect(&pool, effect.id)
+      .await
+      .expect("operator can recover a proven orphan");
+    assert_eq!(released.status, BuildStatus::Cancelled);
+    assert_eq!(released.agent_machine_id, None);
+  }
+
+  let active = repo::builds::get(&pool, still_active.id)
+    .await
+    .expect("reload live effect");
+  assert!(active.error_message.is_none());
+  assert_eq!(active.status, BuildStatus::Running);
+
   let _ = repo::projects::delete(&pool, project.id).await;
 }
 
@@ -2002,6 +2740,86 @@ async fn test_dedup_by_drv_path() {
   assert!(batch.contains_key(&drv));
 
   // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_completed_effects_are_never_reused_as_builds() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-dedup").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "publish").await;
+  let machine_id = create_test_agent(&pool).await;
+
+  let claimed = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .unwrap()
+    .expect("claim effect");
+  assert!(
+    repo::builds::record_assigned_effect_outcome(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Succeeded,
+      None,
+    )
+    .await
+    .expect("record Effect outcome")
+  );
+  assert!(
+    repo::builds::finalize_assigned_effect_attempt(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Succeeded,
+      None,
+      None,
+    )
+    .await
+    .expect("finalize Effect metadata")
+  );
+
+  assert!(
+    repo::builds::complete(
+      &pool,
+      effect.id,
+      BuildStatus::Failed,
+      None,
+      None,
+      Some("generic completion must not rewrite Effects"),
+    )
+    .await
+    .is_err(),
+    "the unguarded regular-build completion path must reject Effects"
+  );
+  let completed = repo::builds::get(&pool, effect.id)
+    .await
+    .expect("reload completed Effect");
+  assert_eq!(completed.status, BuildStatus::Succeeded);
+  assert_eq!(completed.agent_machine_id, Some(machine_id));
+
+  assert!(
+    repo::builds::get_completed_by_drv_path(&pool, &effect.drv_path)
+      .await
+      .expect("single dedup lookup")
+      .is_none()
+  );
+  assert!(
+    repo::builds::get_completed_by_drv_paths(
+      &pool,
+      std::slice::from_ref(&effect.drv_path),
+    )
+    .await
+    .expect("batch dedup lookup")
+    .is_empty()
+  );
+
   let _ = repo::projects::delete(&pool, project.id).await;
 }
 
@@ -2330,4 +3148,268 @@ async fn test_declarative_projects_are_reconciled_authoritatively() {
   repo::projects::delete(&pool, mutable.id)
     .await
     .expect("delete mutable declarative project");
+}
+
+#[tokio::test]
+async fn effect_completion_event_is_atomic_and_revision_guarded() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "effect-completion-event").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+  let effect = create_test_effect(&pool, eval.id, "deploy").await;
+  let machine_id = create_test_agent(&pool).await;
+  let claimed = repo::builds::start_with_agent(&pool, effect.id, machine_id)
+    .await
+    .expect("start effect")
+    .expect("claim effect");
+
+  assert!(
+    repo::effect_completion_events::list_pending(&pool, 100)
+      .await
+      .expect("list before completion")
+      .into_iter()
+      .all(|event| event.build.id != effect.id)
+  );
+  assert!(
+    repo::builds::record_assigned_effect_outcome(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Succeeded,
+      Some("agent result"),
+    )
+    .await
+    .expect("record effect result")
+  );
+
+  let initial = repo::effect_completion_events::list_pending(&pool, 100)
+    .await
+    .expect("list completion events")
+    .into_iter()
+    .find(|event| event.build.id == effect.id)
+    .expect("effect completion event");
+  assert_eq!(initial.attempt, claimed.retry_count);
+  assert_eq!(initial.revision, 1);
+  assert_eq!(initial.build.status, BuildStatus::Succeeded);
+  assert_eq!(initial.build.error_message.as_deref(), Some("agent result"));
+
+  assert!(
+    !repo::builds::record_assigned_effect_outcome(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Failed,
+      Some("late duplicate"),
+    )
+    .await
+    .expect("reject duplicate result")
+  );
+  assert!(
+    repo::builds::finalize_assigned_effect_attempt(
+      &pool,
+      effect.id,
+      machine_id,
+      claimed.retry_count,
+      BuildStatus::Succeeded,
+      Some("/var/log/circus/effect.log"),
+      None,
+    )
+    .await
+    .expect("finalize effect metadata")
+  );
+
+  let finalized = repo::effect_completion_events::list_pending(&pool, 100)
+    .await
+    .expect("list finalized event")
+    .into_iter()
+    .find(|event| event.build.id == effect.id)
+    .expect("finalized effect event");
+  assert_eq!(finalized.revision, initial.revision);
+
+  let client = pool.get().await.expect("get event refresh client");
+  assert_eq!(
+    client
+      .execute(
+        "UPDATE builds
+         SET status = 'failed', error_message = 'refreshed terminal state'
+         WHERE id = $1",
+        &[&effect.id],
+      )
+      .await
+      .expect("refresh terminal state"),
+    1
+  );
+  drop(client);
+
+  let refreshed = repo::effect_completion_events::list_pending(&pool, 100)
+    .await
+    .expect("list refreshed event")
+    .into_iter()
+    .find(|event| event.build.id == effect.id)
+    .expect("refreshed effect event");
+  assert_eq!(refreshed.revision, initial.revision + 1);
+  assert_eq!(refreshed.build.status, BuildStatus::Failed);
+  assert_eq!(
+    refreshed.build.error_message.as_deref(),
+    Some("refreshed terminal state")
+  );
+  assert!(
+    !repo::effect_completion_events::ack(
+      &pool,
+      effect.id,
+      initial.attempt,
+      initial.revision,
+    )
+    .await
+    .expect("reject stale event acknowledgement")
+  );
+  assert!(
+    repo::effect_completion_events::ack(
+      &pool,
+      effect.id,
+      refreshed.attempt,
+      refreshed.revision,
+    )
+    .await
+    .expect("acknowledge exact event revision")
+  );
+
+  let client = pool.get().await.expect("get post-ack refresh client");
+  assert_eq!(
+    client
+      .execute(
+        "UPDATE builds
+         SET status = 'succeeded', error_message = 'post-ack terminal repair'
+         WHERE id = $1",
+        &[&effect.id],
+      )
+      .await
+      .expect("refresh terminal state after acknowledgement"),
+    1
+  );
+  drop(client);
+
+  let reopened = repo::effect_completion_events::list_pending(&pool, 100)
+    .await
+    .expect("list reopened event")
+    .into_iter()
+    .find(|event| event.build.id == effect.id)
+    .expect("post-ack repair must reopen completion event");
+  assert_eq!(reopened.revision, refreshed.revision + 1);
+  assert_eq!(reopened.build.status, BuildStatus::Succeeded);
+  assert!(
+    !repo::effect_completion_events::ack(
+      &pool,
+      effect.id,
+      reopened.attempt,
+      refreshed.revision,
+    )
+    .await
+    .expect("reject superseded acknowledged revision")
+  );
+  assert!(
+    repo::effect_completion_events::ack(
+      &pool,
+      effect.id,
+      reopened.attempt,
+      reopened.revision,
+    )
+    .await
+    .expect("acknowledge reopened event revision")
+  );
+  assert!(
+    repo::effect_completion_events::list_pending(&pool, 100)
+      .await
+      .expect("list after acknowledgement")
+      .into_iter()
+      .all(|event| event.build.id != effect.id)
+  );
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn effect_completion_trigger_waits_for_execution_release() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project =
+    create_test_project(&pool, "effect-completion-transitions").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  let pending = create_test_effect(&pool, eval.id, "pending-cancel").await;
+  repo::builds::cancel(&pool, pending.id)
+    .await
+    .expect("cancel pending effect");
+
+  let assigned = create_test_effect(&pool, eval.id, "assigned-cancel").await;
+  let machine_id = create_test_agent(&pool).await;
+  let assigned_attempt =
+    repo::builds::start_with_agent(&pool, assigned.id, machine_id)
+      .await
+      .expect("start assigned effect")
+      .expect("claim assigned effect")
+      .retry_count;
+  repo::builds::cancel(&pool, assigned.id)
+    .await
+    .expect("cancel assigned effect");
+
+  let before_ack = repo::effect_completion_events::list_pending(&pool, 100)
+    .await
+    .expect("list events before acknowledgement");
+  assert!(before_ack.iter().any(|event| event.build.id == pending.id));
+  assert!(before_ack.iter().all(|event| event.build.id != assigned.id));
+
+  assert!(
+    repo::builds::acknowledge_effect_stopped(
+      &pool,
+      assigned.id,
+      machine_id,
+      assigned_attempt,
+    )
+    .await
+    .expect("acknowledge assigned effect stopped")
+  );
+
+  let quarantined = create_test_effect(&pool, eval.id, "force-released").await;
+  let quarantined_attempt =
+    repo::builds::start_with_agent(&pool, quarantined.id, machine_id)
+      .await
+      .expect("start quarantined effect")
+      .expect("claim quarantined effect")
+      .retry_count;
+  assert!(
+    repo::builds::quarantine_effect(
+      &pool,
+      quarantined.id,
+      machine_id,
+      quarantined_attempt,
+      circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR,
+    )
+    .await
+    .expect("quarantine effect")
+  );
+  repo::builds::force_release_effect(&pool, quarantined.id)
+    .await
+    .expect("force release quarantined effect");
+
+  let events = repo::effect_completion_events::list_pending(&pool, 100)
+    .await
+    .expect("list terminal effect events");
+  for build_id in [pending.id, assigned.id, quarantined.id] {
+    let event = events
+      .iter()
+      .find(|event| event.build.id == build_id)
+      .expect("terminal transition must enqueue an event");
+    assert_eq!(event.build.status, BuildStatus::Cancelled);
+  }
+
+  let _ = repo::projects::delete(&pool, project.id).await;
 }

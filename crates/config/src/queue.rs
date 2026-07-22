@@ -198,6 +198,10 @@ pub struct RpcConfig {
   #[serde(default = "default_heartbeat_ttl_secs")]
   pub heartbeat_ttl_secs: u64,
 
+  /// Public Circus HTTP API base URL exposed to effect processes.
+  #[serde(default)]
+  pub api_base_url: Option<String>,
+
   /// Cache agents substitute drv closures from, forwarded to each agent.
   #[serde(default)]
   pub cache_substituter: Option<String>,

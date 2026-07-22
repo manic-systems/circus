@@ -184,6 +184,7 @@ pub(in crate::routes::dashboard) async fn starred_page(
               None,
               None,
               Some(&s.job_name),
+              None,
               1,
               0,
             )

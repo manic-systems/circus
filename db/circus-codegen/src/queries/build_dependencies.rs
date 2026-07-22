@@ -45,6 +45,8 @@ pub struct BuildRow {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
+    pub kind: String,
+    pub effect_execution_active: bool,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -79,6 +81,8 @@ pub struct BuildRowBorrowed<'a> {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub kind: &'a str,
+    pub effect_execution_active: bool,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -115,6 +119,8 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features,
+            kind,
+            effect_execution_active,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -150,6 +156,8 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
+            kind: kind.into(),
+            effect_execution_active,
         }
     }
 }
@@ -564,6 +572,8 @@ impl ListDependencyBuildsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -630,6 +640,8 @@ impl ListDependentBuildsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -756,6 +768,8 @@ impl ListFailedDependenciesStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),

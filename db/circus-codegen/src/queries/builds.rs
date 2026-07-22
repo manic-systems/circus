@@ -14,6 +14,7 @@ pub struct CreateParams<
     T10: crate::StringSql,
     T11: crate::StringSql,
     T12: crate::ArraySql<Item = T11>,
+    T13: crate::StringSql,
 > {
     pub evaluation_id: uuid::Uuid,
     pub job_name: T1,
@@ -29,6 +30,7 @@ pub struct CreateParams<
     pub meta_homepage: Option<T9>,
     pub meta_maintainers: Option<T10>,
     pub required_features: T12,
+    pub kind: T13,
 }
 #[derive(Debug)]
 pub struct ListForJobsetEvaluationsParams<T1: crate::ArraySql<Item = uuid::Uuid>> {
@@ -40,8 +42,33 @@ pub struct ListPendingParams {
     pub schedulable_capacity: i32,
     pub limit: i64,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct StartParams {
+    pub id: uuid::Uuid,
+    pub agent_machine_id: uuid::Uuid,
+}
+#[derive(Debug)]
+pub struct QuarantineEffectParams<T1: crate::StringSql> {
+    pub error_message: T1,
+    pub id: uuid::Uuid,
+    pub machine_id: uuid::Uuid,
+    pub attempt: i32,
+}
 #[derive(Debug)]
 pub struct CompleteParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+> {
+    pub status: T1,
+    pub log_path: Option<T2>,
+    pub build_output_path: Option<T3>,
+    pub error_message: Option<T4>,
+    pub id: uuid::Uuid,
+}
+#[derive(Debug)]
+pub struct CompletePendingParams<
     T1: crate::StringSql,
     T2: crate::StringSql,
     T3: crate::StringSql,
@@ -87,20 +114,32 @@ pub struct ResetOrphanedParams<T1: crate::ArraySql<Item = uuid::Uuid>> {
     pub excluded_ids: T1,
 }
 #[derive(Debug)]
-pub struct ListFilteredParams<T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql> {
+pub struct ListFilteredParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+> {
     pub evaluation_id: Option<uuid::Uuid>,
     pub status: Option<T1>,
     pub system: Option<T2>,
     pub job_name: Option<T3>,
+    pub kind: Option<T4>,
     pub limit: i64,
     pub offset: i64,
 }
 #[derive(Debug)]
-pub struct CountFilteredParams<T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql> {
+pub struct CountFilteredParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+> {
     pub evaluation_id: Option<uuid::Uuid>,
     pub status: Option<T1>,
     pub system: Option<T2>,
     pub job_name: Option<T3>,
+    pub kind: Option<T4>,
 }
 #[derive(Debug)]
 pub struct SetEffectiveFeaturesParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T1>> {
@@ -121,6 +160,62 @@ pub struct SetBuilderParams {
 pub struct SetAgentParams {
     pub machine_id: uuid::Uuid,
     pub id: uuid::Uuid,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct AcknowledgeEffectStoppedParams {
+    pub id: uuid::Uuid,
+    pub machine_id: uuid::Uuid,
+    pub attempt: i32,
+}
+#[derive(Debug)]
+pub struct RecordAssignedEffectOutcomeParams<T1: crate::StringSql, T2: crate::StringSql> {
+    pub status: T1,
+    pub error_message: Option<T2>,
+    pub id: uuid::Uuid,
+    pub machine_id: uuid::Uuid,
+    pub attempt: i32,
+}
+#[derive(Debug)]
+pub struct FinalizeAssignedEffectAttemptParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+> {
+    pub log_path: Option<T1>,
+    pub build_output_path: Option<T2>,
+    pub id: uuid::Uuid,
+    pub status: T3,
+    pub machine_id: uuid::Uuid,
+    pub attempt: i32,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ReleaseTerminalEffectAttemptParams {
+    pub id: uuid::Uuid,
+    pub attempt: i32,
+}
+#[derive(Debug)]
+pub struct ForceReleaseEffectParams<T1: crate::StringSql> {
+    pub id: uuid::Uuid,
+    pub outcome_unknown_error: T1,
+}
+#[derive(Debug)]
+pub struct QuarantineOrphanedEffectsParams<
+    T1: crate::StringSql,
+    T2: crate::ArraySql<Item = uuid::Uuid>,
+> {
+    pub outcome_unknown_error: T1,
+    pub active_build_ids: T2,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ProjectHasRunningEffectParams {
+    pub project_id: uuid::Uuid,
+    pub evaluation_id: uuid::Uuid,
+}
+#[derive(Debug)]
+pub struct ProjectHasActiveEffectAmongParams<T1: crate::ArraySql<Item = uuid::Uuid>> {
+    pub active_build_ids: T1,
+    pub project_id: uuid::Uuid,
+    pub evaluation_id: uuid::Uuid,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildRow {
@@ -156,6 +251,8 @@ pub struct BuildRow {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
+    pub kind: String,
+    pub effect_execution_active: bool,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -190,6 +287,8 @@ pub struct BuildRowBorrowed<'a> {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub kind: &'a str,
+    pub effect_execution_active: bool,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -226,6 +325,8 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features,
+            kind,
+            effect_execution_active,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -261,6 +362,8 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
+            kind: kind.into(),
+            effect_execution_active,
         }
     }
 }
@@ -689,10 +792,74 @@ where
         Ok(mapped)
     }
 }
+pub struct BoolQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<bool, tokio_postgres::Error>,
+    mapper: fn(bool) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> BoolQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(bool) -> R) -> BoolQuery<'c, 'a, 's, C, R, N> {
+        BoolQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
 pub struct CreateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create() -> CreateStmt {
     CreateStmt(
-        "INSERT INTO builds ( evaluation_id, job_name, drv_path, status, system, outputs, is_aggregate, constituents, is_fod, fod_hash, meta_description, meta_license, meta_homepage, meta_maintainers, required_features ) VALUES ( $1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14 ) RETURNING *",
+        "INSERT INTO builds ( evaluation_id, job_name, drv_path, status, system, outputs, is_aggregate, constituents, is_fod, fod_hash, meta_description, meta_license, meta_homepage, meta_maintainers, required_features, kind ) VALUES ( $1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15 ) RETURNING *",
         None,
     )
 }
@@ -721,6 +888,7 @@ impl CreateStmt {
         T10: crate::StringSql,
         T11: crate::StringSql,
         T12: crate::ArraySql<Item = T11>,
+        T13: crate::StringSql,
     >(
         &'s self,
         client: &'c C,
@@ -738,7 +906,8 @@ impl CreateStmt {
         meta_homepage: &'a Option<T9>,
         meta_maintainers: &'a Option<T10>,
         required_features: &'a T12,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 14> {
+        kind: &'a T13,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 15> {
         BuildRowQuery {
             client,
             params: [
@@ -756,6 +925,7 @@ impl CreateStmt {
                 meta_homepage,
                 meta_maintainers,
                 required_features,
+                kind,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -794,6 +964,8 @@ impl CreateStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -817,21 +989,22 @@ impl<
     T10: crate::StringSql,
     T11: crate::StringSql,
     T12: crate::ArraySql<Item = T11>,
+    T13: crate::StringSql,
 >
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>,
-        BuildRowQuery<'c, 'a, 's, C, BuildRow, 14>,
+        CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 15>,
         C,
     > for CreateStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 14> {
+        params: &'a CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 15> {
         self.bind(
             client,
             &params.evaluation_id,
@@ -848,13 +1021,14 @@ impl<
             &params.meta_homepage,
             &params.meta_maintainers,
             &params.required_features,
+            &params.kind,
         )
     }
 }
 pub struct GetCompletedByDrvPathStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_completed_by_drv_path() -> GetCompletedByDrvPathStmt {
     GetCompletedByDrvPathStmt(
-        "SELECT * FROM builds WHERE drv_path = $1 AND status = 'succeeded' LIMIT 1",
+        "SELECT * FROM builds WHERE drv_path = $1 AND status = 'succeeded' AND kind = 'build' LIMIT 1",
         None,
     )
 }
@@ -911,6 +1085,8 @@ impl GetCompletedByDrvPathStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -974,6 +1150,8 @@ impl GetStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1070,6 +1248,8 @@ impl ListForEvaluationStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1137,6 +1317,8 @@ impl ListForJobsetEvaluationsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1222,6 +1404,8 @@ impl ListPendingStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1249,7 +1433,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct StartStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn start() -> StartStmt {
     StartStmt(
-        "WITH candidate AS ( SELECT b.id FROM builds b WHERE b.id = $1 AND b.status = 'pending' AND pg_try_advisory_xact_lock(hashtextextended(b.drv_path, 0)) AND NOT EXISTS ( SELECT 1 FROM builds active WHERE active.drv_path = b.drv_path AND active.status = 'running' ) FOR UPDATE SKIP LOCKED ) UPDATE builds SET status = 'running', started_at = NOW() FROM candidate WHERE builds.id = candidate.id RETURNING builds.*",
+        "WITH candidate AS ( SELECT b.id FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.id = $1 AND b.status = 'pending' AND pg_try_advisory_xact_lock(hashtextextended(b.drv_path, 0)) AND NOT EXISTS ( SELECT 1 FROM builds active WHERE active.drv_path = b.drv_path AND active.status = 'running' ) AND CASE WHEN b.kind = 'effect' THEN pg_try_advisory_xact_lock( hashtextextended('circus-effect-project:' || j.project_id::text, 0) ) AND NOT EXISTS ( SELECT 1 FROM builds active JOIN evaluations active_e ON active_e.id = active.evaluation_id JOIN jobsets active_j ON active_j.id = active_e.jobset_id WHERE active_j.project_id = j.project_id AND active.kind = 'effect' AND ( active.status = 'running' OR ( active.status = 'cancelled' AND active.effect_execution_active ) ) AND active.evaluation_id != b.evaluation_id ) ELSE true END FOR UPDATE SKIP LOCKED ) UPDATE builds SET status = 'running', started_at = NOW(), agent_machine_id = COALESCE( NULLIF($2::uuid, '00000000-0000-0000-0000-000000000000'), builds.agent_machine_id ), effect_execution_active = ( builds.kind = 'effect' AND NULLIF( $2::uuid, '00000000-0000-0000-0000-000000000000' ) IS NOT NULL ) FROM candidate WHERE builds.id = candidate.id RETURNING builds.*",
         None,
     )
 }
@@ -1265,10 +1449,11 @@ impl StartStmt {
         &'s self,
         client: &'c C,
         id: &'a uuid::Uuid,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 1> {
+        agent_machine_id: &'a uuid::Uuid,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
         BuildRowQuery {
             client,
-            params: [id],
+            params: [id, agent_machine_id],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1306,10 +1491,30 @@ impl StartStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
         }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        StartParams,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 2>,
+        C,
+    > for StartStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a StartParams,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+        self.bind(client, &params.id, &params.agent_machine_id)
     }
 }
 pub struct MarkStartedNotifiedStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -1345,7 +1550,7 @@ impl MarkStartedNotifiedStmt {
 pub struct RequeueStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn requeue() -> RequeueStmt {
     RequeueStmt(
-        "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, effective_features = NULL WHERE id = $1 AND status = 'running' RETURNING * ) SELECT * FROM bumped",
+        "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, effective_features = NULL, agent_machine_id = NULL, effect_execution_active = FALSE WHERE id = $1 AND status = 'running' RETURNING * ) SELECT * FROM bumped",
         None,
     )
 }
@@ -1402,16 +1607,75 @@ impl RequeueStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
         }
     }
 }
+pub struct QuarantineEffectStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn quarantine_effect() -> QuarantineEffectStmt {
+    QuarantineEffectStmt(
+        "UPDATE builds SET status = 'running', completed_at = NULL, error_message = $1, effect_execution_active = TRUE WHERE id = $2 AND kind = 'effect' AND status IN ('running', 'cancelled') AND effect_execution_active AND agent_machine_id = $3 AND retry_count = $4 RETURNING id",
+        None,
+    )
+}
+impl QuarantineEffectStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        error_message: &'a T1,
+        id: &'a uuid::Uuid,
+        machine_id: &'a uuid::Uuid,
+        attempt: &'a i32,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 4> {
+        UuidUuidQuery {
+            client,
+            params: [error_message, id, machine_id, attempt],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        QuarantineEffectParams<T1>,
+        UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 4>,
+        C,
+    > for QuarantineEffectStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a QuarantineEffectParams<T1>,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 4> {
+        self.bind(
+            client,
+            &params.error_message,
+            &params.id,
+            &params.machine_id,
+            &params.attempt,
+        )
+    }
+}
 pub struct RetryStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn retry() -> RetryStmt {
     RetryStmt(
-        "UPDATE builds SET status = 'pending', started_at = NULL, retry_count = retry_count + 1, completed_at = NULL, effective_features = NULL WHERE id = $1",
+        "UPDATE builds SET status = 'pending', started_at = NULL, retry_count = retry_count + 1, completed_at = NULL, effective_features = NULL WHERE id = $1 AND kind = 'build'",
         None,
     )
 }
@@ -1434,7 +1698,7 @@ impl RetryStmt {
 pub struct CompleteStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn complete() -> CompleteStmt {
     CompleteStmt(
-        "UPDATE builds SET status = $1, completed_at = NOW(), log_path = $2, build_output_path = $3, error_message = $4 WHERE id = $5 RETURNING *",
+        "UPDATE builds SET status = $1, completed_at = NOW(), log_path = $2, build_output_path = $3, error_message = $4 WHERE id = $5 AND kind = 'build' RETURNING *",
         None,
     )
 }
@@ -1504,6 +1768,8 @@ impl CompleteStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1533,6 +1799,121 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a CompleteParams<T1, T2, T3, T4>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 5> {
+        self.bind(
+            client,
+            &params.status,
+            &params.log_path,
+            &params.build_output_path,
+            &params.error_message,
+            &params.id,
+        )
+    }
+}
+pub struct CompletePendingStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn complete_pending() -> CompletePendingStmt {
+    CompletePendingStmt(
+        "UPDATE builds SET status = $1, completed_at = NOW(), log_path = $2, build_output_path = $3, error_message = $4 WHERE id = $5 AND status = 'pending' RETURNING *",
+        None,
+    )
+}
+impl CompletePendingStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+        T4: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        status: &'a T1,
+        log_path: &'a Option<T2>,
+        build_output_path: &'a Option<T3>,
+        error_message: &'a Option<T4>,
+        id: &'a uuid::Uuid,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 5> {
+        BuildRowQuery {
+            client,
+            params: [status, log_path, build_output_path, error_message, id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BuildRowBorrowed, tokio_postgres::Error> {
+                    Ok(BuildRowBorrowed {
+                        id: row.try_get(0)?,
+                        evaluation_id: row.try_get(1)?,
+                        job_name: row.try_get(2)?,
+                        drv_path: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        started_at: row.try_get(5)?,
+                        completed_at: row.try_get(6)?,
+                        log_path: row.try_get(7)?,
+                        build_output_path: row.try_get(8)?,
+                        error_message: row.try_get(9)?,
+                        priority: row.try_get(10)?,
+                        retry_count: row.try_get(11)?,
+                        max_retries: row.try_get(12)?,
+                        notification_pending_since: row.try_get(13)?,
+                        outputs: row.try_get(14)?,
+                        is_aggregate: row.try_get(15)?,
+                        constituents: row.try_get(16)?,
+                        builder_id: row.try_get(17)?,
+                        signed: row.try_get(18)?,
+                        system: row.try_get(19)?,
+                        keep: row.try_get(20)?,
+                        created_at: row.try_get(21)?,
+                        is_fod: row.try_get(22)?,
+                        fod_hash: row.try_get(23)?,
+                        meta_description: row.try_get(24)?,
+                        meta_license: row.try_get(25)?,
+                        meta_homepage: row.try_get(26)?,
+                        meta_maintainers: row.try_get(27)?,
+                        required_features: row.try_get(28)?,
+                        agent_machine_id: row.try_get(29)?,
+                        started_notified_at: row.try_get(30)?,
+                        effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
+                    })
+                },
+            mapper: |it| BuildRow::from(it),
+        }
+    }
+}
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        CompletePendingParams<T1, T2, T3, T4>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 5>,
+        C,
+    > for CompletePendingStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a CompletePendingParams<T1, T2, T3, T4>,
     ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 5> {
         self.bind(
             client,
@@ -1605,6 +1986,8 @@ impl CompleteDependencyFailedStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1632,7 +2015,7 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
 pub struct ListPendingInSchedulerOrderStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_pending_in_scheduler_order() -> ListPendingInSchedulerOrderStmt {
     ListPendingInSchedulerOrderStmt(
-        "SELECT * FROM builds WHERE status = 'pending' AND ($1::text IS NULL OR system = $1) AND ($2::text IS NULL OR job_name ILIKE '%' || $2 || '%') ORDER BY priority DESC, cardinality(COALESCE(effective_features, required_features)) DESC, created_at ASC, id ASC LIMIT $3 OFFSET $4",
+        "SELECT * FROM builds WHERE status = 'pending' AND kind = 'build' AND ($1::text IS NULL OR system = $1) AND ($2::text IS NULL OR job_name ILIKE '%' || $2 || '%') ORDER BY priority DESC, cardinality(COALESCE(effective_features, required_features)) DESC, created_at ASC, id ASC LIMIT $3 OFFSET $4",
         None,
     )
 }
@@ -1692,6 +2075,8 @@ impl ListPendingInSchedulerOrderStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1725,7 +2110,7 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>
 pub struct ListPendingForSystemsStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_pending_for_systems() -> ListPendingForSystemsStmt {
     ListPendingForSystemsStmt(
-        "SELECT * FROM builds WHERE status = 'pending' AND system = ANY($1) ORDER BY priority DESC, created_at ASC LIMIT 512",
+        "SELECT * FROM builds WHERE status = 'pending' AND kind = 'build' AND system = ANY($1) ORDER BY priority DESC, created_at ASC LIMIT 512",
         None,
     )
 }
@@ -1789,6 +2174,8 @@ impl ListPendingForSystemsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1886,6 +2273,8 @@ impl BumpPriorityStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1970,6 +2359,8 @@ impl ListRecentStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2038,6 +2429,8 @@ impl ListForProjectStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2164,7 +2557,7 @@ impl GetStatsStmt {
 pub struct ResetOrphanedStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn reset_orphaned() -> ResetOrphanedStmt {
     ResetOrphanedStmt(
-        "UPDATE builds SET status = 'pending', started_at = NULL, effective_features = NULL WHERE status = 'running' AND started_at < NOW() - make_interval(secs => $1::bigint) AND NOT (id = ANY($2))",
+        "UPDATE builds SET status = 'pending', started_at = NULL, effective_features = NULL WHERE status = 'running' AND kind != 'effect' AND started_at < NOW() - make_interval(secs => $1::bigint) AND NOT (id = ANY($2))",
         None,
     )
 }
@@ -2268,6 +2661,8 @@ impl ListPendingWithFailedDepsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2277,7 +2672,7 @@ impl ListPendingWithFailedDepsStmt {
 pub struct ListFilteredStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_filtered() -> ListFilteredStmt {
     ListFilteredStmt(
-        "SELECT * FROM builds WHERE ($1::uuid IS NULL OR evaluation_id = $1) AND ($2::text IS NULL OR status = $2) AND ($3::text IS NULL OR system = $3) AND ($4::text IS NULL OR job_name ILIKE '%' || $4 || '%') ORDER BY created_at DESC LIMIT $5 OFFSET $6",
+        "SELECT * FROM builds WHERE ($1::uuid IS NULL OR evaluation_id = $1) AND ($2::text IS NULL OR status = $2) AND ($3::text IS NULL OR system = $3) AND ($4::text IS NULL OR job_name ILIKE '%' || $4 || '%') AND ($5::text IS NULL OR kind = $5) ORDER BY created_at DESC LIMIT $6 OFFSET $7",
         None,
     )
 }
@@ -2297,6 +2692,7 @@ impl ListFilteredStmt {
         T1: crate::StringSql,
         T2: crate::StringSql,
         T3: crate::StringSql,
+        T4: crate::StringSql,
     >(
         &'s self,
         client: &'c C,
@@ -2304,12 +2700,13 @@ impl ListFilteredStmt {
         status: &'a Option<T1>,
         system: &'a Option<T2>,
         job_name: &'a Option<T3>,
+        kind: &'a Option<T4>,
         limit: &'a i64,
         offset: &'a i64,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 6> {
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 7> {
         BuildRowQuery {
             client,
-            params: [evaluation_id, status, system, job_name, limit, offset],
+            params: [evaluation_id, status, system, job_name, kind, limit, offset],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -2347,33 +2744,45 @@ impl ListFilteredStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
         }
     }
 }
-impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql>
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+>
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        ListFilteredParams<T1, T2, T3>,
-        BuildRowQuery<'c, 'a, 's, C, BuildRow, 6>,
+        ListFilteredParams<T1, T2, T3, T4>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 7>,
         C,
     > for ListFilteredStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a ListFilteredParams<T1, T2, T3>,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 6> {
+        params: &'a ListFilteredParams<T1, T2, T3, T4>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 7> {
         self.bind(
             client,
             &params.evaluation_id,
             &params.status,
             &params.system,
             &params.job_name,
+            &params.kind,
             &params.limit,
             &params.offset,
         )
@@ -2382,7 +2791,7 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T
 pub struct CountFilteredStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn count_filtered() -> CountFilteredStmt {
     CountFilteredStmt(
-        "SELECT COUNT(*) FROM builds WHERE ($1::uuid IS NULL OR evaluation_id = $1) AND ($2::text IS NULL OR status = $2) AND ($3::text IS NULL OR system = $3) AND ($4::text IS NULL OR job_name ILIKE '%' || $4 || '%')",
+        "SELECT COUNT(*) FROM builds WHERE ($1::uuid IS NULL OR evaluation_id = $1) AND ($2::text IS NULL OR status = $2) AND ($3::text IS NULL OR system = $3) AND ($4::text IS NULL OR job_name ILIKE '%' || $4 || '%') AND ($5::text IS NULL OR kind = $5)",
         None,
     )
 }
@@ -2402,6 +2811,7 @@ impl CountFilteredStmt {
         T1: crate::StringSql,
         T2: crate::StringSql,
         T3: crate::StringSql,
+        T4: crate::StringSql,
     >(
         &'s self,
         client: &'c C,
@@ -2409,10 +2819,11 @@ impl CountFilteredStmt {
         status: &'a Option<T1>,
         system: &'a Option<T2>,
         job_name: &'a Option<T3>,
-    ) -> I64Query<'c, 'a, 's, C, i64, 4> {
+        kind: &'a Option<T4>,
+    ) -> I64Query<'c, 'a, 's, C, i64, 5> {
         I64Query {
             client,
-            params: [evaluation_id, status, system, job_name],
+            params: [evaluation_id, status, system, job_name, kind],
             query: self.0,
             cached: self.1.as_ref(),
             extractor: |row| Ok(row.try_get(0)?),
@@ -2420,27 +2831,37 @@ impl CountFilteredStmt {
         }
     }
 }
-impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql>
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+>
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        CountFilteredParams<T1, T2, T3>,
-        I64Query<'c, 'a, 's, C, i64, 4>,
+        CountFilteredParams<T1, T2, T3, T4>,
+        I64Query<'c, 'a, 's, C, i64, 5>,
         C,
     > for CountFilteredStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a CountFilteredParams<T1, T2, T3>,
-    ) -> I64Query<'c, 'a, 's, C, i64, 4> {
+        params: &'a CountFilteredParams<T1, T2, T3, T4>,
+    ) -> I64Query<'c, 'a, 's, C, i64, 5> {
         self.bind(
             client,
             &params.evaluation_id,
             &params.status,
             &params.system,
             &params.job_name,
+            &params.kind,
         )
     }
 }
@@ -2534,6 +2955,8 @@ impl CancelStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2573,7 +2996,7 @@ impl CancelCascadeDependentsStmt {
 pub struct RestartStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart() -> RestartStmt {
     RestartStmt(
-        "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL, retry_count = retry_count + 1 WHERE id = $1 AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure', 'dependency_failed') RETURNING *",
+        "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL, retry_count = retry_count + 1, agent_machine_id = NULL, effect_execution_active = FALSE WHERE id = $1 AND status NOT IN ('pending', 'running') AND NOT (kind = 'effect' AND effect_execution_active) RETURNING *",
         None,
     )
 }
@@ -2630,6 +3053,8 @@ impl RestartStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2696,6 +3121,8 @@ impl ResetDependencyFailedDependentsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2778,7 +3205,7 @@ impl MarkSignedStmt {
 pub struct GetCompletedByDrvPathsStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_completed_by_drv_paths() -> GetCompletedByDrvPathsStmt {
     GetCompletedByDrvPathsStmt(
-        "SELECT DISTINCT ON (drv_path) * FROM builds WHERE drv_path = ANY($1) AND status = 'succeeded' ORDER BY drv_path, completed_at DESC",
+        "SELECT DISTINCT ON (drv_path) * FROM builds WHERE drv_path = ANY($1) AND status = 'succeeded' AND kind = 'build' ORDER BY drv_path, completed_at DESC",
         None,
     )
 }
@@ -2842,6 +3269,8 @@ impl GetCompletedByDrvPathsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2935,6 +3364,8 @@ impl SetKeepStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3005,7 +3436,7 @@ impl<'a, C: GenericClient + Send + Sync>
 pub struct SetAgentStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn set_agent() -> SetAgentStmt {
     SetAgentStmt(
-        "UPDATE builds SET agent_machine_id = $1 WHERE id = $2",
+        "UPDATE builds SET agent_machine_id = $1, effect_execution_active = ( kind = 'effect' AND $1::uuid != '00000000-0000-0000-0000-000000000000' ) WHERE id = $2 AND status = 'running'",
         None,
     )
 }
@@ -3046,6 +3477,436 @@ impl<'a, C: GenericClient + Send + Sync>
         Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
     > {
         Box::pin(self.bind(client, &params.machine_id, &params.id))
+    }
+}
+pub struct AcknowledgeEffectStoppedStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn acknowledge_effect_stopped() -> AcknowledgeEffectStoppedStmt {
+    AcknowledgeEffectStoppedStmt(
+        "UPDATE builds SET agent_machine_id = NULL, effect_execution_active = FALSE WHERE id = $1 AND kind = 'effect' AND status = 'cancelled' AND effect_execution_active AND agent_machine_id = $2 AND retry_count = $3 RETURNING id",
+        None,
+    )
+}
+impl AcknowledgeEffectStoppedStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+        machine_id: &'a uuid::Uuid,
+        attempt: &'a i32,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 3> {
+        UuidUuidQuery {
+            client,
+            params: [id, machine_id, attempt],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        AcknowledgeEffectStoppedParams,
+        UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 3>,
+        C,
+    > for AcknowledgeEffectStoppedStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a AcknowledgeEffectStoppedParams,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 3> {
+        self.bind(client, &params.id, &params.machine_id, &params.attempt)
+    }
+}
+pub struct ReleaseUnhandedEffectStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn release_unhanded_effect() -> ReleaseUnhandedEffectStmt {
+    ReleaseUnhandedEffectStmt(
+        "UPDATE builds SET agent_machine_id = NULL, effect_execution_active = FALSE WHERE id = $1 AND kind = 'effect' AND status = 'cancelled' AND effect_execution_active AND agent_machine_id IS NOT NULL RETURNING id",
+        None,
+    )
+}
+impl ReleaseUnhandedEffectStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 1> {
+        UuidUuidQuery {
+            client,
+            params: [id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+pub struct RecordAssignedEffectOutcomeStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn record_assigned_effect_outcome() -> RecordAssignedEffectOutcomeStmt {
+    RecordAssignedEffectOutcomeStmt(
+        "UPDATE builds SET status = $1, completed_at = NOW(), error_message = $2 WHERE id = $3 AND kind = 'effect' AND status IN ('running', 'cancelled') AND effect_execution_active AND agent_machine_id = $4 AND retry_count = $5 RETURNING id",
+        None,
+    )
+}
+impl RecordAssignedEffectOutcomeStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        status: &'a T1,
+        error_message: &'a Option<T2>,
+        id: &'a uuid::Uuid,
+        machine_id: &'a uuid::Uuid,
+        attempt: &'a i32,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 5> {
+        UuidUuidQuery {
+            client,
+            params: [status, error_message, id, machine_id, attempt],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        RecordAssignedEffectOutcomeParams<T1, T2>,
+        UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 5>,
+        C,
+    > for RecordAssignedEffectOutcomeStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a RecordAssignedEffectOutcomeParams<T1, T2>,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 5> {
+        self.bind(
+            client,
+            &params.status,
+            &params.error_message,
+            &params.id,
+            &params.machine_id,
+            &params.attempt,
+        )
+    }
+}
+pub struct FinalizeAssignedEffectAttemptStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn finalize_assigned_effect_attempt() -> FinalizeAssignedEffectAttemptStmt {
+    FinalizeAssignedEffectAttemptStmt(
+        "UPDATE builds SET log_path = $1, build_output_path = $2, effect_execution_active = FALSE WHERE id = $3 AND kind = 'effect' AND status = $4 AND effect_execution_active AND agent_machine_id = $5 AND retry_count = $6 RETURNING id",
+        None,
+    )
+}
+impl FinalizeAssignedEffectAttemptStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        log_path: &'a Option<T1>,
+        build_output_path: &'a Option<T2>,
+        id: &'a uuid::Uuid,
+        status: &'a T3,
+        machine_id: &'a uuid::Uuid,
+        attempt: &'a i32,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 6> {
+        UuidUuidQuery {
+            client,
+            params: [log_path, build_output_path, id, status, machine_id, attempt],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        FinalizeAssignedEffectAttemptParams<T1, T2, T3>,
+        UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 6>,
+        C,
+    > for FinalizeAssignedEffectAttemptStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a FinalizeAssignedEffectAttemptParams<T1, T2, T3>,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 6> {
+        self.bind(
+            client,
+            &params.log_path,
+            &params.build_output_path,
+            &params.id,
+            &params.status,
+            &params.machine_id,
+            &params.attempt,
+        )
+    }
+}
+pub struct ReleaseTerminalEffectAttemptStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn release_terminal_effect_attempt() -> ReleaseTerminalEffectAttemptStmt {
+    ReleaseTerminalEffectAttemptStmt(
+        "UPDATE builds SET effect_execution_active = FALSE WHERE id = $1 AND kind = 'effect' AND status NOT IN ('pending', 'running', 'cancelled') AND effect_execution_active AND retry_count = $2 RETURNING id",
+        None,
+    )
+}
+impl ReleaseTerminalEffectAttemptStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+        attempt: &'a i32,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 2> {
+        UuidUuidQuery {
+            client,
+            params: [id, attempt],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ReleaseTerminalEffectAttemptParams,
+        UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 2>,
+        C,
+    > for ReleaseTerminalEffectAttemptStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ReleaseTerminalEffectAttemptParams,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 2> {
+        self.bind(client, &params.id, &params.attempt)
+    }
+}
+pub struct ForceReleaseEffectStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn force_release_effect() -> ForceReleaseEffectStmt {
+    ForceReleaseEffectStmt(
+        "UPDATE builds SET status = 'cancelled', completed_at = NOW(), agent_machine_id = NULL, effect_execution_active = FALSE WHERE id = $1 AND kind = 'effect' AND status IN ('running', 'cancelled') AND effect_execution_active AND agent_machine_id IS NOT NULL AND error_message = $2 RETURNING *",
+        None,
+    )
+}
+impl ForceReleaseEffectStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+        outcome_unknown_error: &'a T1,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+        BuildRowQuery {
+            client,
+            params: [id, outcome_unknown_error],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BuildRowBorrowed, tokio_postgres::Error> {
+                    Ok(BuildRowBorrowed {
+                        id: row.try_get(0)?,
+                        evaluation_id: row.try_get(1)?,
+                        job_name: row.try_get(2)?,
+                        drv_path: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        started_at: row.try_get(5)?,
+                        completed_at: row.try_get(6)?,
+                        log_path: row.try_get(7)?,
+                        build_output_path: row.try_get(8)?,
+                        error_message: row.try_get(9)?,
+                        priority: row.try_get(10)?,
+                        retry_count: row.try_get(11)?,
+                        max_retries: row.try_get(12)?,
+                        notification_pending_since: row.try_get(13)?,
+                        outputs: row.try_get(14)?,
+                        is_aggregate: row.try_get(15)?,
+                        constituents: row.try_get(16)?,
+                        builder_id: row.try_get(17)?,
+                        signed: row.try_get(18)?,
+                        system: row.try_get(19)?,
+                        keep: row.try_get(20)?,
+                        created_at: row.try_get(21)?,
+                        is_fod: row.try_get(22)?,
+                        fod_hash: row.try_get(23)?,
+                        meta_description: row.try_get(24)?,
+                        meta_license: row.try_get(25)?,
+                        meta_homepage: row.try_get(26)?,
+                        meta_maintainers: row.try_get(27)?,
+                        required_features: row.try_get(28)?,
+                        agent_machine_id: row.try_get(29)?,
+                        started_notified_at: row.try_get(30)?,
+                        effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
+                    })
+                },
+            mapper: |it| BuildRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ForceReleaseEffectParams<T1>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 2>,
+        C,
+    > for ForceReleaseEffectStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ForceReleaseEffectParams<T1>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+        self.bind(client, &params.id, &params.outcome_unknown_error)
+    }
+}
+pub struct QuarantineOrphanedEffectsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn quarantine_orphaned_effects() -> QuarantineOrphanedEffectsStmt {
+    QuarantineOrphanedEffectsStmt(
+        "UPDATE builds SET error_message = $1 WHERE kind = 'effect' AND status IN ('running', 'cancelled') AND effect_execution_active AND agent_machine_id IS NOT NULL AND NOT (id = ANY($2)) AND error_message IS DISTINCT FROM $1",
+        None,
+    )
+}
+impl QuarantineOrphanedEffectsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::ArraySql<Item = uuid::Uuid>,
+    >(
+        &'s self,
+        client: &'c C,
+        outcome_unknown_error: &'a T1,
+        active_build_ids: &'a T2,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(self.0, &[outcome_unknown_error, active_build_ids])
+            .await
+    }
+}
+impl<
+    'a,
+    C: GenericClient + Send + Sync,
+    T1: crate::StringSql,
+    T2: crate::ArraySql<Item = uuid::Uuid>,
+>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        QuarantineOrphanedEffectsParams<T1, T2>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for QuarantineOrphanedEffectsStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a QuarantineOrphanedEffectsParams<T1, T2>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.outcome_unknown_error,
+            &params.active_build_ids,
+        ))
+    }
+}
+pub struct ReleaseOrphanedTerminalEffectsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn release_orphaned_terminal_effects() -> ReleaseOrphanedTerminalEffectsStmt {
+    ReleaseOrphanedTerminalEffectsStmt(
+        "UPDATE builds SET effect_execution_active = FALSE WHERE kind = 'effect' AND status NOT IN ('pending', 'running', 'cancelled') AND effect_execution_active",
+        None,
+    )
+}
+impl ReleaseOrphanedTerminalEffectsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[]).await
     }
 }
 pub struct ListConstituentsStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -3108,6 +3969,8 @@ impl ListConstituentsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        kind: row.try_get(32)?,
+                        effect_execution_active: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3132,5 +3995,109 @@ impl DeleteStmt {
         id: &'a uuid::Uuid,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[id]).await
+    }
+}
+pub struct ProjectHasRunningEffectStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn project_has_running_effect() -> ProjectHasRunningEffectStmt {
+    ProjectHasRunningEffectStmt(
+        "SELECT EXISTS ( SELECT 1 FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE j.project_id = $1 AND b.kind = 'effect' AND ( b.status = 'running' OR (b.status = 'cancelled' AND b.effect_execution_active) ) AND b.evaluation_id != $2 ) AS running",
+        None,
+    )
+}
+impl ProjectHasRunningEffectStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        project_id: &'a uuid::Uuid,
+        evaluation_id: &'a uuid::Uuid,
+    ) -> BoolQuery<'c, 'a, 's, C, bool, 2> {
+        BoolQuery {
+            client,
+            params: [project_id, evaluation_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ProjectHasRunningEffectParams,
+        BoolQuery<'c, 'a, 's, C, bool, 2>,
+        C,
+    > for ProjectHasRunningEffectStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ProjectHasRunningEffectParams,
+    ) -> BoolQuery<'c, 'a, 's, C, bool, 2> {
+        self.bind(client, &params.project_id, &params.evaluation_id)
+    }
+}
+pub struct ProjectHasActiveEffectAmongStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn project_has_active_effect_among() -> ProjectHasActiveEffectAmongStmt {
+    ProjectHasActiveEffectAmongStmt(
+        "SELECT EXISTS ( SELECT 1 FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.id = ANY($1) AND j.project_id = $2 AND b.kind = 'effect' AND b.evaluation_id != $3 ) AS active",
+        None,
+    )
+}
+impl ProjectHasActiveEffectAmongStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::ArraySql<Item = uuid::Uuid>>(
+        &'s self,
+        client: &'c C,
+        active_build_ids: &'a T1,
+        project_id: &'a uuid::Uuid,
+        evaluation_id: &'a uuid::Uuid,
+    ) -> BoolQuery<'c, 'a, 's, C, bool, 3> {
+        BoolQuery {
+            client,
+            params: [active_build_ids, project_id, evaluation_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::ArraySql<Item = uuid::Uuid>>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ProjectHasActiveEffectAmongParams<T1>,
+        BoolQuery<'c, 'a, 's, C, bool, 3>,
+        C,
+    > for ProjectHasActiveEffectAmongStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ProjectHasActiveEffectAmongParams<T1>,
+    ) -> BoolQuery<'c, 'a, 's, C, bool, 3> {
+        self.bind(
+            client,
+            &params.active_build_ids,
+            &params.project_id,
+            &params.evaluation_id,
+        )
     }
 }

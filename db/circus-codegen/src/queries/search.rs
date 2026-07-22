@@ -180,6 +180,8 @@ pub struct BuildQuickSearchRow {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
+    pub kind: String,
+    pub effect_execution_active: bool,
 }
 pub struct BuildQuickSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -214,6 +216,8 @@ pub struct BuildQuickSearchRowBorrowed<'a> {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub kind: &'a str,
+    pub effect_execution_active: bool,
 }
 impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
     fn from(
@@ -250,6 +254,8 @@ impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
             agent_machine_id,
             started_notified_at,
             effective_features,
+            kind,
+            effect_execution_active,
         }: BuildQuickSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -285,6 +291,8 @@ impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
             agent_machine_id,
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
+            kind: kind.into(),
+            effect_execution_active,
         }
     }
 }
@@ -932,6 +940,8 @@ impl QuickBuildsStmt {
                     agent_machine_id: row.try_get(29)?,
                     started_notified_at: row.try_get(30)?,
                     effective_features: row.try_get(31)?,
+                    kind: row.try_get(32)?,
+                    effect_execution_active: row.try_get(33)?,
                 })
             },
             mapper: |it| BuildQuickSearchRow::from(it),
@@ -1495,6 +1505,8 @@ impl SearchBuildsStmt {
                     agent_machine_id: row.try_get(29)?,
                     started_notified_at: row.try_get(30)?,
                     effective_features: row.try_get(31)?,
+                    kind: row.try_get(32)?,
+                    effect_execution_active: row.try_get(33)?,
                 })
             },
             mapper: |it| BuildQuickSearchRow::from(it),

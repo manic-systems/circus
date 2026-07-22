@@ -344,6 +344,9 @@ pub struct Build {
   /// build. [`None`] means this was not yet computed.
   #[serde(default)]
   pub effective_features:         Option<Vec<String>>,
+  /// Whether this row is a regular build or a post-build effect.
+  #[serde(default)]
+  pub kind:                       BuildKind,
 }
 
 impl Build {
@@ -362,6 +365,48 @@ impl Build {
   #[must_use]
   pub fn is_dependency(&self) -> bool {
     self.job_name.starts_with(DEPENDENCY_JOB_PREFIX)
+  }
+}
+
+/// Distinguishes regular builds from post-build effects.
+pub const EFFECT_OUTCOME_UNKNOWN_ERROR: &str =
+  "Agent disconnected during effect; outcome unknown; explicit force-release \
+   required before restart";
+
+#[derive(
+  Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildKind {
+  #[default]
+  Build,
+  Effect,
+}
+
+impl BuildKind {
+  #[must_use]
+  pub const fn as_db_str(self) -> &'static str {
+    match self {
+      Self::Build => "build",
+      Self::Effect => "effect",
+    }
+  }
+
+  #[must_use]
+  pub const fn is_effect(self) -> bool {
+    matches!(self, Self::Effect)
+  }
+}
+
+impl std::str::FromStr for BuildKind {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "build" => Ok(Self::Build),
+      "effect" => Ok(Self::Effect),
+      _ => Err(format!("invalid build kind '{s}'")),
+    }
   }
 }
 
@@ -1035,6 +1080,8 @@ pub struct CreateBuild {
   /// `requiredSystemFeatures` from the derivation. Empty = no constraint.
   #[serde(default)]
   pub required_features: Vec<String>,
+  #[serde(default)]
+  pub kind:              BuildKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

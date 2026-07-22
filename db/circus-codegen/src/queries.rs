@@ -12,6 +12,7 @@ pub mod cache;
 pub mod cache_traffic;
 pub mod channels;
 pub mod database;
+pub mod effect_completion_events;
 pub mod evaluations;
 pub mod failed_paths_cache;
 pub mod health;

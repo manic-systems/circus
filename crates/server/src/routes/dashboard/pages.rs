@@ -748,6 +748,7 @@ pub(super) async fn builds_page(
     params.status.as_deref(),
     params.system.as_deref(),
     params.job_name.as_deref(),
+    None,
     limit,
     offset,
   )
@@ -759,6 +760,7 @@ pub(super) async fn builds_page(
     params.status.as_deref(),
     params.system.as_deref(),
     params.job_name.as_deref(),
+    None,
   )
   .await
   .unwrap_or(0);

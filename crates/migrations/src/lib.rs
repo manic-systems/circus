@@ -65,6 +65,9 @@ const MIGRATIONS: &[Migration] = migrations![
   (36, "0036_project_runtime_mutation"),
   (37, "0037_drop_build_steps"),
   (38, "0038_user_external_identity"),
+  (39, "0039_build_kind"),
+  (40, "0040_effect_execution_state"),
+  (41, "0041_effect_completion_events"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.
@@ -328,6 +331,7 @@ pub const REQUIRED_TABLES: &[&str] = &[
   "builds",
   "cache_traffic",
   "channels",
+  "effect_completion_events",
   "evaluations",
   "failed_paths_cache",
   "jobset_inputs",

@@ -294,6 +294,154 @@ async fn can_upgrade_existing_database_from_previous_migration() {
   ]);
 }
 
+#[tokio::test]
+async fn build_kind_migration_backfills_and_constrains_existing_rows() {
+  let url = test_database_url();
+  let Some(()) = require_postgres(&url).await else {
+    return;
+  };
+
+  reset_database(&url).await;
+  run_migrations_up_to(&url, 30)
+    .await
+    .expect("migrate through version 30");
+  let client = connect_once(&url).await.expect("connect before upgrade");
+  client
+    .batch_execute(
+      "WITH project AS (
+         INSERT INTO projects (name, repository_url)
+         \
+       VALUES ('build-kind-upgrade', 'https://example.test/repo')
+         RETURNING id
+       ), jobset AS (
+         INSERT INTO jobsets (project_id, name, nix_expression)
+         SELECT id, 'default', 'packages' FROM project
+         RETURNING id
+       ), evaluation AS (
+         INSERT INTO evaluations (jobset_id, commit_hash, status)
+         SELECT id, '0123456789012345678901234567890123456789', 'completed'
+         FROM jobset
+         RETURNING id
+       )
+       INSERT INTO builds (evaluation_id, job_name, drv_path, status)
+       SELECT id, 'existing', '/nix/store/existing.drv', 'succeeded'
+       FROM evaluation;",
+    )
+    .await
+    .expect("insert pre-migration build");
+
+  run_migrations(&url)
+    .await
+    .expect("apply build kind migration");
+
+  let kind: String = client
+    .query_one("SELECT kind FROM builds WHERE job_name = 'existing'", &[])
+    .await
+    .expect("read backfilled kind")
+    .get(0);
+  assert_eq!(kind, "build");
+
+  client
+    .execute(
+      "INSERT INTO builds (
+         evaluation_id, job_name, drv_path, status, kind
+       )
+       SELECT evaluation_id, 'effect', '/nix/store/effect.drv', 'succeeded',
+              'effect'
+       FROM builds
+       WHERE job_name = 'existing'",
+      &[],
+    )
+    .await
+    .expect("insert effect");
+  let total_builds: i64 = client
+    .query_one("SELECT total_builds FROM build_stats", &[])
+    .await
+    .expect("read build stats")
+    .get(0);
+  assert_eq!(total_builds, 1);
+
+  let error = client
+    .execute(
+      "UPDATE builds SET kind = 'unknown' WHERE job_name = 'existing'",
+      &[],
+    )
+    .await
+    .expect_err("invalid build kind must fail");
+  assert_eq!(
+    error.code(),
+    Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION)
+  );
+}
+
+#[tokio::test]
+async fn effect_completion_migration_backfills_terminal_effect_snapshots() {
+  let url = test_database_url();
+  let Some(()) = require_postgres(&url).await else {
+    return;
+  };
+
+  reset_database(&url).await;
+  run_migrations_up_to(&url, 32)
+    .await
+    .expect("migrate through version 32");
+  let client = connect_once(&url).await.expect("connect before upgrade");
+  let build_id: String = client
+    .query_one(
+      "WITH project AS (
+         INSERT INTO projects (name, repository_url)
+         \
+       VALUES ('effect-event-upgrade', 'https://example.test/repo')
+         RETURNING id
+       ), jobset AS (
+         INSERT INTO jobsets (project_id, name, nix_expression)
+         SELECT id, 'default', 'packages' FROM project
+         RETURNING id
+       ), evaluation AS (
+         INSERT INTO evaluations (jobset_id, commit_hash, status)
+         SELECT id, '0123456789012345678901234567890123456789', 'completed'
+         FROM jobset
+         RETURNING id
+       )
+       INSERT INTO builds (
+         evaluation_id, job_name, drv_path, status, kind, completed_at
+       )
+       SELECT id, 'deploy', '/nix/store/effect-event.drv', 'succeeded',
+              'effect', NOW()
+       FROM evaluation
+       RETURNING id::text",
+      &[],
+    )
+    .await
+    .expect("insert terminal effect")
+    .get(0);
+  drop(client);
+
+  run_migrations(&url)
+    .await
+    .expect("apply effect completion migration");
+  let client = connect_once(&url).await.expect("connect after upgrade");
+  let row = client
+    .query_one(
+      "SELECT
+         retry_count,
+         revision,
+         build_snapshot ->> 'id',
+       build_snapshot ->> 'kind',
+       build_snapshot ->> 'status'
+       FROM effect_completion_events
+       WHERE build_id::text = $1",
+      &[&build_id],
+    )
+    .await
+    .expect("read backfilled completion event");
+  assert_eq!(row.get::<_, i32>(0), 0);
+  assert_eq!(row.get::<_, i64>(1), 1);
+  assert_eq!(row.get::<_, String>(2), build_id);
+  assert_eq!(row.get::<_, String>(3), "effect");
+  assert_eq!(row.get::<_, String>(4), "succeeded");
+}
+
 #[test]
 fn migration_set_is_non_empty_and_strictly_increasing() {
   let set = migration_set();

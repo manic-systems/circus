@@ -58,6 +58,7 @@ async fn list_builds(
     status,
     system,
     job_name,
+    None,
     limit,
     offset,
   )
@@ -68,6 +69,7 @@ async fn list_builds(
     status,
     system,
     job_name,
+    None,
   )
   .await?;
   Ok(Json(PaginatedResponse {
