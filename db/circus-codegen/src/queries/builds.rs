@@ -1930,6 +1930,71 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::ArraySql<Item = uuid::Uuid>>
         Box::pin(self.bind(client, &params.older_than_secs, &params.excluded_ids))
     }
 }
+pub struct ListPendingWithFailedDepsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn list_pending_with_failed_deps() -> ListPendingWithFailedDepsStmt {
+    ListPendingWithFailedDepsStmt(
+        "SELECT DISTINCT b.* FROM builds b JOIN build_dependencies bd ON bd.build_id = b.id JOIN builds dep ON dep.id = bd.dependency_build_id WHERE b.status = 'pending' AND dep.status NOT IN ('pending', 'running', 'succeeded')",
+        None,
+    )
+}
+impl ListPendingWithFailedDepsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 0> {
+        BuildRowQuery {
+            client,
+            params: [],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BuildRowBorrowed, tokio_postgres::Error> {
+                    Ok(BuildRowBorrowed {
+                        id: row.try_get(0)?,
+                        evaluation_id: row.try_get(1)?,
+                        job_name: row.try_get(2)?,
+                        drv_path: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        started_at: row.try_get(5)?,
+                        completed_at: row.try_get(6)?,
+                        log_path: row.try_get(7)?,
+                        build_output_path: row.try_get(8)?,
+                        error_message: row.try_get(9)?,
+                        priority: row.try_get(10)?,
+                        retry_count: row.try_get(11)?,
+                        max_retries: row.try_get(12)?,
+                        notification_pending_since: row.try_get(13)?,
+                        outputs: row.try_get(14)?,
+                        is_aggregate: row.try_get(15)?,
+                        constituents: row.try_get(16)?,
+                        builder_id: row.try_get(17)?,
+                        signed: row.try_get(18)?,
+                        system: row.try_get(19)?,
+                        keep: row.try_get(20)?,
+                        created_at: row.try_get(21)?,
+                        is_fod: row.try_get(22)?,
+                        fod_hash: row.try_get(23)?,
+                        meta_description: row.try_get(24)?,
+                        meta_license: row.try_get(25)?,
+                        meta_homepage: row.try_get(26)?,
+                        meta_maintainers: row.try_get(27)?,
+                        required_features: row.try_get(28)?,
+                        agent_machine_id: row.try_get(29)?,
+                        started_notified_at: row.try_get(30)?,
+                        effective_features: row.try_get(31)?,
+                    })
+                },
+            mapper: |it| BuildRow::from(it),
+        }
+    }
+}
 pub struct ListFilteredStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_filtered() -> ListFilteredStmt {
     ListFilteredStmt(
@@ -2229,11 +2294,77 @@ impl CancelCascadeDependentsStmt {
 pub struct RestartStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart() -> RestartStmt {
     RestartStmt(
-        "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL, retry_count = retry_count + 1 WHERE id = $1 AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure') RETURNING *",
+        "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL, retry_count = retry_count + 1 WHERE id = $1 AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure', 'dependency_failed') RETURNING *",
         None,
     )
 }
 impl RestartStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 1> {
+        BuildRowQuery {
+            client,
+            params: [id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BuildRowBorrowed, tokio_postgres::Error> {
+                    Ok(BuildRowBorrowed {
+                        id: row.try_get(0)?,
+                        evaluation_id: row.try_get(1)?,
+                        job_name: row.try_get(2)?,
+                        drv_path: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        started_at: row.try_get(5)?,
+                        completed_at: row.try_get(6)?,
+                        log_path: row.try_get(7)?,
+                        build_output_path: row.try_get(8)?,
+                        error_message: row.try_get(9)?,
+                        priority: row.try_get(10)?,
+                        retry_count: row.try_get(11)?,
+                        max_retries: row.try_get(12)?,
+                        notification_pending_since: row.try_get(13)?,
+                        outputs: row.try_get(14)?,
+                        is_aggregate: row.try_get(15)?,
+                        constituents: row.try_get(16)?,
+                        builder_id: row.try_get(17)?,
+                        signed: row.try_get(18)?,
+                        system: row.try_get(19)?,
+                        keep: row.try_get(20)?,
+                        created_at: row.try_get(21)?,
+                        is_fod: row.try_get(22)?,
+                        fod_hash: row.try_get(23)?,
+                        meta_description: row.try_get(24)?,
+                        meta_license: row.try_get(25)?,
+                        meta_homepage: row.try_get(26)?,
+                        meta_maintainers: row.try_get(27)?,
+                        required_features: row.try_get(28)?,
+                        agent_machine_id: row.try_get(29)?,
+                        started_notified_at: row.try_get(30)?,
+                        effective_features: row.try_get(31)?,
+                    })
+                },
+            mapper: |it| BuildRow::from(it),
+        }
+    }
+}
+pub struct ResetDependencyFailedDependentsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn reset_dependency_failed_dependents() -> ResetDependencyFailedDependentsStmt {
+    ResetDependencyFailedDependentsStmt(
+        "WITH RECURSIVE dependents AS ( SELECT bd.build_id FROM build_dependencies bd WHERE bd.dependency_build_id = $1 UNION SELECT bd.build_id FROM build_dependencies bd JOIN dependents d ON bd.dependency_build_id = d.build_id ) UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL WHERE id IN (SELECT build_id FROM dependents) AND status = 'dependency_failed' RETURNING *",
+        None,
+    )
+}
+impl ResetDependencyFailedDependentsStmt {
     pub async fn prepare<'a, C: GenericClient>(
         mut self,
         client: &'a C,

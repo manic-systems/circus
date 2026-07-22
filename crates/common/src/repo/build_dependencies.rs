@@ -188,6 +188,24 @@ pub async fn check_deps_for_builds(
   )
 }
 
+/// Dependencies that finished without succeeding, so the dependent build
+/// can never run.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn list_failed_dependencies(
+  pool: &PgPool,
+  build_id: Uuid,
+) -> Result<Vec<Build>> {
+  let client = pool.get().await?;
+  let rows = q::list_failed_dependencies()
+    .bind(&client, &build_id)
+    .all()
+    .await?;
+  rows.into_iter().map(Build::try_from).collect()
+}
+
 /// Check if all dependency builds for a given build are completed.
 ///
 /// # Errors

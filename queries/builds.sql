@@ -192,6 +192,14 @@ WHERE status = 'running'
   AND started_at < NOW() - make_interval(secs => :older_than_secs::bigint)
   AND NOT (id = ANY(:excluded_ids));
 
+--! list_pending_with_failed_deps : BuildRow
+SELECT DISTINCT b.*
+FROM builds b
+JOIN build_dependencies bd ON bd.build_id = b.id
+JOIN builds dep ON dep.id = bd.dependency_build_id
+WHERE b.status = 'pending'
+  AND dep.status NOT IN ('pending', 'running', 'succeeded');
+
 --! list_filtered (evaluation_id?, status?, system?, job_name?) : BuildRow
 SELECT * FROM builds
 WHERE (:evaluation_id::uuid IS NULL OR evaluation_id = :evaluation_id)
@@ -228,7 +236,24 @@ SET status = 'pending', started_at = NULL, completed_at = NULL,
     started_notified_at = NULL, effective_features = NULL,
     retry_count = retry_count + 1
 WHERE id = :id
-  AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure')
+  AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure',
+                 'dependency_failed')
+RETURNING *;
+
+--! reset_dependency_failed_dependents : BuildRow
+WITH RECURSIVE dependents AS (
+  SELECT bd.build_id FROM build_dependencies bd
+  WHERE bd.dependency_build_id = :id
+  UNION
+  SELECT bd.build_id FROM build_dependencies bd
+  JOIN dependents d ON bd.dependency_build_id = d.build_id
+)
+UPDATE builds
+SET status = 'pending', started_at = NULL, completed_at = NULL,
+    log_path = NULL, build_output_path = NULL, error_message = NULL,
+    started_notified_at = NULL, effective_features = NULL
+WHERE id IN (SELECT build_id FROM dependents)
+  AND status = 'dependency_failed'
 RETURNING *;
 
 --! set_effective_features

@@ -234,6 +234,22 @@ pub async fn list_pending(
   rows.into_iter().map(Build::try_from).collect()
 }
 
+/// Pending builds with a dependency that finished without succeeding.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn list_pending_with_failed_deps(
+  pool: &PgPool,
+) -> Result<Vec<Build>> {
+  let client = pool.get().await?;
+  let rows = q::list_pending_with_failed_deps()
+    .bind(&client)
+    .all()
+    .await?;
+  rows.into_iter().map(Build::try_from).collect()
+}
+
 /// Atomically claim a pending build by setting it to running. The advisory
 /// lock and the running twin check keep duplicate pending builds of one
 /// `drv_path` from both dispatching.
@@ -646,8 +662,10 @@ pub async fn cancel_cascade(pool: &PgPool, id: Uuid) -> Result<Vec<Build>> {
   Ok(cancelled)
 }
 
-/// Restart a build by resetting it to pending state.
-/// Only works for failed, succeeded, cancelled, or `cached_failure` builds.
+/// Restart a build by resetting it to pending state. This only works for
+/// failed, succeeded, cancelled, `cached_failure`, or `dependency_failed`
+/// builds. Transitive dependents that were marked `dependency_failed` because
+/// of this build are returned to pending as well.
 ///
 /// # Errors
 ///
@@ -667,6 +685,21 @@ pub async fn restart(pool: &PgPool, id: Uuid) -> Result<Build> {
         ))
       })?
   };
+
+  let revived = {
+    let client = pool.get().await?;
+    q::reset_dependency_failed_dependents()
+      .bind(&client, &id)
+      .all()
+      .await?
+  };
+  if !revived.is_empty() {
+    tracing::info!(
+      build_id = %id,
+      count = revived.len(),
+      "Returned dependency-failed dependents to pending"
+    );
+  }
 
   if let Err(e) =
     super::failed_paths_cache::invalidate(pool, &build.drv_path).await

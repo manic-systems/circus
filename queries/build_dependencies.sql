@@ -57,3 +57,15 @@ FROM
 WHERE
   bd.build_id =:build_id
   AND b.status != 'succeeded';
+
+--! list_failed_dependencies : BuildRow
+SELECT
+  b.*
+FROM
+  build_dependencies bd
+  JOIN builds b ON b.id = bd.dependency_build_id
+WHERE
+  bd.build_id =:build_id
+  AND b.status NOT IN ('pending', 'running', 'succeeded')
+ORDER BY
+  b.job_name;
