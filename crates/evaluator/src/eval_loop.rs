@@ -282,6 +282,39 @@ fn accepts_pending_evaluation(
     || trigger_kind == EvaluationTriggerKind::Interval
 }
 
+fn normalize_attested_branch(branch: &str) -> &str {
+  branch.strip_prefix("refs/heads/").unwrap_or(branch).trim()
+}
+
+fn evaluation_allows_declarative_sync(evaluation: &Evaluation) -> bool {
+  if evaluation.pr_number.is_some()
+    || evaluation.pr_action.is_some()
+    || !matches!(
+      evaluation.trigger_kind,
+      EvaluationTriggerKind::SourceChange | EvaluationTriggerKind::Interval
+    )
+  {
+    return false;
+  }
+
+  let Some(head) = evaluation
+    .pr_head_branch
+    .as_deref()
+    .map(normalize_attested_branch)
+  else {
+    return false;
+  };
+  let Some(default_branch) = evaluation
+    .pr_base_branch
+    .as_deref()
+    .map(normalize_attested_branch)
+  else {
+    return false;
+  };
+
+  !head.is_empty() && head == default_branch
+}
+
 fn warn_on_disk_pressure(msg: &str) {
   let lower = msg.to_lowercase();
   if lower.contains("no space left on device")
@@ -379,10 +412,13 @@ async fn evaluate_pending_eval(
     tracing::warn!(eval_id = %claimed.id, "Failed to set inputs hash: {e}");
   }
 
-  // PR authors must not rewrite jobsets.
-  if !claimed.is_pull_request() {
-    sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
-  }
+  sync_repo_declarative_config_for_evaluation(
+    pool,
+    &repo_path,
+    jobset.project_id,
+    &claimed,
+  )
+  .await;
 
   let evaluated = run_path_filtered_evaluation(
     pool,
@@ -559,15 +595,35 @@ async fn run_nix_and_record_builds(
         circus_common::systems::resolve_allowed_systems(pool, config).await,
         jobset.systems.as_deref(),
       );
-      if !create_builds_from_eval(
+      let builds_created = match create_builds_from_eval(
         pool,
         eval.id,
         &eval_result,
         crate::memory::MemoryLimit::from(config),
         allowed_systems.as_ref(),
       )
-      .await?
+      .await
       {
+        Ok(created) => created,
+        Err(error) => {
+          let msg =
+            format!("Failed to classify derivations or create builds: {error}");
+          tracing::error!(
+            jobset = %jobset.name,
+            eval_id = %eval.id,
+            "Evaluation failed: {msg}"
+          );
+          repo::evaluations::finish_running(
+            pool,
+            eval.id,
+            EvaluationStatus::Failed,
+            Some(&msg),
+          )
+          .await?;
+          return Ok(());
+        },
+      };
+      if !builds_created {
         tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
         return Ok(());
       }
@@ -696,7 +752,7 @@ async fn evaluate_matching_refs(
         crate::git::RefKind::Branch => Some(git_ref.name.clone()),
         crate::git::RefKind::Tag => None,
       },
-      pr_base_branch: None,
+      pr_base_branch: jobset.branch.clone(),
       pr_action:      match git_ref.kind {
         crate::git::RefKind::Branch => None,
         crate::git::RefKind::Tag => Some(format!("tag:{}", git_ref.name)),
@@ -897,8 +953,8 @@ async fn evaluate_single_ref(
       jobset_id:      jobset.id,
       commit_hash:    commit_hash.clone(),
       pr_number:      None,
-      pr_head_branch: None,
-      pr_base_branch: None,
+      pr_head_branch: jobset.branch.clone(),
+      pr_base_branch: jobset.branch.clone(),
       pr_action:      None,
     })
     .await?
@@ -912,7 +968,13 @@ async fn evaluate_single_ref(
     tracing::warn!(eval_id = %eval.id, "Failed to set evaluation inputs hash: {e}");
   }
 
-  sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
+  sync_repo_declarative_config_for_evaluation(
+    pool,
+    &repo_path,
+    jobset.project_id,
+    &eval,
+  )
+  .await;
   let evaluated = run_path_filtered_evaluation(
     pool,
     jobset,
@@ -1126,6 +1188,23 @@ async fn project_allows_repo_config(pool: &PgPool, project_id: Uuid) -> bool {
   }
 }
 
+async fn sync_repo_declarative_config_for_evaluation(
+  pool: &PgPool,
+  repo_path: &std::path::Path,
+  project_id: Uuid,
+  evaluation: &Evaluation,
+) {
+  if !evaluation_allows_declarative_sync(evaluation) {
+    tracing::info!(
+      evaluation_id = %evaluation.id,
+      trigger_kind = ?evaluation.trigger_kind,
+      pr_number = ?evaluation.pr_number,
+      "Skipping in-repository config from an unattested evaluation"
+    );
+    return;
+  }
+  sync_repo_declarative_config(pool, repo_path, project_id).await;
+}
 /// Clone each project that has no active jobsets and look for a `.circus.toml`.
 ///
 /// This handles the bootstrap case where a project is declared in the server
@@ -1189,10 +1268,38 @@ async fn discover_projects_without_jobsets(
 
 #[cfg(test)]
 mod tests {
-  use circus_common::models::{EvaluationTriggerKind, JobsetTriggerMode};
+  use chrono::Utc;
+  use circus_common::models::{
+    Evaluation,
+    EvaluationStatus,
+    EvaluationTriggerKind,
+    JobsetTriggerMode,
+  };
+  use uuid::Uuid;
 
-  use super::accepts_pending_evaluation;
+  use super::{accepts_pending_evaluation, evaluation_allows_declarative_sync};
   use crate::git::{DiscoveredRef, RefKind, retain_newest_tag};
+
+  fn evaluation(trigger_kind: EvaluationTriggerKind) -> Evaluation {
+    Evaluation {
+      id: Uuid::new_v4(),
+      jobset_id: Uuid::new_v4(),
+      commit_hash: "a".repeat(40),
+      evaluation_time: Utc::now(),
+      status: EvaluationStatus::Running,
+      error_message: None,
+      inputs_hash: None,
+      trigger_kind,
+      hidden: false,
+      pr_number: None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action: None,
+      source_scope: None,
+      source_base_commit: None,
+      superseded_by: None,
+    }
+  }
 
   #[test]
   fn interval_restarts_are_accepted_by_pending_queue() {
@@ -1234,5 +1341,37 @@ mod tests {
     assert_eq!(refs.len(), 2);
     assert!(refs.iter().any(|git_ref| git_ref.name == "main"));
     assert!(refs.iter().any(|git_ref| git_ref.name == "v2"));
+  }
+
+  #[test]
+  fn manual_and_pr_checkouts_cannot_mutate_declarative_ref_policy() {
+    let mut manual = evaluation(EvaluationTriggerKind::Manual);
+    manual.pr_head_branch = Some("main".into());
+    manual.pr_base_branch = Some("main".into());
+    assert!(!evaluation_allows_declarative_sync(&manual));
+
+    let mut pr = evaluation(EvaluationTriggerKind::SourceChange);
+    pr.pr_number = Some(42);
+    pr.pr_head_branch = Some("attacker-controlled".into());
+    pr.pr_base_branch = Some("main".into());
+    assert!(!evaluation_allows_declarative_sync(&pr));
+
+    let mut trusted_branch = evaluation(EvaluationTriggerKind::SourceChange);
+    trusted_branch.pr_head_branch = Some("refs/heads/main".into());
+    trusted_branch.pr_base_branch = Some("main".into());
+    assert!(evaluation_allows_declarative_sync(&trusted_branch));
+
+    let mut matched_branch = evaluation(EvaluationTriggerKind::SourceChange);
+    matched_branch.pr_head_branch = Some("release-2026".into());
+    matched_branch.pr_base_branch = Some("main".into());
+    assert!(!evaluation_allows_declarative_sync(&matched_branch));
+
+    let mut trusted_tag = evaluation(EvaluationTriggerKind::Interval);
+    trusted_tag.pr_action = Some("tag:v1.2.3".into());
+    assert!(!evaluation_allows_declarative_sync(&trusted_tag));
+
+    assert!(!evaluation_allows_declarative_sync(&evaluation(
+      EvaluationTriggerKind::SourceChange,
+    )));
   }
 }
