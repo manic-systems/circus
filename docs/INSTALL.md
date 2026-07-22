@@ -354,10 +354,11 @@ configuration or the Nix store.
 <!-- markdownlint-enable MD013 -->
 
 `evaluator.memory_limit_mb` is enforced per Nix subprocess, not as one shared
-budget for the evaluator service. It covers evix workers and the auxiliary
-`nix eval`/`nix derivation show` processes used for `nixosConfigurations`. Evix
-also uses the same value as its post-attribute worker recycle threshold. Plan
-for up to `memory_limit_mb * eval_workers * max_concurrent_evals`, plus the
+budget for the evaluator service. It covers evix workers and every auxiliary
+`nix`/`nix-store` process spawned while discovering and recording builds. Evix
+also uses the same value as its post-attribute worker recycle threshold. When
+the hard limit is unset, that threshold retains its historical 4096 MiB default.
+Plan for up to `memory_limit_mb * eval_workers * max_concurrent_evals`, plus the
 comparatively small Circus parent process. Lower `eval_workers` or
 `max_concurrent_evals` when the resulting aggregate is too high for the host.
 
@@ -990,11 +991,11 @@ Circus exposes a Prometheus-compatible metrics endpoint at `/prometheus`.
 
 ```yaml
 scrape_configs:
-  - job_name: "circus-ci"
-    static_configs:
-      - targets: ["ci.example.org:3000"]
-    metrics_path: "/prometheus"
-    scrape_interval: 30s
+    - job_name: "circus-ci"
+      static_configs:
+          - targets: ["ci.example.org:3000"]
+      metrics_path: "/prometheus"
+      scrape_interval: 30s
 ```
 
 The `/health` endpoint reports database and service status. Administrative
