@@ -4,7 +4,10 @@ use std::{
   cmp::Ordering,
   collections::HashSet,
   path::Path,
-  sync::Arc,
+  sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering as AtomicOrdering},
+  },
   time::{Duration, Instant},
 };
 
@@ -15,7 +18,14 @@ use BuilderSchedulingStrategy::{
 };
 use circus_common::{
   PgPool,
-  models::{Build, Evaluation, EvaluationTriggerKind, Jobset},
+  models::{
+    Build,
+    BuildKind,
+    BuildStatus,
+    EFFECT_OUTCOME_UNKNOWN_ERROR,
+    Evaluation,
+    EvaluationTriggerKind,
+  },
   repo,
 };
 use circus_config::BuilderSchedulingStrategy;
@@ -35,6 +45,7 @@ use crate::{
       AgentMeta,
       DispatchCommand,
       DispatchResult,
+      EffectContext,
       PresignedUpload,
       SlotGuard,
     },
@@ -43,9 +54,10 @@ use crate::{
 
 pub enum ExecutionReservation {
   Agent {
-    meta: Arc<AgentMeta>,
-    snap: Box<AgentSnapshot>,
-    slot: SlotGuard,
+    meta:           Arc<AgentMeta>,
+    snap:           Box<AgentSnapshot>,
+    slot:           SlotGuard,
+    effect_context: Option<EffectContext>,
   },
   Runner(OwnedSemaphorePermit),
 }
@@ -88,26 +100,90 @@ pub(crate) fn supports_required_features(
 }
 
 #[must_use]
-pub(crate) fn is_trusted_ref_evaluation(
+pub(crate) fn is_trusted_ref_evaluation(evaluation: &Evaluation) -> bool {
+  trusted_ref_context(evaluation).is_some()
+}
+
+pub(crate) const UNTRUSTED_EFFECT_ERROR: &str =
+  "Effect cancelled: evaluation is not associated with a trusted \
+   source-change or interval branch/tag";
+pub(crate) const UNIDENTIFIABLE_EFFECT_REPOSITORY_ERROR: &str =
+  "Effect cancelled: project repository URL does not identify an owner and \
+   repository";
+
+#[must_use]
+pub(crate) fn effect_ref_rejection(
+  kind: BuildKind,
   evaluation: &Evaluation,
-  jobset: &Jobset,
-) -> bool {
-  if jobset.branch.as_deref().is_none_or(str::is_empty) {
-    return false;
+) -> Option<(BuildStatus, &'static str)> {
+  (kind.is_effect() && !is_trusted_ref_evaluation(evaluation))
+    .then_some((BuildStatus::Cancelled, UNTRUSTED_EFFECT_ERROR))
+}
+
+#[must_use]
+pub(crate) fn effect_repository_rejection(
+  kind: BuildKind,
+  repository_url: &str,
+) -> Option<(BuildStatus, &'static str)> {
+  (kind.is_effect() && repository_coordinates(repository_url).is_none())
+    .then_some((
+      BuildStatus::Cancelled,
+      UNIDENTIFIABLE_EFFECT_REPOSITORY_ERROR,
+    ))
+}
+
+struct TrustedRefContext {
+  branch:            String,
+  tag:               String,
+  is_default_branch: bool,
+}
+
+fn trusted_ref_context(evaluation: &Evaluation) -> Option<TrustedRefContext> {
+  if evaluation.pr_number.is_some()
+    || !matches!(
+      evaluation.trigger_kind,
+      EvaluationTriggerKind::SourceChange | EvaluationTriggerKind::Interval
+    )
+  {
+    return None;
   }
-  if evaluation.is_pull_request() {
-    return false;
+
+  if let Some(tag) = evaluation
+    .pr_action
+    .as_deref()
+    .and_then(|action| action.strip_prefix("tag:"))
+    .filter(|tag| !tag.is_empty())
+  {
+    return Some(TrustedRefContext {
+      branch:            String::new(),
+      tag:               tag.to_owned(),
+      is_default_branch: false,
+    });
   }
-  matches!(
-    evaluation.trigger_kind,
-    EvaluationTriggerKind::SourceChange
-      | EvaluationTriggerKind::Manual
-      | EvaluationTriggerKind::Interval
-  )
+  if evaluation.pr_action.is_some() {
+    return None;
+  }
+
+  let branch = evaluation
+    .pr_head_branch
+    .as_deref()
+    .filter(|branch| !branch.is_empty())
+    .map(|branch| branch.strip_prefix("refs/heads/").unwrap_or(branch))?;
+  let attested_default_branch = evaluation
+    .pr_base_branch
+    .as_deref()
+    .map(|branch| branch.strip_prefix("refs/heads/").unwrap_or(branch));
+
+  Some(TrustedRefContext {
+    branch:            branch.to_owned(),
+    tag:               String::new(),
+    is_default_branch: attested_default_branch == Some(branch),
+  })
 }
 
 struct TrustedBuildContext {
   repository: Option<String>,
+  effect:     Option<EffectContext>,
 }
 
 async fn trusted_build_context(
@@ -126,6 +202,7 @@ async fn trusted_build_context(
       return None;
     },
   };
+  let ref_context = trusted_ref_context(&evaluation)?;
   let jobset = match repo::jobsets::get(pool, evaluation.jobset_id).await {
     Ok(jobset) => jobset,
     Err(e) => {
@@ -137,9 +214,6 @@ async fn trusted_build_context(
       return None;
     },
   };
-  if !is_trusted_ref_evaluation(&evaluation, &jobset) {
-    return None;
-  }
   let project = match repo::projects::get(pool, jobset.project_id).await {
     Ok(project) => project,
     Err(e) => {
@@ -151,8 +225,20 @@ async fn trusted_build_context(
       return None;
     },
   };
+  let repository = repository_coordinates(&project.repository_url);
   Some(TrustedBuildContext {
     repository: github_repository_slug(&project.repository_url),
+    effect:     repository.map(|repository| {
+      EffectContext {
+        project_id:        project.id.to_string(),
+        project_path:      repository.project_path,
+        owner:             repository.owner,
+        repo:              repository.repo,
+        branch:            ref_context.branch,
+        tag:               ref_context.tag,
+        is_default_branch: ref_context.is_default_branch,
+      }
+    }),
   })
 }
 
@@ -182,6 +268,10 @@ fn candidate_allowed_for_trusted_build(
     .is_some_and(|repo| trusted.repository.as_deref() == Some(repo))
 }
 
+const fn candidate_allowed_for_effect(agent: &AgentSnapshot) -> bool {
+  agent.effects && !agent.ephemeral
+}
+
 #[must_use]
 pub(crate) fn github_repository_slug(url: &str) -> Option<String> {
   let url = url.trim().trim_end_matches(".git");
@@ -204,6 +294,51 @@ fn owner_repo_from_path(path: &str) -> Option<String> {
     return None;
   }
   Some(format!("{owner}/{repo}"))
+}
+
+struct RepositoryCoordinates {
+  project_path: String,
+  owner:        String,
+  repo:         String,
+}
+
+fn repository_coordinates(raw: &str) -> Option<RepositoryCoordinates> {
+  let raw = raw.trim();
+  let (host, path) = if let Ok(url) = url::Url::parse(raw) {
+    (url.host_str()?.to_ascii_lowercase(), url.path().to_owned())
+  } else {
+    let (prefix, path) = raw.split_once(':')?;
+    (
+      prefix
+        .rsplit_once('@')
+        .map_or(prefix, |(_, host)| host)
+        .to_ascii_lowercase(),
+      path.to_owned(),
+    )
+  };
+  let path = path
+    .trim_start_matches('/')
+    .trim_end_matches('/')
+    .trim_end_matches(".git");
+  let parts = path
+    .split('/')
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>();
+  let owner = (*parts.first()?).to_owned();
+  let repo = (*parts.last()?).to_owned();
+  if parts.len() < 2 {
+    return None;
+  }
+  let site = match host.as_str() {
+    "github.com" => "github",
+    "gitlab.com" => "gitlab",
+    _ => host.as_str(),
+  };
+  Some(RepositoryCoordinates {
+    project_path: format!("{site}/{}", parts.join("/")),
+    owner,
+    repo,
+  })
 }
 
 /// Load-based ordering for the configured strategy, used as the tie-break once
@@ -246,6 +381,57 @@ pub struct AgentDispatch<'a> {
   pub fail_build_on_upload_error: bool,
 }
 
+pub enum AgentRunOutcome {
+  Completed(BuildResult),
+  VenueLost,
+  EffectQuarantined,
+}
+
+struct AbortOnDrop(Option<oneshot::Sender<()>>);
+
+impl AbortOnDrop {
+  const fn new(sender: oneshot::Sender<()>) -> Self {
+    Self(Some(sender))
+  }
+
+  fn disarm(&mut self) {
+    self.0.take();
+  }
+}
+
+/// Shared handoff marker between the worker task and the RPC connection task.
+#[derive(Clone, Default)]
+pub struct AgentHandoff(Arc<AtomicBool>);
+
+impl AgentHandoff {
+  fn mark_handed_off(&self) {
+    self.0.store(true, AtomicOrdering::Release);
+  }
+
+  #[must_use]
+  pub fn is_handed_off(&self) -> bool {
+    self.0.load(AtomicOrdering::Acquire)
+  }
+}
+
+impl Drop for AbortOnDrop {
+  fn drop(&mut self) {
+    if let Some(sender) = self.0.take() {
+      let _ = sender.send(());
+    }
+  }
+}
+
+#[must_use]
+pub(crate) const fn quarantine_on_agent_disconnect(kind: BuildKind) -> bool {
+  kind.is_effect()
+}
+
+#[must_use]
+pub(crate) const fn non_agent_execution_allowed(kind: BuildKind) -> bool {
+  !kind.is_effect()
+}
+
 /// Reserve capacity before the build is claimed as running. [`None`] means
 /// there is no capable venue.
 ///
@@ -259,14 +445,25 @@ pub async fn reserve_venue(
   system: Option<&str>,
 ) -> Option<ExecutionReservation> {
   if let Some(system) = system
-    && let Some((meta, snap, slot)) =
+    && let Some((meta, snap, slot, effect_context)) =
       select_and_reserve_agent(ctx, build, system).await
   {
     return Some(ExecutionReservation::Agent {
       meta,
       snap: Box::new(snap),
       slot,
+      effect_context,
     });
+  }
+
+  // Effects require opted-in agents because runner and SSH builders lack
+  // secrets and sandboxing.
+  if !non_agent_execution_allowed(build.kind) {
+    tracing::debug!(
+      build_id = %build.id,
+      "no effect-capable agent; leaving effect pending"
+    );
+    return None;
   }
 
   let features = build.scheduling_features();
@@ -294,7 +491,12 @@ async fn select_and_reserve_agent(
   ctx: &BuildContext,
   build: &Build,
   system: &str,
-) -> Option<(Arc<AgentMeta>, AgentSnapshot, SlotGuard)> {
+) -> Option<(
+  Arc<AgentMeta>,
+  AgentSnapshot,
+  SlotGuard,
+  Option<EffectContext>,
+)> {
   let mut candidates = ctx.agent_pool.candidates_for(system);
   if candidates.is_empty() {
     return None;
@@ -319,15 +521,32 @@ async fn select_and_reserve_agent(
 
   candidates
     .retain(|(_, snap)| snap.supports_features(build.scheduling_features()));
+  if build.kind.is_effect() {
+    candidates.retain(|(_, snap)| candidate_allowed_for_effect(snap));
+  }
   if candidates.is_empty() {
     return None;
   }
 
-  if candidates
-    .iter()
-    .any(|(_, snap)| snap.requires_trusted_ref())
-  {
+  let needs_trusted_context = build.kind.is_effect()
+    || candidates
+      .iter()
+      .any(|(_, snap)| snap.requires_trusted_ref());
+  let trusted = if needs_trusted_context {
     let trusted = trusted_build_context(&ctx.pool, build).await;
+    if build.kind.is_effect()
+      && trusted
+        .as_ref()
+        .and_then(|context| context.effect.as_ref())
+        .is_none()
+    {
+      tracing::warn!(
+        build_id = %build.id,
+        evaluation_id = %build.evaluation_id,
+        "refusing effect without a trusted, fully identified ref context"
+      );
+      return None;
+    }
     candidates.retain(|(_, snap)| {
       candidate_allowed_for_trusted_build(snap, trusted.as_ref())
     });
@@ -338,7 +557,10 @@ async fn select_and_reserve_agent(
       );
       return None;
     }
-  }
+    trusted
+  } else {
+    None
+  };
 
   let mut eligible = Vec::with_capacity(candidates.len());
   for candidate in candidates {
@@ -395,33 +617,42 @@ async fn select_and_reserve_agent(
       .then_with(|| a.1.machine_id.cmp(&b.1.machine_id))
   });
 
+  let effect_context = trusted.and_then(|context| context.effect);
   eligible.into_iter().find_map(|(meta, snap)| {
-    meta.try_acquire_slot().map(|slot| (meta, snap, slot))
+    meta
+      .try_acquire_slot()
+      .map(|slot| (meta, snap, slot, effect_context.clone()))
   })
 }
 
-/// Return [`None`] when the agent disappears before reporting a result.
 pub async fn run_on_agent(
   meta: &Arc<AgentMeta>,
   snap: &AgentSnapshot,
   slot: SlotGuard,
+  effect_context: Option<EffectContext>,
   pool: &PgPool,
   build: &Build,
   drv_path: &str,
   live_log_path: &Path,
   opts: &AgentDispatch<'_>,
-) -> Option<BuildResult> {
+  handoff: &AgentHandoff,
+) -> AgentRunOutcome {
   let (tx, rx) = oneshot::channel();
-  let presigned_upload = opts.cache_upload_enabled_s3.then(|| {
-    PresignedUpload {
-      compression:                opts.cache_upload_compression.to_owned(),
-      fail_build_on_upload_error: opts.fail_build_on_upload_error,
-    }
-  });
+  let (abort_tx, abort_rx) = oneshot::channel();
+  let presigned_upload =
+    (opts.cache_upload_enabled_s3 && effect_context.is_none()).then(|| {
+      PresignedUpload {
+        compression:                opts.cache_upload_compression.to_owned(),
+        fail_build_on_upload_error: opts.fail_build_on_upload_error,
+      }
+    });
+  let cache_upload_handled = presigned_upload.is_some();
 
   let cmd = DispatchCommand {
     build_id: build.id,
+    attempt: build.retry_count,
     drv_path: drv_path.to_owned(),
+    effect: effect_context,
     max_log_size: 100 * 1024 * 1024,
     max_silent_time: opts
       .max_silent_time
@@ -432,20 +663,21 @@ pub async fn run_on_agent(
     extra_args: opts.extra_nix_args.to_vec(),
     log_path: live_log_path.to_path_buf(),
     presigned_upload,
+    abort: abort_rx,
     reservation: slot,
     completion: tx,
   };
+  meta.active_builds.write().insert(build.id);
   if meta.tx.send(cmd).is_err() {
+    meta.active_builds.write().remove(&build.id);
     tracing::warn!(name = %snap.name, "agent channel closed, falling back");
-    return None;
+    return AgentRunOutcome::VenueLost;
   }
+  handoff.mark_handed_off();
+  let mut abort_on_drop = AbortOnDrop::new(abort_tx);
 
   if let Err(e) = repo::builder_sessions::touch(pool, meta.machine_id).await {
     tracing::debug!(name = %snap.name, "builder_sessions touch failed: {e}");
-  }
-  if let Err(e) = repo::builds::set_agent(pool, build.id, meta.machine_id).await
-  {
-    tracing::warn!(build_id = %build.id, name = %snap.name, "Failed to set agent_machine_id: {e}");
   }
   tracing::info!(build_id = %build.id, agent = %snap.name, "dispatched to agent");
 
@@ -456,16 +688,26 @@ pub async fn run_on_agent(
       stdout: String::new(),
       stderr,
       output_paths,
-      cache_upload_handled: opts.cache_upload_enabled_s3,
+      cache_upload_handled,
     }
   };
 
-  match rx.await {
+  let outcome = rx.await;
+  abort_on_drop.disarm();
+  match outcome {
     Ok(DispatchResult::Succeeded { error_message }) => {
+      if build.kind.is_effect() {
+        return AgentRunOutcome::Completed(result(
+          true,
+          0,
+          error_message.unwrap_or_default(),
+          Vec::new(),
+        ));
+      }
       let outputs = match try_read_drv_outputs(drv_path).await {
         Ok(outputs) if !outputs.is_empty() => outputs,
         Ok(_) => {
-          return Some(result(
+          return AgentRunOutcome::Completed(result(
             false,
             1,
             format!("{drv_path} has no queryable outputs on the runner"),
@@ -473,7 +715,7 @@ pub async fn run_on_agent(
           ));
         },
         Err(e) => {
-          return Some(result(
+          return AgentRunOutcome::Completed(result(
             false,
             1,
             format!("could not read the outputs of {drv_path}: {e}"),
@@ -485,7 +727,7 @@ pub async fn run_on_agent(
         match invalid_store_paths(&outputs).await {
           Ok(missing) if missing.is_empty() => {},
           Ok(missing) => {
-            return Some(result(
+            return AgentRunOutcome::Completed(result(
               false,
               1,
               format!(
@@ -498,7 +740,7 @@ pub async fn run_on_agent(
             ));
           },
           Err(e) => {
-            return Some(result(
+            return AgentRunOutcome::Completed(result(
               false,
               1,
               format!("could not verify the outputs on the runner: {e}"),
@@ -507,32 +749,75 @@ pub async fn run_on_agent(
           },
         }
       }
-      Some(result(true, 0, error_message.unwrap_or_default(), outputs))
+      AgentRunOutcome::Completed(result(
+        true,
+        0,
+        error_message.unwrap_or_default(),
+        outputs,
+      ))
     },
     Ok(DispatchResult::Failed(error_message)) => {
-      Some(result(false, 1, error_message, Vec::new()))
+      AgentRunOutcome::Completed(result(false, 1, error_message, Vec::new()))
     },
     Ok(DispatchResult::TimedOut) => {
-      Some(result(false, 124, "build timed out".into(), Vec::new()))
+      AgentRunOutcome::Completed(result(
+        false,
+        124,
+        "build timed out".into(),
+        Vec::new(),
+      ))
     },
     Ok(DispatchResult::Aborted) => {
-      Some(result(false, 130, "build aborted".into(), Vec::new()))
+      AgentRunOutcome::Completed(result(
+        false,
+        130,
+        "build aborted".into(),
+        Vec::new(),
+      ))
     },
     Ok(DispatchResult::OomKilled(error_message)) => {
-      Some(result(false, -9, error_message, Vec::new()))
+      AgentRunOutcome::Completed(result(false, -9, error_message, Vec::new()))
     },
-    Ok(DispatchResult::Disconnected) | Err(_) => {
-      tracing::warn!(name = %snap.name, "agent disconnected mid-build; falling back");
-      None
-    },
-    Ok(DispatchResult::Refused(reason)) => {
+    Ok(DispatchResult::Refused(reason))
+      if !quarantine_on_agent_disconnect(build.kind) =>
+    {
       tracing::warn!(
         name = %snap.name,
         reason,
         "agent refused the assignment; retrying after {AGENT_REFUSAL_BACKOFF:?}"
       );
       sleep(AGENT_REFUSAL_BACKOFF).await;
-      None
+      AgentRunOutcome::VenueLost
+    },
+    Ok(DispatchResult::Disconnected | DispatchResult::Refused(_)) | Err(_) => {
+      if quarantine_on_agent_disconnect(build.kind) {
+        if let Err(e) = repo::builds::quarantine_effect(
+          pool,
+          build.id,
+          snap.machine_id,
+          build.retry_count,
+          EFFECT_OUTCOME_UNKNOWN_ERROR,
+        )
+        .await
+        {
+          tracing::warn!(
+            build_id = %build.id,
+            "failed to record disconnected effect quarantine: {e}"
+          );
+        }
+        tracing::warn!(
+          build_id = %build.id,
+          name = %snap.name,
+          "agent disconnected during effect; quarantining running row"
+        );
+        AgentRunOutcome::EffectQuarantined
+      } else {
+        tracing::warn!(
+          name = %snap.name,
+          "agent disconnected mid-build; falling back"
+        );
+        AgentRunOutcome::VenueLost
+      }
     },
   }
 }
@@ -622,18 +907,29 @@ mod tests {
   use chrono::Utc;
   use circus_common::models::{
     AuthKind,
+    BuildKind,
+    BuildStatus,
     EvaluationStatus,
-    JobsetState,
-    JobsetTriggerMode,
   };
   use uuid::Uuid;
 
   use super::{
+    AbortOnDrop,
+    AgentHandoff,
     AgentSnapshot,
+    UNIDENTIFIABLE_EFFECT_REPOSITORY_ERROR,
+    UNTRUSTED_EFFECT_ERROR,
+    candidate_allowed_for_effect,
     candidate_allowed_for_trusted_build,
+    effect_ref_rejection,
+    effect_repository_rejection,
     github_repository_slug,
     is_trusted_ref_evaluation,
+    non_agent_execution_allowed,
+    quarantine_on_agent_disconnect,
+    repository_coordinates,
     supports_required_features,
+    trusted_ref_context,
   };
   use crate::rpc::pool::HeartbeatSnapshot;
 
@@ -643,32 +939,6 @@ mod tests {
 
   fn demand(values: &[&str]) -> HashSet<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
-  }
-
-  fn jobset(branch: Option<&str>) -> circus_common::models::Jobset {
-    let now = Utc::now();
-    circus_common::models::Jobset {
-      id:                Uuid::new_v4(),
-      project_id:        Uuid::new_v4(),
-      name:              "packages".into(),
-      nix_expression:    "packages".into(),
-      enabled:           true,
-      flake_mode:        true,
-      check_interval:    60,
-      trigger_mode:      JobsetTriggerMode::SourceChange,
-      branch:            branch.map(str::to_owned),
-      branch_pattern:    None,
-      tag_pattern:       None,
-      scheduling_shares: 100,
-      created_at:        now,
-      updated_at:        now,
-      state:             JobsetState::Enabled,
-      last_checked_at:   None,
-      keep_nr:           3,
-      systems:           None,
-      only_build_latest: false,
-      path_filters:      Vec::new(),
-    }
   }
 
   fn evaluation(
@@ -695,6 +965,17 @@ mod tests {
     }
   }
 
+  fn attested_evaluation(
+    trigger_kind: circus_common::models::EvaluationTriggerKind,
+    branch: Option<&str>,
+    default_branch: Option<&str>,
+  ) -> circus_common::models::Evaluation {
+    let mut evaluation = evaluation(trigger_kind, None);
+    evaluation.pr_head_branch = branch.map(str::to_owned);
+    evaluation.pr_base_branch = default_branch.map(str::to_owned);
+    evaluation
+  }
+
   fn agent_snapshot(
     ephemeral: bool,
     auth_kind: circus_common::models::AuthKind,
@@ -711,6 +992,7 @@ mod tests {
       max_jobs: 1,
       current_jobs: 0,
       ephemeral,
+      effects: false,
       auth_kind,
       oidc_repository: oidc_repository.map(str::to_owned),
       oidc_subject: None,
@@ -791,26 +1073,125 @@ mod tests {
   }
 
   #[test]
-  fn trusted_ref_requires_concrete_jobset_branch_and_not_pr() {
-    use circus_common::models::EvaluationTriggerKind::SourceChange;
-    assert!(is_trusted_ref_evaluation(
-      &evaluation(SourceChange, None),
-      &jobset(Some("main"))
-    ));
-    assert!(!is_trusted_ref_evaluation(
-      &evaluation(SourceChange, None),
-      &jobset(None)
-    ));
-    assert!(!is_trusted_ref_evaluation(
-      &evaluation(SourceChange, Some("feature")),
-      &jobset(Some("main"))
-    ));
+  fn trusted_ref_uses_immutable_evaluation_provenance() {
+    use circus_common::models::EvaluationTriggerKind::{
+      Interval,
+      Manual,
+      SourceChange,
+    };
+    let fixed_evaluation =
+      attested_evaluation(SourceChange, Some("main"), Some("main"));
+    assert!(is_trusted_ref_evaluation(&fixed_evaluation));
+    assert!(is_trusted_ref_evaluation(&attested_evaluation(
+      Interval,
+      Some("main"),
+      Some("main"),
+    )));
+    assert!(!is_trusted_ref_evaluation(&attested_evaluation(
+      Manual,
+      Some("main"),
+      Some("main"),
+    )));
+    let fixed = trusted_ref_context(&fixed_evaluation)
+      .expect("attested polling branch is trusted");
+    assert_eq!(fixed.branch, "main");
+    assert!(fixed.is_default_branch);
+    assert!(!is_trusted_ref_evaluation(&evaluation(SourceChange, None,)));
+    assert!(!is_trusted_ref_evaluation(&evaluation(
+      SourceChange,
+      Some("feature"),
+    )));
+
+    let matched_evaluation =
+      attested_evaluation(SourceChange, Some("release/1.0"), None);
+    let matched = trusted_ref_context(&matched_evaluation)
+      .expect("matched branch is trusted");
+    assert_eq!(matched.branch, "release/1.0");
+    assert!(matched.tag.is_empty());
+    assert!(!matched.is_default_branch);
+
+    let mut tag_evaluation = evaluation(SourceChange, None);
+    tag_evaluation.pr_action = Some("tag:v1.0".into());
+    let tag =
+      trusted_ref_context(&tag_evaluation).expect("attested tag is trusted");
+    assert!(tag.branch.is_empty());
+    assert_eq!(tag.tag, "v1.0");
+    assert!(!tag.is_default_branch);
+    tag_evaluation.pr_action = Some("not-a-ref-attestation".into());
+    assert!(trusted_ref_context(&tag_evaluation).is_none());
+  }
+
+  #[test]
+  fn untrusted_effects_cancel_while_trusted_effects_and_builds_continue() {
+    use circus_common::models::EvaluationTriggerKind::{Manual, SourceChange};
+
+    let pr = evaluation(SourceChange, Some("feature"));
+    assert_eq!(
+      effect_ref_rejection(BuildKind::Effect, &pr),
+      Some((BuildStatus::Cancelled, UNTRUSTED_EFFECT_ERROR))
+    );
+    assert_eq!(
+      effect_ref_rejection(
+        BuildKind::Effect,
+        &attested_evaluation(SourceChange, Some("main"), Some("main")),
+      ),
+      None
+    );
+    assert_eq!(effect_ref_rejection(BuildKind::Build, &pr), None);
+    assert_eq!(
+      effect_ref_rejection(BuildKind::Effect, &evaluation(Manual, None)),
+      Some((BuildStatus::Cancelled, UNTRUSTED_EFFECT_ERROR))
+    );
+  }
+
+  #[test]
+  fn effects_require_a_persistent_opted_in_agent() {
+    let mut persistent = agent_snapshot(false, AuthKind::Token, None);
+    persistent.effects = true;
+    let mut ephemeral = agent_snapshot(true, AuthKind::Token, None);
+    ephemeral.effects = true;
+    let not_opted_in = agent_snapshot(false, AuthKind::Token, None);
+
+    assert!(candidate_allowed_for_effect(&persistent));
+    assert!(!candidate_allowed_for_effect(&ephemeral));
+    assert!(!candidate_allowed_for_effect(&not_opted_in));
+  }
+
+  #[test]
+  fn effects_never_fall_back_to_local_or_ssh_execution() {
+    assert!(non_agent_execution_allowed(BuildKind::Build));
+    assert!(!non_agent_execution_allowed(BuildKind::Effect));
+  }
+
+  #[test]
+  fn only_effect_disconnects_quarantine_the_running_row() {
+    assert!(quarantine_on_agent_disconnect(BuildKind::Effect));
+    assert!(!quarantine_on_agent_disconnect(BuildKind::Build));
+  }
+
+  #[tokio::test]
+  async fn dropping_an_inflight_agent_effect_requests_remote_abort() {
+    let (abort_tx, abort_rx) = tokio::sync::oneshot::channel();
+    let guard = AbortOnDrop::new(abort_tx);
+    drop(guard);
+    assert_eq!(abort_rx.await, Ok(()));
+  }
+
+  #[test]
+  fn agent_handoff_marker_is_monotonic() {
+    let handoff = AgentHandoff::default();
+    let observer = handoff.clone();
+    assert!(!handoff.is_handed_off());
+    handoff.mark_handed_off();
+    assert!(handoff.is_handed_off());
+    assert!(observer.is_handed_off());
   }
 
   #[test]
   fn oidc_agent_must_match_project_repository() {
     let trusted = super::TrustedBuildContext {
       repository: Some("owner/repo".into()),
+      effect:     None,
     };
     let matching = agent_snapshot(true, AuthKind::Oidc, Some("owner/repo"));
     let other_repo = agent_snapshot(true, AuthKind::Oidc, Some("owner/other"));
@@ -844,6 +1225,34 @@ mod tests {
     );
     assert_eq!(
       github_repository_slug("https://example.com/owner/repo"),
+      None
+    );
+  }
+
+  #[test]
+  fn repository_coordinates_build_hercules_project_paths() {
+    let github = repository_coordinates("https://github.com/owner/repo.git")
+      .expect("valid GitHub repository URL");
+    assert_eq!(github.project_path, "github/owner/repo");
+    assert_eq!(github.owner, "owner");
+    assert_eq!(github.repo, "repo");
+
+    let gitlab =
+      repository_coordinates("git@gitlab.com:group/subgroup/repo.git")
+        .expect("valid GitLab repository URL");
+    assert_eq!(gitlab.project_path, "gitlab/group/subgroup/repo");
+    assert_eq!(gitlab.owner, "group");
+    assert_eq!(gitlab.repo, "repo");
+
+    assert_eq!(
+      effect_repository_rejection(BuildKind::Effect, "/srv/repos/infra"),
+      Some((
+        BuildStatus::Cancelled,
+        UNIDENTIFIABLE_EFFECT_REPOSITORY_ERROR,
+      ))
+    );
+    assert_eq!(
+      effect_repository_rejection(BuildKind::Build, "/srv/repos/infra"),
       None
     );
   }

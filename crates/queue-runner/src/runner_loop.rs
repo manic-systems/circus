@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use circus_common::{
   PgPool,
   error::Result as CiResult,
-  models::{Build, BuildStatus, JobsetState},
+  models::{Build, BuildKind, BuildStatus, JobsetState},
   repo,
 };
 use circus_config::{HotConfig, NotificationsConfig};
@@ -14,6 +14,7 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+  dispatch::{effect_ref_rejection, effect_repository_rejection},
   helpers::{get_project_for_build, is_interval_rebuild},
   worker::{ActiveBuilds, WorkerPool},
 };
@@ -34,6 +35,35 @@ async fn reset_orphaned_builds(pool: &PgPool, active_builds: &ActiveBuilds) {
     Ok(_) => {},
     Err(e) => {
       tracing::error!("Failed to reset orphaned builds: {e}");
+    },
+  }
+}
+
+/// Quarantine Effect assignments orphaned by an earlier runner process.
+async fn quarantine_preexisting_effects(pool: &PgPool) {
+  match repo::builds::release_orphaned_terminal_effects(pool).await {
+    Ok(count) if count > 0 => {
+      tracing::warn!(
+        count,
+        "Released terminal Effect worker barriers orphaned by a runner restart"
+      );
+    },
+    Ok(_) => {},
+    Err(e) => {
+      tracing::error!("Failed to release terminal Effect barriers: {e}");
+    },
+  }
+
+  match repo::builds::quarantine_orphaned_effects(pool, &[]).await {
+    Ok(count) if count > 0 => {
+      tracing::warn!(
+        count,
+        "Quarantined Effect assignments orphaned by a runner restart"
+      );
+    },
+    Ok(_) => {},
+    Err(e) => {
+      tracing::error!("Failed to quarantine preexisting Effects: {e}");
     },
   }
 }
@@ -81,6 +111,26 @@ async fn query_drv_output(drv_path: &str) -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
+const fn use_aggregate_shortcut(kind: BuildKind, is_aggregate: bool) -> bool {
+  is_aggregate && !kind.is_effect()
+}
+
+const fn use_fod_shortcut(
+  kind: BuildKind,
+  is_fod: bool,
+  interval_rebuild: bool,
+) -> bool {
+  is_fod && !interval_rebuild && !kind.is_effect()
+}
+
+fn effect_attempt_is_still_agent_active(
+  kind: BuildKind,
+  build_id: Uuid,
+  active_build_ids: &[Uuid],
+) -> bool {
+  kind.is_effect() && active_build_ids.contains(&build_id)
+}
+
 async fn mark_build_done(
   pool: &PgPool,
   build_id: Uuid,
@@ -89,10 +139,7 @@ async fn mark_build_done(
   output_path: Option<&str>,
   error_msg: Option<&str>,
 ) -> CiResult<()> {
-  if let Err(e) = repo::builds::start(pool, build_id).await {
-    tracing::warn!(build_id = %build_id, "Failed to start build before completion: {e}");
-  }
-  repo::builds::complete(
+  repo::builds::complete_pending(
     pool,
     build_id,
     status,
@@ -155,8 +202,9 @@ async fn mark_dependency_failed(
     },
   };
 
-  if let Some((project, commit_hash)) =
-    get_project_for_build(pool, &updated_build).await
+  if !build.kind.is_effect()
+    && let Some((project, commit_hash)) =
+      get_project_for_build(pool, &updated_build).await
   {
     circus_notification::dispatch_build_finished(
       Some(pool),
@@ -167,6 +215,95 @@ async fn mark_dependency_failed(
       notification_secret_key,
     )
     .await;
+  }
+}
+
+async fn reject_untrusted_effect(
+  pool: &PgPool,
+  build: &Build,
+  status: BuildStatus,
+  error_message: &str,
+) {
+  tracing::warn!(
+    build_id = %build.id,
+    evaluation_id = %build.evaluation_id,
+    "{error_message}"
+  );
+  if let Err(e) =
+    mark_build_done(pool, build.id, status, None, None, Some(error_message))
+      .await
+  {
+    tracing::warn!(
+      build_id = %build.id,
+      "Failed to cancel untrusted effect: {e}"
+    );
+  }
+}
+
+/// Deliver terminal Effect notifications from the database-backed outbox.
+async fn sweep_effect_completion_notifications(
+  pool: &PgPool,
+  notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
+) {
+  let events =
+    match repo::effect_completion_events::list_pending(pool, 64).await {
+      Ok(events) => events,
+      Err(e) => {
+        tracing::error!("Failed to list Effect completion events: {e}");
+        return;
+      },
+    };
+
+  for event in events {
+    let build = &event.build;
+    let Some((project, commit_hash)) = get_project_for_build(pool, build).await
+    else {
+      tracing::warn!(
+        build_id = %build.id,
+        attempt = event.attempt,
+        "Could not resolve project for durable Effect completion notification"
+      );
+      continue;
+    };
+
+    circus_notification::dispatch_build_finished(
+      Some(pool),
+      build,
+      &project,
+      &commit_hash,
+      notifications_config,
+      notification_secret_key,
+    )
+    .await;
+
+    match repo::effect_completion_events::ack(
+      pool,
+      build.id,
+      event.attempt,
+      event.revision,
+    )
+    .await
+    {
+      Ok(true) => {},
+      Ok(false) => {
+        tracing::debug!(
+          build_id = %build.id,
+          attempt = event.attempt,
+          revision = event.revision,
+          "Effect completion event changed during delivery; leaving it for \
+           reconciliation"
+        );
+      },
+      Err(e) => {
+        tracing::error!(
+          build_id = %build.id,
+          attempt = event.attempt,
+          revision = event.revision,
+          "Failed to acknowledge Effect completion event: {e}"
+        );
+      },
+    }
   }
 }
 
@@ -241,9 +378,15 @@ async fn publish_succeeded_output_closure(
       None
     },
   };
-  worker_pool
+  if let Err(error) = worker_pool
     .persist_closure_narinfos(build_id, output_paths, project_id)
-    .await;
+    .await
+  {
+    tracing::warn!(
+      %build_id,
+      "failed to publish reused output closure narinfos: {error}"
+    );
+  }
 }
 
 /// Collects the build's output paths from the first source that has any.
@@ -342,6 +485,7 @@ pub async fn run(
   let mut last_orphan_reset = tokio::time::Instant::now();
   let orphan_reset_interval = Duration::from_mins(1);
   let mut closure_publications: JoinSet<()> = JoinSet::new();
+  quarantine_preexisting_effects(&pool).await;
   reset_orphaned_builds(&pool, worker_pool.active_builds()).await;
   prune_stale_ephemeral_sessions(&pool).await;
 
@@ -369,6 +513,13 @@ pub async fn run(
         hot.psi_threshold,
       )
     };
+
+    sweep_effect_completion_notifications(
+      &pool,
+      &notifications_config,
+      notification_secret_key.as_deref(),
+    )
+    .await;
 
     sweep_dependency_failed(
       &pool,
@@ -403,7 +554,7 @@ pub async fn run(
           let interval_rebuild = is_interval_rebuild(&pool, &build).await;
 
           // Aggregate builds: check if all constituents are done
-          if build.is_aggregate {
+          if use_aggregate_shortcut(build.kind, build.is_aggregate) {
             match repo::build_dependencies::all_deps_completed(&pool, build.id)
               .await
             {
@@ -466,7 +617,7 @@ pub async fn run(
           // Derivation deduplication: reuse result if same drv was already
           // built. Interval rebuilds explicitly bypass this so the queued run
           // reaches a builder instead of becoming an immediate cached success.
-          if !interval_rebuild {
+          if !interval_rebuild && !build.kind.is_effect() {
             match repo::builds::get_completed_by_drv_path(
               &pool,
               &build.drv_path,
@@ -510,18 +661,19 @@ pub async fn run(
 
           // FOD store check: if the output already exists in the Nix store,
           // mark as succeeded without running the full build.
-          let fod_output = if build.is_fod && !interval_rebuild {
-            if let Some(cached) = fod_output_cache.get(&build.drv_path) {
-              cached.clone()
+          let fod_output =
+            if use_fod_shortcut(build.kind, build.is_fod, interval_rebuild) {
+              if let Some(cached) = fod_output_cache.get(&build.drv_path) {
+                cached.clone()
+              } else {
+                let v = query_drv_output(&build.drv_path).await;
+                fod_output_cache.insert(build.drv_path.clone(), v.clone());
+                v
+              }
             } else {
-              let v = query_drv_output(&build.drv_path).await;
-              fod_output_cache.insert(build.drv_path.clone(), v.clone());
-              v
-            }
-          } else {
-            None
-          };
-          if build.is_fod
+              None
+            };
+          if use_fod_shortcut(build.kind, build.is_fod, interval_rebuild)
             && let Some(output_path) = fod_output
           {
             let valid = tokio::process::Command::new("nix-store")
@@ -563,6 +715,7 @@ pub async fn run(
 
           // Failed paths cache: skip known-failing derivations
           if !interval_rebuild
+            && !build.kind.is_effect()
             && failed_paths_cache
             && matches!(
               repo::failed_paths_cache::is_cached_failure(
@@ -613,6 +766,60 @@ pub async fn run(
             },
           }
 
+          let eval =
+            match repo::evaluations::get(&pool, build.evaluation_id).await {
+              Ok(eval) => eval,
+              Err(e) => {
+                tracing::error!(
+                    build_id = %build.id,
+                    evaluation_id = %build.evaluation_id,
+                    "Failed to get evaluation for scheduling: {e}"
+                );
+                continue;
+              },
+            };
+
+          let jobset = match repo::jobsets::get(&pool, eval.jobset_id).await {
+            Ok(jobset) => jobset,
+            Err(e) => {
+              tracing::error!(
+                  build_id = %build.id,
+                  jobset_id = %eval.jobset_id,
+                  "Failed to get jobset for scheduling: {e}"
+              );
+              continue;
+            },
+          };
+
+          if let Some((status, error_message)) =
+            effect_ref_rejection(build.kind, &eval)
+          {
+            reject_untrusted_effect(&pool, &build, status, error_message).await;
+            continue;
+          }
+
+          if build.kind.is_effect() {
+            let project =
+              match repo::projects::get(&pool, jobset.project_id).await {
+                Ok(project) => project,
+                Err(e) => {
+                  tracing::error!(
+                    build_id = %build.id,
+                    project_id = %jobset.project_id,
+                    "Failed to get effect project for scheduling: {e}"
+                  );
+                  continue;
+                },
+              };
+            if let Some((status, error_message)) =
+              effect_repository_rejection(build.kind, &project.repository_url)
+            {
+              reject_untrusted_effect(&pool, &build, status, error_message)
+                .await;
+              continue;
+            }
+          }
+
           if let Some(timeout) = unsupported_timeout {
             // Agents are system-keyed, but a system-less build can only run
             // on the runner host.
@@ -620,11 +827,14 @@ pub async fn run(
               worker_pool.agent_pool().snapshot_all().iter().any(|agent| {
                 agent.systems.iter().any(|s| s == system)
                   && agent.supports_features(build.scheduling_features())
+                  && (!build.kind.is_effect()
+                    || (agent.effects && !agent.ephemeral))
               })
             });
-            let has_runner = worker_pool
-              .runner_caps()
-              .supports(build.system.as_deref(), build.scheduling_features());
+            let has_runner = !build.kind.is_effect()
+              && worker_pool
+                .runner_caps()
+                .supports(build.system.as_deref(), build.scheduling_features());
             if !has_agent && !has_runner {
               let timeout_at = build.created_at + timeout;
               if chrono::Utc::now() > timeout_at {
@@ -655,32 +865,6 @@ pub async fn run(
           }
 
           // One-at-a-time scheduling: check if jobset allows concurrent builds
-          // First, get the evaluation to find the jobset
-          let eval =
-            match repo::evaluations::get(&pool, build.evaluation_id).await {
-              Ok(eval) => eval,
-              Err(e) => {
-                tracing::error!(
-                    build_id = %build.id,
-                    evaluation_id = %build.evaluation_id,
-                    "Failed to get evaluation for one-at-a-time check: {e}"
-                );
-                continue;
-              },
-            };
-
-          let jobset = match repo::jobsets::get(&pool, eval.jobset_id).await {
-            Ok(jobset) => jobset,
-            Err(e) => {
-              tracing::error!(
-                  build_id = %build.id,
-                  jobset_id = %eval.jobset_id,
-                  "Failed to get jobset for one-at-a-time check: {e}"
-              );
-              continue;
-            },
-          };
-
           if jobset.state == JobsetState::OneAtATime {
             match repo::jobsets::has_running_builds(&pool, jobset.id).await {
               Ok(true) => {
@@ -702,6 +886,73 @@ pub async fn run(
             }
           }
 
+          // Effects serialize per project so deploys do not mutate external
+          // state concurrently.
+          if build.kind.is_effect() {
+            let active_build_ids = worker_pool.agent_pool().active_build_ids();
+            if effect_attempt_is_still_agent_active(
+              build.kind,
+              build.id,
+              &active_build_ids,
+            ) {
+              tracing::debug!(
+                build_id = %build.id,
+                "Effect restart waiting for the prior agent attempt to stop"
+              );
+              continue;
+            }
+            match repo::builds::project_has_active_effect_among(
+              &pool,
+              jobset.project_id,
+              build.evaluation_id,
+              &active_build_ids,
+            )
+            .await
+            {
+              Ok(false) => {},
+              Ok(true) => {
+                tracing::debug!(
+                  build_id = %build.id,
+                  project_id = %jobset.project_id,
+                  "Effect waiting for agent acknowledgement of an older effect"
+                );
+                continue;
+              },
+              Err(e) => {
+                tracing::error!(
+                  build_id = %build.id,
+                  "Failed to check agent-active effects: {e}"
+                );
+                continue;
+              },
+            }
+
+            match repo::builds::project_has_running_effect(
+              &pool,
+              jobset.project_id,
+              build.evaluation_id,
+            )
+            .await
+            {
+              Ok(false) => {},
+              Ok(true) => {
+                tracing::debug!(
+                    build_id = %build.id,
+                    project_id = %jobset.project_id,
+                    "Effect waiting for a running effect of the same project"
+                );
+                continue;
+              },
+              Err(e) => {
+                tracing::error!(
+                    build_id = %build.id,
+                    "Failed to check running effects: {e}"
+                );
+                continue;
+              },
+            }
+          }
+
           worker_pool.dispatch(build);
         }
       },
@@ -716,5 +967,50 @@ pub async fn run(
     }
     // Wake on NOTIFY or fall back to regular poll interval
     let _ = tokio::time::timeout(poll_interval, wakeup.notified()).await;
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use circus_common::models::BuildKind;
+  use uuid::Uuid;
+
+  use super::{
+    effect_attempt_is_still_agent_active,
+    use_aggregate_shortcut,
+    use_fod_shortcut,
+  };
+
+  #[test]
+  fn effects_bypass_aggregate_and_fod_success_shortcuts() {
+    assert!(use_aggregate_shortcut(BuildKind::Build, true));
+    assert!(!use_aggregate_shortcut(BuildKind::Effect, true));
+    assert!(!use_aggregate_shortcut(BuildKind::Build, false));
+
+    assert!(use_fod_shortcut(BuildKind::Build, true, false));
+    assert!(!use_fod_shortcut(BuildKind::Effect, true, false));
+    assert!(!use_fod_shortcut(BuildKind::Build, true, true));
+    assert!(!use_fod_shortcut(BuildKind::Build, false, false));
+  }
+
+  #[test]
+  fn an_immediate_effect_restart_waits_for_the_prior_agent_attempt() {
+    let build_id = Uuid::new_v4();
+    let sibling_id = Uuid::new_v4();
+    assert!(effect_attempt_is_still_agent_active(
+      BuildKind::Effect,
+      build_id,
+      &[build_id],
+    ));
+    assert!(!effect_attempt_is_still_agent_active(
+      BuildKind::Effect,
+      sibling_id,
+      &[build_id],
+    ));
+    assert!(!effect_attempt_is_still_agent_active(
+      BuildKind::Build,
+      build_id,
+      &[build_id],
+    ));
   }
 }
