@@ -6,7 +6,7 @@ use circus_common::{
   models::{Build, BuildStatus, JobsetState},
   repo,
 };
-use circus_config::HotConfig;
+use circus_config::{HotConfig, NotificationsConfig};
 use tokio::{
   sync::{Notify, RwLock},
   task::JoinSet,
@@ -102,6 +102,109 @@ async fn mark_build_done(
   )
   .await
   .map(|_| ())
+}
+
+/// Mark a build whose dependencies can never succeed as `dependency_failed`
+/// and send its finished notification. `failed_deps` must be non-empty.
+async fn mark_dependency_failed(
+  pool: &PgPool,
+  build: &Build,
+  failed_deps: &[Build],
+  notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
+) {
+  let first = &failed_deps[0];
+  let msg = if failed_deps.len() > 1 {
+    format!(
+      "dependency {} finished as {} and {} more dependencies failed",
+      first.job_name,
+      first.status.as_db_str(),
+      failed_deps.len() - 1
+    )
+  } else {
+    format!(
+      "dependency {} finished as {}",
+      first.job_name,
+      first.status.as_db_str()
+    )
+  };
+
+  tracing::info!(
+      build_id = %build.id,
+      job = %build.job_name,
+      failed_deps = failed_deps.len(),
+      "Marking build as dependency_failed"
+  );
+  if let Err(e) = mark_build_done(
+    pool,
+    build.id,
+    BuildStatus::DependencyFailed,
+    None,
+    None,
+    Some(&msg),
+  )
+  .await
+  {
+    tracing::warn!(build_id = %build.id, "Failed to complete dependency-failed build: {e}");
+    return;
+  }
+
+  if let Ok(updated_build) = repo::builds::get(pool, build.id).await
+    && let Some((project, commit_hash)) =
+      get_project_for_build(pool, &updated_build).await
+  {
+    circus_notification::dispatch_build_finished(
+      Some(pool),
+      &updated_build,
+      &project,
+      &commit_hash,
+      notifications_config,
+      notification_secret_key,
+    )
+    .await;
+  }
+}
+
+/// `list_pending` never returns a build with an unfinished dependency, so
+/// without this sweep a failed dependency leaves its dependents queued
+/// forever. Each cycle propagates the failure one graph level further.
+async fn sweep_dependency_failed(
+  pool: &PgPool,
+  notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
+) {
+  let stranded = match repo::builds::list_pending_with_failed_deps(pool).await {
+    Ok(builds) => builds,
+    Err(e) => {
+      tracing::error!("Failed to list builds with failed dependencies: {e}");
+      return;
+    },
+  };
+
+  for build in stranded {
+    match repo::build_dependencies::list_failed_dependencies(pool, build.id)
+      .await
+    {
+      Ok(failed) if !failed.is_empty() => {
+        mark_dependency_failed(
+          pool,
+          &build,
+          &failed,
+          notifications_config,
+          notification_secret_key,
+        )
+        .await;
+      },
+      // The dependency was retried or restarted between the two queries
+      Ok(_) => {},
+      Err(e) => {
+        tracing::error!(
+            build_id = %build.id,
+            "Failed to list failed dependencies: {e}"
+        );
+      },
+    }
+  }
 }
 
 async fn publish_succeeded_output_closure(
@@ -261,6 +364,13 @@ pub async fn run(
         hot.psi_threshold,
       )
     };
+
+    sweep_dependency_failed(
+      &pool,
+      &notifications_config,
+      notification_secret_key.as_deref(),
+    )
+    .await;
 
     let capacity = crate::dispatch::scheduler_capacity(
       worker_pool.agent_pool(),

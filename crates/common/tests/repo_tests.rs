@@ -1475,6 +1475,156 @@ async fn test_batch_check_deps_for_builds() {
 }
 
 #[tokio::test]
+async fn test_list_failed_dependencies() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "failed-deps").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  let mk_drv = || format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  let main_build =
+    create_test_build(&pool, eval.id, "main", &mk_drv(), None).await;
+  let dep_pending =
+    create_test_build(&pool, eval.id, "dep-pending", &mk_drv(), None).await;
+  let dep_failed =
+    create_test_build(&pool, eval.id, "dep-failed", &mk_drv(), None).await;
+  let dep_succeeded =
+    create_test_build(&pool, eval.id, "dep-succeeded", &mk_drv(), None).await;
+
+  for dep in [dep_pending.id, dep_failed.id, dep_succeeded.id] {
+    repo::build_dependencies::create(&pool, main_build.id, dep)
+      .await
+      .expect("create dep edge");
+  }
+
+  repo::builds::start(&pool, dep_failed.id)
+    .await
+    .expect("start");
+  repo::builds::complete(
+    &pool,
+    dep_failed.id,
+    BuildStatus::Failed,
+    None,
+    None,
+    None,
+  )
+  .await
+  .expect("complete failed dep");
+  repo::builds::start(&pool, dep_succeeded.id)
+    .await
+    .expect("start");
+  repo::builds::complete(
+    &pool,
+    dep_succeeded.id,
+    BuildStatus::Succeeded,
+    None,
+    None,
+    None,
+  )
+  .await
+  .expect("complete succeeded dep");
+
+  let failed =
+    repo::build_dependencies::list_failed_dependencies(&pool, main_build.id)
+      .await
+      .expect("list failed deps");
+  assert_eq!(failed.len(), 1);
+  assert_eq!(failed[0].id, dep_failed.id);
+
+  let none =
+    repo::build_dependencies::list_failed_dependencies(&pool, dep_pending.id)
+      .await
+      .expect("list failed deps of build without deps");
+  assert!(none.is_empty());
+
+  let stranded = repo::builds::list_pending_with_failed_deps(&pool)
+    .await
+    .expect("list pending with failed deps");
+  assert!(stranded.iter().any(|b| b.id == main_build.id));
+  assert!(stranded.iter().all(|b| b.id != dep_pending.id));
+
+  // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_restart_resets_dependency_failed_dependents() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "restart-dep-failed").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  let mk_drv = || format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  let dep = create_test_build(&pool, eval.id, "dep", &mk_drv(), None).await;
+  let mid = create_test_build(&pool, eval.id, "mid", &mk_drv(), None).await;
+  let top = create_test_build(&pool, eval.id, "top", &mk_drv(), None).await;
+  let sibling =
+    create_test_build(&pool, eval.id, "sibling", &mk_drv(), None).await;
+
+  repo::build_dependencies::create(&pool, mid.id, dep.id)
+    .await
+    .expect("mid dep edge");
+  repo::build_dependencies::create(&pool, top.id, mid.id)
+    .await
+    .expect("top dep edge");
+  repo::build_dependencies::create(&pool, sibling.id, dep.id)
+    .await
+    .expect("sibling dep edge");
+
+  let finish = |id, status| {
+    let pool = pool.clone();
+    async move {
+      repo::builds::start(&pool, id).await.expect("start");
+      repo::builds::complete(&pool, id, status, None, None, None)
+        .await
+        .expect("complete");
+    }
+  };
+  finish(dep.id, BuildStatus::Failed).await;
+  finish(mid.id, BuildStatus::DependencyFailed).await;
+  finish(top.id, BuildStatus::DependencyFailed).await;
+  finish(sibling.id, BuildStatus::Succeeded).await;
+
+  let restarted = repo::builds::restart(&pool, top.id)
+    .await
+    .expect("restart dependency_failed build");
+  assert_eq!(restarted.status, BuildStatus::Pending);
+  finish(top.id, BuildStatus::DependencyFailed).await;
+
+  repo::builds::restart(&pool, dep.id)
+    .await
+    .expect("restart failed dep");
+  let statuses = |ids: Vec<uuid::Uuid>| {
+    let pool = pool.clone();
+    async move {
+      let mut out = Vec::new();
+      for id in ids {
+        out.push(repo::builds::get(&pool, id).await.expect("get").status);
+      }
+      out
+    }
+  };
+  assert_eq!(
+    statuses(vec![dep.id, mid.id, top.id, sibling.id]).await,
+    vec![
+      BuildStatus::Pending,
+      BuildStatus::Pending,
+      BuildStatus::Pending,
+      BuildStatus::Succeeded,
+    ]
+  );
+
+  // Cleanup
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
 async fn test_list_pending_prioritizes_dependency_ready_builds() {
   let Some(pool) = get_pool().await else {
     return;

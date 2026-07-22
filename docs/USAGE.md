@@ -673,6 +673,12 @@ highest priority first, then by jobset scheduling-share fairness, then oldest
 creation time. This is a preference, not a preemption mechanism: it does not
 stop or reorder builds that are already running.
 
+When a build fails permanently (including after exhausting its retries), every
+build that depends on it is marked `dependency_failed` rather than waiting in
+the queue forever. Restarting the failed build also returns its
+`dependency_failed` dependents to pending, so a single restart revives the whole
+affected subtree.
+
 Use `keep=true` for build outputs that must survive garbage collection. A kept
 build pins every recorded product for that build: GC cleanup preserves the
 primary build root, any recorded product GC root path, and any root symlink
