@@ -58,7 +58,7 @@ pub(in crate::routes::dashboard) async fn queue_page(
       Some("running"),
       params.system.as_deref(),
       params.job_name.as_deref(),
-      None,
+      Some("build"),
       100,
       0,
     )

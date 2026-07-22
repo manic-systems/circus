@@ -181,15 +181,20 @@ async fn trigger_push_evaluations(
     }
     let source_scope = push_source_scope(pushed_ref);
     let source_order = push_source_order(pushed_ref, previous_commit);
+    let (branch, action) = match pushed_ref {
+      PushedRef::Branch(branch) => (Some(branch.to_owned()), None),
+      PushedRef::Tag(tag) => (None, Some(format!("tag:{tag}"))),
+      PushedRef::Other(_) => (None, None),
+    };
     match repo::evaluations::enqueue_source(
       &state.pool,
       CreateEvaluation {
         jobset_id:      jobset.id,
         commit_hash:    commit.to_string(),
         pr_number:      None,
-        pr_head_branch: None,
-        pr_base_branch: None,
-        pr_action:      None,
+        pr_head_branch: branch,
+        pr_base_branch: jobset.branch.clone(),
+        pr_action:      action,
       },
       &source_scope,
       source_order,

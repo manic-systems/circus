@@ -252,6 +252,7 @@ pub(super) async fn evaluation() -> Response {
     ui: ui(),
     eval: fixtures::eval_view(3, "Completed", "completed"),
     builds: builds_fixture(),
+    effects: Vec::new(),
     failed_derivations,
     project_name: "circus".into(),
     project_id: id(1),

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Build {{ build.job_name }} log - circus{% endblock %}
+{% block title %}{{ build.kind_label }} {{ build.job_name }} log - circus{% endblock %}
 {% block auth %}
     {% if !auth_name.is_empty() %}
         <span class="auth-user">{{ auth_name }}</span>
@@ -28,16 +28,16 @@
 {% block content %}
     <section class="build-log-hero">
         <div class="build-log-title">
-            <div class="build-log-kicker">Build log</div>
+            <div class="build-log-kicker">{{ build.kind_label }} log</div>
             <h1>{{ build.job_name }}</h1>
             <div class="build-log-meta">
                 <span class="status status-{{ build.status_class }}">{{ build.status_text }}</span>
                 <span>{{ build.system }}</span>
                 {% if !build.duration.is_empty() %}<span>{{ build.duration }}</span>{% endif %}
-                <a href="/build/{{ build.id }}">Build #{{ build.id_short }}</a>
+                <a href="/build/{{ build.id }}">{{ build.kind_label }} #{{ build.id_short }}</a>
             </div>
         </div>
-        <div class="build-log-facts" aria-label="Build log summary">
+        <div class="build-log-facts" aria-label="{{ build.kind_label }} log summary">
             <div class="build-log-fact">
                 <strong>{{ log.summary.visible_lines }}</strong>
                 <span>lines</span>

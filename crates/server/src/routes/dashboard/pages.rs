@@ -396,7 +396,10 @@ pub(super) async fn jobset_page(
   .unwrap_or_default();
 
   let mut builds_by_eval: HashMap<Uuid, Vec<&Build>> = HashMap::new();
-  for b in builds.iter().filter(|build| is_job_name(&build.job_name)) {
+  for b in builds
+    .iter()
+    .filter(|build| !build.kind.is_effect() && is_job_name(&build.job_name))
+  {
     builds_by_eval.entry(b.evaluation_id).or_default().push(b);
   }
 
@@ -523,7 +526,7 @@ pub(super) async fn jobset_jobs_page(
     BTreeMap::new();
   for build in builds
     .into_iter()
-    .filter(|build| is_job_name(&build.job_name))
+    .filter(|build| !build.kind.is_effect() && is_job_name(&build.job_name))
   {
     builds_by_job
       .entry(build.job_name.clone())
@@ -686,11 +689,18 @@ pub(super) async fn evaluation_page(
 
   let top_level_builds = builds
     .iter()
-    .filter(|build| is_job_name(&build.job_name))
+    .filter(|build| is_job_name(&build.job_name) && !build.kind.is_effect())
     .collect::<Vec<_>>();
+  let effects = builds
+    .iter()
+    .filter(|build| build.kind.is_effect())
+    .map(build_view)
+    .collect();
   let failed_derivations = builds
     .iter()
-    .filter(|build| is_failed_derivation_status(build.status))
+    .filter(|build| {
+      !build.kind.is_effect() && is_failed_derivation_status(build.status)
+    })
     .map(build_view)
     .collect();
 
@@ -715,6 +725,7 @@ pub(super) async fn evaluation_page(
     ui: ui_config(&state),
     eval: eval_view(&eval),
     builds: top_level_builds.into_iter().map(build_view).collect(),
+    effects,
     failed_derivations,
     project_name: project.name,
     project_id: project.id,
@@ -748,7 +759,7 @@ pub(super) async fn builds_page(
     params.status.as_deref(),
     params.system.as_deref(),
     params.job_name.as_deref(),
-    None,
+    Some("build"),
     limit,
     offset,
   )
@@ -760,7 +771,7 @@ pub(super) async fn builds_page(
     params.status.as_deref(),
     params.system.as_deref(),
     params.job_name.as_deref(),
-    None,
+    Some("build"),
   )
   .await
   .unwrap_or(0);

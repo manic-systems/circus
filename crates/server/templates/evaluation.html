@@ -134,6 +134,34 @@
         </div>
     {% endif %}
 
+    {% if !effects.is_empty() %}
+        <h2>Effects</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Effect</th>
+                        <th>Status</th>
+                        <th>System</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for effect in effects %}
+                        <tr>
+                            <td><a href="/build/{{ effect.id }}">{{ effect.job_name }}</a></td>
+                            <td>
+                                <span class="badge badge-{{ effect.status_class }}">{{ effect.status_text }}</span>
+                            </td>
+                            <td>{{ effect.system }}</td>
+                            <td>{{ effect.created_at }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+
     <h2>Builds</h2>
     {% if builds.is_empty() %}
         <div class="empty">No builds for this evaluation.</div>

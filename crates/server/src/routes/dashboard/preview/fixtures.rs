@@ -132,6 +132,7 @@ pub(super) fn build_view(
     id:            build_id,
     id_short:      short_uuid(build_id),
     job_name:      job.into(),
+    kind_label:    "Build".into(),
     project_id:    Some(id(1)),
     project_name:  "circus".into(),
     jobset_id:     Some(id(2)),

@@ -149,6 +149,7 @@ pub(super) struct BuildView {
   pub(super) id:            Uuid,
   pub(super) id_short:      String,
   pub(super) job_name:      String,
+  pub(super) kind_label:    String,
   pub(super) project_id:    Option<Uuid>,
   pub(super) project_name:  String,
   pub(super) jobset_id:     Option<Uuid>,
@@ -463,6 +464,7 @@ impl From<&operator::OperatorBuild> for BuildView {
       id:            b.id,
       id_short:      short_uuid(b.id),
       job_name:      b.job_name.clone(),
+      kind_label:    "Build".to_string(),
       project_id:    b.project_id,
       project_name:  b.project_name.clone(),
       jobset_id:     b.jobset_id,
@@ -819,6 +821,11 @@ impl From<&Build> for BuildView {
       id:            b.id,
       id_short:      short_uuid(b.id),
       job_name:      b.job_name.clone(),
+      kind_label:    if b.kind.is_effect() {
+        "Effect".to_string()
+      } else {
+        "Build".to_string()
+      },
       project_id:    None,
       project_name:  String::new(),
       jobset_id:     None,

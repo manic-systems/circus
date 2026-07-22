@@ -241,7 +241,7 @@ pub async fn build_nixexprs_tarball(
   let mut by_system: BTreeMap<String, Vec<&circus_common::models::Build>> =
     BTreeMap::new();
   for build in &builds {
-    if build.status != BuildStatus::Succeeded {
+    if build.kind.is_effect() || build.status != BuildStatus::Succeeded {
       continue;
     }
     let Some(system) = build.system.clone() else {

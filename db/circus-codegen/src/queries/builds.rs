@@ -2458,7 +2458,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct ProjectBuildSummaryStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn project_build_summary() -> ProjectBuildSummaryStmt {
     ProjectBuildSummaryStmt(
-        "SELECT COUNT(*) FILTER (WHERE b.status = ANY($1))::bigint AS failing, COUNT(*) FILTER (WHERE b.status = 'pending')::bigint AS queued, COALESCE( ARRAY_AGG(DISTINCT b.system ORDER BY b.system) FILTER (WHERE b.system IS NOT NULL), '{}' )::text[] AS systems FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $2",
+        "SELECT COUNT(*) FILTER (WHERE b.status = ANY($1))::bigint AS failing, COUNT(*) FILTER (WHERE b.status = 'pending')::bigint AS queued, COALESCE( ARRAY_AGG(DISTINCT b.system ORDER BY b.system) FILTER (WHERE b.system IS NOT NULL), '{}' )::text[] AS systems FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $2 AND b.kind = 'build'",
         None,
     )
 }

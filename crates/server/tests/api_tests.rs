@@ -156,7 +156,204 @@ async fn create_test_project(pool: &circus_common::PgPool) -> uuid::Uuid {
   .id
 }
 
+async fn create_push_jobset(
+  pool: &circus_common::PgPool,
+  project_id: uuid::Uuid,
+  name: &str,
+  branch: Option<&str>,
+  branch_pattern: Option<&str>,
+  tag_pattern: Option<&str>,
+) -> circus_common::Jobset {
+  circus_common::repo::jobsets::create(pool, circus_common::CreateJobset {
+    project_id,
+    name: name.to_owned(),
+    nix_expression: ".".to_owned(),
+    enabled: Some(true),
+    flake_mode: Some(true),
+    check_interval: Some(300),
+    trigger_mode: None,
+    branch: branch.map(str::to_owned),
+    branch_pattern: branch_pattern.map(str::to_owned),
+    tag_pattern: tag_pattern.map(str::to_owned),
+    scheduling_shares: None,
+    state: None,
+    keep_nr: None,
+    systems: None,
+    only_build_latest: None,
+    path_filters: None,
+  })
+  .await
+  .expect("create push jobset")
+}
+
+async fn create_test_agent(pool: &circus_common::PgPool) -> uuid::Uuid {
+  let machine_id = uuid::Uuid::new_v4();
+  let name = format!("api-effect-agent-{machine_id}");
+  let systems = vec!["x86_64-linux".to_owned()];
+  circus_common::repo::builder_sessions::register(
+    pool,
+    circus_common::repo::builder_sessions::RegisterSession {
+      machine_id,
+      name: &name,
+      hostname: "api-effect-agent.test",
+      systems: &systems,
+      supported_features: &[],
+      mandatory_features: &[],
+      speed_factor: 1.0,
+      cpu_count: 1,
+      max_jobs: 1,
+      proto_version: "test",
+      ephemeral: false,
+      auth_kind: "token",
+    },
+  )
+  .await
+  .expect("register API test agent");
+  machine_id
+}
+
+fn github_webhook_signature(secret: &str, body: &[u8]) -> String {
+  use hmac::{Hmac, KeyInit, Mac};
+  use sha2::Sha256;
+
+  let mut mac =
+    Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key");
+  mac.update(body);
+  format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+}
+
 // API endpoint tests
+
+#[tokio::test]
+async fn force_releasing_an_outcome_unknown_effect_is_admin_and_explicit() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_id = create_test_project(&pool).await;
+  let jobset = create_push_jobset(
+    &pool,
+    project_id,
+    "force-release",
+    Some("main"),
+    None,
+    None,
+  )
+  .await;
+  let evaluation = circus_common::repo::evaluations::create(
+    &pool,
+    circus_common::CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    "a".repeat(40),
+      pr_number:      None,
+      pr_head_branch: Some("main".into()),
+      pr_base_branch: Some("main".into()),
+      pr_action:      None,
+    },
+  )
+  .await
+  .unwrap();
+  let effect =
+    circus_common::repo::builds::create(&pool, circus_common::CreateBuild {
+      evaluation_id: evaluation.id,
+      job_name: "deploy".into(),
+      drv_path: format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple()),
+      system: Some("x86_64-linux".into()),
+      kind: circus_common::BuildKind::Effect,
+      ..Default::default()
+    })
+    .await
+    .unwrap();
+  let machine_id = create_test_agent(&pool).await;
+  let claimed =
+    circus_common::repo::builds::start_with_agent(&pool, effect.id, machine_id)
+      .await
+      .unwrap()
+      .expect("claim effect");
+  circus_common::repo::builds::quarantine_effect(
+    &pool,
+    effect.id,
+    machine_id,
+    claimed.retry_count,
+    circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR,
+  )
+  .await
+  .unwrap();
+
+  ensure_api_key(
+    &pool,
+    READ_TOKEN,
+    circus_common::roles::GlobalRole::ReadOnly,
+  )
+  .await;
+  ensure_api_key(&pool, ADMIN_TOKEN, circus_common::roles::GlobalRole::Admin)
+    .await;
+  let app = build_app(pool.clone());
+  let uri = format!("/api/v1/builds/{}/force-release-effect", effect.id);
+
+  let forbidden = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("authorization", format!("Bearer {READ_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"acknowledge_outcome_unknown":true}"#))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+  let unacknowledged = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"acknowledge_outcome_unknown":false}"#))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(unacknowledged.status(), StatusCode::BAD_REQUEST);
+
+  let released = app
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"acknowledge_outcome_unknown":true}"#))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(released.status(), StatusCode::OK);
+
+  let released = circus_common::repo::builds::get(&pool, effect.id)
+    .await
+    .unwrap();
+  assert_eq!(released.status, circus_common::BuildStatus::Cancelled);
+  assert_eq!(released.agent_machine_id, None);
+  assert_eq!(
+    released.error_message.as_deref(),
+    Some(circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR)
+  );
+  assert!(
+    circus_common::repo::builds::restart(&pool, effect.id)
+      .await
+      .is_ok()
+  );
+
+  circus_common::repo::projects::delete(&pool, project_id)
+    .await
+    .unwrap();
+}
 
 #[tokio::test]
 async fn test_health_endpoint() {
@@ -1387,6 +1584,52 @@ async fn test_builds_list_combined_filters() {
 }
 
 #[tokio::test]
+async fn test_builds_list_with_kind_filter() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let app = build_app_public_reads(pool);
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/builds?kind=effect")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert!(json["items"].is_array());
+}
+
+#[tokio::test]
+async fn test_builds_list_rejects_invalid_kind() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let app = build_app_public_reads(pool);
+  let response = app
+    .oneshot(
+      Request::builder()
+        .uri("/api/v1/builds?kind=deployment")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_cache_info_returns_correct_headers() {
   let Some(pool) = get_pool().await else {
     return;
@@ -2108,6 +2351,142 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
     .await
     .unwrap();
   assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_github_push_persists_branch_and_tag_ref_context() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_id = create_test_project(&pool).await;
+  let fixed = create_push_jobset(
+    &pool,
+    project_id,
+    "fixed-release",
+    Some("release-2026"),
+    None,
+    None,
+  )
+  .await;
+  let matched = create_push_jobset(
+    &pool,
+    project_id,
+    "matched-release",
+    Some("main"),
+    Some("release-*"),
+    None,
+  )
+  .await;
+  let tagged = create_push_jobset(
+    &pool,
+    project_id,
+    "release-tags",
+    None,
+    None,
+    Some("v*"),
+  )
+  .await;
+
+  let secret = "push-ref-context-secret";
+  let encryption_key = "push-ref-context-encryption-key";
+  circus_common::repo::webhook_configs::upsert(
+    &pool,
+    project_id,
+    circus_common::ForgeType::Github,
+    Some(secret),
+    true,
+    Some(encryption_key),
+  )
+  .await
+  .expect("configure GitHub webhook");
+
+  let mut config = circus_config::Config::default();
+  config.server.webhook_secret_encryption_key = Some(encryption_key.into());
+  let app = build_app_with_config(pool.clone(), &config);
+
+  let branch_commit = "1111111111111111111111111111111111111111";
+  let branch_body = serde_json::to_vec(&serde_json::json!({
+    "ref": "refs/heads/release-2026",
+    "after": branch_commit,
+  }))
+  .unwrap();
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/webhooks/{project_id}/github"))
+        .header("x-github-event", "push")
+        .header(
+          "x-hub-signature-256",
+          github_webhook_signature(secret, &branch_body),
+        )
+        .body(Body::from(branch_body))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+
+  for (jobset, expected_default_branch) in
+    [(fixed, Some("release-2026")), (matched, Some("main"))]
+  {
+    let evaluation =
+      circus_common::repo::evaluations::get_by_jobset_and_commit(
+        &pool,
+        jobset.id,
+        branch_commit,
+      )
+      .await
+      .expect("query branch evaluation")
+      .expect("branch evaluation exists");
+    assert_eq!(evaluation.pr_head_branch.as_deref(), Some("release-2026"));
+    assert_eq!(
+      evaluation.pr_base_branch.as_deref(),
+      expected_default_branch
+    );
+    assert!(evaluation.pr_action.is_none());
+    assert!(evaluation.pr_number.is_none());
+  }
+
+  let tag_commit = "2222222222222222222222222222222222222222";
+  let tag_body = serde_json::to_vec(&serde_json::json!({
+    "ref": "refs/tags/v2.0",
+    "after": tag_commit,
+  }))
+  .unwrap();
+  let response = app
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/webhooks/{project_id}/github"))
+        .header("x-github-event", "push")
+        .header(
+          "x-hub-signature-256",
+          github_webhook_signature(secret, &tag_body),
+        )
+        .body(Body::from(tag_body))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let evaluation = circus_common::repo::evaluations::get_by_jobset_and_commit(
+    &pool, tagged.id, tag_commit,
+  )
+  .await
+  .expect("query tag evaluation")
+  .expect("tag evaluation exists");
+  assert!(evaluation.pr_head_branch.is_none());
+  assert!(evaluation.pr_base_branch.is_none());
+  assert_eq!(evaluation.pr_action.as_deref(), Some("tag:v2.0"));
+  assert!(evaluation.pr_number.is_none());
+
+  circus_common::repo::projects::delete(&pool, project_id)
+    .await
+    .expect("delete webhook test project");
 }
 
 #[tokio::test]

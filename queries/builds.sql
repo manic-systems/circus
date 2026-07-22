@@ -278,7 +278,8 @@ SELECT
 FROM builds b
 JOIN evaluations e ON b.evaluation_id = e.id
 JOIN jobsets j ON e.jobset_id = j.id
-WHERE j.project_id = :project_id;
+WHERE j.project_id = :project_id
+  AND b.kind = 'build';
 
 --! get_stats : (total_builds?, completed_builds?, failed_builds?, running_builds?, pending_builds?, avg_duration_seconds?)
 SELECT * FROM build_stats;

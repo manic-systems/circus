@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Build {{ build.job_name }} - circus{% endblock %}
+{% block title %}{{ build.kind_label }} {{ build.job_name }} - circus{% endblock %}
 {% block auth %}
     {% if !auth_name.is_empty() %}
         <span class="auth-user">{{ auth_name }}</span>
@@ -24,7 +24,7 @@
     </nav>
 {% endblock %}
 {% block content %}
-    <h1>Build: {{ build.job_name }}</h1>
+    <h1>{{ build.kind_label }}: {{ build.job_name }}</h1>
 
     <section class="panel build-detail-section">
         <div class="panel-header">
@@ -32,6 +32,10 @@
         </div>
         <div class="panel-body">
             <div class="build-meta">
+                <div class="build-meta-item">
+                    <span class="build-meta-label">Kind</span>
+                    <span class="build-meta-value">{{ build.kind_label }}</span>
+                </div>
                 <div class="build-meta-item">
                     <span class="build-meta-label">Status</span>
                     <span class="build-meta-value">

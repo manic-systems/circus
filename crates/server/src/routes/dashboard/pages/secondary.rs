@@ -87,13 +87,14 @@ pub(in crate::routes::dashboard) async fn channel_page(
     return Err(not_found("Channel"));
   };
 
-  let builds = if let Some(eval_id) = channel.current_evaluation_id {
+  let mut builds = if let Some(eval_id) = channel.current_evaluation_id {
     circus_common::repo::builds::list_for_evaluation(&state.pool, eval_id)
       .await
       .unwrap_or_default()
   } else {
     Vec::new()
   };
+  builds.retain(|build| !build.kind.is_effect());
 
   let succeeded_count = builds
     .iter()
@@ -184,7 +185,7 @@ pub(in crate::routes::dashboard) async fn starred_page(
               None,
               None,
               Some(&s.job_name),
-              None,
+              Some("build"),
               1,
               0,
             )

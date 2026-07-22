@@ -73,9 +73,13 @@ fn document_value() -> Value {
             "cached_failure"
           ]
         },
+        "BuildKind": {
+          "type": "string",
+          "enum": ["build", "effect"]
+        },
         "Build": {
           "type": "object",
-          "required": ["id", "evaluation_id", "job_name", "status", "drv_path"],
+          "required": ["id", "evaluation_id", "job_name", "status", "drv_path", "kind"],
           "properties": {
             "id":                { "$ref": "#/components/schemas/Uuid" },
             "evaluation_id":     { "$ref": "#/components/schemas/Uuid" },
@@ -86,6 +90,7 @@ fn document_value() -> Value {
             "build_output_path": { "type": ["string", "null"] },
             "log_path":          { "type": ["string", "null"] },
             "status":            { "$ref": "#/components/schemas/BuildStatus" },
+            "kind":              { "$ref": "#/components/schemas/BuildKind" },
             "priority":          { "type": "integer" },
             "is_aggregate":      { "type": "boolean" },
             "retry_count":       { "type": "integer" },
@@ -454,6 +459,15 @@ fn document_value() -> Value {
       },
       "/builds": {
         "get": { "summary": "List builds",
+          "parameters": [
+            { "name": "evaluation_id", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Uuid" } },
+            { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/BuildStatus" } },
+            { "name": "system", "in": "query", "required": false, "schema": { "type": "string" } },
+            { "name": "job_name", "in": "query", "required": false, "schema": { "type": "string" } },
+            { "name": "kind", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/BuildKind" } },
+            { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } },
+            { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer" } }
+          ],
           "responses": { "200": { "description": "Array of builds",
             "content": { "application/json": {
               "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Build" } }
@@ -479,6 +493,19 @@ fn document_value() -> Value {
       "/builds/{id}/restart": { "post": { "summary": "Restart a build",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
         "responses": { "200": { "description": "Restarted" } } } },
+      "/builds/{id}/force-release-effect": { "post": {
+        "summary": "Acknowledge that an outcome-unknown effect has stopped",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+        "requestBody": { "required": true, "content": { "application/json": {
+          "schema": {
+            "type": "object",
+            "required": ["acknowledge_outcome_unknown"],
+            "properties": {
+              "acknowledge_outcome_unknown": { "type": "boolean", "const": true }
+            }
+          }
+        } } },
+        "responses": { "200": { "description": "Effect assignment released" } } } },
       "/builds/{id}/bump":    { "post": { "summary": "Bump build priority",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
         "responses": { "200": { "description": "Bumped" } } } },

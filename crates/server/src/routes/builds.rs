@@ -7,7 +7,14 @@ use axum::{
   response::{IntoResponse, Response},
   routing::{get, post, put},
 };
-use circus_common::{Build, BuildProduct, PaginatedResponse, PaginationParams};
+use circus_common::{
+  Build,
+  BuildKind,
+  BuildProduct,
+  CiError,
+  PaginatedResponse,
+  PaginationParams,
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -35,8 +42,18 @@ struct ListBuildsParams {
     deserialize_with = "crate::routes::serde_util::empty_string_as_none"
   )]
   job_name:      Option<String>,
+  #[serde(
+    default,
+    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
+  )]
+  kind:          Option<String>,
   limit:         Option<i64>,
   offset:        Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ForceReleaseEffectRequest {
+  acknowledge_outcome_unknown: bool,
 }
 
 async fn list_builds(
@@ -52,13 +69,20 @@ async fn list_builds(
   let status = params.status.as_deref();
   let system = params.system.as_deref();
   let job_name = params.job_name.as_deref();
+  let kind = params
+    .kind
+    .as_deref()
+    .map(str::parse::<BuildKind>)
+    .transpose()
+    .map_err(|error| ApiError(CiError::Validation(error)))?
+    .map(BuildKind::as_db_str);
   let items = circus_common::repo::builds::list_filtered(
     &state.pool,
     params.evaluation_id,
     status,
     system,
     job_name,
-    None,
+    kind,
     limit,
     offset,
   )
@@ -69,7 +93,7 @@ async fn list_builds(
     status,
     system,
     job_name,
-    None,
+    kind,
   )
   .await?;
   Ok(Json(PaginatedResponse {
@@ -188,6 +212,30 @@ async fn restart_build(
       build_id = %id,
       job = %build.job_name,
       "Build restarted"
+  );
+
+  Ok(Json(build))
+}
+
+async fn force_release_effect(
+  extensions: Extensions,
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  Json(input): Json<ForceReleaseEffectRequest>,
+) -> Result<Json<Build>, ApiError> {
+  permissions::require_api(&extensions, Permission::Admin)?;
+  if !input.acknowledge_outcome_unknown {
+    return Err(ApiError(CiError::Validation(
+      "acknowledge_outcome_unknown must be true".to_string(),
+    )));
+  }
+  let build =
+    circus_common::repo::builds::force_release_effect(&state.pool, id).await?;
+
+  tracing::warn!(
+    build_id = %id,
+    job = %build.job_name,
+    "Operator force-released an effect with an unacknowledged agent assignment"
   );
 
   Ok(Json(build))
@@ -341,6 +389,10 @@ pub fn router() -> Router<AppState> {
     .route("/builds/{id}", get(get_build))
     .route("/builds/{id}/cancel", post(cancel_build))
     .route("/builds/{id}/restart", post(restart_build))
+    .route(
+      "/builds/{id}/force-release-effect",
+      post(force_release_effect),
+    )
     .route("/builds/{id}/bump", post(bump_build))
     .route("/builds/{id}/keep/{value}", put(set_keep_flag))
     .route("/builds/{id}/products", get(list_build_products))
