@@ -245,6 +245,7 @@ bind               = "0.0.0.0:8443"
 auth_tokens        = [ "abcdef0123...sha256-of-the-raw-token" ]
 max_connections    = 256
 heartbeat_ttl_secs = 60
+api_base_url       = "https://ci.example.org"
 cache_substituter  = "https://ci.example.org/nix-cache/"
 cache_public_key   = "circus-cache:..."
 
@@ -326,6 +327,10 @@ cores                   = 8
 ca_file   = "/etc/circus/tls/runner.ca.crt" # required: trusts the runner cert
 cert_file = "/etc/circus/tls/build-01.crt"  # optional: client identity (mTLS)
 key_file  = "/etc/circus/tls/build-01.key"  # omit cert_file + key_file for token-only
+
+# presence opts this persistent agent into post-build Effects
+[agent.effects]
+secrets_file = "/var/lib/circus-agent/secrets.json"
 ```
 
 For CI builders, set `agent.ephemeral` or pass `--ephemeral`. Ephemeral agents
@@ -341,10 +346,21 @@ max_idle_secs     = 120
 unique_name       = true
 ```
 
+Effect-capable agents must be persistent; ephemeral agents never advertise the
+capability even if an `effects` table is present. The secrets file stays on the
+agent host and must be readable only by the agent service account. Effects
+currently require non-rootless mode. See [EFFECTS.md](./EFFECTS.md) for the
+secrets format and execution contract.
+
 The agent runs as a Systemd service. A NixOS module is provided at
 `nix/modules/circus-agent.nix` and exposed as `self.nixosModules.circus-agent`.
-The queue-runner picks the agent up the first time it connects; no operator
-action is required beyond provisioning the token and (optionally) TLS material.
+Set `services.circus-agent.effectsSecretsFile` to opt in through the module; it
+passes the host file through systemd credentials and writes the runtime-only
+`agent.effects.secrets_file` setting automatically. Use a canonical absolute
+runtime path outside `/nix/store`; a Nix path literal or `pkgs.writeText` leaks
+the source through the world-readable store. The queue-runner picks the agent up
+the first time it connects; no operator action is required beyond provisioning
+the token and (optionally) TLS material.
 
 macOS builder hosts run the same `circus-agent` binary and advertise Darwin
 systems such as `aarch64-darwin`. The flake exposes
