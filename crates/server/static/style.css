@@ -961,6 +961,33 @@ table {
   font-size: 12px;
   line-height: 16px;
 }
+
+.probe-outputs-table th:nth-child(1) {
+  width: 7%;
+}
+
+.probe-outputs-table th:nth-child(2) {
+  width: 20%;
+}
+
+.probe-outputs-table th:nth-child(3) {
+  width: 28%;
+}
+
+.probe-outputs-table th:nth-child(4) {
+  width: 33%;
+}
+
+.probe-outputs-table th:nth-child(5) {
+  width: 12%;
+}
+
+.probe-outputs-table .inline-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
 .agents-table {
   table-layout: fixed;
   min-width: 64rem;
