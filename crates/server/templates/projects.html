@@ -274,7 +274,7 @@ list.innerHTML = '<div class="empty">No buildable outputs detected.</div>';
 return;
 }
 
-let html = '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Expression</th><th>Description</th><th>Priority</th></tr></thead><tbody>';
+let html = '<div class="table-wrap"><table class="probe-outputs-table"><thead><tr><th></th><th>Name</th><th>Expression</th><th>Description</th><th>Priority</th></tr></thead><tbody>';
 probeResult.suggested_jobsets.forEach((js, i) => {
 const checked = js.priority >= 6 ? 'checked' : '';
 html += '<tr>'
