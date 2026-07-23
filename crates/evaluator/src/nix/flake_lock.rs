@@ -58,8 +58,8 @@ fn allowed_uris_from_nodes(
   let mut uris: Vec<String> = nodes
     .iter()
     .filter(|(name, _)| Some(name.as_str()) != root_name)
-    .filter_map(|(_, node)| node.get("locked").or(Some(node)))
-    .flat_map(locked_node_to_uris)
+    .map(|(_, node)| LockedSource::new(node.get("locked").unwrap_or(node)))
+    .flat_map(LockedSource::allowed_uris)
     .collect();
 
   uris.sort();
@@ -67,69 +67,96 @@ fn allowed_uris_from_nodes(
   uris
 }
 
-/// Map one `locked` node to the narrowest prefix(es) `checkURI` accepts.
-fn locked_node_to_uris(locked: &Value) -> Vec<String> {
-  let typ = locked
-    .get("type")
-    .and_then(Value::as_str)
-    .unwrap_or_default();
+/// A source entry from any supported lockfile.
+struct LockedSource<'a> {
+  value: &'a Value,
+}
 
-  match typ {
-    "github" | "gitlab" | "sourcehut" => {
-      let (Some(owner), Some(repo)) = (
-        locked.get("owner").and_then(Value::as_str),
-        locked.get("repo").and_then(Value::as_str),
-      ) else {
-        return Vec::new();
-      };
-      // owner/repo, not the full /rev, whose trailing `?narHash` fails checkURI
-      vec![format!("{typ}:{owner}/{repo}")]
-    },
+impl<'a> LockedSource<'a> {
+  const fn new(value: &'a Value) -> Self {
+    Self { value }
+  }
 
-    "tarball" | "file" => {
-      locked
-        .get("url")
-        .and_then(Value::as_str)
-        .map(|url| vec![url.to_owned()])
-        .unwrap_or_default()
-    },
+  fn kind(&self) -> &str {
+    self
+      .value
+      .get("type")
+      .and_then(Value::as_str)
+      .unwrap_or_default()
+  }
 
-    "git" | "mercurial" => {
-      let scheme = if typ == "git" { "git+" } else { "hg+" };
-      locked
-        .get("url")
-        .and_then(Value::as_str)
-        .map(|url| with_scheme_and_parent(scheme, url))
-        .unwrap_or_default()
-    },
+  fn url(&self) -> Option<&str> {
+    self.value.get("url").and_then(Value::as_str)
+  }
 
-    // `path` inputs are local. `indirect` is resolved to a concrete node.
-    "path" | "indirect" => Vec::new(),
+  fn allowed_uris(self) -> Vec<String> {
+    match self.kind() {
+      "github" | "gitlab" | "sourcehut" => {
+        let (Some(owner), Some(repo)) = (
+          self.value.get("owner").and_then(Value::as_str),
+          self.value.get("repo").and_then(Value::as_str),
+        ) else {
+          return Vec::new();
+        };
+        // owner/repo, not the full /rev, whose trailing `?narHash` fails
+        // checkURI.
+        vec![format!("{}:{owner}/{repo}", self.kind())]
+      },
 
-    other => {
-      let uris = locked
-        .get("url")
-        .and_then(Value::as_str)
-        .map(|url| with_scheme_and_parent("", url))
-        .unwrap_or_default();
-      tracing::warn!(
-        node_type = other,
-        derived = ?uris,
-        "Unrecognized flake.lock input type, deriving best-effort allowed-uris"
-      );
-      uris
-    },
+      "tarball" | "file" => {
+        self
+          .url()
+          .map(UriPrefixes::from_uri)
+          .map(UriPrefixes::into_vec)
+          .unwrap_or_default()
+      },
+
+      "git" | "mercurial" => {
+        let scheme = if self.kind() == "git" { "git+" } else { "hg+" };
+        self
+          .url()
+          .map(|url| UriPrefixes::from_uri(format!("{scheme}{url}")))
+          .map(UriPrefixes::into_vec)
+          .unwrap_or_default()
+      },
+
+      // `path` inputs are local. `indirect` is resolved to a concrete node.
+      "path" | "indirect" => Vec::new(),
+
+      other => {
+        let uris = self
+          .url()
+          .map(UriPrefixes::from_uri)
+          .map(UriPrefixes::into_vec)
+          .unwrap_or_default();
+        tracing::warn!(
+          node_type = other,
+          derived = ?uris,
+          "Unrecognized flake.lock input type, deriving best-effort allowed-uris"
+        );
+        uris
+      },
+    }
   }
 }
 
-/// Scheme-prefixed url plus its parent dir, covering the `?ref=&rev=` form.
-fn with_scheme_and_parent(scheme: &str, url: &str) -> Vec<String> {
-  let full = format!("{scheme}{url}");
-  let mut out = vec![full.clone()];
-  if let Some(slash) = full.rfind('/') {
-    out.push(full[..=slash].to_owned());
+/// URI prefixes that satisfy Nix's exact-or-slash-delimited matcher.
+struct UriPrefixes(Vec<String>);
+
+impl UriPrefixes {
+  fn from_uri(uri: impl Into<String>) -> Self {
+    let uri = uri.into();
+    let uri = uri.split(['?', '#']).next().unwrap_or(&uri);
+    let mut prefixes = vec![uri.to_owned()];
+    if let Some(slash) = uri.rfind('/') {
+      prefixes.push(uri[..=slash].to_owned());
+    }
+    Self(prefixes)
   }
-  out
+
+  fn into_vec(self) -> Vec<String> {
+    self.0
+  }
 }
 
 #[cfg(test)]
@@ -148,12 +175,34 @@ mod tests {
         "local": { "locked": { "type": "path", "path": "/etc/nixos" } }
       }
     }"#;
-    assert_eq!(Lockfile::parse(lock).unwrap().allowed_uris(), vec![
-      "git+https://git.example.com/team/",
-      "git+https://git.example.com/team/lib",
-      "github:ipetkov/crane",
-      "https://releases.nixos.org/x/nixexprs.tar.xz",
-    ]);
+    assert_eq!(
+      Lockfile::parse(lock)
+        .expect("valid lockfile")
+        .allowed_uris(),
+      vec![
+        "git+https://git.example.com/team/",
+        "git+https://git.example.com/team/lib",
+        "github:ipetkov/crane",
+        "https://releases.nixos.org/x/",
+        "https://releases.nixos.org/x/nixexprs.tar.xz",
+      ]
+    );
+  }
+
+  #[test]
+  fn tarball_parent_allows_nix_fetch_metadata() {
+    let lock = r#"{
+      "root": "root", "nodes": {
+        "root": {},
+        "nixpkgs": { "locked": {
+          "type": "tarball",
+          "url": "https://releases.nixos.org/nixos/unstable/nixos-26.11pre1035164.753cc8a3a874/nixexprs.tar.xz"
+        } }
+      }
+    }"#;
+    assert!(Lockfile::parse(lock).expect("valid lockfile").allowed_uris().contains(
+      &"https://releases.nixos.org/nixos/unstable/nixos-26.11pre1035164.753cc8a3a874/".to_string()
+    ));
   }
 
   #[test]
@@ -166,14 +215,22 @@ mod tests {
         "b": { "locked": { "type": "github", "owner": "o", "repo": "a", "rev": "2" } }
       }
     }"#;
-    assert_eq!(Lockfile::parse(lock).unwrap().allowed_uris(), vec![
-      "github:o/a"
-    ]);
+    assert_eq!(
+      Lockfile::parse(lock)
+        .expect("valid lockfile")
+        .allowed_uris(),
+      vec!["github:o/a"]
+    );
   }
 
   #[test]
   fn unknown_lock_yields_no_uris() {
-    assert!(Lockfile::parse("{}").unwrap().allowed_uris().is_empty());
+    assert!(
+      Lockfile::parse("{}")
+        .expect("valid empty JSON object")
+        .allowed_uris()
+        .is_empty()
+    );
     assert!(Lockfile::parse("not json").is_err());
   }
 
@@ -183,8 +240,11 @@ mod tests {
       "nixpkgs": { "type": "github", "owner": "nixos", "repo": "nixpkgs", "rev": "ffa" },
       "local": { "type": "path", "path": "." }
     }"#;
-    assert_eq!(Lockfile::parse(lock).unwrap().allowed_uris(), vec![
-      "github:nixos/nixpkgs"
-    ]);
+    assert_eq!(
+      Lockfile::parse(lock)
+        .expect("valid lockfile")
+        .allowed_uris(),
+      vec!["github:nixos/nixpkgs"]
+    );
   }
 }
