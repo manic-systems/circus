@@ -96,9 +96,7 @@ pub(super) async fn run_eval(
     "Starting evix evaluation with Nix options"
   );
 
-  let session = evix::Session::open(config)
-    .await
-    .map_err(|e| evix_eval_failure(description, &error_chain(&e)))?;
+  let session = open_session(config, description).await?;
 
   let collect = async {
     let mut events = session.stream();
@@ -148,6 +146,52 @@ pub(super) async fn run_eval(
       session.cancel();
       Err(CiError::NixEval("Nix evaluation was cancelled".to_string()))
     },
+  }
+}
+
+/// Start evix with the requested parallelism, falling back to fewer workers
+/// when the operating system refuses to create another process or thread.
+async fn open_session(
+  config: evix::Config,
+  description: &'static str,
+) -> Result<evix::Session> {
+  let mut workers = config.workers;
+
+  loop {
+    let mut attempt = config.clone();
+    attempt.workers = workers;
+    match evix::Session::open(attempt).await {
+      Ok(session) => return Ok(session),
+      Err(error) if is_resource_exhaustion(&error_chain(&error)) => {
+        let Some(retry_workers) = retry_workers(workers) else {
+          return Err(evix_eval_failure(description, &error_chain(&error)));
+        };
+        tracing::warn!(
+          evaluation = description,
+          requested_workers = workers,
+          retry_workers,
+          "evix worker capacity exhausted; retrying evaluation with less \
+           parallelism"
+        );
+        workers = retry_workers;
+      },
+      Err(error) => {
+        return Err(evix_eval_failure(description, &error_chain(&error)));
+      },
+    }
+  }
+}
+
+fn is_resource_exhaustion(error: &str) -> bool {
+  error.contains("Resource temporarily unavailable")
+    || error.contains("os error 11")
+}
+
+const fn retry_workers(workers: usize) -> Option<usize> {
+  if workers > 1 {
+    Some(workers.div_ceil(2))
+  } else {
+    None
   }
 }
 
@@ -216,6 +260,22 @@ mod policy_tests {
     assert!(message.contains("exit status: 1"));
     assert!(message.contains("locking flake"));
     assert!(!message.contains("worker closed stdout unexpectedly"));
+  }
+
+  #[test]
+  fn recognizes_worker_thread_capacity_errors() {
+    assert!(is_resource_exhaustion(
+      "OS can't spawn worker thread: Resource temporarily unavailable (os \
+       error 11)"
+    ));
+    assert!(!is_resource_exhaustion("access to URI is forbidden"));
+  }
+
+  #[test]
+  fn reduces_parallelism_to_one_worker() {
+    assert_eq!(retry_workers(4), Some(2));
+    assert_eq!(retry_workers(2), Some(1));
+    assert_eq!(retry_workers(1), None);
   }
 
   #[test]

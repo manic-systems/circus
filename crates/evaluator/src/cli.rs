@@ -67,6 +67,10 @@ where
   unsafe { memory_limit.export_worker_env() };
 
   let runtime = tokio::runtime::Builder::new_multi_thread()
+    // Evaluation work is performed by evix subprocesses. One coordinator
+    // thread avoids exhausting constrained service cgroups before they start.
+    .worker_threads(1)
+    .max_blocking_threads(4)
     .enable_all()
     .build()?;
   runtime.block_on(run_async(config))
