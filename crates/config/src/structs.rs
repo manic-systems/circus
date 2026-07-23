@@ -240,7 +240,7 @@ pub struct EvaluatorConfig {
   /// the lock-derived set when `auto_allowed_uris` is on.
   pub allowed_uris:         Vec<String>,
 
-  /// Derive `allowed-uris` from the flake jobset's `flake.lock`.
+  /// Derive `allowed-uris` from committed flake and Tack lock files.
   pub auto_allowed_uris: bool,
 
   /// Refuse a flake jobset that has no committed `flake.lock`.

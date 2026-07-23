@@ -1,28 +1,64 @@
-//! Derive Nix `allowed-uris` from a flake's `flake.lock` so locked inputs stay
-//! fetchable under `restrict-eval`.
+//! Parse committed lockfiles into Nix `allowed-uris` prefixes.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
-/// Parse `flake.lock` and return the sorted, deduped `allowed-uris` for its
-/// locked inputs.
-pub fn allowed_uris_from_lock(lock_json: &str) -> Vec<String> {
-  let root: Value = match serde_json::from_str(lock_json) {
-    Ok(v) => v,
-    Err(e) => {
-      tracing::warn!(error = %e, "Failed to parse flake.lock, deriving no allowed-uris");
-      return Vec::new();
-    },
-  };
+/// A supported committed lockfile.
+#[derive(Debug)]
+pub enum Lockfile {
+  Flake {
+    root:  Option<String>,
+    nodes: Map<String, Value>,
+  },
+  Pins(Map<String, Value>),
+  Unknown,
+}
 
-  let root_name = root.get("root").and_then(Value::as_str);
-  let Some(nodes) = root.get("nodes").and_then(Value::as_object) else {
-    return Vec::new();
-  };
+impl Lockfile {
+  /// Parse and identify a lockfile by its JSON structure.
+  pub fn parse(contents: &str) -> Result<Self, serde_json::Error> {
+    let root: Value = serde_json::from_str(contents)?;
+    let Some(entries) = root.as_object() else {
+      return Ok(Self::Unknown);
+    };
 
+    if let Some(nodes) = entries.get("nodes").and_then(Value::as_object) {
+      return Ok(Self::Flake {
+        root:  entries
+          .get("root")
+          .and_then(Value::as_str)
+          .map(str::to_owned),
+        nodes: nodes.clone(),
+      });
+    }
+
+    if entries.values().any(|entry| entry.get("type").is_some()) {
+      return Ok(Self::Pins(entries.clone()));
+    }
+
+    Ok(Self::Unknown)
+  }
+
+  /// Return the sorted, deduplicated URI prefixes required by this lockfile.
+  #[must_use]
+  pub fn allowed_uris(&self) -> Vec<String> {
+    match self {
+      Self::Flake { root, nodes } => {
+        allowed_uris_from_nodes(nodes, root.as_deref())
+      },
+      Self::Pins(pins) => allowed_uris_from_nodes(pins, None),
+      Self::Unknown => Vec::new(),
+    }
+  }
+}
+
+fn allowed_uris_from_nodes(
+  nodes: &serde_json::Map<String, Value>,
+  root_name: Option<&str>,
+) -> Vec<String> {
   let mut uris: Vec<String> = nodes
     .iter()
     .filter(|(name, _)| Some(name.as_str()) != root_name)
-    .filter_map(|(_, node)| node.get("locked"))
+    .filter_map(|(_, node)| node.get("locked").or(Some(node)))
     .flat_map(locked_node_to_uris)
     .collect();
 
@@ -112,7 +148,7 @@ mod tests {
         "local": { "locked": { "type": "path", "path": "/etc/nixos" } }
       }
     }"#;
-    assert_eq!(allowed_uris_from_lock(lock), vec![
+    assert_eq!(Lockfile::parse(lock).unwrap().allowed_uris(), vec![
       "git+https://git.example.com/team/",
       "git+https://git.example.com/team/lib",
       "github:ipetkov/crane",
@@ -130,12 +166,25 @@ mod tests {
         "b": { "locked": { "type": "github", "owner": "o", "repo": "a", "rev": "2" } }
       }
     }"#;
-    assert_eq!(allowed_uris_from_lock(lock), vec!["github:o/a"]);
+    assert_eq!(Lockfile::parse(lock).unwrap().allowed_uris(), vec![
+      "github:o/a"
+    ]);
   }
 
   #[test]
-  fn invalid_lock_yields_empty() {
-    assert!(allowed_uris_from_lock("not json").is_empty());
-    assert!(allowed_uris_from_lock("{}").is_empty());
+  fn unknown_lock_yields_no_uris() {
+    assert!(Lockfile::parse("{}").unwrap().allowed_uris().is_empty());
+    assert!(Lockfile::parse("not json").is_err());
+  }
+
+  #[test]
+  fn maps_tack_pins() {
+    let lock = r#"{
+      "nixpkgs": { "type": "github", "owner": "nixos", "repo": "nixpkgs", "rev": "ffa" },
+      "local": { "type": "path", "path": "." }
+    }"#;
+    assert_eq!(Lockfile::parse(lock).unwrap().allowed_uris(), vec![
+      "github:nixos/nixpkgs"
+    ]);
   }
 }

@@ -241,7 +241,7 @@ fn rewrite_nixos_config_expr(expr: &str) -> Option<String> {
   }
 }
 
-/// Derive `allowed-uris` from the project's `flake.lock`.
+/// Derive `allowed-uris` from lock files used during evaluation.
 fn lock_derived_allowed_uris(
   repo_path: &Path,
   config: &EvaluatorConfig,
@@ -250,37 +250,51 @@ fn lock_derived_allowed_uris(
     return Ok(Vec::new());
   }
 
-  let lock_path = repo_path.join("flake.lock");
-  match std::fs::read_to_string(&lock_path) {
-    Ok(contents) => {
-      let uris = flake_lock::allowed_uris_from_lock(&contents);
-      tracing::info!(
-        count = uris.len(),
-        "Derived allowed-uris from flake.lock"
-      );
-      Ok(uris)
-    },
+  let flake_lock_path = repo_path.join("flake.lock");
+  let mut uris = match std::fs::read_to_string(&flake_lock_path) {
+    Ok(contents) => parse_lockfile(&flake_lock_path, &contents),
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
       if config.require_locked_flake {
-        Err(CiError::NixEval(format!(
+        return Err(CiError::NixEval(format!(
           "No flake.lock at {} but require_locked_flake is enabled. Commit a \
            lock file or disable require_locked_flake",
-          lock_path.display()
-        )))
-      } else {
-        tracing::warn!(
-          path = %lock_path.display(),
-          "No flake.lock found, deriving no allowed-uris (set \
-           evaluator.allowed_uris or restrict_eval = false if inputs are blocked)"
-        );
-        Ok(Vec::new())
+          flake_lock_path.display()
+        )));
       }
+      tracing::warn!(
+        path = %flake_lock_path.display(),
+        "No flake.lock found, deriving no allowed-uris (set \
+         evaluator.allowed_uris or restrict_eval = false if inputs are blocked)"
+      );
+      Vec::new()
     },
     Err(e) => {
-      Err(CiError::NixEval(format!(
+      return Err(CiError::NixEval(format!(
         "Failed to read {}: {e}",
-        lock_path.display()
-      )))
+        flake_lock_path.display()
+      )));
+    },
+  };
+
+  let tack_lock_path = repo_path.join(".tack/pins.lock.json");
+  if let Ok(contents) = std::fs::read_to_string(&tack_lock_path) {
+    uris.extend(parse_lockfile(&tack_lock_path, &contents));
+  }
+  uris.sort();
+  uris.dedup();
+  tracing::info!(
+    count = uris.len(),
+    "Derived allowed-uris from project locks"
+  );
+  Ok(uris)
+}
+
+fn parse_lockfile(path: &Path, contents: &str) -> Vec<String> {
+  match flake_lock::Lockfile::parse(contents) {
+    Ok(lockfile) => lockfile.allowed_uris(),
+    Err(error) => {
+      tracing::warn!(path = %path.display(), %error, "Failed to parse lockfile, deriving no allowed-uris");
+      Vec::new()
     },
   }
 }
