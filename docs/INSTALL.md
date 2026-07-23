@@ -225,7 +225,7 @@ configuration or the Nix store.
 | `evaluator`          | `work_dir`                                             | `/tmp/circus-evaluator`                             | Working directory for clones                                              |
 | `evaluator`          | `restrict_eval`                                        | `true`                                              | Pass `--option restrict-eval true` to Nix                                 |
 | `evaluator`          | `allow_ifd`                                            | `false`                                             | Allow import-from-derivation                                              |
-| `evaluator`          | `auto_allowed_uris`                                    | `true`                                              | Derive `allowed-uris` from the jobset flake.lock                          |
+| `evaluator`          | `auto_allowed_uris`                                    | `true`                                              | Derive `allowed-uris` from committed flake and Tack lock files            |
 | `evaluator`          | `allowed_uris`                                         | `[]`                                                | Extra fetch URIs honored under `restrict_eval`                            |
 | `evaluator`          | `require_locked_flake`                                 | `false`                                             | Refuse flake jobsets with no committed flake.lock                         |
 | `evaluator`          | `strict_errors`                                        | `false`                                             | Abort on first evaluation cycle error                                     |
@@ -354,13 +354,15 @@ configuration or the Nix store.
 <!-- markdownlint-enable MD013 -->
 
 `evaluator.memory_limit_mb` is enforced per Nix subprocess, not as one shared
-budget for the evaluator service. It covers evix workers and every auxiliary
+budget for the evaluator service. It covers Evix workers and every auxiliary
 `nix`/`nix-store` process spawned while discovering and recording builds. Evix
 also uses the same value as its post-attribute worker recycle threshold. When
 the hard limit is unset, that threshold retains its historical 4096 MiB default.
-Plan for up to `memory_limit_mb * eval_workers * max_concurrent_evals`, plus the
-comparatively small Circus parent process. Lower `eval_workers` or
-`max_concurrent_evals` when the resulting aggregate is too high for the host.
+
+> [!IMPORTANT]
+> Plan for up to `memory_limit_mb * eval_workers * max_concurrent_evals`, plus
+> the comparatively small Circus parent process. Higher configured parallelism
+> is retried with fewer Evix workers if the host rejects worker startup.
 
 ## Binary Cache Storage
 
