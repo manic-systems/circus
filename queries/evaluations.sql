@@ -115,6 +115,21 @@ WHERE status = 'running'
     < NOW() - make_interval(secs => :deadline_secs)
 RETURNING *;
 
+--! supersede_pending_push : EvaluationRow
+UPDATE evaluations
+SET status = 'cancelled', error_message = 'superseded by ' || :commit_hash
+WHERE jobset_id = :jobset_id AND status = 'pending'
+  AND trigger_kind = 'source_change'
+  AND pr_number IS NULL AND commit_hash <> :commit_hash
+RETURNING *;
+
+--! supersede_pending_change_request : EvaluationRow
+UPDATE evaluations
+SET status = 'cancelled', error_message = 'superseded by ' || :commit_hash
+WHERE jobset_id = :jobset_id AND status = 'pending'
+  AND pr_number = :pr_number AND commit_hash <> :commit_hash
+RETURNING *;
+
 --! restart_requeue : EvaluationRow
 UPDATE evaluations e
 SET status = 'pending', evaluation_time = NOW(),

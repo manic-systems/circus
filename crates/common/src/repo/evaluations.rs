@@ -684,3 +684,42 @@ pub async fn sweep_orphaned(
     .await?;
   rows.into_iter().map(Evaluation::try_from).collect()
 }
+
+/// Cancel pending push evaluations of a jobset made obsolete by a newer
+/// commit.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn supersede_pending_push(
+  pool: &PgPool,
+  jobset_id: Uuid,
+  commit_hash: &str,
+) -> Result<Vec<Evaluation>> {
+  let client = pool.get().await?;
+  let rows = q::supersede_pending_push()
+    .bind(&client, &commit_hash, &jobset_id)
+    .all()
+    .await?;
+  rows.into_iter().map(Evaluation::try_from).collect()
+}
+
+/// Cancel pending evaluations of a change request made obsolete by a newer
+/// head commit.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn supersede_pending_change_request(
+  pool: &PgPool,
+  jobset_id: Uuid,
+  pr_number: i32,
+  commit_hash: &str,
+) -> Result<Vec<Evaluation>> {
+  let client = pool.get().await?;
+  let rows = q::supersede_pending_change_request()
+    .bind(&client, &commit_hash, &jobset_id, &pr_number)
+    .all()
+    .await?;
+  rows.into_iter().map(Evaluation::try_from).collect()
+}

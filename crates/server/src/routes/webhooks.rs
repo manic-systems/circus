@@ -136,6 +136,48 @@ fn is_deleted_commit(commit: &str) -> bool {
   commit.is_empty() || commit == "0000000000000000000000000000000000000000"
 }
 
+/// Cancel pending evaluations obsoleted by a newer commit on the same ref.
+///
+/// Scoped to a single change request or a jobset tracking one concrete
+/// branch. Pattern jobsets span refs the rows do not record, so their
+/// pending evaluations are never superseded.
+async fn supersede_pending(
+  state: &AppState,
+  jobset_id: Uuid,
+  pr_number: Option<i32>,
+  commit: &str,
+) {
+  let result = match pr_number {
+    Some(number) => {
+      repo::evaluations::supersede_pending_change_request(
+        &state.pool,
+        jobset_id,
+        number,
+        commit,
+      )
+      .await
+    },
+    None => {
+      repo::evaluations::supersede_pending_push(&state.pool, jobset_id, commit)
+        .await
+    },
+  };
+  match result {
+    Ok(superseded) if !superseded.is_empty() => {
+      tracing::info!(
+        %jobset_id,
+        commit,
+        count = superseded.len(),
+        "Cancelled superseded pending evaluations"
+      );
+    },
+    Ok(_) => {},
+    Err(e) => {
+      tracing::warn!(%jobset_id, "Failed to supersede pending evaluations: {e}");
+    },
+  }
+}
+
 async fn trigger_push_evaluations(
   state: &AppState,
   project_id: Uuid,
@@ -163,7 +205,16 @@ async fn trigger_push_evaluations(
     })
     .await
     {
-      Ok(_) => triggered += 1,
+      Ok(_) => {
+        triggered += 1;
+        if matches!(pushed_ref, PushedRef::Branch(_))
+          && jobset.branch.is_some()
+          && jobset.branch_pattern.is_none()
+          && jobset.tag_pattern.is_none()
+        {
+          supersede_pending(state, jobset.id, None, commit).await;
+        }
+      },
       Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
@@ -208,7 +259,13 @@ async fn trigger_change_request_evaluations(
     })
     .await
     {
-      Ok(_) => triggered += 1,
+      Ok(_) => {
+        triggered += 1;
+        if let Some(number) = input.number {
+          supersede_pending(state, jobset.id, Some(number), &input.commit)
+            .await;
+        }
+      },
       Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
