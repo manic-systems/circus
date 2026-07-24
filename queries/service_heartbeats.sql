@@ -17,7 +17,7 @@ SET
   poll_interval_seconds = EXCLUDED.poll_interval_seconds,
   version = EXCLUDED.version;
 
---! list_status
+--! list_status : (version?)
 SELECT
   service,
   last_heartbeat_at,
@@ -26,6 +26,7 @@ SELECT
     FROM
       (NOW() - last_heartbeat_at)
   )::float8 AS seconds_since,
-  poll_interval_seconds
+  poll_interval_seconds,
+  version
 FROM
   service_heartbeats;

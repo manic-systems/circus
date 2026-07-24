@@ -46,7 +46,7 @@ fn document_value() -> Value {
     "openapi": "3.1.0",
     "info": {
       "title":       "circus API",
-      "version":     env!("CARGO_PKG_VERSION"),
+      "version":     circus_common::version::VERSION,
       "description": "REST API for the circus continuous integration server.",
       "license":     { "name": "MPL-2.0" }
     },

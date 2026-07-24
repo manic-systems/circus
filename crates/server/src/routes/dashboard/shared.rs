@@ -39,6 +39,7 @@ pub(super) struct UiTemplateConfig {
   pub(super) favicon_url:    String,
   pub(super) has_favicon:    bool,
   pub(super) has_custom_css: bool,
+  pub(super) version:        &'static str,
 }
 
 impl UiTemplateConfig {
@@ -53,6 +54,7 @@ impl UiTemplateConfig {
       has_favicon: !favicon_url.is_empty(),
       favicon_url,
       has_custom_css: config.custom_css.is_some(),
+      version: circus_common::version::long(),
     }
   }
 }

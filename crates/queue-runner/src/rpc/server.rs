@@ -589,7 +589,7 @@ impl runner::Server for RunnerImpl {
   ) -> Promise<(), capnp::Error> {
     let mut r = results.get();
     r.set_proto(PROTO_VERSION);
-    r.set_server(env!("CARGO_PKG_VERSION"));
+    r.set_server(circus_common::version::long());
     Promise::ok(())
   }
 

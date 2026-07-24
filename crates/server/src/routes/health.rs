@@ -25,6 +25,8 @@ const STALE_THRESHOLD_MULTIPLIER: u32 = 3;
 struct HealthResponse {
   /// Overall status: "ok" if everything healthy, "degraded" otherwise.
   status:   &'static str,
+  /// Build of the server answering this request.
+  version:  &'static str,
   /// True if the database is reachable.
   database: bool,
   /// Per-service liveness, as reported by background-service heartbeats.
@@ -56,6 +58,7 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
 
   let body = Json(HealthResponse {
     status,
+    version: circus_common::version::long(),
     database: db_ok,
     services,
   });
