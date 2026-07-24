@@ -377,6 +377,8 @@ pub struct EvaluationSearchRow {
     pub pr_action: Option<String>,
     pub trigger_kind: String,
     pub hidden: bool,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub orphaned_count: i32,
 }
 pub struct EvaluationSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -392,6 +394,8 @@ pub struct EvaluationSearchRowBorrowed<'a> {
     pub pr_action: Option<&'a str>,
     pub trigger_kind: &'a str,
     pub hidden: bool,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub orphaned_count: i32,
 }
 impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
     fn from(
@@ -409,6 +413,8 @@ impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
             pr_action,
             trigger_kind,
             hidden,
+            started_at,
+            orphaned_count,
         }: EvaluationSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -425,6 +431,8 @@ impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
             pr_action: pr_action.map(|v| v.into()),
             trigger_kind: trigger_kind.into(),
             hidden,
+            started_at,
+            orphaned_count,
         }
     }
 }
@@ -1252,6 +1260,8 @@ impl SearchEvaluationsStmt {
                     pr_action: row.try_get(10)?,
                     trigger_kind: row.try_get(11)?,
                     hidden: row.try_get(12)?,
+                    started_at: row.try_get(13)?,
+                    orphaned_count: row.try_get(14)?,
                 })
             },
             mapper: |it| EvaluationSearchRow::from(it),

@@ -662,3 +662,25 @@ pub async fn get_build_contexts(
       .collect(),
   )
 }
+
+/// Recover running evaluations whose claim is older than `deadline_secs`.
+///
+/// A row can only stay running that long if the evaluator that claimed it
+/// died before finishing, so it is requeued as pending. After three
+/// orphanings the row is marked failed instead to keep a crash-inducing
+/// evaluation from cycling forever.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn sweep_orphaned(
+  pool: &PgPool,
+  deadline_secs: f64,
+) -> Result<Vec<Evaluation>> {
+  let client = pool.get().await?;
+  let rows = q::sweep_orphaned()
+    .bind(&client, &deadline_secs)
+    .all()
+    .await?;
+  rows.into_iter().map(Evaluation::try_from).collect()
+}

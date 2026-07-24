@@ -57,6 +57,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (28, "0028_narinfo_cache_project_owners"),
   (29, "0029_evaluation_cancellation"),
   (30, "0030_runtime_enum_constraints"),
+  (31, "0031_evaluation_started_at"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.

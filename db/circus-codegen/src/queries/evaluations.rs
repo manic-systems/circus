@@ -112,6 +112,8 @@ pub struct EvaluationRow {
     pub pr_action: Option<String>,
     pub trigger_kind: String,
     pub hidden: bool,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub orphaned_count: i32,
 }
 pub struct EvaluationRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -127,6 +129,8 @@ pub struct EvaluationRowBorrowed<'a> {
     pub pr_action: Option<&'a str>,
     pub trigger_kind: &'a str,
     pub hidden: bool,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub orphaned_count: i32,
 }
 impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
     fn from(
@@ -144,6 +148,8 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             pr_action,
             trigger_kind,
             hidden,
+            started_at,
+            orphaned_count,
         }: EvaluationRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -160,6 +166,8 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             pr_action: pr_action.map(|v| v.into()),
             trigger_kind: trigger_kind.into(),
             hidden,
+            started_at,
+            orphaned_count,
         }
     }
 }
@@ -528,7 +536,7 @@ where
 pub struct CreateWithKindStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create_with_kind() -> CreateWithKindStmt {
     CreateWithKindStmt(
-        "INSERT INTO evaluations ( jobset_id, commit_hash, status, trigger_kind, pr_number, pr_head_branch, pr_base_branch, pr_action ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8 ) RETURNING *",
+        "INSERT INTO evaluations ( jobset_id, commit_hash, status, trigger_kind, pr_number, pr_head_branch, pr_base_branch, pr_action, started_at ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3::text = 'running' THEN NOW() END ) RETURNING *",
         None,
     )
 }
@@ -593,6 +601,8 @@ impl CreateWithKindStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -676,6 +686,8 @@ impl GetStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -724,6 +736,8 @@ impl GetVisibleStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -789,6 +803,8 @@ impl ListForJobsetStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -840,6 +856,8 @@ impl ListFilteredWithVisibilityStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -968,6 +986,8 @@ impl SetHiddenStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -995,7 +1015,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct TryClaimPendingStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn try_claim_pending() -> TryClaimPendingStmt {
     TryClaimPendingStmt(
-        "UPDATE evaluations SET status = 'running' WHERE id = $1 AND status = 'pending' RETURNING *",
+        "UPDATE evaluations SET status = 'running', started_at = NOW() WHERE id = $1 AND status = 'pending' RETURNING *",
         None,
     )
 }
@@ -1033,6 +1053,8 @@ impl TryClaimPendingStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1082,6 +1104,8 @@ impl UpdateStatusStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1147,6 +1171,8 @@ impl GetLatestStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1241,6 +1267,8 @@ impl GetByInputsHashStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1331,6 +1359,8 @@ impl ListPendingStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1408,6 +1438,8 @@ impl GetByJobsetAndCommitStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1515,6 +1547,8 @@ impl FinishRunningStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1580,6 +1614,57 @@ impl CancelStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
+                    })
+                },
+            mapper: |it| EvaluationRow::from(it),
+        }
+    }
+}
+pub struct SweepOrphanedStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn sweep_orphaned() -> SweepOrphanedStmt {
+    SweepOrphanedStmt(
+        "UPDATE evaluations SET status = CASE WHEN orphaned_count >= 2 THEN 'failed' ELSE 'pending' END, error_message = CASE WHEN orphaned_count >= 2 THEN 'evaluation orphaned repeatedly, giving up' END, orphaned_count = orphaned_count + 1, started_at = NULL, inputs_hash = NULL, evaluation_time = NOW() WHERE status = 'running' AND COALESCE(started_at, evaluation_time) < NOW() - make_interval(secs => $1) RETURNING *",
+        None,
+    )
+}
+impl SweepOrphanedStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        deadline_secs: &'a f64,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 1> {
+        EvaluationRowQuery {
+            client,
+            params: [deadline_secs],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
+                    Ok(EvaluationRowBorrowed {
+                        id: row.try_get(0)?,
+                        jobset_id: row.try_get(1)?,
+                        commit_hash: row.try_get(2)?,
+                        evaluation_time: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        error_message: row.try_get(5)?,
+                        inputs_hash: row.try_get(6)?,
+                        pr_number: row.try_get(7)?,
+                        pr_head_branch: row.try_get(8)?,
+                        pr_base_branch: row.try_get(9)?,
+                        pr_action: row.try_get(10)?,
+                        trigger_kind: row.try_get(11)?,
+                        hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1589,7 +1674,7 @@ impl CancelStmt {
 pub struct RestartRequeueStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart_requeue() -> RestartRequeueStmt {
     RestartRequeueStmt(
-        "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), error_message = NULL, inputs_hash = NULL FROM jobsets j WHERE e.id = $1 AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', 'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN ('enabled', 'one_at_a_time'))) RETURNING e.*",
+        "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), error_message = NULL, inputs_hash = NULL, started_at = NULL, orphaned_count = 0 FROM jobsets j WHERE e.id = $1 AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', 'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN ('enabled', 'one_at_a_time'))) RETURNING e.*",
         None,
     )
 }
@@ -1627,6 +1712,8 @@ impl RestartRequeueStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1797,6 +1884,8 @@ impl ListPageFilteredStmt {
                         pr_action: row.try_get(10)?,
                         trigger_kind: row.try_get(11)?,
                         hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),

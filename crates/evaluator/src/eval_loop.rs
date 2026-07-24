@@ -69,6 +69,34 @@ pub async fn run(
   }
 }
 
+/// Grace period past the worst-case evaluation time before a running row is
+/// considered orphaned.
+const ORPHAN_SWEEP_SLACK_SECS: f64 = 300.0;
+
+/// Requeue evaluations stranded in running state by an evaluator that died
+/// after claiming them. No live evaluation can outlast the git plus nix
+/// timeouts, so anything older is unowned. Also unwedges the duplicate-poll
+/// skip that a stranded row otherwise holds forever.
+async fn sweep_orphaned_evaluations(pool: &PgPool, worst_case: Duration) {
+  let deadline_secs = worst_case.as_secs_f64() + ORPHAN_SWEEP_SLACK_SECS;
+  match repo::evaluations::sweep_orphaned(pool, deadline_secs).await {
+    Ok(swept) => {
+      for eval in swept {
+        tracing::warn!(
+          eval_id = %eval.id,
+          jobset_id = %eval.jobset_id,
+          commit = %eval.commit_hash,
+          status = eval.status.as_db_str(),
+          "Recovered orphaned evaluation"
+        );
+      }
+    },
+    Err(e) => {
+      tracing::warn!("Failed to sweep orphaned evaluations: {e}");
+    },
+  }
+}
+
 async fn run_cycle(
   pool: &PgPool,
   config: &EvaluatorConfig,
@@ -77,6 +105,8 @@ async fn run_cycle(
   nix_timeout: Duration,
   git_timeout: Duration,
 ) -> color_eyre::Result<()> {
+  sweep_orphaned_evaluations(pool, git_timeout + nix_timeout).await;
+
   let active = repo::jobsets::list_active(pool).await?;
   let active_by_id: HashMap<Uuid, ActiveJobset> =
     active.iter().cloned().map(|j| (j.id, j)).collect();
