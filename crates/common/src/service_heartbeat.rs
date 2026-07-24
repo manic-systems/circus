@@ -60,6 +60,8 @@ pub struct ServiceStatus {
   pub seconds_since:     Option<f64>,
   /// Configured poll interval the service most recently reported.
   pub poll_interval:     Option<i32>,
+  /// Build of the service most recently reported.
+  pub version:           Option<String>,
   /// True when the heartbeat is fresh; false when stale or missing.
   pub healthy:           bool,
   /// Optional human-readable hint about why this service is unhealthy.
@@ -112,6 +114,7 @@ pub async fn status_for(
       last_heartbeat_at: Some(row.last_heartbeat_at),
       seconds_since: Some(row.seconds_since),
       poll_interval: Some(row.poll_interval_seconds),
+      version: row.version,
       healthy,
       detail,
     });
@@ -124,6 +127,7 @@ pub async fn status_for(
         last_heartbeat_at: None,
         seconds_since:     None,
         poll_interval:     None,
+        version:           None,
         healthy:           false,
         detail:            Some(
           "service has never reported a heartbeat".to_string(),

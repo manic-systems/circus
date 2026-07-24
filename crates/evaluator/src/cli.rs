@@ -137,7 +137,7 @@ async fn heartbeat_loop(
     &pool,
     circus_common::service_heartbeat::SERVICE_EVALUATOR,
     poll_u32,
-    Some(env!("CARGO_PKG_VERSION")),
+    Some(circus_common::version::long()),
   )
   .await
   {
@@ -151,7 +151,7 @@ async fn heartbeat_loop(
       &pool,
       circus_common::service_heartbeat::SERVICE_EVALUATOR,
       poll_u32,
-      Some(env!("CARGO_PKG_VERSION")),
+      Some(circus_common::version::long()),
     )
     .await
     {

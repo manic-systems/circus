@@ -456,12 +456,17 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: 36px;
   padding: 8px 16px;
   color: var(--text-subtle);
   border-top: 1px solid var(--border);
   font-size: 12px;
   line-height: 16px;
+}
+
+.footer-version {
+  opacity: 0.75;
 }
 
 h1 {

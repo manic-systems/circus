@@ -76,9 +76,15 @@
             inherit cargoExtraArgs;
           });
 
+      # Kept out of commonArgs so the shared dependency artifacts stay cached across commits
+      buildShaArgs = {
+        env = commonArgs.env // {CIRCUS_BUILD_SHA = self.rev or self.dirtyRev or "";};
+      };
+
       callCratePackage = path: name: cargoExtraArgs:
         pkgs.callPackage path {
-          inherit craneLib commonArgs;
+          inherit craneLib;
+          commonArgs = commonArgs // buildShaArgs;
           cargoArtifacts = cargoArtifactsFor name cargoExtraArgs;
         };
 
@@ -118,7 +124,11 @@
       }
       // lib.optionalAttrs (muslCrossAttr ? ${system}) {
         circus-agent-static = staticCraneLib.buildPackage (
-          staticAgentArgs // {cargoArtifacts = staticCraneLib.buildDepsOnly staticAgentArgs;}
+          staticAgentArgs
+          // {
+            cargoArtifacts = staticCraneLib.buildDepsOnly staticAgentArgs;
+            env = staticAgentArgs.env // {CIRCUS_BUILD_SHA = self.rev or self.dirtyRev or "";};
+          }
         );
       });
 

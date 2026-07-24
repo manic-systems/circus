@@ -50,7 +50,7 @@ fn run_subcommand(mut args: Vec<OsString>) -> color_eyre::Result<()> {
     return Ok(());
   }
   if matches!(command, "-V" | "--version") {
-    println!("circus {}", env!("CARGO_PKG_VERSION"));
+    println!("circus {}", circus_common::version::long());
     return Ok(());
   }
 

@@ -515,7 +515,7 @@ async fn heartbeat_loop(
     circus_common::service_heartbeat::SERVICE_QUEUE_RUNNER,
     u32::try_from(poll_interval_seconds.min(u64::from(u32::MAX)))
       .unwrap_or(u32::MAX),
-    Some(env!("CARGO_PKG_VERSION")),
+    Some(circus_common::version::long()),
   )
   .await
   {
@@ -533,7 +533,7 @@ async fn heartbeat_loop(
       circus_common::service_heartbeat::SERVICE_QUEUE_RUNNER,
       u32::try_from(poll_interval_seconds.min(u64::from(u32::MAX)))
         .unwrap_or(u32::MAX),
-      Some(env!("CARGO_PKG_VERSION")),
+      Some(circus_common::version::long()),
     )
     .await
     {

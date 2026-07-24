@@ -12,12 +12,14 @@ pub struct ListStatus {
     pub last_heartbeat_at: chrono::DateTime<chrono::Utc>,
     pub seconds_since: f64,
     pub poll_interval_seconds: i32,
+    pub version: Option<String>,
 }
 pub struct ListStatusBorrowed<'a> {
     pub service: &'a str,
     pub last_heartbeat_at: chrono::DateTime<chrono::Utc>,
     pub seconds_since: f64,
     pub poll_interval_seconds: i32,
+    pub version: Option<&'a str>,
 }
 impl<'a> From<ListStatusBorrowed<'a>> for ListStatus {
     fn from(
@@ -26,6 +28,7 @@ impl<'a> From<ListStatusBorrowed<'a>> for ListStatus {
             last_heartbeat_at,
             seconds_since,
             poll_interval_seconds,
+            version,
         }: ListStatusBorrowed<'a>,
     ) -> Self {
         Self {
@@ -33,6 +36,7 @@ impl<'a> From<ListStatusBorrowed<'a>> for ListStatus {
             last_heartbeat_at,
             seconds_since,
             poll_interval_seconds,
+            version: version.map(|v| v.into()),
         }
     }
 }
@@ -162,7 +166,7 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::String
 pub struct ListStatusStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_status() -> ListStatusStmt {
     ListStatusStmt(
-        "SELECT service, last_heartbeat_at, EXTRACT( EPOCH FROM (NOW() - last_heartbeat_at) )::float8 AS seconds_since, poll_interval_seconds FROM service_heartbeats",
+        "SELECT service, last_heartbeat_at, EXTRACT( EPOCH FROM (NOW() - last_heartbeat_at) )::float8 AS seconds_since, poll_interval_seconds, version FROM service_heartbeats",
         None,
     )
 }
@@ -190,6 +194,7 @@ impl ListStatusStmt {
                         last_heartbeat_at: row.try_get(1)?,
                         seconds_since: row.try_get(2)?,
                         poll_interval_seconds: row.try_get(3)?,
+                        version: row.try_get(4)?,
                     })
                 },
             mapper: |it| ListStatus::from(it),
