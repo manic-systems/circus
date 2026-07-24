@@ -28,7 +28,7 @@ LIMIT
   :limit;
 
 --: JobsetSearchRow(branch?, branch_pattern?, tag_pattern?, last_checked_at?)
---: EvaluationSearchRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?)
+--: EvaluationSearchRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?)
 
 -- The optional filters use NULL-guarded predicates and the dynamic sort is a
 -- CASE ladder keyed on :sort, so the whole search surface stays static.

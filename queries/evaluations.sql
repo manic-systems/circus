@@ -1,13 +1,14 @@
---: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?)
+--: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?)
 
 --! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?) : EvaluationRow
 INSERT INTO evaluations (
   jobset_id, commit_hash, status, trigger_kind,
-  pr_number, pr_head_branch, pr_base_branch, pr_action
+  pr_number, pr_head_branch, pr_base_branch, pr_action, started_at
 )
 VALUES (
   :jobset_id, :commit_hash, :status, :trigger_kind,
-  :pr_number, :pr_head_branch, :pr_base_branch, :pr_action
+  :pr_number, :pr_head_branch, :pr_base_branch, :pr_action,
+  CASE WHEN :status::text = 'running' THEN NOW() END
 )
 RETURNING *;
 
@@ -39,7 +40,7 @@ WHERE (:jobset_id::uuid IS NULL OR jobset_id = :jobset_id)
 UPDATE evaluations SET hidden = :hidden WHERE id = :id RETURNING *;
 
 --! try_claim_pending : EvaluationRow
-UPDATE evaluations SET status = 'running'
+UPDATE evaluations SET status = 'running', started_at = NOW()
 WHERE id = :id AND status = 'pending'
 RETURNING *;
 
@@ -102,10 +103,23 @@ UPDATE evaluations SET status = 'cancelled', error_message = NULL
 WHERE id = :id AND status IN ('pending', 'running')
 RETURNING *;
 
+--! sweep_orphaned : EvaluationRow
+UPDATE evaluations
+SET status = CASE WHEN orphaned_count >= 2 THEN 'failed' ELSE 'pending' END,
+    error_message = CASE WHEN orphaned_count >= 2
+      THEN 'evaluation orphaned repeatedly, giving up' END,
+    orphaned_count = orphaned_count + 1,
+    started_at = NULL, inputs_hash = NULL, evaluation_time = NOW()
+WHERE status = 'running'
+  AND COALESCE(started_at, evaluation_time)
+    < NOW() - make_interval(secs => :deadline_secs)
+RETURNING *;
+
 --! restart_requeue : EvaluationRow
 UPDATE evaluations e
 SET status = 'pending', evaluation_time = NOW(),
-    error_message = NULL, inputs_hash = NULL
+    error_message = NULL, inputs_hash = NULL,
+    started_at = NULL, orphaned_count = 0
 FROM jobsets j
 WHERE e.id = :id AND e.jobset_id = j.id
   AND e.status IN ('cancelled', 'failed', 'timed_out')
