@@ -70,6 +70,17 @@ pub struct FinishRunningParams<T1: crate::StringSql, T2: crate::StringSql> {
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
+pub struct SupersedePendingPushParams<T1: crate::StringSql> {
+    pub commit_hash: T1,
+    pub jobset_id: uuid::Uuid,
+}
+#[derive(Debug)]
+pub struct SupersedePendingChangeRequestParams<T1: crate::StringSql> {
+    pub commit_hash: T1,
+    pub jobset_id: uuid::Uuid,
+    pub pr_number: i32,
+}
+#[derive(Debug)]
 pub struct ListPageFilteredParams<
     T1: crate::StringSql,
     T2: crate::StringSql,
@@ -1669,6 +1680,148 @@ impl SweepOrphanedStmt {
                 },
             mapper: |it| EvaluationRow::from(it),
         }
+    }
+}
+pub struct SupersedePendingPushStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn supersede_pending_push() -> SupersedePendingPushStmt {
+    SupersedePendingPushStmt(
+        "UPDATE evaluations SET status = 'cancelled', error_message = 'superseded by ' || $1 WHERE jobset_id = $2 AND status = 'pending' AND trigger_kind = 'source_change' AND pr_number IS NULL AND commit_hash <> $1 RETURNING *",
+        None,
+    )
+}
+impl SupersedePendingPushStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        commit_hash: &'a T1,
+        jobset_id: &'a uuid::Uuid,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2> {
+        EvaluationRowQuery {
+            client,
+            params: [commit_hash, jobset_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
+                    Ok(EvaluationRowBorrowed {
+                        id: row.try_get(0)?,
+                        jobset_id: row.try_get(1)?,
+                        commit_hash: row.try_get(2)?,
+                        evaluation_time: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        error_message: row.try_get(5)?,
+                        inputs_hash: row.try_get(6)?,
+                        pr_number: row.try_get(7)?,
+                        pr_head_branch: row.try_get(8)?,
+                        pr_base_branch: row.try_get(9)?,
+                        pr_action: row.try_get(10)?,
+                        trigger_kind: row.try_get(11)?,
+                        hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
+                    })
+                },
+            mapper: |it| EvaluationRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        SupersedePendingPushParams<T1>,
+        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2>,
+        C,
+    > for SupersedePendingPushStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a SupersedePendingPushParams<T1>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2> {
+        self.bind(client, &params.commit_hash, &params.jobset_id)
+    }
+}
+pub struct SupersedePendingChangeRequestStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn supersede_pending_change_request() -> SupersedePendingChangeRequestStmt {
+    SupersedePendingChangeRequestStmt(
+        "UPDATE evaluations SET status = 'cancelled', error_message = 'superseded by ' || $1 WHERE jobset_id = $2 AND status = 'pending' AND pr_number = $3 AND commit_hash <> $1 RETURNING *",
+        None,
+    )
+}
+impl SupersedePendingChangeRequestStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        commit_hash: &'a T1,
+        jobset_id: &'a uuid::Uuid,
+        pr_number: &'a i32,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 3> {
+        EvaluationRowQuery {
+            client,
+            params: [commit_hash, jobset_id, pr_number],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
+                    Ok(EvaluationRowBorrowed {
+                        id: row.try_get(0)?,
+                        jobset_id: row.try_get(1)?,
+                        commit_hash: row.try_get(2)?,
+                        evaluation_time: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        error_message: row.try_get(5)?,
+                        inputs_hash: row.try_get(6)?,
+                        pr_number: row.try_get(7)?,
+                        pr_head_branch: row.try_get(8)?,
+                        pr_base_branch: row.try_get(9)?,
+                        pr_action: row.try_get(10)?,
+                        trigger_kind: row.try_get(11)?,
+                        hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
+                    })
+                },
+            mapper: |it| EvaluationRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        SupersedePendingChangeRequestParams<T1>,
+        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 3>,
+        C,
+    > for SupersedePendingChangeRequestStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a SupersedePendingChangeRequestParams<T1>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 3> {
+        self.bind(
+            client,
+            &params.commit_hash,
+            &params.jobset_id,
+            &params.pr_number,
+        )
     }
 }
 pub struct RestartRequeueStmt(&'static str, Option<tokio_postgres::Statement>);
