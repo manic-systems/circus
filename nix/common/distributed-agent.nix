@@ -8,9 +8,7 @@
   pkgs,
   lib,
   ...
-}: let
-  circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-in {
+}: {
   imports = [self.nixosModules.circus-agent];
 
   environment.systemPackages = with pkgs; [nix curl jq];
@@ -23,7 +21,6 @@ in {
 
   services.circus-agent = {
     enable = true;
-    package = circus-packages.circus-agent;
     authTokenFile = "/etc/circus-agent/token";
     settings.agent = {
       inherit name;

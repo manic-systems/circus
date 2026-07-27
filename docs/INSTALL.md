@@ -656,7 +656,11 @@ it is possible to run on _any_ system with a Nix installation, it might be
 rather clunky. You're encouraged to provide documentation for alternative
 methods if you successfully run them.
 
-Circus ships a NixOS module at `nixosModules.default`. Minimal configuration:
+Circus ships a NixOS module at `nixosModules.default`. All package options
+default to the packages built by the Circus flake itself, so a minimal
+configuration only enables the services it needs. Set `package`,
+`evaluatorPackage`, `queueRunnerPackage` or `migratePackage` explicitly to build
+from your own nixpkgs instead.
 
 ```nix
 {
@@ -669,8 +673,6 @@ Circus ships a NixOS module at `nixosModules.default`. Minimal configuration:
         {
           services.circus = {
             enable = true;
-            package = circus.packages.x86_64-linux.circus-server;
-            migratePackage = circus.packages.x86_64-linux.circus-cli;
 
             server.enable = true;
             # evaluator.enable = true;
@@ -689,16 +691,10 @@ A complete production configuration with all three daemons and NGINX reverse
 proxy:
 
 ```nix
-{ inputs, pkgs, ... }: let
-  circusPkgs = inputs.circus.packages.${pkgs.stdenv.hostPlatform.system};
-in {
+{ inputs, pkgs, ... }: {
   networking.firewall.allowedTCPPorts = [ 80 443 ];
   services.circus = {
     enable = true;
-    package = circusPkgs.circus-server;
-    evaluatorPackage = circusPkgs.circus-evaluator;
-    queueRunnerPackage = circusPkgs.circus-queue-runner;
-    migratePackage = circusPkgs.circus-cli;
 
     server.enable = true;
     evaluator.enable = true;
