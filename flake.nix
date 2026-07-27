@@ -95,23 +95,17 @@
       };
 
       depsCommonArgs = commonArgs // {src = cargoDepsSrc;};
-      cargoArtifactsFor = name: cargoExtraArgs:
-        craneLib.buildDepsOnly (depsCommonArgs
-          // {
-            pname = name;
-            inherit cargoExtraArgs;
-          });
+      cargoArtifacts = craneLib.buildDepsOnly depsCommonArgs;
 
       # Kept out of commonArgs so the shared dependency artifacts stay cached across commits
       buildShaArgs = {
         env = commonArgs.env // {CIRCUS_BUILD_SHA = self.rev or self.dirtyRev or "";};
       };
 
-      callCratePackage = path: name: cargoExtraArgs:
+      callCratePackage = path:
         pkgs.callPackage path {
-          inherit craneLib;
+          inherit craneLib cargoArtifacts;
           commonArgs = commonArgs // buildShaArgs;
-          cargoArtifacts = cargoArtifactsFor name cargoExtraArgs;
         };
 
       muslCrossAttr = {
@@ -142,11 +136,11 @@
         demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
 
         # circus Packages
-        circus-cli = callCratePackage ./nix/packages/circus-cli.nix "circus-cli" "--package circus-cli --bin circusctl";
-        circus-agent = callCratePackage ./nix/packages/circus-agent.nix "circus-agent" "--package circus-agent";
-        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix "circus-evaluator" "--package circus-evaluator";
-        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix "circus-queue-runner" "--package circus-queue-runner";
-        circus-server = callCratePackage ./nix/packages/circus-server.nix "circus-server" "--package circus-server";
+        circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
+        circus-agent = callCratePackage ./nix/packages/circus-agent.nix;
+        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
+        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
+        circus-server = callCratePackage ./nix/packages/circus-server.nix;
       }
       // lib.optionalAttrs (muslCrossAttr ? ${system}) {
         circus-agent-static = staticCraneLib.buildPackage (
