@@ -68,11 +68,6 @@
       circus = {
         enable = true;
 
-        package = circusPkgs.circus-server;
-        evaluatorPackage = circusPkgs.circus-evaluator;
-        queueRunnerPackage = circusPkgs.circus-queue-runner;
-        migratePackage = circusPkgs.circus-cli;
-
         server.enable = true;
         evaluator.enable = true;
         queueRunner.enable = true;

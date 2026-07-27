@@ -4,8 +4,7 @@
   lib,
   ...
 }: let
-  inherit (lib.modules) mkDefault mkForce;
-  circus-packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+  inherit (lib.modules) mkForce;
 in {
   programs.git.enable = true;
   security.sudo.enable = true;
@@ -29,11 +28,6 @@ in {
 
   services.circus = {
     enable = true;
-
-    package = mkDefault circus-packages.circus-server;
-    evaluatorPackage = mkDefault circus-packages.circus-evaluator;
-    queueRunnerPackage = mkDefault circus-packages.circus-queue-runner;
-    migratePackage = mkDefault circus-packages.circus-cli;
 
     server.enable = true;
     evaluator.enable = true;

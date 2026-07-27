@@ -16,8 +16,34 @@
   in {
     # NixOS modules for Circus and components
     nixosModules = {
-      circus = ./nix/modules/circus.nix;
-      circus-agent = ./nix/modules/circus-agent.nix;
+      circus = {
+        _file = ./flake.nix;
+        key = "circus/nixosModules/circus";
+        imports = [
+          ./nix/modules/circus.nix
+          ({pkgs, ...}: let
+            packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          in {
+            services.circus = {
+              package = lib.mkDefault packages.circus-server;
+              evaluatorPackage = lib.mkDefault packages.circus-evaluator;
+              queueRunnerPackage = lib.mkDefault packages.circus-queue-runner;
+              migratePackage = lib.mkDefault packages.circus-cli;
+            };
+          })
+        ];
+      };
+      circus-agent = {
+        _file = ./flake.nix;
+        key = "circus/nixosModules/circus-agent";
+        imports = [
+          ./nix/modules/circus-agent.nix
+          ({pkgs, ...}: {
+            services.circus-agent.package =
+              lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
+          })
+        ];
+      };
       default = self.nixosModules.circus; # agent is optional
     };
 
@@ -137,7 +163,6 @@
       craneLib = crane.mkLib pkgs;
 
       callTest = path: pkgs.callPackage path {inherit self;};
-      nixosModuleAgentPackage = pkgs.callPackage ./nix/package.nix {crate = "circus-agent";};
       vmTests = {
         # Split VM integration tests
         service-startup = callTest ./nix/tests/startup.nix;
@@ -160,7 +185,6 @@
     in
       vmTests
       // {
-        nixos-module-agent-package = nixosModuleAgentPackage;
         full = pkgs.symlinkJoin {
           name = "vm-tests-full";
           paths = builtins.attrValues vmTests;

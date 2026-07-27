@@ -5,7 +5,7 @@
   ...
 }: let
   inherit (lib.modules) mkIf mkDefault mkMerge;
-  inherit (lib.options) literalExpression mkEnableOption mkOption;
+  inherit (lib.options) mkEnableOption mkOption;
   inherit (lib.types) bool int listOf nullOr package path str submodule;
   inherit (lib.lists) concatMap optional;
   inherit (lib.meta) getExe';
@@ -307,15 +307,11 @@ in {
 
     evaluatorPackage = mkOption {
       type = package;
-      default = cfg.package;
-      defaultText = literalExpression "cfg.package";
       description = "The circus evaluator package.";
     };
 
     queueRunnerPackage = mkOption {
       type = package;
-      default = cfg.package;
-      defaultText = literalExpression "cfg.package";
       description = "The circus queue runner package.";
     };
 
