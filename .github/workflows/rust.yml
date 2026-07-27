@@ -46,6 +46,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
+      - name: Restore cached paths
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
       - name: Check Dependency Policy
         run: nix build .#checks.x86_64-linux.cargo-deny --no-link -L
       - name: Audit Dependency Advisories
