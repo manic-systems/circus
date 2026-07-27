@@ -77,9 +77,9 @@ jobs:
 
       - name: Build all circus packages
         run: |
-          nix build .#circus-cli .#circus-agent .#circus-agent-static \
-                    .#circus-evaluator \
-                    .#circus-queue-runner .#circus-server -L --no-link
+          nix build .#circus-agent-static .#circus-server    .#circus-cli   \
+                    .#circus-queue-runner .#circus-evaluator .#circus-agent \
+                    -L --out-link result-circus
 
   build:
     name: Build ${{ matrix.package }}
@@ -110,3 +110,65 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: nix build .#${{ matrix.package }} -L --no-link
+
+  vm-test:
+    name: ${{ matrix.name }}
+    needs: [changes, build-packages]
+    if: ${{ needs.changes.outputs.files_changed == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Service Startup
+            check: service-startup
+          - name: Basic API
+            check: basic-api
+          - name: Auth RBAC
+            check: auth-rbac
+          - name: API CRUD
+            check: api-crud
+          - name: Features
+            check: features
+          - name: Webhooks
+            check: webhooks
+          - name: E2E
+            check: e2e
+          - name: Declarative
+            check: declarative
+          - name: Distributed
+            check: distributed
+          - name: Agent Dispatch
+            check: agent-dispatch
+          - name: GC Pinning
+            check: gc-pinning
+          - name: Machine Health
+            check: machine-health
+          - name: Channel Tarball
+            check: channel-tarball
+          - name: Capability Scheduling
+            check: capability-scheduling
+          - name: S3 Cache
+            check: s3-cache
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
+        with:
+          enable_kvm: true
+          extra_nix_config: |
+            system-features = kvm benchmark big-parallel nixos-test uid-range
+            extra-experimental-features = nix-command flakes auto-allocate-uids cgroups
+            auto-allocate-uids = true
+            use-cgroups = true
+
+      - name: Restore cached paths
+        id: cache-store-restore
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
+
+      - name: Build ${{ matrix.check }} for x86_64-linux
+        run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
