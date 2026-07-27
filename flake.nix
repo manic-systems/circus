@@ -131,6 +131,7 @@
         hardeningDisable = ["fortify" "fortify3"];
         env.CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
       };
+      staticCargoArtifacts = staticCraneLib.buildDepsOnly staticAgentArgs;
     in
       {
         demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
@@ -141,12 +142,29 @@
         circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
         circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
         circus-server = callCratePackage ./nix/packages/circus-server.nix;
+
+        ci-cargo-artifacts = pkgs.linkFarm "ci-cargo-artifacts" ([
+            {
+              name = "deps";
+              path = cargoArtifacts;
+            }
+            {
+              name = "vendor";
+              path = craneLib.vendorCargoDeps depsCommonArgs;
+            }
+          ]
+          ++ lib.optionals (muslCrossAttr ? ${system}) [
+            {
+              name = "deps-static";
+              path = staticCargoArtifacts;
+            }
+          ]);
       }
       // lib.optionalAttrs (muslCrossAttr ? ${system}) {
         circus-agent-static = staticCraneLib.buildPackage (
           staticAgentArgs
           // {
-            cargoArtifacts = staticCraneLib.buildDepsOnly staticAgentArgs;
+            cargoArtifacts = staticCargoArtifacts;
             env = staticAgentArgs.env // {CIRCUS_BUILD_SHA = self.rev or self.dirtyRev or "";};
           }
         );

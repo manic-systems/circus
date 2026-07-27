@@ -68,7 +68,7 @@ jobs:
         with:
           primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
           restore-prefixes-first-match: nix-packages-${{ runner.os }}-
-          gc-max-store-size-linux: 5G
+          gc-max-store-size-linux: 8G
           purge: true
           purge-prefixes: nix-packages-${{ runner.os }}-
           purge-created: 0
@@ -79,7 +79,7 @@ jobs:
         run: |
           nix build .#circus-agent-static .#circus-server    .#circus-cli   \
                     .#circus-queue-runner .#circus-evaluator .#circus-agent \
-                    -L --out-link result-circus
+                    .#ci-cargo-artifacts -L --out-link result-circus
 
   build:
     name: Build ${{ matrix.package }}
