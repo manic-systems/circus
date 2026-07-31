@@ -251,6 +251,44 @@ fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
   }
 }
 
+/// Resolve the dependency edges to insert for `jobs`, deduplicated. Jobs can
+/// alias one drv path (`packages.default`), so edges are anchored to each
+/// job's own build id rather than the drv-keyed map, which only retains the
+/// last build per drv.
+fn resolve_dependency_pairs(
+  jobs: &[crate::nix::NixJob],
+  build_ids: &[Uuid],
+  drv_to_build: &HashMap<String, Uuid>,
+  name_to_build: &HashMap<String, Uuid>,
+) -> Vec<(Uuid, Uuid)> {
+  let mut seen = HashSet::new();
+  let mut pairs = Vec::new();
+  for (job, &build_id) in jobs.iter().zip(build_ids) {
+    if let Some(input_drvs) = &job.input_drvs {
+      for dep_drv in input_drvs.keys() {
+        if let Some(&dep_build_id) = drv_to_build.get(dep_drv)
+          && dep_build_id != build_id
+          && seen.insert((build_id, dep_build_id))
+        {
+          pairs.push((build_id, dep_build_id));
+        }
+      }
+    }
+
+    if let Some(constituents) = &job.constituents {
+      for constituent_name in constituents {
+        if let Some(&dep_build_id) = name_to_build.get(constituent_name)
+          && dep_build_id != build_id
+          && seen.insert((build_id, dep_build_id))
+        {
+          pairs.push((build_id, dep_build_id));
+        }
+      }
+    }
+  }
+  pairs
+}
+
 /// Create build records and finish the evaluation while it is still running.
 pub(crate) async fn create_builds_from_eval(
   pool: &PgPool,
@@ -301,6 +339,7 @@ pub(crate) async fn create_builds_from_eval(
     return Ok(false);
   }
 
+  let mut build_ids = Vec::with_capacity(jobs.len());
   for build in builds {
     let drv_path = build.drv_path.clone();
     let job_name = build.job_name.clone();
@@ -308,46 +347,18 @@ pub(crate) async fn create_builds_from_eval(
 
     drv_to_build.insert(drv_path, id);
     name_to_build.insert(job_name, id);
+    build_ids.push(id);
   }
 
-  // Resolve dependencies
-  for job in &jobs {
-    let build_id = match drv_to_build.get(&job.drv_path) {
-      Some(id) => *id,
-      None => continue,
-    };
-
-    // Input derivation dependencies
-    if let Some(ref input_drvs) = job.input_drvs {
-      for dep_drv in input_drvs.keys() {
-        if let Some(&dep_build_id) = drv_to_build.get(dep_drv)
-          && dep_build_id != build_id
-        {
-          repo::build_dependencies::create_in_transaction(
-            &tx,
-            build_id,
-            dep_build_id,
-          )
-          .await?;
-        }
-      }
-    }
-
-    // Aggregate constituent dependencies
-    if let Some(ref constituents) = job.constituents {
-      for constituent_name in constituents {
-        if let Some(&dep_build_id) = name_to_build.get(constituent_name)
-          && dep_build_id != build_id
-        {
-          repo::build_dependencies::create_in_transaction(
-            &tx,
-            build_id,
-            dep_build_id,
-          )
-          .await?;
-        }
-      }
-    }
+  for (build_id, dep_build_id) in
+    resolve_dependency_pairs(&jobs, &build_ids, &drv_to_build, &name_to_build)
+  {
+    repo::build_dependencies::create_in_transaction(
+      &tx,
+      build_id,
+      dep_build_id,
+    )
+    .await?;
   }
 
   if !repo::evaluations::finish_running_in_transaction(
@@ -391,4 +402,66 @@ pub(crate) fn compute_inputs_hash(
   }
 
   hex::encode(hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::HashMap;
+
+  use uuid::Uuid;
+
+  use super::resolve_dependency_pairs;
+  use crate::nix::{NixJob, NixMeta};
+
+  fn job(name: &str, drv_path: &str, input_drvs: &[&str]) -> NixJob {
+    NixJob {
+      name:         name.to_owned(),
+      drv_path:     drv_path.to_owned(),
+      system:       None,
+      outputs:      None,
+      input_drvs:   (!input_drvs.is_empty()).then(|| {
+        input_drvs
+          .iter()
+          .map(|drv| ((*drv).to_owned(), serde_json::Value::Null))
+          .collect()
+      }),
+      constituents: None,
+      meta:         NixMeta::default(),
+    }
+  }
+
+  #[test]
+  fn aliased_jobs_get_unique_edges_on_their_own_builds() {
+    let jobs = [
+      job("packages.x86_64-linux.default", "/drv/pkg.drv", &[
+        "/drv/dep.drv",
+      ]),
+      job("packages.x86_64-linux.pkg", "/drv/pkg.drv", &[
+        "/drv/dep.drv",
+      ]),
+      job("drv:dep", "/drv/dep.drv", &[]),
+    ];
+    let build_ids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+    let drv_to_build = HashMap::from([
+      ("/drv/pkg.drv".to_owned(), build_ids[1]),
+      ("/drv/dep.drv".to_owned(), build_ids[2]),
+    ]);
+    let name_to_build = jobs
+      .iter()
+      .zip(build_ids)
+      .map(|(job, id)| (job.name.clone(), id))
+      .collect();
+
+    let pairs = resolve_dependency_pairs(
+      &jobs,
+      &build_ids,
+      &drv_to_build,
+      &name_to_build,
+    );
+
+    assert_eq!(pairs, vec![
+      (build_ids[0], build_ids[2]),
+      (build_ids[1], build_ids[2]),
+    ]);
+  }
 }
