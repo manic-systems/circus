@@ -99,6 +99,15 @@ pub async fn show_required_features(drvs: &[String]) -> Result<Vec<String>> {
   Ok(features.into_iter().collect())
 }
 
+/// `requiredSystemFeatures` of a single derivation's `nix derivation show`
+/// value, as opposed to [`union_required_features`] over a whole document.
+#[must_use]
+pub fn drv_required_features(drv: &serde_json::Value) -> Vec<String> {
+  let mut out = BTreeSet::new();
+  features_of_drv(drv, &mut out);
+  out.into_iter().collect()
+}
+
 /// Construct the canonical `nix derivation show` command used to inspect
 /// required system features.
 #[must_use]
@@ -139,6 +148,16 @@ mod tests {
       "nixos-test",
       "uid-range"
     ]);
+  }
+
+  #[test]
+  fn reads_features_of_a_single_drv_value() {
+    let drv = json!({
+      "env": { "requiredSystemFeatures": "kvm nixos-test" }
+    });
+
+    assert_eq!(drv_required_features(&drv), vec!["kvm", "nixos-test"]);
+    assert!(union_required_features(&drv).is_empty());
   }
 
   #[test]

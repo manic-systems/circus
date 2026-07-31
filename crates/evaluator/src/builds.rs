@@ -36,9 +36,10 @@ async fn read_required_features(
 
 #[derive(Debug, Clone)]
 struct DerivationInfo {
-  system:     Option<String>,
-  outputs:    Option<HashMap<String, String>>,
-  input_drvs: Option<HashMap<String, serde_json::Value>>,
+  system:            Option<String>,
+  outputs:           Option<HashMap<String, String>>,
+  input_drvs:        Option<HashMap<String, serde_json::Value>>,
+  required_features: Vec<String>,
 }
 
 fn parse_derivation_infos(
@@ -84,11 +85,14 @@ fn parse_derivation_infos(
         serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone())
           .ok()
       });
+      let required_features =
+        circus_nix::derivation::drv_required_features(drv_val);
 
       (drv_path, DerivationInfo {
         system,
         outputs,
         input_drvs,
+        required_features,
       })
     })
     .collect()
@@ -128,36 +132,56 @@ async fn show_recursive_derivations(
     .unwrap_or_default()
 }
 
-async fn output_available(path: &str, memory_limit: MemoryLimit) -> bool {
-  let mut command = Command::new("nix-store");
-  command.args(["--check-validity", path]).kill_on_drop(true);
-  let valid = memory_limit.apply_to(&mut command).is_ok()
-    && command.status().await.is_ok_and(|status| status.success());
-  if valid {
-    return true;
-  }
+/// Paths the command cannot vouch for are treated as invalid so the
+/// derivation still gets enqueued.
+async fn invalid_output_paths(
+  derivations: &HashMap<String, DerivationInfo>,
+  memory_limit: MemoryLimit,
+) -> HashSet<String> {
+  let paths = derivations
+    .values()
+    .filter_map(|info| info.outputs.as_ref())
+    .flat_map(|outputs| outputs.values().cloned())
+    .collect::<HashSet<String>>()
+    .into_iter()
+    .collect::<Vec<String>>();
 
-  let mut command = Command::new("nix");
-  command
-    .args(["path-info", "--json", path])
-    .kill_on_drop(true);
-  memory_limit.apply_to(&mut command).is_ok()
-    && command.status().await.is_ok_and(|status| status.success())
+  let mut invalid = HashSet::new();
+  for chunk in paths.chunks(1024) {
+    let mut command = Command::new("nix-store");
+    command
+      .args(["--check-validity", "--print-invalid"])
+      .args(chunk)
+      .kill_on_drop(true);
+    let output = if memory_limit.apply_to(&mut command).is_ok() {
+      command.output().await.ok()
+    } else {
+      None
+    };
+    match output {
+      Some(output) if output.status.success() => {
+        invalid.extend(
+          String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned),
+        );
+      },
+      _ => invalid.extend(chunk.iter().cloned()),
+    }
+  }
+  invalid
 }
 
-async fn should_enqueue_derivation(
+fn should_enqueue_derivation(
   info: &DerivationInfo,
-  memory_limit: MemoryLimit,
+  invalid_outputs: &HashSet<String>,
 ) -> bool {
   let Some(outputs) = &info.outputs else {
     return true;
   };
-  for output in outputs.values() {
-    if !output_available(output, memory_limit).await {
-      return true;
-    }
-  }
-  false
+  outputs
+    .values()
+    .any(|output| invalid_outputs.contains(output))
 }
 
 fn dependency_job_name(drv_path: &str) -> String {
@@ -172,7 +196,7 @@ fn dependency_job_name(drv_path: &str) -> String {
 async fn expand_derivation_graph(
   jobs: &[crate::nix::NixJob],
   memory_limit: MemoryLimit,
-) -> Vec<crate::nix::NixJob> {
+) -> (Vec<crate::nix::NixJob>, HashMap<String, DerivationInfo>) {
   let top_level_drvs = jobs
     .iter()
     .map(|job| job.drv_path.clone())
@@ -180,8 +204,9 @@ async fn expand_derivation_graph(
   let derivations =
     show_recursive_derivations(&top_level_drvs, memory_limit).await;
   if derivations.is_empty() {
-    return jobs.to_vec();
+    return (jobs.to_vec(), derivations);
   }
+  let invalid_outputs = invalid_output_paths(&derivations, memory_limit).await;
 
   let mut expanded = jobs.to_vec();
   let mut included = expanded
@@ -202,7 +227,7 @@ async fn expand_derivation_graph(
     let Some(info) = derivations.get(&drv_path) else {
       continue;
     };
-    if !should_enqueue_derivation(info, memory_limit).await {
+    if !should_enqueue_derivation(info, &invalid_outputs) {
       continue;
     }
 
@@ -221,7 +246,7 @@ async fn expand_derivation_graph(
     });
   }
 
-  expanded
+  (expanded, derivations)
 }
 
 /// Detect whether a derivation is a fixed-output derivation by reading the
@@ -298,7 +323,8 @@ pub(crate) async fn create_builds_from_eval(
 ) -> color_eyre::Result<bool> {
   let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
   let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
-  let jobs = expand_derivation_graph(&eval_result.jobs, memory_limit).await;
+  let (jobs, derivations) =
+    expand_derivation_graph(&eval_result.jobs, memory_limit).await;
   let mut builds = Vec::with_capacity(jobs.len());
 
   for job in &jobs {
@@ -313,8 +339,10 @@ pub(crate) async fn create_builds_from_eval(
     let is_aggregate = job.constituents.is_some();
 
     let (is_fod, fod_hash) = detect_fod(&job.drv_path);
-    let required_features =
-      read_required_features(&job.drv_path, memory_limit).await;
+    let required_features = match derivations.get(&job.drv_path) {
+      Some(info) => info.required_features.clone(),
+      None => read_required_features(&job.drv_path, memory_limit).await,
+    };
     builds.push(CreateBuild {
       evaluation_id: eval_id,
       job_name: job.name.clone(),
