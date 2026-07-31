@@ -41,7 +41,7 @@ async-compression = { version = "0.4.42", default-features = false, features = [
 async-stream = "0.3.6"
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = [ "typed-header", "cookie" ] }
-base64 = "0.22.1"
+base64 = "0.23.0"
 blake3 = "1.8.5"
 bstr = "1.12.3"
 bytes = "1.12.0"
@@ -150,7 +150,7 @@ argon2 = { version = "0.5.3", features = [ "std" ] }
 
 # default-features off drops the `pem`/`simple_asn1` deps we don't use; the
 # crate keeps ring (matching the rest of our stack) for RS256 verification.
-jsonwebtoken = { version = "10.4.0", default-features = false }
+jsonwebtoken = { version = "11.0.0", default-features = false }
 
 # In-house crates and Nix utilities
 cognos = "1.0.0"
