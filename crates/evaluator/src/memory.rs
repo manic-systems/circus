@@ -32,7 +32,7 @@ impl MemoryLimit {
       // SAFETY: the closure only calls async-signal-safe resource-limit
       // syscalls.
       unsafe {
-        command.pre_exec(move || set_address_space_limit(limit));
+        command.pre_exec(move || set_data_segment_limit(limit));
       }
       Ok(())
     }
@@ -88,7 +88,7 @@ pub fn limit_evix_worker_from_env() -> io::Result<()> {
   })?;
 
   #[cfg(unix)]
-  return set_address_space_limit(bytes(limit_mb)?);
+  return set_data_segment_limit(bytes(limit_mb)?);
 
   #[cfg(not(unix))]
   Err(io::Error::new(
@@ -97,20 +97,24 @@ pub fn limit_evix_worker_from_env() -> io::Result<()> {
   ))
 }
 
+/// `RLIMIT_DATA` leaves file-backed mmaps and reservations uncounted, so
+/// large packfile maps cannot starve worker thread creation.
 #[cfg(unix)]
-fn set_address_space_limit(limit: libc::rlim_t) -> io::Result<()> {
+fn set_data_segment_limit(limit: libc::rlim_t) -> io::Result<()> {
   let mut resource_limit = libc::rlimit {
     rlim_cur: 0,
     rlim_max: 0,
   };
   // SAFETY: resource_limit points to writable storage for a valid rlimit.
-  if unsafe { libc::getrlimit(libc::RLIMIT_AS, &raw mut resource_limit) } != 0 {
+  if unsafe { libc::getrlimit(libc::RLIMIT_DATA, &raw mut resource_limit) } != 0
+  {
     return Err(io::Error::last_os_error());
   }
   resource_limit.rlim_cur = limit.min(resource_limit.rlim_max);
   // SAFETY: resource_limit contains the existing hard limit and a soft limit
   // no greater than it.
-  if unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const resource_limit) } == 0
+  if unsafe { libc::setrlimit(libc::RLIMIT_DATA, &raw const resource_limit) }
+    == 0
   {
     Ok(())
   } else {
@@ -138,9 +142,9 @@ mod tests {
 
   #[cfg(unix)]
   #[tokio::test]
-  async fn command_receives_address_space_limit() {
+  async fn command_receives_data_segment_limit() {
     let mut command = Command::new("sh");
-    command.args(["-c", "ulimit -v"]);
+    command.args(["-c", "ulimit -d"]);
     MemoryLimit::new(Some(64)).apply_to(&mut command).unwrap();
 
     let output = command.output().await.unwrap();

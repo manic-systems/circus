@@ -221,7 +221,7 @@ configuration or the Nix store.
 | `evaluator`          | `max_eval_time`                                        | none                                                | Optional total evaluation limit (seconds); timeout is recorded distinctly |
 | `evaluator`          | `max_concurrent_evals`                                 | `4`                                                 | Maximum concurrent evaluations                                            |
 | `evaluator`          | `eval_workers`                                         | `4`                                                 | Evix worker subprocesses per evaluation                                   |
-| `evaluator`          | `memory_limit_mb`                                      | none                                                | Hard address-space limit per Nix subprocess (MiB)                         |
+| `evaluator`          | `memory_limit_mb`                                      | none                                                | Hard data-segment limit per Nix subprocess (MiB)                          |
 | `evaluator`          | `work_dir`                                             | `/tmp/circus-evaluator`                             | Working directory for clones                                              |
 | `evaluator`          | `restrict_eval`                                        | `true`                                              | Pass `--option restrict-eval true` to Nix                                 |
 | `evaluator`          | `allow_ifd`                                            | `false`                                             | Allow import-from-derivation                                              |

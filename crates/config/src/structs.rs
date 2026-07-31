@@ -255,7 +255,7 @@ pub struct EvaluatorConfig {
   /// at the cost of memory. Reduce this on memory-constrained hosts.
   pub eval_workers: usize,
 
-  /// Hard address-space limit, in MiB, for each Nix evaluator subprocess.
+  /// Hard data-segment limit, in MiB, for each Nix evaluator subprocess.
   /// This applies independently to every evix worker and auxiliary `nix`
   /// process. `None` disables the limit.
   pub memory_limit_mb: Option<u64>,
