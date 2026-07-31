@@ -13,7 +13,97 @@
     inherit (nixpkgs) lib;
     forAllSystems = lib.genAttrs (lib.systems.doubles.linux ++ ["aarch64-darwin"]);
     pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs {inherit system;});
+    src = let
+      fs = lib.fileset;
+      s = ./.;
+    in
+      fs.toSource {
+        root = s;
+        fileset = fs.unions [
+          (s + /crates)
+          (s + /db/circus-codegen)
+          (s + /Cargo.lock)
+          (s + /Cargo.toml)
+        ];
+      };
+    cargoDepsSrc = let
+      fs = lib.fileset;
+      s = ./.;
+    in
+      fs.toSource {
+        root = s;
+        fileset = fs.unions [
+          (s + /Cargo.lock)
+          (s + /Cargo.toml)
+          (fs.fileFilter (file: file.name == "Cargo.toml") (s + /crates))
+          (fs.fileFilter (file: file.name == "Cargo.toml") (s + /db/circus-codegen))
+        ];
+      };
+    mkAgent = pkgs: let
+      craneLib = crane.mkLib pkgs;
+      # The agent also builds on Darwin, so it skips the control plane's
+      # Nix/glibc/libclang stack.
+      commonArgs = {
+        pname = "circus-agent";
+        inherit src;
+        strictDeps = true;
+        nativeBuildInputs = with pkgs.buildPackages; [pkg-config capnproto];
+        buildInputs = [];
+      };
+      cargoArtifacts = craneLib.buildDepsOnly (commonArgs
+        // {
+          src = cargoDepsSrc;
+          cargoExtraArgs = "--package circus-agent";
+        });
+    in {
+      inherit cargoArtifacts;
+      package = pkgs.callPackage ./nix/packages/circus-agent.nix {
+        inherit craneLib cargoArtifacts commonArgs;
+      };
+    };
+    mkPackageSet = pkgs: let
+      craneLib = crane.mkLib pkgs;
+      agent = mkAgent pkgs;
+      # circus-evaluator embeds evix, which builds Rust bindings against the
+      # Nix C API (via nix-bindings-sys). Building the workspace dependency
+      # closure therefore needs the Nix C dev libraries, a glibc sysroot, and
+      # libclang for bindgen.
+      commonArgs = {
+        pname = "circus";
+        inherit src;
+        strictDeps = true;
+        nativeBuildInputs = with pkgs.buildPackages; [pkg-config capnproto];
+        buildInputs = with pkgs; [openssl sqlite nixVersions.nix_2_34.dev] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
+        env = {
+          LIBCLANG_PATH = "${pkgs.buildPackages.llvmPackages.libclang.lib}/lib";
+          BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
+        };
+      };
+      depsCommonArgs = commonArgs // {src = cargoDepsSrc;};
+      cargoArtifacts = craneLib.buildDepsOnly depsCommonArgs;
+      # Kept out of commonArgs so the shared dependency artifacts stay cached across commits
+      buildShaArgs = {
+        env = commonArgs.env // {CIRCUS_BUILD_SHA = self.rev or self.dirtyRev or "";};
+      };
+      callCratePackage = path:
+        pkgs.callPackage path {
+          inherit craneLib cargoArtifacts;
+          commonArgs = commonArgs // buildShaArgs;
+        };
+    in {
+      inherit craneLib cargoArtifacts depsCommonArgs;
+      agentCargoArtifacts = agent.cargoArtifacts;
+      packages = {
+        circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
+        circus-agent = agent.package;
+        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
+        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
+        circus-server = callCratePackage ./nix/packages/circus-server.nix;
+      };
+    };
   in {
+    lib.mkPackages = pkgs: (mkPackageSet pkgs).packages;
+
     # NixOS modules for Circus and components
     nixosModules = {
       circus = {
@@ -22,7 +112,7 @@
         imports = [
           ./nix/modules/circus.nix
           ({pkgs, ...}: let
-            packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+            packages = self.lib.mkPackages pkgs;
           in {
             services.circus = {
               package = lib.mkDefault packages.circus-server;
@@ -40,7 +130,7 @@
           ./nix/modules/circus-agent.nix
           ({pkgs, ...}: {
             services.circus-agent.package =
-              lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
+              lib.mkDefault (self.lib.mkPackages pkgs).circus-agent;
           })
         ];
       };
@@ -55,7 +145,7 @@
           ./nix/modules/circus-agent-darwin.nix
           ({pkgs, ...}: {
             services.circus-agent.package =
-              lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
+              lib.mkDefault (self.lib.mkPackages pkgs).circus-agent;
           })
         ];
       };
@@ -64,79 +154,14 @@
 
     packages = forAllSystems (system: let
       pkgs = pkgsFor system;
-      craneLib = crane.mkLib pkgs;
-      src = let
-        fs = lib.fileset;
-        s = ./.;
-      in
-        fs.toSource {
-          root = s;
-          fileset = fs.unions [
-            (s + /crates)
-            (s + /db/circus-codegen)
-            (s + /Cargo.lock)
-            (s + /Cargo.toml)
-          ];
-        };
-
-      cargoDepsSrc = let
-        fs = lib.fileset;
-        s = ./.;
-      in
-        fs.toSource {
-          root = s;
-          fileset = fs.unions [
-            (s + /Cargo.lock)
-            (s + /Cargo.toml)
-            (fs.fileFilter (file: file.name == "Cargo.toml") (s + /crates))
-            (fs.fileFilter (file: file.name == "Cargo.toml") (s + /db/circus-codegen))
-          ];
-        };
-
-      # circus-evaluator embeds evix, which builds Rust bindings against the
-      # Nix C API (via nix-bindings-sys). Building the workspace dependency
-      # closure therefore needs the Nix C dev libraries, a glibc sysroot, and
-      # libclang for bindgen.
-      commonArgs = {
-        pname = "circus";
-        inherit src;
-        strictDeps = true;
-        nativeBuildInputs = with pkgs; [pkg-config capnproto];
-        buildInputs = with pkgs; [openssl sqlite nixVersions.nix_2_34.dev] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
-        env = {
-          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
-        };
-      };
-
-      depsCommonArgs = commonArgs // {src = cargoDepsSrc;};
-      cargoArtifacts = craneLib.buildDepsOnly depsCommonArgs;
-
-      # Kept out of commonArgs so the shared dependency artifacts stay cached across commits
-      buildShaArgs = {
-        env = commonArgs.env // {CIRCUS_BUILD_SHA = self.rev or self.dirtyRev or "";};
-      };
-
-      callCratePackage = path:
-        pkgs.callPackage path {
-          inherit craneLib cargoArtifacts;
-          commonArgs = commonArgs // buildShaArgs;
-        };
-
-      # The agent also builds on Darwin, so it skips the control plane's
-      # Nix/glibc/libclang stack.
-      agentArgs = {
-        pname = "circus-agent";
-        inherit src;
-        strictDeps = true;
-        nativeBuildInputs = with pkgs; [pkg-config capnproto];
-        buildInputs = [];
-      };
-      agentCargoArtifacts = craneLib.buildDepsOnly (agentArgs
-        // {
-          src = cargoDepsSrc;
-          cargoExtraArgs = "--package circus-agent";
-        });
+      packageSet = mkPackageSet pkgs;
+      inherit
+        (packageSet)
+        agentCargoArtifacts
+        cargoArtifacts
+        craneLib
+        depsCommonArgs
+        ;
 
       muslCrossAttr = {
         x86_64-linux = "musl64";
@@ -163,19 +188,9 @@
       };
       staticCargoArtifacts = staticCraneLib.buildDepsOnly staticAgentArgs;
     in
-      {
+      packageSet.packages
+      // {
         demo-vm = pkgs.callPackage ./nix/demo-vm.nix {inherit self;};
-
-        # circus Packages
-        circus-cli = callCratePackage ./nix/packages/circus-cli.nix;
-        circus-agent = pkgs.callPackage ./nix/packages/circus-agent.nix {
-          inherit craneLib;
-          cargoArtifacts = agentCargoArtifacts;
-          commonArgs = agentArgs;
-        };
-        circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
-        circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
-        circus-server = callCratePackage ./nix/packages/circus-server.nix;
 
         ci-cargo-artifacts = pkgs.linkFarm "ci-cargo-artifacts" ([
             {
