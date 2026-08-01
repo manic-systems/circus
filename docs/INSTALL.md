@@ -222,6 +222,7 @@ configuration or the Nix store.
 | `evaluator`          | `max_concurrent_evals`                                 | `4`                                                 | Maximum concurrent evaluations                                            |
 | `evaluator`          | `eval_workers`                                         | `4`                                                 | Evix worker subprocesses per evaluation                                   |
 | `evaluator`          | `memory_limit_mb`                                      | none                                                | Hard data-segment limit per Nix subprocess (MiB)                          |
+| `evaluator`          | `systems`                                              | none                                                | Systems to keep at eval time (list, or `"auto"` for agents' systems)      |
 | `evaluator`          | `work_dir`                                             | `/tmp/circus-evaluator`                             | Working directory for clones                                              |
 | `evaluator`          | `restrict_eval`                                        | `true`                                              | Pass `--option restrict-eval true` to Nix                                 |
 | `evaluator`          | `allow_ifd`                                            | `false`                                             | Allow import-from-derivation                                              |
@@ -352,6 +353,13 @@ configuration or the Nix store.
 | `nix`                | `store_dir`                                            | `/nix/store`                                        | Nix store directory                                                       |
 
 <!-- markdownlint-enable MD013 -->
+
+`evaluator.systems` drops jobs for any other system before build records are
+created, so flakes exposing platforms your fleet lacks stop queueing dead
+builds. The string `"auto"` keeps whatever the currently connected agents
+advertise and falls back to keeping everything while no agent is connected,
+which also means a restarted eval can produce a different build set than the
+first run.
 
 `evaluator.memory_limit_mb` is enforced per Nix subprocess, not as one shared
 budget for the evaluator service. It covers Evix workers and every auxiliary

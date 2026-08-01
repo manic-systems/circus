@@ -226,10 +226,20 @@ async fn probe_repository(
     &state.config.server.allowed_url_schemes,
   )
   .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let result =
+  let mut result =
     nix::probe::probe_flake(&body.repository_url, body.revision.as_deref())
       .await
       .map_err(circus_common::CiError::from)?;
+  if let Some(allowed) = circus_common::systems::resolve_allowed_systems(
+    &state.pool,
+    &state.config.evaluator,
+  )
+  .await
+  {
+    for output in &mut result.outputs {
+      output.systems.retain(|system| allowed.contains(system));
+    }
+  }
   Ok(Json(result))
 }
 

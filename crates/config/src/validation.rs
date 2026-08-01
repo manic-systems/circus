@@ -4,7 +4,7 @@ use circus_types::validation::{
 };
 use color_eyre::eyre::{self, WrapErr, bail};
 
-use crate::{Config, DatabaseConfig};
+use crate::{Config, DatabaseConfig, EvaluatorSystems};
 
 fn validate_css_variable_name(name: &str) -> eyre::Result<()> {
   let name = name.trim_start_matches("--");
@@ -100,6 +100,20 @@ impl Config {
         || limit.checked_mul(1024 * 1024).is_none()
     }) {
       bail!("Evaluator memory limit is too large for this platform");
+    }
+    match &self.evaluator.systems {
+      Some(EvaluatorSystems::Keyword(word)) if word != "auto" => {
+        bail!(
+          "Evaluator systems must be a list of systems or the string \
+           \"auto\", got {word:?}"
+        );
+      },
+      Some(EvaluatorSystems::List(list))
+        if list.is_empty() || list.iter().any(|s| s.trim().is_empty()) =>
+      {
+        bail!("Evaluator systems list must contain non-empty system names");
+      },
+      _ => {},
     }
 
     if let Some(url) = self.cache.cache_url.as_deref() {

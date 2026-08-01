@@ -16,6 +16,7 @@ pub mod narinfo_signing;
 pub mod pg_notify;
 pub mod psi;
 pub mod repo;
+pub mod systems;
 
 pub mod bootstrap;
 pub mod roles;

@@ -7,6 +7,7 @@ use circus_common::{
   PgPool,
   models::{CreateBuild, EvaluationStatus, JobsetInput},
   repo,
+  systems::system_allowed,
 };
 use tokio::process::Command;
 use uuid::Uuid;
@@ -320,11 +321,31 @@ pub(crate) async fn create_builds_from_eval(
   eval_id: Uuid,
   eval_result: &crate::nix::EvalResult,
   memory_limit: MemoryLimit,
+  allowed_systems: Option<&HashSet<String>>,
 ) -> color_eyre::Result<bool> {
   let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
   let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
-  let (jobs, derivations) =
-    expand_derivation_graph(&eval_result.jobs, memory_limit).await;
+  let named_jobs = eval_result
+    .jobs
+    .iter()
+    .filter(|job| system_allowed(job.system.as_deref(), allowed_systems))
+    .cloned()
+    .collect::<Vec<_>>();
+  let (expanded, derivations) =
+    expand_derivation_graph(&named_jobs, memory_limit).await;
+  let expanded_len = expanded.len();
+  let jobs = expanded
+    .into_iter()
+    .filter(|job| system_allowed(job.system.as_deref(), allowed_systems))
+    .collect::<Vec<_>>();
+  let dropped =
+    (eval_result.jobs.len() - named_jobs.len()) + (expanded_len - jobs.len());
+  if dropped > 0 {
+    tracing::info!(
+      dropped,
+      "Dropped jobs for systems outside evaluator.systems"
+    );
+  }
   let mut builds = Vec::with_capacity(jobs.len());
 
   for job in &jobs {
