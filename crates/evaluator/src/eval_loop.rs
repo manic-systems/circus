@@ -487,11 +487,14 @@ async fn run_nix_and_record_builds(
           "Evaluation discovered jobs"
       );
 
+      let allowed_systems =
+        circus_common::systems::resolve_allowed_systems(pool, config).await;
       if !create_builds_from_eval(
         pool,
         eval.id,
         &eval_result,
         crate::memory::MemoryLimit::from(config),
+        allowed_systems.as_ref(),
       )
       .await?
       {

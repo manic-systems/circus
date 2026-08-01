@@ -259,6 +259,19 @@ pub struct EvaluatorConfig {
   /// This applies independently to every evix worker and auxiliary `nix`
   /// process. `None` disables the limit.
   pub memory_limit_mb: Option<u64>,
+
+  /// Systems to keep when creating builds. A list keeps exactly those,
+  /// `"auto"` keeps what connected agents advertise, and [`None`] keeps
+  /// everything.
+  pub systems: Option<EvaluatorSystems>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EvaluatorSystems {
+  List(Vec<String>),
+  /// Any bare string parses here, validation accepts only `"auto"`.
+  Keyword(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -804,6 +817,7 @@ impl Default for EvaluatorConfig {
       strict_errors:        false,
       eval_workers:         4,
       memory_limit_mb:      None,
+      systems:              None,
     }
   }
 }
