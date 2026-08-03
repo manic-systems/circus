@@ -38,6 +38,10 @@ const HELPER_ARG: &str = "--circus-sandbox";
 const NIX_ENV: &str = "CIRCUS_AGENT_NIX";
 pub const DATA_DIR_ENV: &str = "CIRCUS_AGENT_DATA_DIR";
 
+#[cfg(target_os = "linux")]
+const BUILD_DEV_NODES: [&str; 6] =
+  ["full", "null", "random", "tty", "urandom", "zero"];
+
 #[derive(Clone, Copy)]
 pub(crate) enum NixTool {
   Nix,
@@ -330,15 +334,17 @@ fn prepare_paths() -> color_eyre::Result<SandboxPaths> {
     "tmp",
     "proc",
     "dev",
+    "dev/pts",
     "etc",
     "etc/ssl/certs",
     ".oldroot",
   ] {
     fs::create_dir_all(newroot.path().join(dir))?;
   }
-  for dev in ["null", "zero", "random", "urandom"] {
+  for dev in BUILD_DEV_NODES {
     touch(newroot.path().join("dev").join(dev))?;
   }
+  std::os::unix::fs::symlink("pts/ptmx", newroot.path().join("dev/ptmx"))?;
 
   Ok(SandboxPaths {
     local_nixdir,
@@ -408,6 +414,7 @@ fn child_enter_and_exec(
       .env("USER", "root")
       .env("NIX_REMOTE", "local")
       .env("NIX_CONF_DIR", "/nix/etc/nix")
+      .env("NIX_CONFIG", "require-drop-supplementary-groups = false")
       .env("TMPDIR", "/tmp");
     let e = cmd.as_std_mut().exec();
     Err(e.into())
@@ -520,6 +527,20 @@ fn bind_if_exists(
   Ok(())
 }
 
+/// Nix opens `/dev/ptmx` for the builder console before it forks, and a
+/// private `devpts` is one of the few mounts an unprivileged namespace gets.
+#[cfg(target_os = "linux")]
+fn mount_devpts(target: impl AsRef<Path>) -> color_eyre::Result<()> {
+  mount(
+    Some("devpts"),
+    target.as_ref(),
+    Some("devpts"),
+    MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+    Some("newinstance,ptmxmode=0666,mode=0620"),
+  )?;
+  Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn make_mounts_private() -> color_eyre::Result<()> {
   mount::<str, str, str, str>(
@@ -541,10 +562,10 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
 
   bind(&paths.local_nixdir, newroot.join("nix"))?;
   bind(paths.local_tmp.path(), newroot.join("tmp"))?;
-  bind("/dev/null", newroot.join("dev/null"))?;
-  bind("/dev/zero", newroot.join("dev/zero"))?;
-  bind("/dev/random", newroot.join("dev/random"))?;
-  bind("/dev/urandom", newroot.join("dev/urandom"))?;
+  for dev in BUILD_DEV_NODES {
+    bind(Path::new("/dev").join(dev), newroot.join("dev").join(dev))?;
+  }
+  mount_devpts(newroot.join("dev/pts"))?;
   bind_if_exists("/etc/resolv.conf", newroot.join("etc/resolv.conf"))?;
   bind_if_exists("/etc/hosts", newroot.join("etc/hosts"))?;
   bind_if_exists("/etc/nsswitch.conf", newroot.join("etc/nsswitch.conf"))?;
