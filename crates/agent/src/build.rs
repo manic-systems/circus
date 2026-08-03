@@ -55,6 +55,14 @@ pub struct BuildOptions<'a> {
   pub rootless:          bool,
 }
 
+/// Everything needed to pull the assigned derivation from the runner. Kept
+/// out of `BuildOptions` because that mirrors the schema's `BuildAssignment`.
+pub struct DrvFetch<'a> {
+  pub runner_cap: &'a circus_proto::runner::Client,
+  pub machine_id: &'a str,
+  pub build_id:   &'a str,
+}
+
 /// One output discovered after a successful realisation.
 #[derive(Debug, Clone)]
 pub struct ResolvedOutput {
@@ -90,6 +98,7 @@ pub struct LocalResult {
 /// raised as generic diagnostic errors.
 pub async fn run(
   opts: BuildOptions<'_>,
+  drv_fetch: DrvFetch<'_>,
   log_sink: log_sink::Client,
   cancel: CancellationToken,
 ) -> color_eyre::Result<LocalResult> {
@@ -97,14 +106,63 @@ pub async fn run(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
   )]
-  // nix-store --realise requires the .drv to be present in the local store;
-  // it will not fetch it from a substituter. Pull it from the runner's cache
-  // before realising so the agent doesn't need out-of-band store access.
-  if !opts.cache_substituter.is_empty() {
-    fetch_drv_from_cache(&opts).await;
+  // nix-store --realise requires the .drv in the local store and will not
+  // fetch it from a substituter, so ask the runner that assigned it.
+  if !drv_is_valid(&opts).await
+    && let Err(e) = fetch_drv_over_rpc(&opts, &drv_fetch).await
+  {
+    if opts.cache_substituter.is_empty() {
+      tracing::warn!(drv = %opts.drv_path, "drv fetch from runner failed: {e}");
+    } else {
+      tracing::warn!(
+        drv = %opts.drv_path,
+        "drv fetch from runner failed, falling back to cache: {e}"
+      );
+      fetch_drv_from_cache(&opts).await;
+    }
   }
   let cmd = crate::sandbox::wrap_command(opts.rootless, build_command(&opts)?)?;
   run_command(cmd, &opts, Tunables::default(), log_sink, cancel).await
+}
+
+/// A valid path's references are themselves valid, so a present `.drv`
+/// implies its whole input closure is too and nothing needs fetching.
+async fn drv_is_valid(opts: &BuildOptions<'_>) -> bool {
+  let Ok(mut cmd) =
+    crate::sandbox::nix_command(opts.rootless, NixTool::NixStore)
+  else {
+    return false;
+  };
+  cmd.args(["--query", "--hash", opts.drv_path]);
+  let Ok(mut cmd) = crate::sandbox::wrap_command(opts.rootless, cmd) else {
+    return false;
+  };
+  matches!(
+    cmd.stdin(Stdio::null()).output().await,
+    Ok(o) if o.status.success()
+  )
+}
+
+#[expect(
+  clippy::future_not_send,
+  reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+)]
+async fn fetch_drv_over_rpc(
+  opts: &BuildOptions<'_>,
+  drv_fetch: &DrvFetch<'_>,
+) -> color_eyre::Result<()> {
+  let sink: circus_proto::drv_sink::Client = capnp_rpc::new_client(
+    crate::drv_sink::DrvSinkImpl::new(opts.drv_path.to_owned(), opts.rootless),
+  );
+  let mut req = drv_fetch.runner_cap.fetch_drv_closure_request();
+  {
+    let mut p = req.get();
+    p.set_machine_id(drv_fetch.machine_id);
+    p.set_build_id(drv_fetch.build_id);
+    p.set_sink(sink);
+  }
+  req.send().promise.await?;
+  Ok(())
 }
 
 async fn fetch_drv_from_cache(opts: &BuildOptions<'_>) {
