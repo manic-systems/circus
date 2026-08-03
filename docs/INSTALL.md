@@ -359,7 +359,10 @@ created, so flakes exposing platforms your fleet lacks stop queueing dead
 builds. The string `"auto"` keeps whatever the currently connected agents
 advertise and falls back to keeping everything while no agent is connected,
 which also means a restarted eval can produce a different build set than the
-first run.
+first run. Jobsets can carry their own `systems` list, chosen in the probe
+dialog or set through the API and `.circus.toml`. The effective set is the
+intersection of the instance and jobset lists, while an unset jobset list adds
+no restriction.
 
 `evaluator.memory_limit_mb` is enforced per Nix subprocess, not as one shared
 budget for the evaluator service. It covers Evix workers and every auxiliary

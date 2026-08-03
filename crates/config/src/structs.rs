@@ -666,6 +666,8 @@ pub struct DeclarativeJobset {
   pub scheduling_shares: i32,
   /// Number of recent successful evaluations to retain (default 3)
   pub keep_nr:           Option<i32>,
+  #[serde(default)]
+  pub systems:           Option<Vec<String>>,
   /// Jobset inputs for parameterized evaluations
   #[serde(default)]
   pub inputs:            Vec<DeclarativeJobsetInput>,

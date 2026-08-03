@@ -31,6 +31,7 @@ pub struct SuggestedJobset {
   pub nix_expression: String,
   pub description:    String,
   pub priority:       u8,
+  pub systems:        Vec<String>,
 }
 
 /// Metadata extracted from the flake.
@@ -173,6 +174,7 @@ pub async fn probe_flake(
         nix_expression,
         description: description.to_string(),
         priority,
+        systems,
       });
     }
   }
@@ -275,6 +277,7 @@ mod tests {
         nix_expression: "packages".to_string(),
         description:    "Packages".to_string(),
         priority:       6,
+        systems:        vec!["x86_64-linux".to_string()],
       }],
       metadata:          FlakeMetadata {
         description: Some("A test flake".to_string()),
@@ -318,18 +321,21 @@ mod tests {
         nix_expression: "packages".to_string(),
         description:    "Packages".to_string(),
         priority:       6,
+        systems:        Vec::new(),
       },
       SuggestedJobset {
         name:           "hydraJobs".to_string(),
         nix_expression: "hydraJobs".to_string(),
         description:    "CI Jobs".to_string(),
         priority:       10,
+        systems:        Vec::new(),
       },
       SuggestedJobset {
         name:           "checks".to_string(),
         nix_expression: "checks".to_string(),
         description:    "Checks".to_string(),
         priority:       7,
+        systems:        Vec::new(),
       },
     ];
 
