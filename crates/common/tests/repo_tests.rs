@@ -107,6 +107,7 @@ async fn create_test_jobset(
     scheduling_shares: None,
     state: None,
     keep_nr: None,
+    systems: None,
   })
   .await
   .expect("create jobset")
@@ -468,6 +469,7 @@ async fn test_jobset_crud() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create jobset");
@@ -501,6 +503,7 @@ async fn test_jobset_crud() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("update jobset");
@@ -537,6 +540,7 @@ async fn test_interval_evaluations_can_repeat_commit() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create interval jobset");
@@ -822,6 +826,7 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
     scheduling_shares: None,
     state:             Some(JobsetState::OneShot),
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create one-shot jobset");

@@ -1781,6 +1781,7 @@ mod tests {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           None,
     })
     .await
     .expect("create jobset");

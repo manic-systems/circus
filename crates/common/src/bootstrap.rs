@@ -133,6 +133,7 @@ pub async fn run(
         scheduling_shares: Some(decl_jobset.scheduling_shares),
         state,
         keep_nr: decl_jobset.keep_nr,
+        systems: decl_jobset.systems.clone(),
       })
       .await?;
 

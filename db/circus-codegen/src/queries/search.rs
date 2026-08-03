@@ -299,6 +299,7 @@ pub struct JobsetSearchRow {
     pub trigger_mode: String,
     pub branch_pattern: Option<String>,
     pub tag_pattern: Option<String>,
+    pub systems: Option<Vec<String>>,
 }
 pub struct JobsetSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -318,6 +319,7 @@ pub struct JobsetSearchRowBorrowed<'a> {
     pub trigger_mode: &'a str,
     pub branch_pattern: Option<&'a str>,
     pub tag_pattern: Option<&'a str>,
+    pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
 }
 impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
     fn from(
@@ -339,6 +341,7 @@ impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
             trigger_mode,
             branch_pattern,
             tag_pattern,
+            systems,
         }: JobsetSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -359,6 +362,7 @@ impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
             trigger_mode: trigger_mode.into(),
             branch_pattern: branch_pattern.map(|v| v.into()),
             tag_pattern: tag_pattern.map(|v| v.into()),
+            systems: systems.map(|v| v.map(|v| v.into()).collect()),
         }
     }
 }
@@ -1115,6 +1119,7 @@ impl SearchJobsetsStmt {
                     trigger_mode: row.try_get(14)?,
                     branch_pattern: row.try_get(15)?,
                     tag_pattern: row.try_get(16)?,
+                    systems: row.try_get(17)?,
                 })
             },
             mapper: |it| JobsetSearchRow::from(it),

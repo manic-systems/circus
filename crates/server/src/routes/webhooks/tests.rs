@@ -85,6 +85,7 @@ fn test_jobset(
     state:             circus_common::models::JobsetState::Enabled,
     last_checked_at:   None,
     keep_nr:           3,
+    systems:           None,
   }
 }
 

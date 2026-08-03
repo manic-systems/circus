@@ -178,6 +178,7 @@ struct CreateJobsetBody {
   tag_pattern:       Option<String>,
   scheduling_shares: Option<i32>,
   state:             Option<circus_common::models::JobsetState>,
+  systems:           Option<Vec<String>>,
 }
 
 async fn create_project_jobset(
@@ -201,6 +202,7 @@ async fn create_project_jobset(
     scheduling_shares: body.scheduling_shares,
     state: body.state,
     keep_nr: None,
+    systems: body.systems,
   };
   input
     .validate()
@@ -239,6 +241,9 @@ async fn probe_repository(
     for output in &mut result.outputs {
       output.systems.retain(|system| allowed.contains(system));
     }
+    for suggestion in &mut result.suggested_jobsets {
+      suggestion.systems.retain(|system| allowed.contains(system));
+    }
   }
   Ok(Json(result))
 }
@@ -247,6 +252,7 @@ async fn probe_repository(
 struct SetupJobsetInput {
   name:           String,
   nix_expression: String,
+  systems:        Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,6 +312,7 @@ async fn setup_project(
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           js_input.systems,
     };
     input
       .validate()

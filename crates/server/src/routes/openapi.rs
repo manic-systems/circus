@@ -156,7 +156,8 @@ fn document_value() -> Value {
             "state":          { "type": "string" },
             "branch":         { "type": ["string", "null"] },
             "branch_pattern": { "type": ["string", "null"] },
-            "tag_pattern":    { "type": ["string", "null"] }
+            "tag_pattern":    { "type": ["string", "null"] },
+            "systems":        { "type": ["array", "null"], "items": { "type": "string" } }
           }
         },
         "JobsetInput": {

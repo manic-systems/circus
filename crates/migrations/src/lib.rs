@@ -58,6 +58,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (29, "0029_evaluation_cancellation"),
   (30, "0030_runtime_enum_constraints"),
   (31, "0031_evaluation_started_at"),
+  (32, "0032_jobset_systems"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.

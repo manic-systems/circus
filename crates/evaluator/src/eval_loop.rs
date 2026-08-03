@@ -487,8 +487,10 @@ async fn run_nix_and_record_builds(
           "Evaluation discovered jobs"
       );
 
-      let allowed_systems =
-        circus_common::systems::resolve_allowed_systems(pool, config).await;
+      let allowed_systems = circus_common::systems::restrict_to_jobset(
+        circus_common::systems::resolve_allowed_systems(pool, config).await,
+        jobset.systems.as_deref(),
+      );
       if !create_builds_from_eval(
         pool,
         eval.id,
@@ -931,6 +933,7 @@ async fn sync_repo_declarative_config(
       scheduling_shares: Some(js.scheduling_shares),
       state,
       keep_nr: js.keep_nr,
+      systems: js.systems.clone(),
     };
 
     match repo::jobsets::upsert(pool, input).await {

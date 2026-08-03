@@ -610,6 +610,7 @@ mod tests {
       state:             JobsetState::Enabled,
       last_checked_at:   None,
       keep_nr:           3,
+      systems:           None,
     }
   }
 

@@ -46,6 +46,7 @@ pub struct Jobset {
   pub state:             JobsetState,
   pub last_checked_at:   Option<DateTime<Utc>>,
   pub keep_nr:           i32,
+  pub systems:           Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -684,6 +685,7 @@ pub struct ActiveJobset {
   pub keep_nr:           i32,
   pub project_name:      String,
   pub repository_url:    String,
+  pub systems:           Option<Vec<String>>,
 }
 
 /// Build statistics from the `build_stats` view.
@@ -1021,6 +1023,7 @@ pub struct CreateJobset {
   pub scheduling_shares: Option<i32>,
   pub state:             Option<JobsetState>,
   pub keep_nr:           Option<i32>,
+  pub systems:           Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1037,6 +1040,7 @@ pub struct UpdateJobset {
   pub scheduling_shares: Option<i32>,
   pub state:             Option<JobsetState>,
   pub keep_nr:           Option<i32>,
+  pub systems:           Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

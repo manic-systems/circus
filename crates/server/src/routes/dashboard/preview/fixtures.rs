@@ -90,6 +90,7 @@ pub(super) fn jobset_fixture() -> Jobset {
     state:             JobsetState::Enabled,
     last_checked_at:   Some(Utc::now() - Duration::minutes(10)),
     keep_nr:           3,
+    systems:           None,
   }
 }
 

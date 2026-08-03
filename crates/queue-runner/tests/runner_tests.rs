@@ -348,6 +348,7 @@ async fn test_fair_share_scheduling() {
       scheduling_shares: Some(200),
       state:             None,
       keep_nr:           None,
+      systems:           None,
     },
   )
   .await
@@ -369,6 +370,7 @@ async fn test_fair_share_scheduling() {
       scheduling_shares: Some(100),
       state:             None,
       keep_nr:           None,
+      systems:           None,
     },
   )
   .await
@@ -577,6 +579,7 @@ async fn test_atomic_build_claiming() {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           None,
     },
   )
   .await
@@ -668,6 +671,7 @@ async fn test_orphan_build_reset() {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           None,
     },
   )
   .await
@@ -776,6 +780,7 @@ async fn test_get_cancelled_among() {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           None,
     },
   )
   .await

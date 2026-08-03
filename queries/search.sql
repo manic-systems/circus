@@ -27,7 +27,7 @@ ORDER BY
 LIMIT
   :limit;
 
---: JobsetSearchRow(branch?, branch_pattern?, tag_pattern?, last_checked_at?)
+--: JobsetSearchRow(branch?, branch_pattern?, tag_pattern?, last_checked_at?, systems?)
 --: EvaluationSearchRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?)
 
 -- The optional filters use NULL-guarded predicates and the dynamic sort is a
