@@ -14,6 +14,7 @@
 pub mod build;
 pub mod cli;
 pub mod config;
+pub mod drv_sink;
 pub mod psi;
 pub mod sandbox;
 pub mod session;

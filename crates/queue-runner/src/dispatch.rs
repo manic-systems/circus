@@ -538,6 +538,29 @@ pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
   try_read_drv_outputs(drv_path).await.unwrap_or_default()
 }
 
+/// Every store path the derivation needs, including its input drvs.
+pub(crate) async fn drv_requisites(
+  drv_path: &str,
+) -> color_eyre::Result<Vec<String>> {
+  let out = Command::new("nix-store")
+    .args(["--query", "--requisites", drv_path])
+    .output()
+    .await?;
+  if !out.status.success() {
+    return Err(color_eyre::eyre::eyre!(
+      "nix-store --query --requisites {drv_path} exited with {}",
+      out.status
+    ));
+  }
+  Ok(
+    String::from_utf8_lossy(&out.stdout)
+      .lines()
+      .map(|s| s.trim().to_owned())
+      .filter(|s| !s.is_empty())
+      .collect(),
+  )
+}
+
 pub(crate) async fn try_read_drv_outputs(
   drv_path: &str,
 ) -> color_eyre::Result<Vec<String>> {

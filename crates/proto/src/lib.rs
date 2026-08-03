@@ -58,6 +58,7 @@ pub use circus_capnp::{
   build_outcome,
   build_result,
   builder,
+  drv_sink,
   heartbeat,
   log_sink,
   nar_info,

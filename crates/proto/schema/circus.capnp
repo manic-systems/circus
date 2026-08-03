@@ -35,6 +35,10 @@ interface Runner {
   # configured) so subsequent fetches see the path in the cache.
   notifyUploadComplete @3 (machineId :Text, buildId :Text, narInfo :NarInfo)
                        -> ();
+
+  # Stream the assigned derivation's closure to the agent so realising it
+  # needs no reachable binary cache. Only the active build's drv is served.
+  fetchDrvClosure @4 (machineId :Text, buildId :Text, sink :DrvSink) -> ();
 }
 
 # Capability the agent passes to the runner during register. The runner calls
@@ -72,6 +76,13 @@ interface LogSink {
 # Runner-side capability for a build's output closure. The agent streams
 # `nix-store --export` bytes via `write` and ends with `close`.
 interface OutputSink {
+  write @0 (chunk :Data) -> ();
+  close @1 () -> ();
+}
+
+# Agent-side sink for a derivation closure. The runner streams
+# `nix-store --export` bytes via `write` and ends with `close`.
+interface DrvSink {
   write @0 (chunk :Data) -> ();
   close @1 () -> ();
 }

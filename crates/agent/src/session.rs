@@ -647,6 +647,11 @@ impl builder::Server for BuilderImpl {
             cache_public_key,
             rootless: inner_for_task.rootless,
           },
+          build::DrvFetch {
+            runner_cap: &inner_for_task.runner_cap,
+            machine_id: &inner_for_task.machine_id,
+            build_id:   &build_id_str,
+          },
           log,
           cancel,
         )

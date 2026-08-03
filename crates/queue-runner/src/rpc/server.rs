@@ -21,6 +21,7 @@ use circus_proto::{
   PROTO_VERSION,
   agent_session,
   builder,
+  drv_sink,
   limits,
   log_sink,
   result_sink,
@@ -884,6 +885,114 @@ impl runner::Server for RunnerImpl {
       Ok(())
     })
   }
+
+  fn fetch_drv_closure(
+    self: capnp::capability::Rc<Self>,
+    params: runner::FetchDrvClosureParams,
+    _results: runner::FetchDrvClosureResults,
+  ) -> Promise<(), capnp::Error> {
+    let db_pool = self.db_pool.clone();
+    Promise::from_future(async move {
+      let pr = params.get()?;
+      let machine_id =
+        parse_uuid_param(pr.get_machine_id()?.to_str()?, "machine_id")?;
+      let build_id =
+        parse_uuid_param(pr.get_build_id()?.to_str()?, "build_id")?;
+      let sink = pr.get_sink()?;
+
+      let registered = *self.registered_machine.lock();
+      if registered.map(|r| r.machine_id) != Some(machine_id) {
+        return Err(capnp::Error::failed(
+          "machine_id does not match registered session".into(),
+        ));
+      }
+      let Some(meta) = self.pool.get(&machine_id) else {
+        return Err(capnp::Error::failed(
+          "registered agent is not in the live pool".into(),
+        ));
+      };
+      // Scoped to the assigned build, else any authenticated agent could
+      // read arbitrary paths out of the runner's store.
+      if !meta.active_builds.read().contains(&build_id) {
+        return Err(capnp::Error::failed(
+          "build_id is not active for this agent".into(),
+        ));
+      }
+      let build = circus_common::repo::builds::get(&db_pool, build_id)
+        .await
+        .map_err(|e| {
+          capnp::Error::failed(format!("cannot load build {build_id}: {e}"))
+        })?;
+
+      export_drv_closure(&build.drv_path, sink).await.map_err(|e| {
+        tracing::warn!(%machine_id, %build_id, "drv closure export failed: {e}");
+        capnp::Error::failed(format!("drv closure export failed: {e}"))
+      })
+    })
+  }
+}
+
+/// Stream `nix-store --export` of a derivation's closure into an agent's sink.
+#[expect(clippy::future_not_send, reason = "capnp future")]
+async fn export_drv_closure(
+  drv_path: &str,
+  sink: drv_sink::Client,
+) -> color_eyre::Result<()> {
+  use tokio::io::AsyncReadExt as _;
+
+  let closure = crate::dispatch::drv_requisites(drv_path).await?;
+  if closure.is_empty() {
+    return Err(color_eyre::eyre::eyre!(
+      "derivation {drv_path} has an empty closure"
+    ));
+  }
+
+  let mut child = tokio::process::Command::new("nix-store")
+    .arg("--export")
+    .args(&closure)
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .kill_on_drop(true)
+    .spawn()?;
+  let mut stdout = child
+    .stdout
+    .take()
+    .ok_or_else(|| color_eyre::eyre::eyre!("export stdout missing"))?;
+
+  let mut buf = vec![0u8; 1024 * 1024];
+  let mut stream_err = None;
+  loop {
+    let n = match stdout.read(&mut buf).await {
+      Ok(0) => break,
+      Ok(n) => n,
+      Err(e) => {
+        stream_err =
+          Some(color_eyre::eyre::eyre!("read nix-store --export: {e}"));
+        break;
+      },
+    };
+    let mut req = sink.write_request();
+    req.get().set_chunk(&buf[..n]);
+    if let Err(e) = req.send().promise.await {
+      stream_err = Some(color_eyre::eyre::eyre!("stream drv closure: {e}"));
+      break;
+    }
+  }
+
+  // Always close so the agent reaps its import child, even on a short read.
+  let close_res = sink.close_request().send().promise.await;
+  if let Some(e) = stream_err {
+    return Err(e);
+  }
+  close_res?;
+
+  let status = child.wait().await?;
+  if !status.success() {
+    return Err(color_eyre::eyre::eyre!(
+      "nix-store --export exited with {status}"
+    ));
+  }
+  Ok(())
 }
 
 /// Sign a narinfo fingerprint with the on-disk Nix signing key, returning
