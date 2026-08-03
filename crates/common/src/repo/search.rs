@@ -252,6 +252,7 @@ fn jobset_from_search_row(row: q::JobsetSearchRow) -> Result<Jobset> {
     state:             row.state.parse().map_err(CiError::Internal)?,
     last_checked_at:   row.last_checked_at,
     keep_nr:           row.keep_nr,
+    systems:           row.systems,
   })
 }
 

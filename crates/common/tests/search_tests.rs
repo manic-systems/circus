@@ -97,6 +97,7 @@ async fn test_project_search() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create jobset");
@@ -164,6 +165,7 @@ async fn test_build_search_with_filters() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create jobset");
@@ -353,6 +355,7 @@ async fn test_multi_entity_search() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create jobset");
@@ -586,6 +589,7 @@ async fn test_quick_search() {
     scheduling_shares: None,
     state:             None,
     keep_nr:           None,
+    systems:           None,
   })
   .await
   .expect("create jobset");

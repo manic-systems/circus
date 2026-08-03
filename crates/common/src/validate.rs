@@ -202,6 +202,13 @@ fn validate_check_interval(interval: i32) -> Result<(), String> {
   Ok(())
 }
 
+fn validate_systems(systems: &[String]) -> Result<(), String> {
+  if systems.iter().any(|system| system.trim().is_empty()) {
+    return Err("systems entries cannot be empty".to_string());
+  }
+  Ok(())
+}
+
 pub(crate) fn validate_commit_hash(hash: &str) -> Result<(), String> {
   shared_validation::validate_commit_hash(hash)
 }
@@ -393,6 +400,12 @@ impl Validate for CreateJobset {
     if let Some(interval) = self.check_interval {
       validate_check_interval(interval)?;
     }
+    if let Some(systems) = &self.systems {
+      if systems.is_empty() {
+        return Err("systems cannot be empty".to_string());
+      }
+      validate_systems(systems)?;
+    }
     Ok(())
   }
 }
@@ -407,6 +420,9 @@ impl Validate for UpdateJobset {
     }
     if let Some(interval) = self.check_interval {
       validate_check_interval(interval)?;
+    }
+    if let Some(systems) = &self.systems {
+      validate_systems(systems)?;
     }
     Ok(())
   }
@@ -605,6 +621,7 @@ mod tests {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           None,
     };
     assert!(j.validate().is_ok());
   }
@@ -625,6 +642,7 @@ mod tests {
       scheduling_shares: None,
       state:             None,
       keep_nr:           None,
+      systems:           None,
     };
     assert!(j.validate().is_err());
   }

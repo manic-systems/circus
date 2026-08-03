@@ -30,6 +30,7 @@ impl TryFrom<q::JobsetRow> for Jobset {
       state:             r.state.parse().map_err(CiError::Internal)?,
       last_checked_at:   r.last_checked_at,
       keep_nr:           r.keep_nr,
+      systems:           r.systems,
     })
   }
 }
@@ -58,6 +59,7 @@ impl TryFrom<q::ActiveJobsetRow> for ActiveJobset {
       keep_nr:           r.keep_nr,
       project_name:      r.project_name,
       repository_url:    r.repository_url,
+      systems:           r.systems,
     })
   }
 }
@@ -100,6 +102,7 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &scheduling_shares,
       &state.as_str(),
       &keep_nr,
+      &input.systems,
     )
     .one()
     .await
@@ -227,6 +230,11 @@ pub async fn update(
     .scheduling_shares
     .unwrap_or(existing.scheduling_shares);
   let keep_nr = input.keep_nr.unwrap_or(existing.keep_nr);
+  let systems = match input.systems {
+    None => existing.systems,
+    Some(list) if list.is_empty() => None,
+    Some(list) => Some(list),
+  };
 
   let client = pool.get().await?;
   let row = q::update()
@@ -244,6 +252,7 @@ pub async fn update(
       &scheduling_shares,
       &state.as_str(),
       &keep_nr,
+      &systems,
       &id,
     )
     .one()
@@ -312,6 +321,7 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &scheduling_shares,
       &state.as_str(),
       &keep_nr,
+      &input.systems,
     )
     .one()
     .await?;

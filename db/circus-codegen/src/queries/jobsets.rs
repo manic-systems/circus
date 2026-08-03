@@ -9,6 +9,8 @@ pub struct CreateParams<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
+    T9: crate::ArraySql<Item = T8>,
 > {
     pub project_id: uuid::Uuid,
     pub name: T1,
@@ -23,6 +25,7 @@ pub struct CreateParams<
     pub scheduling_shares: i32,
     pub state: T7,
     pub keep_nr: i32,
+    pub systems: Option<T9>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ListForProjectParams {
@@ -39,6 +42,8 @@ pub struct UpdateParams<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
+    T9: crate::ArraySql<Item = T8>,
 > {
     pub name: T1,
     pub nix_expression: T2,
@@ -52,6 +57,7 @@ pub struct UpdateParams<
     pub scheduling_shares: i32,
     pub state: T7,
     pub keep_nr: i32,
+    pub systems: Option<T9>,
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
@@ -63,6 +69,8 @@ pub struct UpsertParams<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
+    T9: crate::ArraySql<Item = T8>,
 > {
     pub project_id: uuid::Uuid,
     pub name: T1,
@@ -77,6 +85,7 @@ pub struct UpsertParams<
     pub scheduling_shares: i32,
     pub state: T7,
     pub keep_nr: i32,
+    pub systems: Option<T9>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobsetRow {
@@ -97,6 +106,7 @@ pub struct JobsetRow {
     pub trigger_mode: String,
     pub branch_pattern: Option<String>,
     pub tag_pattern: Option<String>,
+    pub systems: Option<Vec<String>>,
 }
 pub struct JobsetRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -116,6 +126,7 @@ pub struct JobsetRowBorrowed<'a> {
     pub trigger_mode: &'a str,
     pub branch_pattern: Option<&'a str>,
     pub tag_pattern: Option<&'a str>,
+    pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
 }
 impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
     fn from(
@@ -137,6 +148,7 @@ impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
             trigger_mode,
             branch_pattern,
             tag_pattern,
+            systems,
         }: JobsetRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -157,6 +169,7 @@ impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
             trigger_mode: trigger_mode.into(),
             branch_pattern: branch_pattern.map(|v| v.into()),
             tag_pattern: tag_pattern.map(|v| v.into()),
+            systems: systems.map(|v| v.map(|v| v.into()).collect()),
         }
     }
 }
@@ -181,6 +194,7 @@ pub struct ActiveJobsetRow {
     pub project_name: String,
     pub repository_url: String,
     pub trigger_mode: String,
+    pub systems: Option<Vec<String>>,
 }
 pub struct ActiveJobsetRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -202,6 +216,7 @@ pub struct ActiveJobsetRowBorrowed<'a> {
     pub project_name: &'a str,
     pub repository_url: &'a str,
     pub trigger_mode: &'a str,
+    pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
 }
 impl<'a> From<ActiveJobsetRowBorrowed<'a>> for ActiveJobsetRow {
     fn from(
@@ -225,6 +240,7 @@ impl<'a> From<ActiveJobsetRowBorrowed<'a>> for ActiveJobsetRow {
             project_name,
             repository_url,
             trigger_mode,
+            systems,
         }: ActiveJobsetRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -247,6 +263,7 @@ impl<'a> From<ActiveJobsetRowBorrowed<'a>> for ActiveJobsetRow {
             project_name: project_name.into(),
             repository_url: repository_url.into(),
             trigger_mode: trigger_mode.into(),
+            systems: systems.map(|v| v.map(|v| v.into()).collect()),
         }
     }
 }
@@ -450,7 +467,7 @@ where
 pub struct CreateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create() -> CreateStmt {
     CreateStmt(
-        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *",
+        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *",
         None,
     )
 }
@@ -474,6 +491,8 @@ impl CreateStmt {
         T5: crate::StringSql,
         T6: crate::StringSql,
         T7: crate::StringSql,
+        T8: crate::StringSql,
+        T9: crate::ArraySql<Item = T8>,
     >(
         &'s self,
         client: &'c C,
@@ -490,7 +509,8 @@ impl CreateStmt {
         scheduling_shares: &'a i32,
         state: &'a T7,
         keep_nr: &'a i32,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13> {
+        systems: &'a Option<T9>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
         JobsetRowQuery {
             client,
             params: [
@@ -507,6 +527,7 @@ impl CreateStmt {
                 scheduling_shares,
                 state,
                 keep_nr,
+                systems,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -530,6 +551,7 @@ impl CreateStmt {
                         trigger_mode: row.try_get(14)?,
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
+                        systems: row.try_get(17)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -548,21 +570,23 @@ impl<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
+    T9: crate::ArraySql<Item = T8>,
 >
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        CreateParams<T1, T2, T3, T4, T5, T6, T7>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13>,
+        CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14>,
         C,
     > for CreateStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a CreateParams<T1, T2, T3, T4, T5, T6, T7>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13> {
+        params: &'a CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
         self.bind(
             client,
             &params.project_id,
@@ -578,6 +602,7 @@ impl<
             &params.scheduling_shares,
             &params.state,
             &params.keep_nr,
+            &params.systems,
         )
     }
 }
@@ -623,6 +648,7 @@ impl GetStmt {
                         trigger_mode: row.try_get(14)?,
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
+                        systems: row.try_get(17)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -676,6 +702,7 @@ impl ListForProjectStmt {
                         trigger_mode: row.try_get(14)?,
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
+                        systems: row.try_get(17)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -745,6 +772,7 @@ impl ListAllForProjectStmt {
                         trigger_mode: row.try_get(14)?,
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
+                        systems: row.try_get(17)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -807,7 +835,7 @@ impl CountStmt {
 pub struct UpdateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn update() -> UpdateStmt {
     UpdateStmt(
-        "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = $11, keep_nr = $12 WHERE id = $13 RETURNING *",
+        "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = $11, keep_nr = $12, systems = $13 WHERE id = $14 RETURNING *",
         None,
     )
 }
@@ -831,6 +859,8 @@ impl UpdateStmt {
         T5: crate::StringSql,
         T6: crate::StringSql,
         T7: crate::StringSql,
+        T8: crate::StringSql,
+        T9: crate::ArraySql<Item = T8>,
     >(
         &'s self,
         client: &'c C,
@@ -846,8 +876,9 @@ impl UpdateStmt {
         scheduling_shares: &'a i32,
         state: &'a T7,
         keep_nr: &'a i32,
+        systems: &'a Option<T9>,
         id: &'a uuid::Uuid,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
         JobsetRowQuery {
             client,
             params: [
@@ -863,6 +894,7 @@ impl UpdateStmt {
                 scheduling_shares,
                 state,
                 keep_nr,
+                systems,
                 id,
             ],
             query: self.0,
@@ -887,6 +919,7 @@ impl UpdateStmt {
                         trigger_mode: row.try_get(14)?,
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
+                        systems: row.try_get(17)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -905,21 +938,23 @@ impl<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
+    T9: crate::ArraySql<Item = T8>,
 >
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        UpdateParams<T1, T2, T3, T4, T5, T6, T7>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13>,
+        UpdateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14>,
         C,
     > for UpdateStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a UpdateParams<T1, T2, T3, T4, T5, T6, T7>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13> {
+        params: &'a UpdateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
         self.bind(
             client,
             &params.name,
@@ -934,6 +969,7 @@ impl<
             &params.scheduling_shares,
             &params.state,
             &params.keep_nr,
+            &params.systems,
             &params.id,
         )
     }
@@ -961,7 +997,7 @@ impl DeleteStmt {
 pub struct UpsertStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn upsert() -> UpsertStmt {
     UpsertStmt(
-        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr RETURNING *",
+        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems RETURNING *",
         None,
     )
 }
@@ -985,6 +1021,8 @@ impl UpsertStmt {
         T5: crate::StringSql,
         T6: crate::StringSql,
         T7: crate::StringSql,
+        T8: crate::StringSql,
+        T9: crate::ArraySql<Item = T8>,
     >(
         &'s self,
         client: &'c C,
@@ -1001,7 +1039,8 @@ impl UpsertStmt {
         scheduling_shares: &'a i32,
         state: &'a T7,
         keep_nr: &'a i32,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13> {
+        systems: &'a Option<T9>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
         JobsetRowQuery {
             client,
             params: [
@@ -1018,6 +1057,7 @@ impl UpsertStmt {
                 scheduling_shares,
                 state,
                 keep_nr,
+                systems,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -1041,6 +1081,7 @@ impl UpsertStmt {
                         trigger_mode: row.try_get(14)?,
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
+                        systems: row.try_get(17)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -1059,21 +1100,23 @@ impl<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
+    T9: crate::ArraySql<Item = T8>,
 >
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        UpsertParams<T1, T2, T3, T4, T5, T6, T7>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13>,
+        UpsertParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14>,
         C,
     > for UpsertStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a UpsertParams<T1, T2, T3, T4, T5, T6, T7>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 13> {
+        params: &'a UpsertParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
         self.bind(
             client,
             &params.project_id,
@@ -1089,6 +1132,7 @@ impl<
             &params.scheduling_shares,
             &params.state,
             &params.keep_nr,
+            &params.systems,
         )
     }
 }
@@ -1136,6 +1180,7 @@ impl ListActiveStmt {
                     project_name: row.try_get(16)?,
                     repository_url: row.try_get(17)?,
                     trigger_mode: row.try_get(18)?,
+                    systems: row.try_get(19)?,
                 })
             },
             mapper: |it| ActiveJobsetRow::from(it),
@@ -1296,6 +1341,7 @@ impl ListDueForEvalStmt {
                     project_name: row.try_get(16)?,
                     repository_url: row.try_get(17)?,
                     trigger_mode: row.try_get(18)?,
+                    systems: row.try_get(19)?,
                 })
             },
             mapper: |it| ActiveJobsetRow::from(it),
