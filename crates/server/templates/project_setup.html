@@ -40,6 +40,9 @@
             <h2>Step 2: Select Jobsets</h2>
             <p class="wizard-hint">Select which outputs to build. You can customise the Nix expression for each.</p>
             <div id="outputs-list"></div>
+                    <div id="sys-drawer" class="sys-drawer" hidden>
+                        <div id="sys-drawer-list" class="sys-drawer-list"></div>
+                    </div>
             <div class="wizard-actions">
                 <button type="button" class="btn" onclick="goToStep(3)">Continue</button>
                 <button type="button" class="btn btn-secondary" onclick="goToStep(1)">Back</button>
@@ -87,6 +90,45 @@
     <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 let probeResult = null;
+let sysState = [];
+
+function sysSummary(idx) {
+const detected = probeResult.suggested_jobsets[idx].systems;
+if (!detected.length) return '\u2014';
+const picked = sysState[idx];
+return picked.length === detected.length ? 'All systems' : picked.length + ' of ' + detected.length;
+}
+
+function openSysDrawer(idx, btn) {
+const pop = document.getElementById('sys-drawer');
+if (!pop.hidden && pop.dataset.idx === String(idx)) {
+pop.hidden = true;
+return;
+}
+pop.dataset.idx = idx;
+const js = probeResult.suggested_jobsets[idx];
+const listEl = document.getElementById('sys-drawer-list');
+listEl.innerHTML = js.systems.map(sys => '<label class="sys-item"><input type="checkbox" class="js-sys" value="' + escapeHtml(sys) + '"' + (sysState[idx].includes(sys) ? ' checked' : '') + '> ' + escapeHtml(sys) + '</label>').join('');
+listEl.onchange = () => {
+sysState[idx] = Array.from(listEl.querySelectorAll('.js-sys:checked')).map(cb => cb.value);
+if (btn) btn.textContent = sysSummary(idx);
+};
+pop.hidden = false;
+const r = btn.getBoundingClientRect();
+const parentRect = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
+pop.style.left = (r.left - parentRect.left) + 'px';
+pop.style.top = (r.bottom - parentRect.top + 4) + 'px';
+}
+
+function closeSysDrawer() {
+document.getElementById('sys-drawer').hidden = true;
+}
+
+document.addEventListener('click', e => {
+const pop = document.getElementById('sys-drawer');
+if (!pop || pop.hidden || pop.contains(e.target) || e.target.closest('.js-sys-btn')) return;
+pop.hidden = true;
+});
 
 function showSpinner(el, msg) {
 el.innerHTML = '<span class="spinner"></span><span class="text-muted">' + escapeHtml(msg) + '</span>';
@@ -143,18 +185,21 @@ btn.disabled = false;
 
 function renderOutputs() {
 const list = document.getElementById('outputs-list');
+closeSysDrawer();
+sysState = probeResult && probeResult.suggested_jobsets ? probeResult.suggested_jobsets.map(js => js.systems.slice()) : [];
 if (!probeResult || !probeResult.suggested_jobsets.length) {
 list.innerHTML = '<div class="empty">No buildable outputs detected.</div>';
 return;
 }
 
-let html = '<div class="table-wrap"><table class="probe-outputs-table"><thead><tr><th></th><th>Name</th><th>Expression</th><th>Description</th><th>Priority</th></tr></thead><tbody>';
+let html = '<div class="table-wrap"><table class="probe-outputs-table"><thead><tr><th></th><th>Name</th><th>Expression</th><th>Systems</th><th>Description</th><th>Priority</th></tr></thead><tbody>';
 probeResult.suggested_jobsets.forEach((js, i) => {
 const checked = js.priority >= 6 ? 'checked' : '';
 html += '<tr>'
 + '<td><input type="checkbox" id="setup-jobset-check-' + i + '" name="jobset_selected_' + i + '" class="js-check" data-idx="' + i + '" aria-label="Include ' + escapeHtml(js.name) + '" ' + checked + '></td>'
 + '<td>' + escapeHtml(js.name) + '</td>'
 + '<td><input type="text" id="setup-jobset-expr-' + i + '" name="jobset_expression_' + i + '" class="js-expr inline-input" data-idx="' + i + '" aria-label="Nix expression for ' + escapeHtml(js.name) + '" value="' + escapeHtml(js.nix_expression) + '"></td>'
++ '<td>' + (js.systems.length ? '<button type="button" class="btn btn-small btn-secondary js-sys-btn" data-idx="' + i + '" onclick="openSysDrawer(' + i + ', this)">' + sysSummary(i) + '</button>' : '<span class="text-muted">\u2014</span>') + '</td>'
 + '<td class="text-muted text-sm">' + escapeHtml(js.description) + '</td>'
 + '<td class="text-center">' + js.priority + '</td>'
 + '</tr>';
@@ -164,9 +209,7 @@ html += '</tbody></table></div>';
 if (probeResult.outputs.length) {
 html += '<details class="outputs-detail"><summary>All detected outputs (' + probeResult.outputs.length + ')</summary><ul class="outputs-list">';
 probeResult.outputs.forEach(o => {
-html += '<li><strong>' + escapeHtml(o.path) + '</strong> (' + escapeHtml(o.output_type) + ')';
-if (o.systems.length) html += ' \u2014 ' + o.systems.map(escapeHtml).join(', ');
-html += '</li>';
+html += '<li><span class="output-path">' + escapeHtml(o.path) + '</span><span class="output-meta">' + escapeHtml(o.output_type) + (o.systems.length ? ' \u00b7 ' + o.systems.map(escapeHtml).join(', ') : '') + '</span></li>';
 });
 html += '</ul></details>';
 }
@@ -180,10 +223,13 @@ document.querySelectorAll('.js-check:checked').forEach(cb => {
 const idx = parseInt(cb.dataset.idx);
 const js = probeResult.suggested_jobsets[idx];
 const exprInput = document.querySelector('.js-expr[data-idx="' + idx + '"]');
+const detected = js.systems;
+const picked = sysState[idx] || detected;
 jobsets.push({
 name: js.name,
 nix_expression: exprInput ? exprInput.value : js.nix_expression,
 description: js.description,
+systems: picked.length === detected.length ? null : picked,
 });
 });
 return jobsets;

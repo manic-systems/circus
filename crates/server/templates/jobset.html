@@ -80,6 +80,10 @@
         <dd>
             {{ jobset.check_interval }}s
         </dd>
+        {% if let Some(systems) = jobset.systems %}
+            <dt>Systems</dt>
+            <dd>{{ systems|join(", ") }}</dd>
+        {% endif %}
         <dt>Last checked</dt>
         <dd>
             {% if let Some(t) = jobset.last_checked_at %}

@@ -98,6 +98,7 @@ mod tests {
             name = "packages"
             nix_expression = "packages"
             trigger_mode = "interval"
+            systems = ["x86_64-linux"]
 
             [[api_keys]]
             name = "admin-key"
@@ -114,6 +115,10 @@ mod tests {
     assert_eq!(
       config.projects[0].jobsets[0].trigger_mode.as_deref(),
       Some("interval")
+    );
+    assert_eq!(
+      config.projects[0].jobsets[0].systems.as_deref(),
+      Some(["x86_64-linux".to_string()].as_slice())
     );
     assert_eq!(config.api_keys.len(), 1);
     assert_eq!(config.api_keys[0].role, GlobalRole::Admin);
@@ -162,6 +167,7 @@ mod tests {
           tag_pattern:       None,
           scheduling_shares: 100,
           keep_nr:           None,
+          systems:           Some(vec!["x86_64-linux".to_string()]),
           inputs:            vec![],
         }],
         notifications:   vec![],
@@ -183,6 +189,10 @@ mod tests {
     let parsed: DeclarativeConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.projects.len(), 1);
     assert_eq!(parsed.projects[0].jobsets[0].check_interval, 300);
+    assert_eq!(
+      parsed.projects[0].jobsets[0].systems.as_deref(),
+      Some(["x86_64-linux".to_string()].as_slice())
+    );
     assert_eq!(parsed.api_keys[0].name, "test-key");
   }
 

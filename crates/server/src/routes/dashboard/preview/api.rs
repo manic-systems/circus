@@ -50,12 +50,12 @@ pub(super) async fn api_project_probe(
       {
         "path": "packages.x86_64-linux.circus-server",
         "output_type": "derivation",
-        "systems": ["x86_64-linux"]
+        "systems": ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]
       },
       {
         "path": "checks.x86_64-linux.clippy",
         "output_type": "derivation",
-        "systems": ["x86_64-linux"]
+        "systems": ["x86_64-linux", "aarch64-linux"]
       }
     ],
     "suggested_jobsets": [
@@ -63,13 +63,15 @@ pub(super) async fn api_project_probe(
         "name": "packages",
         "nix_expression": "packages",
         "description": "Build package outputs",
-        "priority": 8
+        "priority": 8,
+        "systems": ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]
       },
       {
         "name": "checks",
         "nix_expression": "checks",
         "description": "Run flake checks",
-        "priority": 6
+        "priority": 6,
+        "systems": ["x86_64-linux", "aarch64-linux"]
       }
     ],
     "metadata": {
