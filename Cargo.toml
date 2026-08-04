@@ -31,8 +31,8 @@ circus-types        = { path = "./crates/types", version = "0.12.0" }
 
 # Other dependencies
 askama = "0.16.0"
-askama_fmt = "0.3.3"
-async-compression = { version = "0.4.42", default-features = false, features = [
+askama_fmt = "0.4.0"
+async-compression = { version = "0.4.43", default-features = false, features = [
   "tokio",
   "zstd",
   "xz",
@@ -41,14 +41,14 @@ async-compression = { version = "0.4.42", default-features = false, features = [
 async-stream = "0.3.6"
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = [ "typed-header", "cookie" ] }
-base64 = "0.22.1"
+base64 = "0.23.0"
 blake3 = "1.8.5"
-bstr = "1.12.3"
-bytes = "1.12.0"
-capnp = "0.26.0"
-capnp-futures = "0.26.0"
-capnp-rpc = "0.26.0"
-capnpc = "0.26.0"
+bstr = "1.13.0"
+bytes = "1.12.1"
+capnp = "0.27.0"
+capnp-futures = "0.27.0"
+capnp-rpc = "0.27.0"
+capnpc = "0.27.0"
 chrono = { version = "0.4.44", features = [ "serde" ] }
 clap = { version = "4.6.1", features = [ "derive" ] }
 color-eyre = "0.6.5"
@@ -56,29 +56,29 @@ comfy-table = "7.2.2"
 config = "0.15.23"
 crc = "3.4.0"
 dashmap = "6.2.1"
-data-encoding = "2.11"
-deadpool-postgres = { version = "0.14", features = [ "rt_tokio_1" ] }
-derive_more = { version = "2.1", features = [ "display" ] }
+data-encoding = "2.11.1"
+deadpool-postgres = { version = "0.14.1", features = [ "rt_tokio_1" ] }
+derive_more = { version = "2.1.1", features = [ "display" ] }
 ed25519-dalek = "3.0.0"
-futures = "0.3.32"
-futures-core = "0.3.32"
-futures-sink = "0.3.32"
+futures = "0.3.33"
+futures-core = "0.3.33"
+futures-sink = "0.3.33"
 futures-util = { version = "0.3", features = [ "sink" ] }
-getrandom = "0.4"
+getrandom = "0.4.3"
 git2 = { version = "0.21.0", features = [ "https" ] }
 hex = "0.4.3"
 hex-literal = "1.1.0"
 hmac = "0.13.0"
 humantime-serde = "1.1.1"
 ldap3 = { version = "0.12.1", default-features = false, features = [ "tls-rustls", "tls-rustls-ring" ] }
-lettre = { version = "0.11.22", default-features = false, features = [
+lettre = { version = "0.11.23", default-features = false, features = [
   "tokio1-rustls-tls",
   "smtp-transport",
   "builder",
 ] }
-libc = "0.2.186"
-md5 = "0.8.0"
-moka = { version = "0.12.11", features = [ "sync" ] }
+libc = "0.2.189"
+md5 = "0.8.1"
+moka = { version = "0.12.15", features = [ "sync" ] }
 nix = { version = "0.31.3", default-features = false, features = [
   "sched",
   "mount",
@@ -86,7 +86,7 @@ nix = { version = "0.31.3", default-features = false, features = [
   "user",
   "process",
 ] }
-nix-nar = "0.4.0"
+nix-nar = "0.5.0"
 num_enum = "0.7.6"
 oauth2 = "5.0.0"
 parking_lot = "0.12.5"
@@ -95,7 +95,7 @@ percent-encoding = "2.3.2"
 pin-project-lite = "0.2"
 proptest = "1.11.0"
 proptest-derive = "0.8.0"
-regex = "1.12.3"
+regex = "1.13.1"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "json",
   "rustls-no-provider",
@@ -103,12 +103,12 @@ reqwest = { version = "0.13.4", default-features = false, features = [
 ] }
 ring = "0.17.14"
 rstest = "0.26.1"
-rust_decimal = "1.41.0"
-rustls = { version = "0.23.40", default-features = false, features = [ "ring", "std", "tls12" ] }
-rustls-native-certs = "0.8.3"
-rustls-pki-types = { version = "1.15.0", features = [ "std" ] }
-serde = { version = "1.0.228", features = [ "derive" ] }
-serde_json = "1.0.150"
+rust_decimal = "1.42.1"
+rustls = { version = "0.23.43", default-features = false, features = [ "ring", "std", "tls12" ] }
+rustls-native-certs = "0.8.4"
+rustls-pki-types = { version = "1.15.1", features = [ "std" ] }
+serde = { version = "1.0.229", features = [ "derive" ] }
+serde_json = "1.0.151"
 serde_path_to_error = "0.1.20"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
@@ -119,15 +119,15 @@ sysinfo = { version = "0.39.6", default-features = false, features = [ "system" 
 tar = "0.4.46"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-time = "0.3.47"
-tokio = { version = "1.52.3", features = [ "full" ] }
-tokio-postgres = { version = "0.7", features = [ "with-chrono-0_4", "with-uuid-1", "with-serde_json-1" ] }
+time = "0.3.55"
+tokio = { version = "1.53.1", features = [ "full" ] }
+tokio-postgres = { version = "0.7.18", features = [ "with-chrono-0_4", "with-uuid-1", "with-serde_json-1" ] }
 tokio-postgres-rustls = "0.14"
 tokio-rusqlite = "0.7.0"
 tokio-rustls = { version = "0.26.4", default-features = false, features = [ "ring", "tls12" ] }
 tokio-test = "0.4.5"
-tokio-util = { version = "0.7.18", features = [ "io", "compat" ] }
-toml = "1.1.2"
+tokio-util = { version = "0.7.19", features = [ "io", "compat" ] }
+toml = "1.1.4"
 tower = "0.5.3"
 tower-http = { version = "0.7.0", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
 tracing = "0.1.44"
@@ -135,12 +135,12 @@ tracing-subscriber = { version = "0.3.23", features = [ "env-filter", "json" ] }
 url = "2.5.8"
 urlencoding = "2.1.3"
 utoipa = "5.5.0"
-uuid = { version = "1.23.2", features = [ "v4", "serde" ] }
+uuid = { version = "1.24.0", features = [ "v4", "serde" ] }
 walkdir = "2.5.0"
 webpki-roots = "1"
 whoami = { version = "2.1.2", features = [ "std" ] }
 x509-parser = "0.18.1"
-zerocopy = { version = "0.8.52", features = [ "derive" ] }
+zerocopy = { version = "0.8.55", features = [ "derive" ] }
 zeroize = "1.9.0"
 
 # In fc-common `os::OsRng` is configured out by feature flag.
@@ -150,10 +150,10 @@ argon2 = { version = "0.5.3", features = [ "std" ] }
 
 # default-features off drops the `pem`/`simple_asn1` deps we don't use; the
 # crate keeps ring (matching the rest of our stack) for RS256 verification.
-jsonwebtoken = { version = "10.4.0", default-features = false }
+jsonwebtoken = { version = "11.0.0", default-features = false }
 
 # In-house crates and Nix utilities
-cognos = "1.0.0"
+cognos = "1.0.1"
 evix   = { version = "2.0.2", features = [ "flake" ] }
 
 # Workspace Clippy lints. All workspace crates must inherit them in individual
