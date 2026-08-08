@@ -3,7 +3,7 @@
 [design document]: ./DESIGN.md
 [Hydra]: https://github.com/nixos/hydra
 [evix]: https://github.com/manic-systems/evix
-[discussions tab]: https://github.com/manic-systems/circus/discussions/landing
+[discussions tab]: https://github.com/manic-systems/circus/discussions
 
 Circus is fast, modular and declarative continuous integration (CI) system built
 from the ground up in Rust for Nix-based projects. It is designed for quick,
