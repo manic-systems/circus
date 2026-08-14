@@ -42,6 +42,51 @@ fn test_clone_or_fetch_clones_new_repo() {
 }
 
 #[test]
+fn nix_ref_and_rev_queries_select_non_default_commits() {
+  let upstream_dir = TempDir::new().unwrap();
+  let work_dir = TempDir::new().unwrap();
+  let upstream = Repository::init(upstream_dir.path()).unwrap();
+  let sig = Signature::now("Test", "test@example.com").unwrap();
+  let tree_id = upstream.index().unwrap().write_tree().unwrap();
+  let tree = upstream.find_tree(tree_id).unwrap();
+  let main = upstream
+    .commit(Some("HEAD"), &sig, &sig, "main", &tree, &[])
+    .unwrap();
+  let main = upstream.find_commit(main).unwrap();
+  let next = upstream
+    .commit(Some("refs/heads/next"), &sig, &sig, "next", &tree, &[&main])
+    .unwrap();
+  drop(tree);
+  drop(main);
+
+  let url = format!("file://{}?ref=next", upstream_dir.path().display());
+  let (repo_path, resolved) = circus_evaluator::git::clone_or_fetch(
+    &url,
+    work_dir.path(),
+    "test-project",
+    None,
+  )
+  .expect("clone with Nix ref failed");
+  let checkout = Repository::open(repo_path).unwrap();
+
+  assert_eq!(resolved, next.to_string());
+  assert_eq!(checkout.head().unwrap().target(), Some(next));
+
+  let url = format!("file://{}?rev={next}", upstream_dir.path().display());
+  let (repo_path, resolved) = circus_evaluator::git::clone_or_fetch(
+    &url,
+    work_dir.path(),
+    "rev-project",
+    None,
+  )
+  .expect("clone with Nix revision failed");
+  let checkout = Repository::open(repo_path).unwrap();
+
+  assert_eq!(resolved, next.to_string());
+  assert_eq!(checkout.head().unwrap().target(), Some(next));
+}
+
+#[test]
 fn test_clone_or_fetch_fetches_existing() {
   let upstream_dir = TempDir::new().unwrap();
   let work_dir = TempDir::new().unwrap();
