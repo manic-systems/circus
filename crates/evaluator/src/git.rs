@@ -5,6 +5,47 @@ use circus_common::{
   glob::glob_matches,
 };
 use git2::Repository;
+use url::Url;
+
+/// Query parameters understood by Nix's Git flake fetcher rather than by the
+/// remote Git HTTP endpoint.
+const NIX_GIT_QUERY_PARAMS: &[&str] = &[
+  "allRefs",
+  "dir",
+  "narHash",
+  "ref",
+  "rev",
+  "shallow",
+  "submodules",
+];
+
+/// Return a cloneable repository URL with Nix flake attributes removed.
+///
+/// Unknown query parameters remain intact because self-hosted Git servers may
+/// use them for authentication or routing.
+fn clone_url(source: &str) -> String {
+  let Ok(mut url) = Url::parse(source) else {
+    return source.to_string();
+  };
+  let retained = url
+    .query_pairs()
+    .filter(|(key, _)| !NIX_GIT_QUERY_PARAMS.contains(&key.as_ref()))
+    .map(|(key, value)| (key.into_owned(), value.into_owned()))
+    .collect::<Vec<_>>();
+  url.set_query(None);
+  if !retained.is_empty() {
+    url.query_pairs_mut().extend_pairs(retained);
+  }
+  url.set_fragment(None);
+  url.into()
+}
+
+fn source_attribute(source: &str, attribute: &str) -> Option<String> {
+  Url::parse(source)
+    .ok()?
+    .query_pairs()
+    .find_map(|(key, value)| (key == attribute).then(|| value.into_owned()))
+}
 
 /// Refspecs fetched on every sync. The first is the standard branch fetch.
 /// The two remaining refspecs make pull-request / merge-request commits
@@ -67,12 +108,14 @@ fn clone_or_open_and_fetch(
 ) -> Result<(PathBuf, Repository, bool)> {
   let repo_path = work_dir.join(project_name);
   let is_fetch = repo_path.exists();
+  let clone_url = clone_url(url);
   let repo = if is_fetch {
     let repo = Repository::open(&repo_path)?;
+    repo.remote_set_url("origin", &clone_url)?;
     fetch_all_refs(&repo)?;
     repo
   } else {
-    let repo = Repository::clone(url, &repo_path)?;
+    let repo = Repository::clone(&clone_url, &repo_path)?;
     fetch_all_refs(&repo)?;
     repo
   };
@@ -161,40 +204,55 @@ pub fn clone_or_fetch(
   project_name: &str,
   branch: Option<&str>,
 ) -> Result<(PathBuf, String)> {
-  let (repo_path, repo, is_fetch) =
+  let (repo_path, repo, _is_fetch) =
     clone_or_open_and_fetch(url, work_dir, project_name)?;
 
   // Resolve commit from remote refs (which are always up-to-date after fetch).
   // When no branch is specified, detect the default branch from local HEAD's
   // tracking target.
-  let branch_name = if let Some(b) = branch {
-    b.to_string()
+  let (hash, oid) = if let Some(rev) = source_attribute(url, "rev") {
+    let oid = git2::Oid::from_str(&rev).map_err(|error| {
+      CiError::Validation(format!(
+        "Invalid repository URL revision '{rev}': {error}"
+      ))
+    })?;
+    let commit = repo.find_commit(oid).map_err(|error| {
+      CiError::NotFound(format!(
+        "Repository URL revision '{rev}' not found after fetching origin: \
+         {error}"
+      ))
+    })?;
+    (commit.id().to_string(), commit.id())
   } else {
-    let head = repo.head()?;
-    head.shorthand().unwrap_or("master").to_string()
-  };
+    let branch_name = if let Some(branch) = branch {
+      branch.to_string()
+    } else if let Some(source_ref) = source_attribute(url, "ref") {
+      source_ref
+    } else {
+      let head = repo.head()?;
+      head.shorthand().unwrap_or("master").to_string()
+    };
 
-  let git_ref = if branch_name.starts_with("refs/") {
-    branch_name.clone()
-  } else {
-    format!("refs/remotes/origin/{branch_name}")
+    let git_ref = if branch_name.starts_with("refs/") {
+      branch_name.clone()
+    } else {
+      format!("refs/remotes/origin/{branch_name}")
+    };
+    resolve_ref(&repo, &git_ref).map_err(|error| {
+      CiError::NotFound(format!(
+        "Git ref '{branch_name}' not found ({git_ref}): {error}"
+      ))
+    })?
   };
-  let (hash, oid) = resolve_ref(&repo, &git_ref).map_err(|e| {
-    CiError::NotFound(format!(
-      "Git ref '{branch_name}' not found ({git_ref}): {e}"
-    ))
-  })?;
   let commit = repo.find_commit(oid)?;
 
-  // After fetch, update the working tree so nix evaluation sees the latest
-  // files. Skip on fresh clone since the checkout is already current.
-  if is_fetch {
-    repo.checkout_tree(
-      commit.as_object(),
-      Some(git2::build::CheckoutBuilder::new().force()),
-    )?;
-    repo.set_head_detached(commit.id())?;
-  }
+  // The requested ref may differ from the remote's default branch, including
+  // on a fresh clone, so always align the checkout with the resolved commit.
+  repo.checkout_tree(
+    commit.as_object(),
+    Some(git2::build::CheckoutBuilder::new().force()),
+  )?;
+  repo.set_head_detached(commit.id())?;
 
   Ok((repo_path, hash))
 }

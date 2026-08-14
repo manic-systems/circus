@@ -92,13 +92,18 @@ impl Scheme {
 enum ParsedRepo {
   /// A local filesystem path (absolute), mapped to `git+file://` so the git
   /// fetcher excludes `.git`.
-  Local(String),
+  Local {
+    path:  String,
+    query: Vec<(String, String)>,
+  },
   Remote {
     scheme: Scheme,
     user:   Option<String>,
     host:   String,
     /// Path with no leading/trailing slash and no `.git` suffix.
     path:   String,
+    /// Nix flake fetcher attributes from the source URL.
+    query:  Vec<(String, String)>,
   },
 }
 
@@ -106,8 +111,28 @@ impl ParsedRepo {
   fn parse(url: &str) -> Self {
     let url = url.trim();
 
-    if let Some(path) = url.strip_prefix("file://") {
-      return Self::Local(path.to_string());
+    if let Ok(parsed) = Url::parse(url) {
+      let query = parsed
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+      if parsed.scheme() == "file" {
+        return Self::Local {
+          path: parsed.path().to_string(),
+          query,
+        };
+      }
+      if let Some(host) = parsed.host_str() {
+        let user = (!parsed.username().is_empty())
+          .then(|| parsed.username().to_string());
+        return Self::Remote {
+          scheme: Scheme::from_str(parsed.scheme()),
+          user,
+          host: host.to_ascii_lowercase(),
+          path: clean_path(parsed.path()),
+          query,
+        };
+      }
     }
 
     let Some((scheme, rest)) = url.split_once("://") else {
@@ -120,9 +145,13 @@ impl ParsedRepo {
           user,
           host,
           path: clean_path(path),
+          query: Vec::new(),
         };
       }
-      return Self::Local(url.to_string());
+      return Self::Local {
+        path:  url.to_string(),
+        query: Vec::new(),
+      };
     };
 
     let (authority, path) = match rest.split_once('/') {
@@ -136,6 +165,7 @@ impl ParsedRepo {
       user,
       host,
       path: clean_path(path),
+      query: Vec::new(),
     }
   }
 
@@ -144,23 +174,35 @@ impl ParsedRepo {
     rev: &str,
     repo_path: &Path,
   ) -> Result<SourceFlakeRef> {
-    let (scheme, user, host, path) = match self {
-      Self::Local(_) => return local_git_ref(repo_path, rev),
+    let (scheme, user, host, path, query) = match self {
+      Self::Local { query, .. } => {
+        return local_git_ref(repo_path, rev, &query);
+      },
       Self::Remote {
         scheme,
         user,
         host,
         path,
-      } => (scheme, user, host, path),
+        query,
+      } => (scheme, user, host, path, query),
     };
 
     let segments = path.split('/').filter(|s| !s.is_empty()).count();
 
+    let forge_query_supported = query
+      .iter()
+      .all(|(key, _)| matches!(key.as_str(), "ref" | "rev"));
     let primary = match host.as_str() {
-      "github.com" if segments == 2 => forge_ref("github", &path, rev),
-      "gitlab.com" if segments == 2 => forge_ref("gitlab", &path, rev),
-      "git.sr.ht" if segments == 2 => forge_ref("sourcehut", &path, rev),
-      _ => generic_git_ref(&scheme, user.as_deref(), &host, &path, rev),
+      "github.com" if segments == 2 && forge_query_supported => {
+        forge_ref("github", &path, rev)
+      },
+      "gitlab.com" if segments == 2 && forge_query_supported => {
+        forge_ref("gitlab", &path, rev)
+      },
+      "git.sr.ht" if segments == 2 && forge_query_supported => {
+        forge_ref("sourcehut", &path, rev)
+      },
+      _ => generic_git_ref(&scheme, user.as_deref(), &host, &path, rev, &query),
     };
 
     Ok(primary)
@@ -176,13 +218,14 @@ fn generic_git_ref(
   host: &str,
   path: &str,
   rev: &str,
+  query: &[(String, String)],
 ) -> SourceFlakeRef {
   let userinfo = match (scheme, user) {
     (Scheme::Ssh, Some(u)) => format!("{u}@"),
     _ => String::new(),
   };
   let base = format!("{}://{userinfo}{host}/{path}", scheme.git_prefix());
-  pinned(&base, rev)
+  pinned(&base, rev, query)
 }
 
 /// `git+file://<repo_path>` for the local working checkout. The git fetcher
@@ -190,7 +233,11 @@ fn generic_git_ref(
 /// bare-path `path:` fetcher which copies the directory verbatim. `repo_path`
 /// is the checkout Circus cloned, which has a worktree and the resolved commit;
 /// the bare `repository_url` would have neither.
-fn local_git_ref(repo_path: &Path, rev: &str) -> Result<SourceFlakeRef> {
+fn local_git_ref(
+  repo_path: &Path,
+  rev: &str,
+  query: &[(String, String)],
+) -> Result<SourceFlakeRef> {
   let repo_path = if repo_path.is_absolute() {
     repo_path.to_path_buf()
   } else {
@@ -209,16 +256,13 @@ fn local_git_ref(repo_path: &Path, rev: &str) -> Result<SourceFlakeRef> {
       repo_path.display()
     ))
   })?;
-  Ok(pinned(&format!("git+{url}"), rev))
+  Ok(pinned(&format!("git+{url}"), rev, query))
 }
 
-/// Append `?rev=<rev>` to a `git+*` base and derive its `allowed-uris`.
-fn pinned(base: &str, rev: &str) -> SourceFlakeRef {
-  let flake_ref = if rev.is_empty() {
-    base.to_string()
-  } else {
-    format!("{base}?rev={rev}")
-  };
+/// Preserve Nix fetcher attributes and replace any caller-supplied revision
+/// with the commit Circus resolved.
+fn pinned(base: &str, rev: &str, query: &[(String, String)]) -> SourceFlakeRef {
+  let flake_ref = with_pinned_query(base, rev, query);
   SourceFlakeRef {
     allowed_uris: UriPrefixes::from_uri(base).into_vec(),
     flake_ref,
@@ -231,6 +275,9 @@ fn pinned(base: &str, rev: &str) -> SourceFlakeRef {
 /// `?narHash`/rev-suffixed form (see `flake_lock`'s input mapping).
 fn forge_ref(forge: &str, path: &str, rev: &str) -> SourceFlakeRef {
   let allowed = format!("{forge}:{path}");
+  // Forge shorthands encode a ref or revision as the fourth path component;
+  // they do not accept the Git fetcher's `?ref=&rev=` query schema. Circus has
+  // already resolved `ref`, so pin the resulting revision directly.
   let flake_ref = if rev.is_empty() {
     allowed.clone()
   } else {
@@ -239,6 +286,29 @@ fn forge_ref(forge: &str, path: &str, rev: &str) -> SourceFlakeRef {
   SourceFlakeRef {
     flake_ref,
     allowed_uris: vec![allowed],
+  }
+}
+
+fn with_pinned_query(
+  base: &str,
+  rev: &str,
+  query: &[(String, String)],
+) -> String {
+  let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+  serializer.extend_pairs(
+    query
+      .iter()
+      .filter(|(key, _)| key != "rev")
+      .map(|(key, value)| (key.as_str(), value.as_str())),
+  );
+  if !rev.is_empty() {
+    serializer.append_pair("rev", rev);
+  }
+  let query = serializer.finish();
+  if query.is_empty() {
+    base.to_string()
+  } else {
+    format!("{base}?{query}")
   }
 }
 
@@ -302,6 +372,28 @@ mod tests {
     let r = sref("https://github.com/owner/repo", REV);
     assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
     assert_eq!(r.allowed_uris, vec!["github:owner/repo"]);
+  }
+
+  #[test]
+  fn github_ref_query_is_replaced_by_the_resolved_revision() {
+    let r = sref("https://github.com/owner/repo?ref=next", REV);
+    assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
+    assert_eq!(r.allowed_uris, vec!["github:owner/repo"]);
+  }
+
+  #[test]
+  fn github_query_revision_is_replaced_by_the_resolved_commit() {
+    let r = sref("https://github.com/owner/repo?rev=untrusted", REV);
+    assert_eq!(r.flake_ref, "github:owner/repo/abc123def456");
+  }
+
+  #[test]
+  fn git_fetcher_attributes_fall_back_to_git_url_schema() {
+    let r = sref("https://github.com/owner/repo?dir=nix&ref=next", REV);
+    assert_eq!(
+      r.flake_ref,
+      "git+https://github.com/owner/repo?dir=nix&ref=next&rev=abc123def456"
+    );
   }
 
   #[test]
