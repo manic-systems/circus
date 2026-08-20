@@ -47,6 +47,7 @@ pub struct Jobset {
   pub last_checked_at:   Option<DateTime<Utc>>,
   pub keep_nr:           i32,
   pub systems:           Option<Vec<String>>,
+  pub only_build_latest: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +65,8 @@ pub struct Evaluation {
   pub pr_head_branch:  Option<String>,
   pub pr_base_branch:  Option<String>,
   pub pr_action:       Option<String>,
+  pub source_scope:    Option<String>,
+  pub superseded_by:   Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -686,6 +689,7 @@ pub struct ActiveJobset {
   pub project_name:      String,
   pub repository_url:    String,
   pub systems:           Option<Vec<String>>,
+  pub only_build_latest: bool,
 }
 
 /// Build statistics from the `build_stats` view.
@@ -1024,9 +1028,10 @@ pub struct CreateJobset {
   pub state:             Option<JobsetState>,
   pub keep_nr:           Option<i32>,
   pub systems:           Option<Vec<String>>,
+  pub only_build_latest: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateJobset {
   pub name:              Option<String>,
   pub nix_expression:    Option<String>,
@@ -1041,6 +1046,7 @@ pub struct UpdateJobset {
   pub state:             Option<JobsetState>,
   pub keep_nr:           Option<i32>,
   pub systems:           Option<Vec<String>>,
+  pub only_build_latest: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

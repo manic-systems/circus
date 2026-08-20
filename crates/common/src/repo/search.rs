@@ -253,6 +253,7 @@ fn jobset_from_search_row(row: q::JobsetSearchRow) -> Result<Jobset> {
     last_checked_at:   row.last_checked_at,
     keep_nr:           row.keep_nr,
     systems:           row.systems,
+    only_build_latest: row.only_build_latest,
   })
 }
 
@@ -273,6 +274,8 @@ fn evaluation_from_search_row(
     pr_head_branch:  row.pr_head_branch,
     pr_base_branch:  row.pr_base_branch,
     pr_action:       row.pr_action,
+    source_scope:    row.source_scope,
+    superseded_by:   row.superseded_by,
   })
 }
 

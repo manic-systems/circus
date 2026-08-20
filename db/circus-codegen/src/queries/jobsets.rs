@@ -26,6 +26,7 @@ pub struct CreateParams<
     pub state: T7,
     pub keep_nr: i32,
     pub systems: Option<T9>,
+    pub only_build_latest: bool,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ListForProjectParams {
@@ -58,6 +59,7 @@ pub struct UpdateParams<
     pub state: T7,
     pub keep_nr: i32,
     pub systems: Option<T9>,
+    pub only_build_latest: bool,
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
@@ -86,6 +88,7 @@ pub struct UpsertParams<
     pub state: T7,
     pub keep_nr: i32,
     pub systems: Option<T9>,
+    pub only_build_latest: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobsetRow {
@@ -107,6 +110,7 @@ pub struct JobsetRow {
     pub branch_pattern: Option<String>,
     pub tag_pattern: Option<String>,
     pub systems: Option<Vec<String>>,
+    pub only_build_latest: bool,
 }
 pub struct JobsetRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -127,6 +131,7 @@ pub struct JobsetRowBorrowed<'a> {
     pub branch_pattern: Option<&'a str>,
     pub tag_pattern: Option<&'a str>,
     pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub only_build_latest: bool,
 }
 impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
     fn from(
@@ -149,6 +154,7 @@ impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
             branch_pattern,
             tag_pattern,
             systems,
+            only_build_latest,
         }: JobsetRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -170,6 +176,7 @@ impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
             branch_pattern: branch_pattern.map(|v| v.into()),
             tag_pattern: tag_pattern.map(|v| v.into()),
             systems: systems.map(|v| v.map(|v| v.into()).collect()),
+            only_build_latest,
         }
     }
 }
@@ -195,6 +202,7 @@ pub struct ActiveJobsetRow {
     pub repository_url: String,
     pub trigger_mode: String,
     pub systems: Option<Vec<String>>,
+    pub only_build_latest: bool,
 }
 pub struct ActiveJobsetRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -217,6 +225,7 @@ pub struct ActiveJobsetRowBorrowed<'a> {
     pub repository_url: &'a str,
     pub trigger_mode: &'a str,
     pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub only_build_latest: bool,
 }
 impl<'a> From<ActiveJobsetRowBorrowed<'a>> for ActiveJobsetRow {
     fn from(
@@ -241,6 +250,7 @@ impl<'a> From<ActiveJobsetRowBorrowed<'a>> for ActiveJobsetRow {
             repository_url,
             trigger_mode,
             systems,
+            only_build_latest,
         }: ActiveJobsetRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -264,6 +274,7 @@ impl<'a> From<ActiveJobsetRowBorrowed<'a>> for ActiveJobsetRow {
             repository_url: repository_url.into(),
             trigger_mode: trigger_mode.into(),
             systems: systems.map(|v| v.map(|v| v.into()).collect()),
+            only_build_latest,
         }
     }
 }
@@ -464,10 +475,74 @@ where
         Ok(mapped)
     }
 }
+pub struct BoolQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<bool, tokio_postgres::Error>,
+    mapper: fn(bool) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> BoolQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(bool) -> R) -> BoolQuery<'c, 'a, 's, C, R, N> {
+        BoolQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
 pub struct CreateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create() -> CreateStmt {
     CreateStmt(
-        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *",
+        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *",
         None,
     )
 }
@@ -510,7 +585,8 @@ impl CreateStmt {
         state: &'a T7,
         keep_nr: &'a i32,
         systems: &'a Option<T9>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
+        only_build_latest: &'a bool,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15> {
         JobsetRowQuery {
             client,
             params: [
@@ -528,6 +604,7 @@ impl CreateStmt {
                 state,
                 keep_nr,
                 systems,
+                only_build_latest,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -552,6 +629,7 @@ impl CreateStmt {
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
                         systems: row.try_get(17)?,
+                        only_build_latest: row.try_get(18)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -578,7 +656,7 @@ impl<
         'a,
         's,
         CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15>,
         C,
     > for CreateStmt
 {
@@ -586,7 +664,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15> {
         self.bind(
             client,
             &params.project_id,
@@ -603,6 +681,7 @@ impl<
             &params.state,
             &params.keep_nr,
             &params.systems,
+            &params.only_build_latest,
         )
     }
 }
@@ -649,6 +728,7 @@ impl GetStmt {
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
                         systems: row.try_get(17)?,
+                        only_build_latest: row.try_get(18)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -703,6 +783,7 @@ impl ListForProjectStmt {
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
                         systems: row.try_get(17)?,
+                        only_build_latest: row.try_get(18)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -773,6 +854,7 @@ impl ListAllForProjectStmt {
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
                         systems: row.try_get(17)?,
+                        only_build_latest: row.try_get(18)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -835,7 +917,7 @@ impl CountStmt {
 pub struct UpdateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn update() -> UpdateStmt {
     UpdateStmt(
-        "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = $11, keep_nr = $12, systems = $13 WHERE id = $14 RETURNING *",
+        "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = $11, keep_nr = $12, systems = $13, only_build_latest = $14 WHERE id = $15 RETURNING *",
         None,
     )
 }
@@ -877,8 +959,9 @@ impl UpdateStmt {
         state: &'a T7,
         keep_nr: &'a i32,
         systems: &'a Option<T9>,
+        only_build_latest: &'a bool,
         id: &'a uuid::Uuid,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15> {
         JobsetRowQuery {
             client,
             params: [
@@ -895,6 +978,7 @@ impl UpdateStmt {
                 state,
                 keep_nr,
                 systems,
+                only_build_latest,
                 id,
             ],
             query: self.0,
@@ -920,6 +1004,7 @@ impl UpdateStmt {
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
                         systems: row.try_get(17)?,
+                        only_build_latest: row.try_get(18)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -946,7 +1031,7 @@ impl<
         'a,
         's,
         UpdateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15>,
         C,
     > for UpdateStmt
 {
@@ -954,7 +1039,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a UpdateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15> {
         self.bind(
             client,
             &params.name,
@@ -970,6 +1055,7 @@ impl<
             &params.state,
             &params.keep_nr,
             &params.systems,
+            &params.only_build_latest,
             &params.id,
         )
     }
@@ -997,7 +1083,7 @@ impl DeleteStmt {
 pub struct UpsertStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn upsert() -> UpsertStmt {
     UpsertStmt(
-        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems RETURNING *",
+        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems, only_build_latest = EXCLUDED.only_build_latest RETURNING *",
         None,
     )
 }
@@ -1040,7 +1126,8 @@ impl UpsertStmt {
         state: &'a T7,
         keep_nr: &'a i32,
         systems: &'a Option<T9>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
+        only_build_latest: &'a bool,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15> {
         JobsetRowQuery {
             client,
             params: [
@@ -1058,6 +1145,7 @@ impl UpsertStmt {
                 state,
                 keep_nr,
                 systems,
+                only_build_latest,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -1082,6 +1170,7 @@ impl UpsertStmt {
                         branch_pattern: row.try_get(15)?,
                         tag_pattern: row.try_get(16)?,
                         systems: row.try_get(17)?,
+                        only_build_latest: row.try_get(18)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -1108,7 +1197,7 @@ impl<
         'a,
         's,
         UpsertParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15>,
         C,
     > for UpsertStmt
 {
@@ -1116,7 +1205,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a UpsertParams<T1, T2, T3, T4, T5, T6, T7, T8, T9>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 14> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 15> {
         self.bind(
             client,
             &params.project_id,
@@ -1133,6 +1222,7 @@ impl<
             &params.state,
             &params.keep_nr,
             &params.systems,
+            &params.only_build_latest,
         )
     }
 }
@@ -1181,9 +1271,40 @@ impl ListActiveStmt {
                     repository_url: row.try_get(17)?,
                     trigger_mode: row.try_get(18)?,
                     systems: row.try_get(19)?,
+                    only_build_latest: row.try_get(20)?,
                 })
             },
             mapper: |it| ActiveJobsetRow::from(it),
+        }
+    }
+}
+pub struct LockLatestPolicyStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn lock_latest_policy() -> LockLatestPolicyStmt {
+    LockLatestPolicyStmt(
+        "SELECT only_build_latest FROM jobsets WHERE id = $1 FOR UPDATE",
+        None,
+    )
+}
+impl LockLatestPolicyStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+    ) -> BoolQuery<'c, 'a, 's, C, bool, 1> {
+        BoolQuery {
+            client,
+            params: [id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
         }
     }
 }
@@ -1342,6 +1463,7 @@ impl ListDueForEvalStmt {
                     repository_url: row.try_get(17)?,
                     trigger_mode: row.try_get(18)?,
                     systems: row.try_get(19)?,
+                    only_build_latest: row.try_get(20)?,
                 })
             },
             mapper: |it| ActiveJobsetRow::from(it),

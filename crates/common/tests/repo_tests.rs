@@ -108,9 +108,22 @@ async fn create_test_jobset(
     state: None,
     keep_nr: None,
     systems: None,
+    only_build_latest: None,
   })
   .await
   .expect("create jobset")
+}
+
+async fn enable_latest_only(
+  pool: &circus_common::PgPool,
+  jobset_id: uuid::Uuid,
+) -> Jobset {
+  repo::jobsets::update(pool, jobset_id, UpdateJobset {
+    only_build_latest: Some(true),
+    ..Default::default()
+  })
+  .await
+  .expect("enable latest-only")
 }
 
 /// Helper: create an evaluation for a jobset.
@@ -128,6 +141,32 @@ async fn create_test_eval(
   })
   .await
   .expect("create evaluation")
+}
+
+async fn enqueue_test_source(
+  pool: &circus_common::PgPool,
+  jobset_id: uuid::Uuid,
+  source_scope: &str,
+) -> Evaluation {
+  repo::evaluations::enqueue_source(
+    pool,
+    source_evaluation(jobset_id),
+    source_scope,
+    repo::evaluations::SourceOrder::Unchecked,
+  )
+  .await
+  .expect("enqueue source evaluation")
+}
+
+fn source_evaluation(jobset_id: uuid::Uuid) -> CreateEvaluation {
+  CreateEvaluation {
+    jobset_id,
+    commit_hash: format!("source{}", uuid::Uuid::new_v4().simple()),
+    pr_number: None,
+    pr_head_branch: None,
+    pr_base_branch: None,
+    pr_action: None,
+  }
 }
 
 /// Helper: create a build for an evaluation.
@@ -470,6 +509,7 @@ async fn test_jobset_crud() {
     state:             None,
     keep_nr:           None,
     systems:           None,
+    only_build_latest: None,
   })
   .await
   .expect("create jobset");
@@ -504,6 +544,7 @@ async fn test_jobset_crud() {
     state:             None,
     keep_nr:           None,
     systems:           None,
+    only_build_latest: None,
   })
   .await
   .expect("update jobset");
@@ -541,6 +582,7 @@ async fn test_interval_evaluations_can_repeat_commit() {
     state:             None,
     keep_nr:           None,
     systems:           None,
+    only_build_latest: None,
   })
   .await
   .expect("create interval jobset");
@@ -599,6 +641,175 @@ async fn test_interval_evaluations_can_repeat_commit() {
     manual_duplicate,
     Err(circus_common::CiError::Conflict(_))
   ));
+}
+
+#[tokio::test]
+async fn test_source_evaluations_keep_every_revision_by_default() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "keep-source-revisions").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let old = enqueue_test_source(&pool, jobset.id, "tags").await;
+  let new = enqueue_test_source(&pool, jobset.id, "tags").await;
+
+  assert_eq!(
+    repo::evaluations::get(&pool, old.id).await.unwrap().status,
+    EvaluationStatus::Pending
+  );
+  assert_eq!(new.status, EvaluationStatus::Pending);
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_latest_only_cancels_active_work_but_keeps_successes() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "latest-source-revision").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  enable_latest_only(&pool, jobset.id).await;
+  let old = enqueue_test_source(&pool, jobset.id, "tags").await;
+  repo::evaluations::update_status(
+    &pool,
+    old.id,
+    EvaluationStatus::Running,
+    None,
+  )
+  .await
+  .expect("start old evaluation");
+  let cancelled_build = create_test_build(
+    &pool,
+    old.id,
+    "pending",
+    &format!("/nix/store/{}-pending.drv", uuid::Uuid::new_v4().simple()),
+    None,
+  )
+  .await;
+  let successful_build = create_test_build(
+    &pool,
+    old.id,
+    "succeeded",
+    &format!("/nix/store/{}-succeeded.drv", uuid::Uuid::new_v4().simple()),
+    None,
+  )
+  .await;
+  repo::builds::complete(
+    &pool,
+    successful_build.id,
+    BuildStatus::Succeeded,
+    None,
+    Some("/nix/store/succeeded"),
+    None,
+  )
+  .await
+  .expect("complete successful build");
+
+  let replacement = enqueue_test_source(&pool, jobset.id, "tags").await;
+
+  let old = repo::evaluations::get(&pool, old.id).await.unwrap();
+  assert_eq!(old.status, EvaluationStatus::Cancelled);
+  assert_eq!(old.superseded_by, Some(replacement.id));
+  assert_eq!(
+    repo::builds::get(&pool, cancelled_build.id)
+      .await
+      .unwrap()
+      .status,
+    BuildStatus::Cancelled
+  );
+  assert_eq!(
+    repo::builds::get(&pool, successful_build.id)
+      .await
+      .unwrap()
+      .status,
+    BuildStatus::Succeeded
+  );
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_latest_only_is_scoped_and_protects_manual_evaluations() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "latest-source-scope").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  enable_latest_only(&pool, jobset.id).await;
+  let legacy = create_test_eval(&pool, jobset.id).await;
+  let main = enqueue_test_source(&pool, jobset.id, "branch:main").await;
+  let release = enqueue_test_source(&pool, jobset.id, "branch:release").await;
+  let manual = repo::evaluations::create_manual(&pool, CreateEvaluation {
+    jobset_id:      jobset.id,
+    commit_hash:    format!("manual{}", uuid::Uuid::new_v4().simple()),
+    pr_number:      None,
+    pr_head_branch: None,
+    pr_base_branch: None,
+    pr_action:      None,
+  })
+  .await
+  .expect("enqueue manual evaluation");
+
+  enqueue_test_source(&pool, jobset.id, "branch:main").await;
+
+  assert_eq!(
+    repo::evaluations::get(&pool, main.id).await.unwrap().status,
+    EvaluationStatus::Cancelled
+  );
+  assert_eq!(
+    repo::evaluations::get(&pool, release.id)
+      .await
+      .unwrap()
+      .status,
+    EvaluationStatus::Pending
+  );
+  assert_eq!(
+    repo::evaluations::get(&pool, manual.id)
+      .await
+      .unwrap()
+      .status,
+    EvaluationStatus::Pending
+  );
+  assert_eq!(
+    repo::evaluations::get(&pool, legacy.id)
+      .await
+      .unwrap()
+      .status,
+    EvaluationStatus::Pending
+  );
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_latest_only_rejects_out_of_order_source_updates() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "ordered-source-update").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let current = enqueue_test_source(&pool, jobset.id, "branch:main").await;
+  enable_latest_only(&pool, jobset.id).await;
+
+  let stale = repo::evaluations::enqueue_source(
+    &pool,
+    source_evaluation(jobset.id),
+    "branch:main",
+    repo::evaluations::SourceOrder::After("older-than-current"),
+  )
+  .await;
+
+  assert!(matches!(stale, Err(circus_common::CiError::Conflict(_))));
+  assert_eq!(
+    repo::evaluations::get(&pool, current.id)
+      .await
+      .unwrap()
+      .status,
+    EvaluationStatus::Pending
+  );
+  let _ = repo::projects::delete(&pool, project.id).await;
 }
 
 #[tokio::test]
@@ -827,6 +1038,7 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
     state:             Some(JobsetState::OneShot),
     keep_nr:           None,
     systems:           None,
+    only_build_latest: None,
   })
   .await
   .expect("create one-shot jobset");
@@ -861,6 +1073,8 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
     .expect("get restarted jobset");
 
   assert_eq!(restarted.status, EvaluationStatus::Pending);
+  assert_eq!(restarted.trigger_kind, EvaluationTriggerKind::Manual);
+  assert!(restarted.source_scope.is_none());
   assert!(restarted.evaluation_time > eval.evaluation_time);
   assert!(restarted_jobset.enabled);
   assert_eq!(restarted_jobset.state, JobsetState::OneShot);

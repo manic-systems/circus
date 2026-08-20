@@ -1,4 +1,4 @@
-use circus_codegen::queries::evaluations as q;
+use circus_codegen::queries::{evaluations as q, jobsets as jobset_q};
 use uuid::Uuid;
 
 use crate::{
@@ -11,6 +11,25 @@ use crate::{
     EvaluationTriggerKind,
   },
 };
+
+#[derive(Clone, Copy)]
+pub enum SourceOrder<'a> {
+  Unchecked,
+  First,
+  After(&'a str),
+}
+
+impl SourceOrder<'_> {
+  fn accepts(self, latest_commit: Option<&str>) -> bool {
+    match self {
+      Self::Unchecked => true,
+      Self::First => latest_commit.is_none(),
+      Self::After(previous) => {
+        latest_commit.is_none_or(|commit| commit == previous)
+      },
+    }
+  }
+}
 
 impl TryFrom<q::EvaluationRow> for Evaluation {
   type Error = CiError;
@@ -30,6 +49,8 @@ impl TryFrom<q::EvaluationRow> for Evaluation {
       pr_head_branch:  r.pr_head_branch,
       pr_base_branch:  r.pr_base_branch,
       pr_action:       r.pr_action,
+      source_scope:    r.source_scope,
+      superseded_by:   r.superseded_by,
     })
   }
 }
@@ -48,6 +69,7 @@ pub async fn create(
     input,
     EvaluationTriggerKind::SourceChange,
     EvaluationStatus::Pending,
+    None,
   )
   .await
 }
@@ -66,6 +88,7 @@ pub async fn create_manual(
     input,
     EvaluationTriggerKind::Manual,
     EvaluationStatus::Pending,
+    None,
   )
   .await
 }
@@ -78,12 +101,37 @@ pub async fn create_manual(
 pub async fn create_running_source_change(
   pool: &PgPool,
   input: CreateEvaluation,
+  source_scope: &str,
 ) -> Result<Evaluation> {
-  create_with_kind(
+  create_automated(
     pool,
     input,
-    EvaluationTriggerKind::SourceChange,
     EvaluationStatus::Running,
+    source_scope,
+    SourceOrder::Unchecked,
+  )
+  .await
+}
+
+/// Enqueue an automated source evaluation and apply the jobset's latest-only
+/// policy atomically.
+///
+/// # Errors
+///
+/// Returns an error if the jobset is missing, the evaluation already exists,
+/// or the transaction fails.
+pub async fn enqueue_source(
+  pool: &PgPool,
+  input: CreateEvaluation,
+  source_scope: &str,
+  source_order: SourceOrder<'_>,
+) -> Result<Evaluation> {
+  create_automated(
+    pool,
+    input,
+    EvaluationStatus::Pending,
+    source_scope,
+    source_order,
   )
   .await
 }
@@ -105,6 +153,7 @@ pub async fn create_interval(
     input,
     EvaluationTriggerKind::Interval,
     EvaluationStatus::Running,
+    None,
   )
   .await
 }
@@ -114,6 +163,7 @@ async fn create_with_kind(
   input: CreateEvaluation,
   trigger_kind: EvaluationTriggerKind,
   status: EvaluationStatus,
+  source_scope: Option<&str>,
 ) -> Result<Evaluation> {
   let client = pool.get().await?;
   let row = q::create_with_kind()
@@ -127,6 +177,7 @@ async fn create_with_kind(
       &input.pr_head_branch,
       &input.pr_base_branch,
       &input.pr_action,
+      &source_scope,
     )
     .one()
     .await
@@ -141,6 +192,83 @@ async fn create_with_kind(
       }
     })?;
   row.try_into()
+}
+
+async fn create_automated(
+  pool: &PgPool,
+  input: CreateEvaluation,
+  status: EvaluationStatus,
+  source_scope: &str,
+  source_order: SourceOrder<'_>,
+) -> Result<Evaluation> {
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  let only_build_latest = jobset_q::lock_latest_policy()
+    .bind(&tx, &input.jobset_id)
+    .opt()
+    .await?
+    .ok_or_else(|| {
+      CiError::NotFound(format!("Jobset {} not found", input.jobset_id))
+    })?;
+
+  let scope = Some(source_scope);
+  if only_build_latest {
+    let latest_commit = q::get_source_head()
+      .bind(&tx, &input.jobset_id, &source_scope)
+      .opt()
+      .await?;
+    if !source_order.accepts(latest_commit.as_deref()) {
+      return Err(CiError::Conflict(format!(
+        "Source update for '{source_scope}' is older than the current revision"
+      )));
+    }
+  }
+  let row = q::create_with_kind()
+    .bind(
+      &tx,
+      &input.jobset_id,
+      &input.commit_hash,
+      &status.as_db_str(),
+      &EvaluationTriggerKind::SourceChange.as_db_str(),
+      &input.pr_number,
+      &input.pr_head_branch,
+      &input.pr_base_branch,
+      &input.pr_action,
+      &scope,
+    )
+    .one()
+    .await
+    .map_err(|error| {
+      if is_unique_violation(&error) {
+        CiError::Conflict(format!(
+          "Evaluation for commit '{}' already exists in this jobset",
+          input.commit_hash
+        ))
+      } else {
+        CiError::Database(error)
+      }
+    })?;
+  let evaluation = Evaluation::try_from(row)?;
+  q::set_source_head()
+    .bind(
+      &tx,
+      &evaluation.jobset_id,
+      &source_scope,
+      &evaluation.commit_hash,
+    )
+    .await?;
+
+  if only_build_latest {
+    q::supersede_source_evaluations()
+      .bind(&tx, &evaluation.id, &evaluation.jobset_id, &scope)
+      .await?;
+    q::cancel_superseded_builds()
+      .bind(&tx, &evaluation.id, &evaluation.jobset_id, &scope)
+      .await?;
+  }
+
+  tx.commit().await?;
+  Ok(evaluation)
 }
 
 /// Get an evaluation by ID.
@@ -680,45 +808,6 @@ pub async fn sweep_orphaned(
   let client = pool.get().await?;
   let rows = q::sweep_orphaned()
     .bind(&client, &deadline_secs)
-    .all()
-    .await?;
-  rows.into_iter().map(Evaluation::try_from).collect()
-}
-
-/// Cancel pending push evaluations of a jobset made obsolete by a newer
-/// commit.
-///
-/// # Errors
-///
-/// Returns error if database query fails.
-pub async fn supersede_pending_push(
-  pool: &PgPool,
-  jobset_id: Uuid,
-  commit_hash: &str,
-) -> Result<Vec<Evaluation>> {
-  let client = pool.get().await?;
-  let rows = q::supersede_pending_push()
-    .bind(&client, &commit_hash, &jobset_id)
-    .all()
-    .await?;
-  rows.into_iter().map(Evaluation::try_from).collect()
-}
-
-/// Cancel pending evaluations of a change request made obsolete by a newer
-/// head commit.
-///
-/// # Errors
-///
-/// Returns error if database query fails.
-pub async fn supersede_pending_change_request(
-  pool: &PgPool,
-  jobset_id: Uuid,
-  pr_number: i32,
-  commit_hash: &str,
-) -> Result<Vec<Evaluation>> {
-  let client = pool.get().await?;
-  let rows = q::supersede_pending_change_request()
-    .bind(&client, &commit_hash, &jobset_id, &pr_number)
     .all()
     .await?;
   rows.into_iter().map(Evaluation::try_from).collect()

@@ -300,6 +300,7 @@ pub struct JobsetSearchRow {
     pub branch_pattern: Option<String>,
     pub tag_pattern: Option<String>,
     pub systems: Option<Vec<String>>,
+    pub only_build_latest: bool,
 }
 pub struct JobsetSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -320,6 +321,7 @@ pub struct JobsetSearchRowBorrowed<'a> {
     pub branch_pattern: Option<&'a str>,
     pub tag_pattern: Option<&'a str>,
     pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub only_build_latest: bool,
 }
 impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
     fn from(
@@ -342,6 +344,7 @@ impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
             branch_pattern,
             tag_pattern,
             systems,
+            only_build_latest,
         }: JobsetSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -363,6 +366,7 @@ impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
             branch_pattern: branch_pattern.map(|v| v.into()),
             tag_pattern: tag_pattern.map(|v| v.into()),
             systems: systems.map(|v| v.map(|v| v.into()).collect()),
+            only_build_latest,
         }
     }
 }
@@ -383,6 +387,8 @@ pub struct EvaluationSearchRow {
     pub hidden: bool,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub orphaned_count: i32,
+    pub source_scope: Option<String>,
+    pub superseded_by: Option<uuid::Uuid>,
 }
 pub struct EvaluationSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -400,6 +406,8 @@ pub struct EvaluationSearchRowBorrowed<'a> {
     pub hidden: bool,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub orphaned_count: i32,
+    pub source_scope: Option<&'a str>,
+    pub superseded_by: Option<uuid::Uuid>,
 }
 impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
     fn from(
@@ -419,6 +427,8 @@ impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
             hidden,
             started_at,
             orphaned_count,
+            source_scope,
+            superseded_by,
         }: EvaluationSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -437,6 +447,8 @@ impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
             hidden,
             started_at,
             orphaned_count,
+            source_scope: source_scope.map(|v| v.into()),
+            superseded_by,
         }
     }
 }
@@ -1120,6 +1132,7 @@ impl SearchJobsetsStmt {
                     branch_pattern: row.try_get(15)?,
                     tag_pattern: row.try_get(16)?,
                     systems: row.try_get(17)?,
+                    only_build_latest: row.try_get(18)?,
                 })
             },
             mapper: |it| JobsetSearchRow::from(it),
@@ -1267,6 +1280,8 @@ impl SearchEvaluationsStmt {
                     hidden: row.try_get(12)?,
                     started_at: row.try_get(13)?,
                     orphaned_count: row.try_get(14)?,
+                    source_scope: row.try_get(15)?,
+                    superseded_by: row.try_get(16)?,
                 })
             },
             mapper: |it| EvaluationSearchRow::from(it),

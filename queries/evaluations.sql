@@ -1,14 +1,15 @@
---: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?)
+--: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?)
 
---! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?) : EvaluationRow
+--! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, source_scope?) : EvaluationRow
 INSERT INTO evaluations (
   jobset_id, commit_hash, status, trigger_kind,
-  pr_number, pr_head_branch, pr_base_branch, pr_action, started_at
+  pr_number, pr_head_branch, pr_base_branch, pr_action, started_at,
+  source_scope
 )
 VALUES (
   :jobset_id, :commit_hash, :status, :trigger_kind,
   :pr_number, :pr_head_branch, :pr_base_branch, :pr_action,
-  CASE WHEN :status::text = 'running' THEN NOW() END
+  CASE WHEN :status::text = 'running' THEN NOW() END, :source_scope
 )
 RETURNING *;
 
@@ -73,6 +74,16 @@ SELECT * FROM evaluations WHERE status = 'pending' ORDER BY evaluation_time ASC;
 --! list_jobsets_with_pending
 SELECT DISTINCT jobset_id FROM evaluations WHERE status = 'pending';
 
+--! get_source_head
+SELECT commit_hash FROM evaluation_source_heads
+WHERE jobset_id = :jobset_id AND source_scope = :source_scope;
+
+--! set_source_head
+INSERT INTO evaluation_source_heads (jobset_id, source_scope, commit_hash)
+VALUES (:jobset_id, :source_scope, :commit_hash)
+ON CONFLICT (jobset_id, source_scope)
+DO UPDATE SET commit_hash = EXCLUDED.commit_hash;
+
 --! get_by_jobset_and_commit : EvaluationRow
 SELECT * FROM evaluations
 WHERE jobset_id = :jobset_id AND commit_hash = :commit_hash
@@ -115,26 +126,42 @@ WHERE status = 'running'
     < NOW() - make_interval(secs => :deadline_secs)
 RETURNING *;
 
---! supersede_pending_push : EvaluationRow
+--! supersede_source_evaluations (source_scope?)
 UPDATE evaluations
-SET status = 'cancelled', error_message = 'superseded by ' || :commit_hash
-WHERE jobset_id = :jobset_id AND status = 'pending'
+SET status = CASE WHEN status IN ('pending', 'running')
+      THEN 'cancelled' ELSE status END,
+    error_message = CASE WHEN status IN ('pending', 'running')
+      THEN 'superseded by evaluation ' || :superseded_by::text
+      ELSE error_message END,
+    superseded_by = :superseded_by
+WHERE jobset_id = :jobset_id AND id <> :superseded_by
   AND trigger_kind = 'source_change'
-  AND pr_number IS NULL AND commit_hash <> :commit_hash
-RETURNING *;
+  AND source_scope = :source_scope
+  AND (status IN ('pending', 'running') OR EXISTS (
+    SELECT 1 FROM builds b
+    WHERE b.evaluation_id = evaluations.id
+      AND b.status IN ('pending', 'running')
+  ));
 
---! supersede_pending_change_request : EvaluationRow
-UPDATE evaluations
-SET status = 'cancelled', error_message = 'superseded by ' || :commit_hash
-WHERE jobset_id = :jobset_id AND status = 'pending'
-  AND pr_number = :pr_number AND commit_hash <> :commit_hash
-RETURNING *;
+--! cancel_superseded_builds (source_scope?)
+UPDATE builds b
+SET status = 'cancelled', completed_at = NOW(),
+    error_message = 'superseded by evaluation ' || :superseded_by::text
+FROM evaluations e
+WHERE b.evaluation_id = e.id
+  AND e.jobset_id = :jobset_id AND e.id <> :superseded_by
+  AND e.trigger_kind = 'source_change'
+  AND e.source_scope = :source_scope
+  AND b.status IN ('pending', 'running');
 
 --! restart_requeue : EvaluationRow
 UPDATE evaluations e
 SET status = 'pending', evaluation_time = NOW(),
     error_message = NULL, inputs_hash = NULL,
-    started_at = NULL, orphaned_count = 0
+    started_at = NULL, orphaned_count = 0, superseded_by = NULL,
+    trigger_kind = CASE WHEN e.trigger_kind = 'source_change'
+      THEN 'manual' ELSE e.trigger_kind END,
+    source_scope = NULL
 FROM jobsets j
 WHERE e.id = :id AND e.jobset_id = j.id
   AND e.status IN ('cancelled', 'failed', 'timed_out')

@@ -347,11 +347,24 @@ use crate::models::{
   CreateProject,
   CreateRemoteBuilder,
   CreateWebhookConfig,
+  JobsetTriggerMode,
   UpdateChannel,
   UpdateJobset,
   UpdateProject,
   UpdateRemoteBuilder,
 };
+
+pub(crate) fn validate_latest_only_policy(
+  trigger_mode: JobsetTriggerMode,
+  only_build_latest: bool,
+) -> Result<(), String> {
+  if only_build_latest && trigger_mode == JobsetTriggerMode::Interval {
+    return Err(
+      "only_build_latest requires trigger_mode 'source_change'".to_string(),
+    );
+  }
+  Ok(())
+}
 
 impl Validate for CreateProject {
   fn validate(&self) -> Result<(), String> {
@@ -406,6 +419,10 @@ impl Validate for CreateJobset {
       }
       validate_systems(systems)?;
     }
+    validate_latest_only_policy(
+      self.trigger_mode.unwrap_or_default(),
+      self.only_build_latest.unwrap_or(false),
+    )?;
     Ok(())
   }
 }
@@ -423,6 +440,11 @@ impl Validate for UpdateJobset {
     }
     if let Some(systems) = &self.systems {
       validate_systems(systems)?;
+    }
+    if let (Some(trigger_mode), Some(only_build_latest)) =
+      (self.trigger_mode, self.only_build_latest)
+    {
+      validate_latest_only_policy(trigger_mode, only_build_latest)?;
     }
     Ok(())
   }
@@ -622,6 +644,7 @@ mod tests {
       state:             None,
       keep_nr:           None,
       systems:           None,
+      only_build_latest: None,
     };
     assert!(j.validate().is_ok());
   }
@@ -643,6 +666,29 @@ mod tests {
       state:             None,
       keep_nr:           None,
       systems:           None,
+      only_build_latest: None,
+    };
+    assert!(j.validate().is_err());
+  }
+
+  #[test]
+  fn test_latest_only_rejects_interval_jobsets() {
+    let j = CreateJobset {
+      project_id:        Uuid::new_v4(),
+      name:              "main".to_string(),
+      nix_expression:    "packages".to_string(),
+      enabled:           None,
+      flake_mode:        None,
+      check_interval:    None,
+      trigger_mode:      Some(JobsetTriggerMode::Interval),
+      branch:            None,
+      branch_pattern:    None,
+      tag_pattern:       None,
+      scheduling_shares: None,
+      state:             None,
+      keep_nr:           None,
+      systems:           None,
+      only_build_latest: Some(true),
     };
     assert!(j.validate().is_err());
   }

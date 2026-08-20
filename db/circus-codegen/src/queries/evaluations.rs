@@ -8,6 +8,7 @@ pub struct CreateWithKindParams<
     T4: crate::StringSql,
     T5: crate::StringSql,
     T6: crate::StringSql,
+    T7: crate::StringSql,
 > {
     pub jobset_id: uuid::Uuid,
     pub commit_hash: T1,
@@ -17,6 +18,7 @@ pub struct CreateWithKindParams<
     pub pr_head_branch: Option<T4>,
     pub pr_base_branch: Option<T5>,
     pub pr_action: Option<T6>,
+    pub source_scope: Option<T7>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct GetVisibleParams {
@@ -59,6 +61,17 @@ pub struct GetByInputsHashParams<T1: crate::StringSql> {
     pub inputs_hash: T1,
 }
 #[derive(Debug)]
+pub struct GetSourceHeadParams<T1: crate::StringSql> {
+    pub jobset_id: uuid::Uuid,
+    pub source_scope: T1,
+}
+#[derive(Debug)]
+pub struct SetSourceHeadParams<T1: crate::StringSql, T2: crate::StringSql> {
+    pub jobset_id: uuid::Uuid,
+    pub source_scope: T1,
+    pub commit_hash: T2,
+}
+#[derive(Debug)]
 pub struct GetByJobsetAndCommitParams<T1: crate::StringSql> {
     pub jobset_id: uuid::Uuid,
     pub commit_hash: T1,
@@ -70,15 +83,16 @@ pub struct FinishRunningParams<T1: crate::StringSql, T2: crate::StringSql> {
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
-pub struct SupersedePendingPushParams<T1: crate::StringSql> {
-    pub commit_hash: T1,
+pub struct SupersedeSourceEvaluationsParams<T1: crate::StringSql> {
+    pub superseded_by: uuid::Uuid,
     pub jobset_id: uuid::Uuid,
+    pub source_scope: Option<T1>,
 }
 #[derive(Debug)]
-pub struct SupersedePendingChangeRequestParams<T1: crate::StringSql> {
-    pub commit_hash: T1,
+pub struct CancelSupersededBuildsParams<T1: crate::StringSql> {
+    pub superseded_by: uuid::Uuid,
     pub jobset_id: uuid::Uuid,
-    pub pr_number: i32,
+    pub source_scope: Option<T1>,
 }
 #[derive(Debug)]
 pub struct ListPageFilteredParams<
@@ -125,6 +139,8 @@ pub struct EvaluationRow {
     pub hidden: bool,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub orphaned_count: i32,
+    pub source_scope: Option<String>,
+    pub superseded_by: Option<uuid::Uuid>,
 }
 pub struct EvaluationRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -142,6 +158,8 @@ pub struct EvaluationRowBorrowed<'a> {
     pub hidden: bool,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub orphaned_count: i32,
+    pub source_scope: Option<&'a str>,
+    pub superseded_by: Option<uuid::Uuid>,
 }
 impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
     fn from(
@@ -161,6 +179,8 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             hidden,
             started_at,
             orphaned_count,
+            source_scope,
+            superseded_by,
         }: EvaluationRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -179,6 +199,8 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             hidden,
             started_at,
             orphaned_count,
+            source_scope: source_scope.map(|v| v.into()),
+            superseded_by,
         }
     }
 }
@@ -413,6 +435,70 @@ where
         Ok(mapped)
     }
 }
+pub struct StringQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<&str, tokio_postgres::Error>,
+    mapper: fn(&str) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> StringQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(&str) -> R) -> StringQuery<'c, 'a, 's, C, R, N> {
+        StringQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
 pub struct BuildContextRowQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
     client: &'c C,
     params: [&'a (dyn postgres_types::ToSql + Sync); N],
@@ -480,74 +566,10 @@ where
         Ok(mapped)
     }
 }
-pub struct StringQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
-    client: &'c C,
-    params: [&'a (dyn postgres_types::ToSql + Sync); N],
-    query: &'static str,
-    cached: Option<&'s tokio_postgres::Statement>,
-    extractor: fn(&tokio_postgres::Row) -> Result<&str, tokio_postgres::Error>,
-    mapper: fn(&str) -> T,
-}
-impl<'c, 'a, 's, C, T: 'c, const N: usize> StringQuery<'c, 'a, 's, C, T, N>
-where
-    C: GenericClient,
-{
-    pub fn map<R>(self, mapper: fn(&str) -> R) -> StringQuery<'c, 'a, 's, C, R, N> {
-        StringQuery {
-            client: self.client,
-            params: self.params,
-            query: self.query,
-            cached: self.cached,
-            extractor: self.extractor,
-            mapper,
-        }
-    }
-    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
-        let row =
-            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
-        Ok((self.mapper)((self.extractor)(&row)?))
-    }
-    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
-        self.iter().await?.try_collect().await
-    }
-    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
-        let opt_row =
-            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
-        Ok(opt_row
-            .map(|row| {
-                let extracted = (self.extractor)(&row)?;
-                Ok((self.mapper)(extracted))
-            })
-            .transpose()?)
-    }
-    pub async fn iter(
-        self,
-    ) -> Result<
-        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
-        tokio_postgres::Error,
-    > {
-        let stream = crate::client::async_::raw(
-            self.client,
-            self.query,
-            crate::slice_iter(&self.params),
-            self.cached,
-        )
-        .await?;
-        let mapped = stream
-            .map(move |res| {
-                res.and_then(|row| {
-                    let extracted = (self.extractor)(&row)?;
-                    Ok((self.mapper)(extracted))
-                })
-            })
-            .into_stream();
-        Ok(mapped)
-    }
-}
 pub struct CreateWithKindStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create_with_kind() -> CreateWithKindStmt {
     CreateWithKindStmt(
-        "INSERT INTO evaluations ( jobset_id, commit_hash, status, trigger_kind, pr_number, pr_head_branch, pr_base_branch, pr_action, started_at ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3::text = 'running' THEN NOW() END ) RETURNING *",
+        "INSERT INTO evaluations ( jobset_id, commit_hash, status, trigger_kind, pr_number, pr_head_branch, pr_base_branch, pr_action, started_at, source_scope ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3::text = 'running' THEN NOW() END, $9 ) RETURNING *",
         None,
     )
 }
@@ -570,6 +592,7 @@ impl CreateWithKindStmt {
         T4: crate::StringSql,
         T5: crate::StringSql,
         T6: crate::StringSql,
+        T7: crate::StringSql,
     >(
         &'s self,
         client: &'c C,
@@ -581,7 +604,8 @@ impl CreateWithKindStmt {
         pr_head_branch: &'a Option<T4>,
         pr_base_branch: &'a Option<T5>,
         pr_action: &'a Option<T6>,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 8> {
+        source_scope: &'a Option<T7>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 9> {
         EvaluationRowQuery {
             client,
             params: [
@@ -593,6 +617,7 @@ impl CreateWithKindStmt {
                 pr_head_branch,
                 pr_base_branch,
                 pr_action,
+                source_scope,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -614,6 +639,8 @@ impl CreateWithKindStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -631,21 +658,22 @@ impl<
     T4: crate::StringSql,
     T5: crate::StringSql,
     T6: crate::StringSql,
+    T7: crate::StringSql,
 >
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        CreateWithKindParams<T1, T2, T3, T4, T5, T6>,
-        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 8>,
+        CreateWithKindParams<T1, T2, T3, T4, T5, T6, T7>,
+        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 9>,
         C,
     > for CreateWithKindStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a CreateWithKindParams<T1, T2, T3, T4, T5, T6>,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 8> {
+        params: &'a CreateWithKindParams<T1, T2, T3, T4, T5, T6, T7>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 9> {
         self.bind(
             client,
             &params.jobset_id,
@@ -656,6 +684,7 @@ impl<
             &params.pr_head_branch,
             &params.pr_base_branch,
             &params.pr_action,
+            &params.source_scope,
         )
     }
 }
@@ -699,6 +728,8 @@ impl GetStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -749,6 +780,8 @@ impl GetVisibleStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -816,6 +849,8 @@ impl ListForJobsetStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -869,6 +904,8 @@ impl ListFilteredWithVisibilityStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -999,6 +1036,8 @@ impl SetHiddenStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1066,6 +1105,8 @@ impl TryClaimPendingStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1117,6 +1158,8 @@ impl UpdateStatusStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1184,6 +1227,8 @@ impl GetLatestStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1280,6 +1325,8 @@ impl GetByInputsHashStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1372,6 +1419,8 @@ impl ListPendingStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1405,6 +1454,109 @@ impl ListJobsetsWithPendingStmt {
             extractor: |row| Ok(row.try_get(0)?),
             mapper: |it| it,
         }
+    }
+}
+pub struct GetSourceHeadStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn get_source_head() -> GetSourceHeadStmt {
+    GetSourceHeadStmt(
+        "SELECT commit_hash FROM evaluation_source_heads WHERE jobset_id = $1 AND source_scope = $2",
+        None,
+    )
+}
+impl GetSourceHeadStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        jobset_id: &'a uuid::Uuid,
+        source_scope: &'a T1,
+    ) -> StringQuery<'c, 'a, 's, C, String, 2> {
+        StringQuery {
+            client,
+            params: [jobset_id, source_scope],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it.into(),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        GetSourceHeadParams<T1>,
+        StringQuery<'c, 'a, 's, C, String, 2>,
+        C,
+    > for GetSourceHeadStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a GetSourceHeadParams<T1>,
+    ) -> StringQuery<'c, 'a, 's, C, String, 2> {
+        self.bind(client, &params.jobset_id, &params.source_scope)
+    }
+}
+pub struct SetSourceHeadStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_source_head() -> SetSourceHeadStmt {
+    SetSourceHeadStmt(
+        "INSERT INTO evaluation_source_heads (jobset_id, source_scope, commit_hash) VALUES ($1, $2, $3) ON CONFLICT (jobset_id, source_scope) DO UPDATE SET commit_hash = EXCLUDED.commit_hash",
+        None,
+    )
+}
+impl SetSourceHeadStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        jobset_id: &'a uuid::Uuid,
+        source_scope: &'a T1,
+        commit_hash: &'a T2,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(self.0, &[jobset_id, source_scope, commit_hash])
+            .await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetSourceHeadParams<T1, T2>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetSourceHeadStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetSourceHeadParams<T1, T2>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.jobset_id,
+            &params.source_scope,
+            &params.commit_hash,
+        ))
     }
 }
 pub struct GetByJobsetAndCommitStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -1451,6 +1603,8 @@ impl GetByJobsetAndCommitStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1560,6 +1714,8 @@ impl FinishRunningStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1627,6 +1783,8 @@ impl CancelStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1676,20 +1834,22 @@ impl SweepOrphanedStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
         }
     }
 }
-pub struct SupersedePendingPushStmt(&'static str, Option<tokio_postgres::Statement>);
-pub fn supersede_pending_push() -> SupersedePendingPushStmt {
-    SupersedePendingPushStmt(
-        "UPDATE evaluations SET status = 'cancelled', error_message = 'superseded by ' || $1 WHERE jobset_id = $2 AND status = 'pending' AND trigger_kind = 'source_change' AND pr_number IS NULL AND commit_hash <> $1 RETURNING *",
+pub struct SupersedeSourceEvaluationsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn supersede_source_evaluations() -> SupersedeSourceEvaluationsStmt {
+    SupersedeSourceEvaluationsStmt(
+        "UPDATE evaluations SET status = CASE WHEN status IN ('pending', 'running') THEN 'cancelled' ELSE status END, error_message = CASE WHEN status IN ('pending', 'running') THEN 'superseded by evaluation ' || $1::text ELSE error_message END, superseded_by = $1 WHERE jobset_id = $2 AND id <> $1 AND trigger_kind = 'source_change' AND source_scope = $3 AND (status IN ('pending', 'running') OR EXISTS ( SELECT 1 FROM builds b WHERE b.evaluation_id = evaluations.id AND b.status IN ('pending', 'running') ))",
         None,
     )
 }
-impl SupersedePendingPushStmt {
+impl SupersedeSourceEvaluationsStmt {
     pub async fn prepare<'a, C: GenericClient>(
         mut self,
         client: &'a C,
@@ -1697,137 +1857,103 @@ impl SupersedePendingPushStmt {
         self.1 = Some(client.prepare(self.0).await?);
         Ok(self)
     }
-    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
         &'s self,
         client: &'c C,
-        commit_hash: &'a T1,
+        superseded_by: &'a uuid::Uuid,
         jobset_id: &'a uuid::Uuid,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2> {
-        EvaluationRowQuery {
-            client,
-            params: [commit_hash, jobset_id],
-            query: self.0,
-            cached: self.1.as_ref(),
-            extractor:
-                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
-                    Ok(EvaluationRowBorrowed {
-                        id: row.try_get(0)?,
-                        jobset_id: row.try_get(1)?,
-                        commit_hash: row.try_get(2)?,
-                        evaluation_time: row.try_get(3)?,
-                        status: row.try_get(4)?,
-                        error_message: row.try_get(5)?,
-                        inputs_hash: row.try_get(6)?,
-                        pr_number: row.try_get(7)?,
-                        pr_head_branch: row.try_get(8)?,
-                        pr_base_branch: row.try_get(9)?,
-                        pr_action: row.try_get(10)?,
-                        trigger_kind: row.try_get(11)?,
-                        hidden: row.try_get(12)?,
-                        started_at: row.try_get(13)?,
-                        orphaned_count: row.try_get(14)?,
-                    })
-                },
-            mapper: |it| EvaluationRow::from(it),
-        }
+        source_scope: &'a Option<T1>,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(self.0, &[superseded_by, jobset_id, source_scope])
+            .await
     }
 }
-impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
     crate::client::async_::Params<
-        'c,
         'a,
-        's,
-        SupersedePendingPushParams<T1>,
-        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2>,
+        'a,
+        'a,
+        SupersedeSourceEvaluationsParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
         C,
-    > for SupersedePendingPushStmt
+    > for SupersedeSourceEvaluationsStmt
 {
     fn params(
-        &'s self,
-        client: &'c C,
-        params: &'a SupersedePendingPushParams<T1>,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2> {
-        self.bind(client, &params.commit_hash, &params.jobset_id)
-    }
-}
-pub struct SupersedePendingChangeRequestStmt(&'static str, Option<tokio_postgres::Statement>);
-pub fn supersede_pending_change_request() -> SupersedePendingChangeRequestStmt {
-    SupersedePendingChangeRequestStmt(
-        "UPDATE evaluations SET status = 'cancelled', error_message = 'superseded by ' || $1 WHERE jobset_id = $2 AND status = 'pending' AND pr_number = $3 AND commit_hash <> $1 RETURNING *",
-        None,
-    )
-}
-impl SupersedePendingChangeRequestStmt {
-    pub async fn prepare<'a, C: GenericClient>(
-        mut self,
+        &'a self,
         client: &'a C,
-    ) -> Result<Self, tokio_postgres::Error> {
-        self.1 = Some(client.prepare(self.0).await?);
-        Ok(self)
-    }
-    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
-        &'s self,
-        client: &'c C,
-        commit_hash: &'a T1,
-        jobset_id: &'a uuid::Uuid,
-        pr_number: &'a i32,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 3> {
-        EvaluationRowQuery {
+        params: &'a SupersedeSourceEvaluationsParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
             client,
-            params: [commit_hash, jobset_id, pr_number],
-            query: self.0,
-            cached: self.1.as_ref(),
-            extractor:
-                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
-                    Ok(EvaluationRowBorrowed {
-                        id: row.try_get(0)?,
-                        jobset_id: row.try_get(1)?,
-                        commit_hash: row.try_get(2)?,
-                        evaluation_time: row.try_get(3)?,
-                        status: row.try_get(4)?,
-                        error_message: row.try_get(5)?,
-                        inputs_hash: row.try_get(6)?,
-                        pr_number: row.try_get(7)?,
-                        pr_head_branch: row.try_get(8)?,
-                        pr_base_branch: row.try_get(9)?,
-                        pr_action: row.try_get(10)?,
-                        trigger_kind: row.try_get(11)?,
-                        hidden: row.try_get(12)?,
-                        started_at: row.try_get(13)?,
-                        orphaned_count: row.try_get(14)?,
-                    })
-                },
-            mapper: |it| EvaluationRow::from(it),
-        }
-    }
-}
-impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
-    crate::client::async_::Params<
-        'c,
-        'a,
-        's,
-        SupersedePendingChangeRequestParams<T1>,
-        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 3>,
-        C,
-    > for SupersedePendingChangeRequestStmt
-{
-    fn params(
-        &'s self,
-        client: &'c C,
-        params: &'a SupersedePendingChangeRequestParams<T1>,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 3> {
-        self.bind(
-            client,
-            &params.commit_hash,
+            &params.superseded_by,
             &params.jobset_id,
-            &params.pr_number,
-        )
+            &params.source_scope,
+        ))
+    }
+}
+pub struct CancelSupersededBuildsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn cancel_superseded_builds() -> CancelSupersededBuildsStmt {
+    CancelSupersededBuildsStmt(
+        "UPDATE builds b SET status = 'cancelled', completed_at = NOW(), error_message = 'superseded by evaluation ' || $1::text FROM evaluations e WHERE b.evaluation_id = e.id AND e.jobset_id = $2 AND e.id <> $1 AND e.trigger_kind = 'source_change' AND e.source_scope = $3 AND b.status IN ('pending', 'running')",
+        None,
+    )
+}
+impl CancelSupersededBuildsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        superseded_by: &'a uuid::Uuid,
+        jobset_id: &'a uuid::Uuid,
+        source_scope: &'a Option<T1>,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(self.0, &[superseded_by, jobset_id, source_scope])
+            .await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        CancelSupersededBuildsParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for CancelSupersededBuildsStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a CancelSupersededBuildsParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.superseded_by,
+            &params.jobset_id,
+            &params.source_scope,
+        ))
     }
 }
 pub struct RestartRequeueStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart_requeue() -> RestartRequeueStmt {
     RestartRequeueStmt(
-        "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), error_message = NULL, inputs_hash = NULL, started_at = NULL, orphaned_count = 0 FROM jobsets j WHERE e.id = $1 AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', 'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN ('enabled', 'one_at_a_time'))) RETURNING e.*",
+        "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), error_message = NULL, inputs_hash = NULL, started_at = NULL, orphaned_count = 0, superseded_by = NULL, trigger_kind = CASE WHEN e.trigger_kind = 'source_change' THEN 'manual' ELSE e.trigger_kind END, source_scope = NULL FROM jobsets j WHERE e.id = $1 AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', 'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN ('enabled', 'one_at_a_time'))) RETURNING e.*",
         None,
     )
 }
@@ -1867,6 +1993,8 @@ impl RestartRequeueStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -2039,6 +2167,8 @@ impl ListPageFilteredStmt {
                         hidden: row.try_get(12)?,
                         started_at: row.try_get(13)?,
                         orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),

@@ -31,6 +31,7 @@ impl TryFrom<q::JobsetRow> for Jobset {
       last_checked_at:   r.last_checked_at,
       keep_nr:           r.keep_nr,
       systems:           r.systems,
+      only_build_latest: r.only_build_latest,
     })
   }
 }
@@ -60,6 +61,7 @@ impl TryFrom<q::ActiveJobsetRow> for ActiveJobset {
       project_name:      r.project_name,
       repository_url:    r.repository_url,
       systems:           r.systems,
+      only_build_latest: r.only_build_latest,
     })
   }
 }
@@ -84,6 +86,7 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   let trigger_mode = input.trigger_mode.unwrap_or_default();
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
+  let only_build_latest = input.only_build_latest.unwrap_or(false);
 
   let client = pool.get().await?;
   let row = q::create()
@@ -103,6 +106,7 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &state.as_str(),
       &keep_nr,
       &input.systems,
+      &only_build_latest,
     )
     .one()
     .await
@@ -235,6 +239,11 @@ pub async fn update(
     Some(list) if list.is_empty() => None,
     Some(list) => Some(list),
   };
+  let only_build_latest = input
+    .only_build_latest
+    .unwrap_or(existing.only_build_latest);
+  crate::validate::validate_latest_only_policy(trigger_mode, only_build_latest)
+    .map_err(CiError::Validation)?;
 
   let client = pool.get().await?;
   let row = q::update()
@@ -253,6 +262,7 @@ pub async fn update(
       &state.as_str(),
       &keep_nr,
       &systems,
+      &only_build_latest,
       &id,
     )
     .one()
@@ -303,6 +313,7 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
   let trigger_mode = input.trigger_mode.unwrap_or_default();
   let scheduling_shares = input.scheduling_shares.unwrap_or(100);
   let keep_nr = input.keep_nr.unwrap_or(3);
+  let only_build_latest = input.only_build_latest.unwrap_or(false);
 
   let client = pool.get().await?;
   let row = q::upsert()
@@ -322,6 +333,7 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &state.as_str(),
       &keep_nr,
       &input.systems,
+      &only_build_latest,
     )
     .one()
     .await?;

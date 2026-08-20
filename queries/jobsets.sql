@@ -2,8 +2,8 @@
 --: ActiveJobsetRow(branch?, branch_pattern?, tag_pattern?, last_checked_at?, systems?)
 
 --! create (branch?, branch_pattern?, tag_pattern?, systems?) : JobsetRow
-INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems)
-VALUES (:project_id, :name, :nix_expression, :enabled, :flake_mode, :check_interval, :trigger_mode, :branch, :branch_pattern, :tag_pattern, :scheduling_shares, :state, :keep_nr, :systems)
+INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest)
+VALUES (:project_id, :name, :nix_expression, :enabled, :flake_mode, :check_interval, :trigger_mode, :branch, :branch_pattern, :tag_pattern, :scheduling_shares, :state, :keep_nr, :systems, :only_build_latest)
 RETURNING *;
 
 --! get : JobsetRow
@@ -23,7 +23,7 @@ SELECT COUNT(*) FROM jobsets;
 
 --! update (branch?, branch_pattern?, tag_pattern?, systems?) : JobsetRow
 UPDATE jobsets
-SET name = :name, nix_expression = :nix_expression, enabled = :enabled, flake_mode = :flake_mode, check_interval = :check_interval, trigger_mode = :trigger_mode, branch = :branch, branch_pattern = :branch_pattern, tag_pattern = :tag_pattern, scheduling_shares = :scheduling_shares, state = :state, keep_nr = :keep_nr, systems = :systems
+SET name = :name, nix_expression = :nix_expression, enabled = :enabled, flake_mode = :flake_mode, check_interval = :check_interval, trigger_mode = :trigger_mode, branch = :branch, branch_pattern = :branch_pattern, tag_pattern = :tag_pattern, scheduling_shares = :scheduling_shares, state = :state, keep_nr = :keep_nr, systems = :systems, only_build_latest = :only_build_latest
 WHERE id = :id
 RETURNING *;
 
@@ -31,14 +31,17 @@ RETURNING *;
 DELETE FROM jobsets WHERE id = :id;
 
 --! upsert (branch?, branch_pattern?, tag_pattern?, systems?) : JobsetRow
-INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems)
-VALUES (:project_id, :name, :nix_expression, :enabled, :flake_mode, :check_interval, :trigger_mode, :branch, :branch_pattern, :tag_pattern, :scheduling_shares, :state, :keep_nr, :systems)
+INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest)
+VALUES (:project_id, :name, :nix_expression, :enabled, :flake_mode, :check_interval, :trigger_mode, :branch, :branch_pattern, :tag_pattern, :scheduling_shares, :state, :keep_nr, :systems, :only_build_latest)
 ON CONFLICT (project_id, name) DO UPDATE
-SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems
+SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems, only_build_latest = EXCLUDED.only_build_latest
 RETURNING *;
 
 --! list_active : ActiveJobsetRow
 SELECT * FROM active_jobsets;
+
+--! lock_latest_policy
+SELECT only_build_latest FROM jobsets WHERE id = :id FOR UPDATE;
 
 --! mark_one_shot_complete
 UPDATE jobsets SET enabled = false WHERE id = :id AND state = 'one_shot';
