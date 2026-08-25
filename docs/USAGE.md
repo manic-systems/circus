@@ -165,8 +165,7 @@ GET /job/{project}/{jobset}/{job}/shield
 GET /job/{project}/{jobset}/{job}/latest
 ```
 
-Use badges in README files or status dashboards. Use `latest` when you need a
-stable URL to the latest successful output for a job.
+Use badges in README files or status dashboards. Both badge endpoints accept an optional `style` query parameter: `flat` (default), `flat-square`, or `for-the-badge`. Use `latest` when you need a stable URL to the latest successful output for a job.
 
 ### Channels
 
