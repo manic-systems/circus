@@ -1,13 +1,24 @@
 use axum::{
   Router,
-  extract::{Path, State},
+  extract::{Path, Query, State},
   http::StatusCode,
   response::{IntoResponse, Response},
   routing::get,
 };
-use badgelib::{Badge, Color};
+use badgelib::{Badge, Color, Style};
 
 use crate::{error::ApiError, state::AppState};
+
+#[derive(serde::Deserialize)]
+struct BadgeParams {
+  style: Option<Style>,
+}
+
+impl BadgeParams {
+  fn style(self) -> Style {
+    self.style.unwrap_or(Style::Flat)
+  }
+}
 
 /// Wrap a generated SVG in a 200 response with the correct content-type
 /// and cache headers. Used for every successful badge return so callers
@@ -27,7 +38,10 @@ fn svg_response(svg: String) -> Response {
 async fn build_badge(
   State(state): State<AppState>,
   Path((project_name, jobset_name, job_name)): Path<(String, String, String)>,
+  Query(params): Query<BadgeParams>,
 ) -> Result<Response, ApiError> {
+  let style = params.style();
+
   // Find the project
   let project =
     circus_common::repo::projects::get_by_name(&state.pool, &project_name)
@@ -44,7 +58,12 @@ async fn build_badge(
 
   let jobset = jobsets.iter().find(|j| j.name == jobset_name);
   let Some(jobset) = jobset else {
-    return Ok(svg_response(shield_svg("build", "not found", "#9f9f9f")));
+    return Ok(svg_response(shield_svg(
+      "build",
+      "not found",
+      "#9f9f9f",
+      style,
+    )));
   };
 
   // Get latest evaluation
@@ -57,6 +76,7 @@ async fn build_badge(
       "build",
       "no evaluations",
       "#9f9f9f",
+      style,
     )));
   };
 
@@ -93,7 +113,7 @@ async fn build_badge(
     }
   });
 
-  Ok(svg_response(shield_svg("build", label, color)))
+  Ok(svg_response(shield_svg("build", label, color, style)))
 }
 
 /// Latest successful build redirect
@@ -137,12 +157,18 @@ async fn latest_build(
   )
 }
 
-fn shield_svg(subject: &str, status: &str, color: &str) -> String {
+fn shield_svg(
+  subject: &str,
+  status: &str,
+  color: &str,
+  style: Style,
+) -> String {
   Badge::new()
     .label(subject)
     .label_color(Color::Hex("555".into()))
     .value(status)
     .value_color(Color::Hex(color.trim_start_matches('#').into()))
+    .style(style)
     .to_svg()
 }
 
@@ -161,7 +187,7 @@ mod tests {
   #[test]
   fn test_shield_svg_is_valid_svg() {
     let color = "#4c1";
-    let svg = shield_svg("build", "passing", color);
+    let svg = shield_svg("build", "passing", color, Style::Flat);
     let color = Color::Hex(color.trim_start_matches('#').into()).to_css();
     assert!(svg.starts_with("<svg xmlns="));
     assert!(svg.ends_with("</svg>"));
@@ -172,7 +198,7 @@ mod tests {
 
   #[test]
   fn test_shield_svg_escapes_text() {
-    let svg = shield_svg("<build>", "passing & cached", "#4c1");
+    let svg = shield_svg("<build>", "passing & cached", "#4c1", Style::Flat);
     assert!(svg.contains("&lt;build&gt;"));
     assert!(svg.contains("passing &amp; cached"));
   }
@@ -185,7 +211,7 @@ mod tests {
       ("building", "#dfb317"),
       ("not found", "#9f9f9f"),
     ] {
-      let svg = shield_svg("build", status, color);
+      let svg = shield_svg("build", status, color, Style::Flat);
       let css_color = Color::Hex(color.trim_start_matches('#').into()).to_css();
       assert!(svg.contains(status), "SVG should contain status '{status}'");
       assert!(
@@ -193,5 +219,22 @@ mod tests {
         "SVG should contain color '{color}'"
       );
     }
+  }
+
+  #[test]
+  fn test_shield_svg_styles() {
+    let flat = shield_svg("build", "passing", "#4c1", Style::Flat);
+    let flat_square = shield_svg("build", "passing", "#4c1", Style::FlatSquare);
+    let for_the_badge =
+      shield_svg("build", "passing", "#4c1", Style::ForTheBadge);
+
+    assert!(flat.contains(r#"id="s""#));
+    assert!(!flat_square.contains(r#"id="s""#));
+    assert!(for_the_badge.contains(r#"height="28""#));
+  }
+
+  #[test]
+  fn test_badge_style_defaults_to_flat() {
+    assert!(matches!(BadgeParams { style: None }.style(), Style::Flat));
   }
 }

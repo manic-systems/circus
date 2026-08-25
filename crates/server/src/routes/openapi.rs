@@ -317,10 +317,12 @@ fn document_value() -> Value {
       },
       "/job/{project}/{jobset}/{job}/shield": {
         "get": { "summary": "Build status shield SVG",
+          "parameters": [{ "name": "style", "in": "query", "required": false, "schema": { "type": "string", "enum": ["flat", "flat-square", "for-the-badge"], "default": "flat" } }],
           "responses": { "200": { "description": "SVG badge" } } }
       },
       "/job/{project}/{jobset}/{job}/badge": {
         "get": { "summary": "Build status badge SVG",
+          "parameters": [{ "name": "style", "in": "query", "required": false, "schema": { "type": "string", "enum": ["flat", "flat-square", "for-the-badge"], "default": "flat" } }],
           "responses": { "200": { "description": "SVG badge" } } }
       },
       "/job/{project}/{jobset}/{job}/latest": {
