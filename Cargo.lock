@@ -390,9 +390,9 @@ dependencies = [
 
 [[package]]
 name = "badgelib"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42e51ca8bc944c97ffd76b405052031133daafe47f21348b6200538c43b8ea3d"
+checksum = "49eacfc65dde3241384baab02a4df9ffc2540ac54d971dd049b625c65113beb7"
 dependencies = [
  "base64 0.23.1",
  "chrono",
