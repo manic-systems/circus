@@ -64,7 +64,6 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/builds/{id}/log/stream` | SSE-stream the live build log | 200 |
 | GET | `/api/v1/builds/{id}/products` | List build products | 200 |
 | POST | `/api/v1/builds/{id}/restart` | Restart a build | 200 |
-| GET | `/api/v1/builds/{id}/steps` | List build steps | 200 |
 | GET | `/api/v1/channels` | List channels | 200 |
 | POST | `/api/v1/channels` | Create a channel | 200 |
 | POST | `/api/v1/channels/{channel_id}/promote/{eval_id}` | Promote an evaluation to a channel | 200 |

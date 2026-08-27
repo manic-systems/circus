@@ -98,21 +98,6 @@ fn document_value() -> Value {
             "completed_at":      { "type": ["string", "null"], "format": "date-time" }
           }
         },
-        "BuildStep": {
-          "type": "object",
-          "required": ["id", "build_id", "step_number"],
-          "properties": {
-            "id":          { "$ref": "#/components/schemas/Uuid" },
-            "build_id":    { "$ref": "#/components/schemas/Uuid" },
-            "step_number": { "type": "integer" },
-            "command":     { "type": "string" },
-            "exit_code":   { "type": ["integer", "null"] },
-            "stdout":      { "type": ["string", "null"] },
-            "stderr":      { "type": ["string", "null"] },
-            "started_at":  { "type": ["string", "null"], "format": "date-time" },
-            "finished_at": { "type": ["string", "null"], "format": "date-time" }
-          }
-        },
         "BuildProduct": {
           "type": "object",
           "required": ["id", "build_id", "name", "path"],
@@ -517,14 +502,6 @@ fn document_value() -> Value {
             { "name": "value", "in": "path", "required": true, "schema": { "type": "boolean" } }
           ],
           "responses": { "200": { "description": "Updated" } } }
-      },
-      "/builds/{id}/steps": {
-        "get": { "summary": "List build steps",
-          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
-          "responses": { "200": { "description": "Array",
-            "content": { "application/json": {
-              "schema": { "type": "array", "items": { "$ref": "#/components/schemas/BuildStep" } }
-            } } } } }
       },
       "/builds/{id}/products": {
         "get": { "summary": "List build products",

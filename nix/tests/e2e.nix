@@ -235,18 +235,6 @@ in {
         assert result != "null" and result.startswith("/nix/store/"), \
             f"Expected /nix/store/ output path, got '{result}'"
 
-    with subtest("Build steps recorded"):
-        result = machine.succeed(
-            f"curl -sf http://127.0.0.1:3000/api/v1/builds/{e2e_build_id}/steps | jq 'length'"
-        )
-        assert int(result.strip()) >= 1, f"Expected >= 1 build step, got {result.strip()}"
-
-        # Verify exit_code = 0
-        exit_code = machine.succeed(
-            f"curl -sf http://127.0.0.1:3000/api/v1/builds/{e2e_build_id}/steps | jq '.[0].exit_code'"
-        ).strip()
-        assert exit_code == "0", f"Expected exit_code 0, got {exit_code}"
-
     with subtest("Build products created"):
         result = machine.succeed(
             f"curl -sf http://127.0.0.1:3000/api/v1/builds/{e2e_build_id}/products | jq 'length'"
