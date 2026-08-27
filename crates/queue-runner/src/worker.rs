@@ -14,7 +14,6 @@ use circus_common::{
     Build,
     BuildStatus,
     CreateBuildProduct,
-    CreateBuildStep,
     Project,
     metric_names,
     metric_units,
@@ -1217,24 +1216,6 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 
   tracing::info!(build_id = %build.id, job = %build.job_name, "Starting build");
 
-  // Clear stale steps from a prior requeued attempt.
-  repo::build_steps::delete_for_build(pool, build.id).await?;
-
-  // Create a build step record
-  let step = repo::build_steps::create(pool, CreateBuildStep {
-    build_id:    build.id,
-    step_number: 1,
-    command:     if build_extra_nix_args.is_empty() {
-      format!("nix build --no-link --print-out-paths {drv_path}")
-    } else {
-      format!(
-        "nix build --no-link --print-out-paths {} {drv_path}",
-        build_extra_nix_args.join(" ")
-      )
-    },
-  })
-  .await?;
-
   // Set up live log path
   let live_log_path =
     log_config.log_dir.join(format!("{}.active.log", build.id));
@@ -1342,29 +1323,6 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 
   match result {
     Ok(build_result) => {
-      // Complete the build step
-      let exit_code = i32::from(!build_result.success);
-      repo::build_steps::complete(
-        pool,
-        step.id,
-        exit_code,
-        Some(&build_result.stdout),
-        Some(&build_result.stderr),
-      )
-      .await?;
-
-      // Create sub-step records from parsed nix log
-      for (i, sub_step) in build_result.sub_steps.iter().enumerate() {
-        let sub = repo::build_steps::create(pool, CreateBuildStep {
-          build_id:    build.id,
-          step_number: (i as i32) + 2,
-          command:     format!("nix build {}", sub_step.drv_path),
-        })
-        .await?;
-        let sub_exit = i32::from(!sub_step.success);
-        repo::build_steps::complete(pool, sub.id, sub_exit, None, None).await?;
-      }
-
       // Write build log (rename active log to final)
       let log_path = if let Some(ref storage) = log_storage {
         let final_path = storage.log_path(&build.id);
@@ -1639,7 +1597,6 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         tracing::debug!(build_id = %build.id, "Failed to remove failed live log: {e}");
       }
 
-      repo::build_steps::complete(pool, step.id, 1, None, Some(&msg)).await?;
       repo::builds::complete(
         pool,
         build.id,

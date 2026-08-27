@@ -208,7 +208,7 @@ flowchart TD
     S -- no --> U["Keep pending and retry"]
     R --> V["Build results"]
     T --> V
-    V --> W["Persist log, steps, products, status"]
+    V --> W["Persist log, products, status"]
 ```
 
 The persistent agent path is used when the queue runner has an active connection

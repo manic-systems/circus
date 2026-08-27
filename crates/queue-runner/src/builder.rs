@@ -204,34 +204,7 @@ pub struct BuildResult {
   pub stdout:               String,
   pub stderr:               String,
   pub output_paths:         Vec<String>,
-  pub sub_steps:            Vec<SubStep>,
   pub cache_upload_handled: bool,
-}
-
-/// A sub-step parsed from nix's internal JSON log format.
-pub struct SubStep {
-  pub drv_path:     String,
-  pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
-  pub success:      bool,
-}
-
-/// Parse a single nix internal JSON log line (`@nix {...}`).
-///
-/// # Returns
-///
-/// Returns `Some(action, drv_path)` if the line contains a derivation action.
-#[must_use]
-pub fn parse_nix_log_line(line: &str) -> Option<(&'static str, String)> {
-  let json_str = line.strip_prefix("@nix ")?.trim();
-  let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
-  let action = parsed.get("action")?.as_str()?;
-  let drv = parsed.get("derivation")?.as_str()?.to_string();
-
-  match action {
-    "start" => Some(("start", drv)),
-    "stop" => Some(("stop", drv)),
-    _ => None,
-  }
 }
 
 /// Run `nix build` for a derivation path.
@@ -324,8 +297,7 @@ async fn run_nix_build_command(
       read_stderr(stderr_handle, live_log_path.map(Path::to_path_buf));
 
     let stdout_buf = join_output(stdout_task, "stdout reader").await?;
-    let (stderr_buf, sub_steps) =
-      join_output(stderr_task, "stderr reader").await?;
+    let stderr_buf = join_output(stderr_task, "stderr reader").await?;
 
     let status = child.wait().await.map_err(|e| {
       CiError::Build(format!("Failed to wait for {operation}: {e}"))
@@ -343,7 +315,6 @@ async fn run_nix_build_command(
       stdout: stdout_buf,
       stderr: stderr_buf,
       output_paths,
-      sub_steps,
       cache_upload_handled: false,
     })
   })
@@ -380,10 +351,9 @@ fn read_stdout(
 fn read_stderr(
   stderr: Option<tokio::process::ChildStderr>,
   live_log_path: Option<PathBuf>,
-) -> JoinHandle<Result<(String, Vec<SubStep>)>> {
+) -> JoinHandle<Result<String>> {
   tokio::spawn(async move {
     let mut buf = String::new();
-    let mut steps: Vec<SubStep> = Vec::new();
     let mut log_file = if let Some(ref path) = live_log_path {
       match tokio::fs::File::create(path).await {
         Ok(file) => Some(file),
@@ -416,10 +386,6 @@ fn read_stderr(
           logged_write_error = true;
         }
 
-        if let Some((action, drv_path)) = parse_nix_log_line(&line) {
-          update_sub_steps(&mut steps, action, drv_path);
-        }
-
         if buf.len() < MAX_LOG_SIZE {
           buf.push_str(&line);
         }
@@ -427,7 +393,7 @@ fn read_stderr(
       }
     }
 
-    Ok((buf, steps))
+    Ok(buf)
   })
 }
 
@@ -437,25 +403,6 @@ async fn write_live_log_line(
 ) -> std::io::Result<()> {
   file.write_all(line.as_bytes()).await?;
   file.flush().await
-}
-
-fn update_sub_steps(steps: &mut Vec<SubStep>, action: &str, drv_path: String) {
-  match action {
-    "start" => {
-      steps.push(SubStep {
-        drv_path,
-        completed_at: None,
-        success: false,
-      });
-    },
-    "stop" => {
-      if let Some(step) = steps.iter_mut().rfind(|s| s.drv_path == drv_path) {
-        step.completed_at = Some(chrono::Utc::now());
-        step.success = true;
-      }
-    },
-    _ => {},
-  }
 }
 
 async fn join_output<T>(task: JoinHandle<Result<T>>, label: &str) -> Result<T> {
