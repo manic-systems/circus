@@ -10,7 +10,6 @@
 use askama::Template;
 use circus_common::models::{
   BuildProduct,
-  BuildStep,
   Channel,
   Jobset,
   NewsItem,
@@ -185,7 +184,6 @@ pub(super) struct BuildTemplate {
   pub(super) ui:                UiTemplateConfig,
   pub(super) build:             BuildView,
   pub(super) builder_label:     String,
-  pub(super) steps:             Vec<BuildStep>,
   pub(super) products:          Vec<BuildProduct>,
   pub(super) dependencies:      Vec<BuildView>,
   pub(super) dependents:        Vec<BuildView>,

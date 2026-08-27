@@ -871,9 +871,6 @@ pub(super) async fn build_page(
     eval.commit_hash.clone()
   };
 
-  let steps = circus_common::repo::build_steps::list_for_build(&state.pool, id)
-    .await
-    .unwrap_or_default();
   let products =
     circus_common::repo::build_products::list_for_build(&state.pool, id)
       .await
@@ -916,7 +913,6 @@ pub(super) async fn build_page(
     ui: ui_config(&state),
     build: build_view(&build),
     builder_label,
-    steps,
     products,
     dependencies,
     dependents,

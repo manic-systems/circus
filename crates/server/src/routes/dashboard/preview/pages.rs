@@ -1,6 +1,6 @@
 use axum::{extract::Query, response::Response};
 use chrono::{Duration, Utc};
-use circus_common::models::{BuildProduct, BuildStep, SystemStatus};
+use circus_common::models::{BuildProduct, SystemStatus};
 
 use super::{
   super::{
@@ -321,17 +321,6 @@ pub(super) async fn build() -> Response {
       "completed",
     ),
     builder_label:     "agent-fast-01".into(),
-    steps:             vec![BuildStep {
-      id: id(31),
-      build_id,
-      step_number: 1,
-      command: "nix build .#circus-server".into(),
-      output: Some("building '/nix/store/...-circus-server.drv'".into()),
-      error_output: None,
-      started_at: Utc::now() - Duration::minutes(3),
-      completed_at: Some(Utc::now() - Duration::minutes(1)),
-      exit_code: Some(0),
-    }],
     products:          vec![BuildProduct {
       id: id(32),
       build_id,

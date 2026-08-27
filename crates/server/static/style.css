@@ -1266,13 +1266,11 @@ tbody tr:hover {
   background: currentColor;
 }
 
-.status-dot-green,
-.step-success {
+.status-dot-green {
   color: var(--status-success);
 }
 
-.status-dot-red,
-.step-failure {
+.status-dot-red {
   color: var(--status-failed);
 }
 
