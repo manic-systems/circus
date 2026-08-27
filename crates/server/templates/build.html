@@ -160,60 +160,6 @@
 
     <section class="panel build-detail-section">
         <div class="panel-header">
-            <h2>Build Steps</h2>
-        </div>
-        {% if steps.is_empty() %}
-            <div class="empty compact-empty">
-                <div class="empty-title">No steps recorded.</div>
-            </div>
-        {% else %}
-            <div class="table-wrap compact-table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Command</th>
-                            <th>Exit</th>
-                            <th>Started</th>
-                            <th>Completed</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for s in steps %}
-                            <tr>
-                                <td>{{ s.step_number }}</td>
-                                <td>
-                                    <code>{{ s.command }}</code>
-                                </td>
-                                <td>
-                                    {% match s.exit_code %}
-                                        {% when Some with (0) %}
-                                            <span class="step-success">0</span>
-                                        {% when Some with (code) %}
-                                            <span class="step-failure">{{ code }}</span>
-                                        {% when None %}
-                                            -
-                                    {% endmatch %}
-                                </td>
-                                <td>{{ s.started_at.format("%H:%M:%S") }}</td>
-                                <td>
-                                    {% match s.completed_at %}
-                                        {% when Some with (t) %}
-                                            {{ t.format("%H:%M:%S") }}
-                                        {% when None %}
-                                            -
-                                    {% endmatch %}
-                                </td>
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        {% endif %}
-    </section>
-
-    <section class="panel build-detail-section">
-        <div class="panel-header">
             <h2>Dependencies</h2>
         </div>
         {% if dependencies.is_empty() && dependents.is_empty() %}
