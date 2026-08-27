@@ -590,14 +590,6 @@ testers.runNixOSTest {
         assert data["limit"] == 2, f"Expected limit=2, got {data['limit']}"
 
     # Build sub-resources
-    with subtest("Build steps endpoint returns empty array for nonexistent build"):
-        result = machine.succeed(
-            "curl -sf "
-            "http://127.0.0.1:3000/api/v1/builds/00000000-0000-0000-0000-000000000000/steps"
-            " | jq 'length'"
-        )
-        assert int(result.strip()) == 0, f"Expected empty steps array, got {result.strip()}"
-
     with subtest("Build products endpoint returns empty array for nonexistent build"):
         result = machine.succeed(
             "curl -sf "

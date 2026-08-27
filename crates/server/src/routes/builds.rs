@@ -10,7 +10,6 @@ use axum::{
 use circus_common::{
   Build,
   BuildProduct,
-  BuildStep,
   PaginatedResponse,
   PaginationParams,
 };
@@ -106,15 +105,6 @@ async fn cancel_build(
     )));
   }
   Ok(Json(cancelled))
-}
-
-async fn list_build_steps(
-  State(state): State<AppState>,
-  Path(id): Path<Uuid>,
-) -> Result<Json<Vec<BuildStep>>, ApiError> {
-  let steps =
-    circus_common::repo::build_steps::list_for_build(&state.pool, id).await?;
-  Ok(Json(steps))
 }
 
 async fn list_build_products(
@@ -343,7 +333,6 @@ pub fn router() -> Router<AppState> {
     .route("/builds/{id}/restart", post(restart_build))
     .route("/builds/{id}/bump", post(bump_build))
     .route("/builds/{id}/keep/{value}", put(set_keep_flag))
-    .route("/builds/{id}/steps", get(list_build_steps))
     .route("/builds/{id}/products", get(list_build_products))
     .route("/builds/{id}/dependencies", get(list_build_dependencies))
     .route("/builds/{id}/dependents", get(list_build_dependents))

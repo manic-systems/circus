@@ -55,7 +55,7 @@ Common dashboard pages:
 | `/evaluations`                | Evaluation list                                                            |
 | `/evaluation/{id}`            | Builds produced by one evaluation                                          |
 | `/builds`                     | Build list with status, system, and job filters                            |
-| `/build/{id}`                 | Build detail, steps, products, dependencies, and logs                      |
+| `/build/{id}`                 | Build detail, products, dependencies, and logs                             |
 | `/queue`                      | Pending and running builds                                                 |
 | `/channels`                   | Published channels                                                         |
 | `/channel/{id}`               | Builds promoted to a channel                                               |
@@ -124,7 +124,6 @@ Builds move through statuses such as `pending`, `running`, `succeeded`,
 The build detail page shows:
 
 - The derivation path and target system.
-- Build steps and command metadata.
 - Live or completed logs.
 - Build products and downloadable artifacts.
 - Dependency and dependent builds.
