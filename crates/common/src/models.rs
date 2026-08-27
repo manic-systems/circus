@@ -631,19 +631,6 @@ pub struct BuildProduct {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuildStep {
-  pub id:           Uuid,
-  pub build_id:     Uuid,
-  pub step_number:  i32,
-  pub command:      String,
-  pub output:       Option<String>,
-  pub error_output: Option<String>,
-  pub started_at:   DateTime<Utc>,
-  pub completed_at: Option<DateTime<Utc>>,
-  pub exit_code:    Option<i32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildDependency {
   pub id:                  Uuid,
   pub build_id:            Uuid,
@@ -1100,13 +1087,6 @@ pub struct CreateBuildProduct {
   pub file_size:    Option<i64>,
   pub content_type: Option<String>,
   pub is_directory: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateBuildStep {
-  pub build_id:    Uuid,
-  pub step_number: i32,
-  pub command:     String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
