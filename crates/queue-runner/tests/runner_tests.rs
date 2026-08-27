@@ -1,14 +1,6 @@
 //! Tests for the queue runner.
-//! Nix log parsing tests require no external binaries.
 //! Database tests require `TEST_DATABASE_URL`.
-#![expect(
-  clippy::unwrap_used,
-  clippy::expect_used,
-  clippy::print_stdout,
-  reason = "Fine in tests"
-)]
-
-// Nix log line parsing
+#![expect(clippy::expect_used, clippy::print_stdout, reason = "Fine in tests")]
 
 use std::sync::Arc;
 
@@ -52,62 +44,6 @@ fn per_process_database_url(url: &str) -> Option<String> {
   let dbname = parsed.path().trim_start_matches('/').to_owned();
   parsed.set_path(&format!("/{dbname}_p{}", std::process::id()));
   Some(parsed.to_string())
-}
-
-#[test]
-fn test_parse_nix_log_start() {
-  let line =
-    r#"@nix {"action":"start","derivation":"/nix/store/abc-hello.drv"}"#;
-  let result = circus_queue_runner::builder::parse_nix_log_line(line);
-  assert!(result.is_some());
-  let (action, drv) = result.unwrap();
-  assert_eq!(action, "start");
-  assert_eq!(drv, "/nix/store/abc-hello.drv");
-}
-
-#[test]
-fn test_parse_nix_log_stop() {
-  let line =
-    r#"@nix {"action":"stop","derivation":"/nix/store/abc-hello.drv"}"#;
-  let result = circus_queue_runner::builder::parse_nix_log_line(line);
-  assert!(result.is_some());
-  let (action, drv) = result.unwrap();
-  assert_eq!(action, "stop");
-  assert_eq!(drv, "/nix/store/abc-hello.drv");
-}
-
-#[test]
-fn test_parse_nix_log_unknown_action() {
-  let line = r#"@nix {"action":"msg","msg":"building..."}"#;
-  let result = circus_queue_runner::builder::parse_nix_log_line(line);
-  assert!(result.is_none());
-}
-
-#[test]
-fn test_parse_nix_log_not_nix_prefix() {
-  let line = "building '/nix/store/abc-hello.drv'...";
-  let result = circus_queue_runner::builder::parse_nix_log_line(line);
-  assert!(result.is_none());
-}
-
-#[test]
-fn test_parse_nix_log_invalid_json() {
-  let line = "@nix {invalid json}";
-  let result = circus_queue_runner::builder::parse_nix_log_line(line);
-  assert!(result.is_none());
-}
-
-#[test]
-fn test_parse_nix_log_no_derivation_field() {
-  let line = r#"@nix {"action":"start","type":"build"}"#;
-  let result = circus_queue_runner::builder::parse_nix_log_line(line);
-  assert!(result.is_none());
-}
-
-#[test]
-fn test_parse_nix_log_empty_line() {
-  let result = circus_queue_runner::builder::parse_nix_log_line("");
-  assert!(result.is_none());
 }
 
 // WorkerPool drain

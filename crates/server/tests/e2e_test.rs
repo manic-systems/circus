@@ -205,24 +205,6 @@ async fn test_e2e_project_eval_build_flow() {
     .await
     .expect("start build1");
 
-  let step = circus_common::repo::build_steps::create(&pool, CreateBuildStep {
-    build_id:    build1.id,
-    step_number: 1,
-    command:     "nix build /nix/store/e2e000-hello.drv".to_string(),
-  })
-  .await
-  .expect("create step");
-
-  circus_common::repo::build_steps::complete(
-    &pool,
-    step.id,
-    0,
-    Some("built!"),
-    None,
-  )
-  .await
-  .expect("complete step");
-
   circus_common::repo::build_products::create(&pool, CreateBuildProduct {
     build_id:     build1.id,
     name:         "out".to_string(),
@@ -277,13 +259,6 @@ async fn test_e2e_project_eval_build_flow() {
       .expect("list products");
   assert_eq!(products.len(), 1);
   assert_eq!(products[0].name, "out");
-
-  let steps =
-    circus_common::repo::build_steps::list_for_build(&pool, build1.id)
-      .await
-      .expect("list steps");
-  assert_eq!(steps.len(), 1);
-  assert_eq!(steps[0].exit_code, Some(0));
 
   // 14. Verify build stats reflect our changes
   let build_stats = circus_common::repo::builds::get_stats(&pool)

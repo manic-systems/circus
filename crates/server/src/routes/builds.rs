@@ -7,12 +7,7 @@ use axum::{
   response::{IntoResponse, Response},
   routing::{get, post, put},
 };
-use circus_common::{
-  Build,
-  BuildProduct,
-  PaginatedResponse,
-  PaginationParams,
-};
+use circus_common::{Build, BuildProduct, PaginatedResponse, PaginationParams};
 use serde::Deserialize;
 use uuid::Uuid;
 

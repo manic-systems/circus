@@ -505,7 +505,6 @@ pub async fn run_on_agent(
       stdout: String::new(),
       stderr,
       output_paths,
-      sub_steps: Vec::new(),
       cache_upload_handled: opts.cache_upload_enabled_s3,
     }
   };
