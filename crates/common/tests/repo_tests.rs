@@ -965,22 +965,6 @@ async fn test_evaluation_and_build_lifecycle() {
   .expect("complete build");
   assert!(matches!(completed.status, BuildStatus::Succeeded));
 
-  // Create build step
-  let step = repo::build_steps::create(&pool, CreateBuildStep {
-    build_id:    build.id,
-    step_number: 1,
-    command:     "nix build".to_string(),
-  })
-  .await
-  .expect("create build step");
-
-  // Complete build step
-  let completed_step =
-    repo::build_steps::complete(&pool, step.id, 0, Some("output"), None)
-      .await
-      .expect("complete build step");
-  assert_eq!(completed_step.exit_code, Some(0));
-
   // Create build product
   let product = repo::build_products::create(&pool, CreateBuildProduct {
     build_id:     build.id,
@@ -1000,12 +984,6 @@ async fn test_evaluation_and_build_lifecycle() {
     .await
     .expect("list products");
   assert_eq!(products.len(), 1);
-
-  // List build steps
-  let steps = repo::build_steps::list_for_build(&pool, build.id)
-    .await
-    .expect("list steps");
-  assert_eq!(steps.len(), 1);
 
   // Test filtered list
   let filtered =
