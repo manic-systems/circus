@@ -109,6 +109,7 @@ in
             {
               name = "decl-project-2";
               repository_url = "https://github.com/test/decl2";
+              allow_runtime_mutation = true;
               jobsets = [
                 {
                   name = "main";
@@ -325,6 +326,17 @@ in
               "-H 'Authorization: Bearer circus_decl_admin'"
           )
           assert code.strip() == "409", f"Expected 409, got {code.strip()}"
+
+      with subtest("Projects can allow runtime mutation individually"):
+          mutable_project_id = machine.succeed(
+              "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-2\") | .id'"
+          ).strip()
+          code = machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' "
+              f"-X DELETE http://127.0.0.1:3000/api/v1/projects/{mutable_project_id} "
+              "-H 'Authorization: Bearer circus_decl_admin'"
+          )
+          assert code.strip() == "200", f"Expected 200, got {code.strip()}"
 
       with subtest("Declarative project has all jobsets"):
           result = machine.succeed(

@@ -6,7 +6,10 @@ use crate::{error::ApiError, state::AppState};
 #[must_use]
 pub const fn project_is_mutable(state: &AppState, project: &Project) -> bool {
   !project.managed_declaratively
-    || state.config.declarative.allow_runtime_mutation
+    || match project.allow_runtime_mutation {
+      Some(allow) => allow,
+      None => state.config.declarative.allow_runtime_mutation,
+    }
 }
 
 pub async fn require_project_mutable(
