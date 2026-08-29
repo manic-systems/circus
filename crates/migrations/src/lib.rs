@@ -63,6 +63,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (34, "0034_jobset_path_filters"),
   (35, "0035_declarative_projects"),
   (36, "0036_project_runtime_mutation"),
+  (37, "0037_drop_build_steps"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.
@@ -322,7 +323,6 @@ pub const REQUIRED_TABLES: &[&str] = &[
   "build_metrics",
   "build_outputs",
   "build_products",
-  "build_steps",
   "builder_sessions",
   "builds",
   "cache_traffic",

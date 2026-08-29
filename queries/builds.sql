@@ -122,10 +122,6 @@ WITH bumped AS (
       effective_features = NULL
   WHERE id = :id AND status = 'running'
   RETURNING *
-),
-cleared AS (
-  DELETE FROM build_steps
-  WHERE build_id = :id AND EXISTS (SELECT 1 FROM bumped)
 )
 SELECT * FROM bumped;
 

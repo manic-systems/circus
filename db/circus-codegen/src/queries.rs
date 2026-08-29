@@ -6,7 +6,6 @@ pub mod build_dependencies;
 pub mod build_metrics;
 pub mod build_outputs;
 pub mod build_products;
-pub mod build_steps;
 pub mod builder_sessions;
 pub mod builds;
 pub mod cache;
