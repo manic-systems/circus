@@ -60,6 +60,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (31, "0031_evaluation_started_at"),
   (32, "0032_jobset_systems"),
   (33, "0033_jobset_latest_only"),
+  (34, "0034_jobset_path_filters"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.

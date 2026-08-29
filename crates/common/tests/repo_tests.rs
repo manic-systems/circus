@@ -109,6 +109,7 @@ async fn create_test_jobset(
     keep_nr: None,
     systems: None,
     only_build_latest: None,
+    path_filters: None,
   })
   .await
   .expect("create jobset")
@@ -120,6 +121,7 @@ async fn enable_latest_only(
 ) -> Jobset {
   repo::jobsets::update(pool, jobset_id, UpdateJobset {
     only_build_latest: Some(true),
+    path_filters: None,
     ..Default::default()
   })
   .await
@@ -510,12 +512,14 @@ async fn test_jobset_crud() {
     keep_nr:           None,
     systems:           None,
     only_build_latest: None,
+    path_filters:      Some(vec!["packages/**".to_string()]),
   })
   .await
   .expect("create jobset");
 
   assert_eq!(jobset.name, "default");
   assert!(jobset.enabled);
+  assert_eq!(jobset.path_filters, ["packages/**"]);
 
   // Get
   let fetched = repo::jobsets::get(&pool, jobset.id)
@@ -545,11 +549,13 @@ async fn test_jobset_crud() {
     keep_nr:           None,
     systems:           None,
     only_build_latest: None,
+    path_filters:      None,
   })
   .await
   .expect("update jobset");
   assert_eq!(updated.nix_expression, "checks");
   assert!(!updated.enabled);
+  assert_eq!(updated.path_filters, ["packages/**"]);
 
   // Delete
   repo::jobsets::delete(&pool, jobset.id)
@@ -583,6 +589,7 @@ async fn test_interval_evaluations_can_repeat_commit() {
     keep_nr:           None,
     systems:           None,
     only_build_latest: None,
+    path_filters:      None,
   })
   .await
   .expect("create interval jobset");
@@ -659,6 +666,10 @@ async fn test_source_evaluations_keep_every_revision_by_default() {
     EvaluationStatus::Pending
   );
   assert_eq!(new.status, EvaluationStatus::Pending);
+  assert_eq!(
+    new.source_base_commit.as_deref(),
+    Some(old.commit_hash.as_str())
+  );
   let _ = repo::projects::delete(&pool, project.id).await;
 }
 
@@ -1039,6 +1050,7 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
     keep_nr:           None,
     systems:           None,
     only_build_latest: None,
+    path_filters:      None,
   })
   .await
   .expect("create one-shot jobset");

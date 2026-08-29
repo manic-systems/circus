@@ -4,7 +4,14 @@ use uuid::Uuid;
 use crate::{
   db::{PgPool, is_unique_violation},
   error::{CiError, Result},
-  models::{ActiveJobset, CreateJobset, Jobset, JobsetState, UpdateJobset},
+  models::{
+    ActiveJobset,
+    CreateJobset,
+    Jobset,
+    JobsetState,
+    JobsetTriggerMode,
+    UpdateJobset,
+  },
   validate::Validate,
 };
 
@@ -32,6 +39,7 @@ impl TryFrom<q::JobsetRow> for Jobset {
       keep_nr:           r.keep_nr,
       systems:           r.systems,
       only_build_latest: r.only_build_latest,
+      path_filters:      r.path_filters,
     })
   }
 }
@@ -62,6 +70,7 @@ impl TryFrom<q::ActiveJobsetRow> for ActiveJobset {
       repository_url:    r.repository_url,
       systems:           r.systems,
       only_build_latest: r.only_build_latest,
+      path_filters:      r.path_filters,
     })
   }
 }
@@ -107,6 +116,7 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &keep_nr,
       &input.systems,
       &only_build_latest,
+      &input.path_filters.unwrap_or_default(),
     )
     .one()
     .await
@@ -242,8 +252,14 @@ pub async fn update(
   let only_build_latest = input
     .only_build_latest
     .unwrap_or(existing.only_build_latest);
+  let path_filters = input.path_filters.unwrap_or(existing.path_filters);
   crate::validate::validate_latest_only_policy(trigger_mode, only_build_latest)
     .map_err(CiError::Validation)?;
+  crate::validate::path_filter::validate_path_filter_policy(
+    trigger_mode == JobsetTriggerMode::SourceChange,
+    &path_filters,
+  )
+  .map_err(CiError::Validation)?;
 
   let client = pool.get().await?;
   let row = q::update()
@@ -263,6 +279,7 @@ pub async fn update(
       &keep_nr,
       &systems,
       &only_build_latest,
+      &path_filters,
       &id,
     )
     .one()
@@ -334,6 +351,7 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &keep_nr,
       &input.systems,
       &only_build_latest,
+      &input.path_filters.unwrap_or_default(),
     )
     .one()
     .await?;

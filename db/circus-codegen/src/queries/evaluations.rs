@@ -9,6 +9,7 @@ pub struct CreateWithKindParams<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
 > {
     pub jobset_id: uuid::Uuid,
     pub commit_hash: T1,
@@ -19,6 +20,7 @@ pub struct CreateWithKindParams<
     pub pr_base_branch: Option<T5>,
     pub pr_action: Option<T6>,
     pub source_scope: Option<T7>,
+    pub source_base_commit: Option<T8>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct GetVisibleParams {
@@ -141,6 +143,7 @@ pub struct EvaluationRow {
     pub orphaned_count: i32,
     pub source_scope: Option<String>,
     pub superseded_by: Option<uuid::Uuid>,
+    pub source_base_commit: Option<String>,
 }
 pub struct EvaluationRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -160,6 +163,7 @@ pub struct EvaluationRowBorrowed<'a> {
     pub orphaned_count: i32,
     pub source_scope: Option<&'a str>,
     pub superseded_by: Option<uuid::Uuid>,
+    pub source_base_commit: Option<&'a str>,
 }
 impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
     fn from(
@@ -181,6 +185,7 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             orphaned_count,
             source_scope,
             superseded_by,
+            source_base_commit,
         }: EvaluationRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -201,6 +206,7 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             orphaned_count,
             source_scope: source_scope.map(|v| v.into()),
             superseded_by,
+            source_base_commit: source_base_commit.map(|v| v.into()),
         }
     }
 }
@@ -569,7 +575,7 @@ where
 pub struct CreateWithKindStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create_with_kind() -> CreateWithKindStmt {
     CreateWithKindStmt(
-        "INSERT INTO evaluations ( jobset_id, commit_hash, status, trigger_kind, pr_number, pr_head_branch, pr_base_branch, pr_action, started_at, source_scope ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3::text = 'running' THEN NOW() END, $9 ) RETURNING *",
+        "INSERT INTO evaluations ( jobset_id, commit_hash, status, trigger_kind, pr_number, pr_head_branch, pr_base_branch, pr_action, started_at, source_scope, source_base_commit ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3::text = 'running' THEN NOW() END, $9, $10 ) RETURNING *",
         None,
     )
 }
@@ -593,6 +599,7 @@ impl CreateWithKindStmt {
         T5: crate::StringSql,
         T6: crate::StringSql,
         T7: crate::StringSql,
+        T8: crate::StringSql,
     >(
         &'s self,
         client: &'c C,
@@ -605,7 +612,8 @@ impl CreateWithKindStmt {
         pr_base_branch: &'a Option<T5>,
         pr_action: &'a Option<T6>,
         source_scope: &'a Option<T7>,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 9> {
+        source_base_commit: &'a Option<T8>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 10> {
         EvaluationRowQuery {
             client,
             params: [
@@ -618,6 +626,7 @@ impl CreateWithKindStmt {
                 pr_base_branch,
                 pr_action,
                 source_scope,
+                source_base_commit,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -641,6 +650,7 @@ impl CreateWithKindStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -659,21 +669,22 @@ impl<
     T5: crate::StringSql,
     T6: crate::StringSql,
     T7: crate::StringSql,
+    T8: crate::StringSql,
 >
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        CreateWithKindParams<T1, T2, T3, T4, T5, T6, T7>,
-        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 9>,
+        CreateWithKindParams<T1, T2, T3, T4, T5, T6, T7, T8>,
+        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 10>,
         C,
     > for CreateWithKindStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a CreateWithKindParams<T1, T2, T3, T4, T5, T6, T7>,
-    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 9> {
+        params: &'a CreateWithKindParams<T1, T2, T3, T4, T5, T6, T7, T8>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 10> {
         self.bind(
             client,
             &params.jobset_id,
@@ -685,6 +696,7 @@ impl<
             &params.pr_base_branch,
             &params.pr_action,
             &params.source_scope,
+            &params.source_base_commit,
         )
     }
 }
@@ -730,6 +742,7 @@ impl GetStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -782,6 +795,7 @@ impl GetVisibleStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -851,6 +865,7 @@ impl ListForJobsetStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -906,6 +921,7 @@ impl ListFilteredWithVisibilityStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1038,6 +1054,7 @@ impl SetHiddenStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1107,6 +1124,7 @@ impl TryClaimPendingStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1160,6 +1178,7 @@ impl UpdateStatusStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1229,6 +1248,7 @@ impl GetLatestStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1327,6 +1347,7 @@ impl GetByInputsHashStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1421,6 +1442,7 @@ impl ListPendingStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1605,6 +1627,7 @@ impl GetByJobsetAndCommitStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1716,6 +1739,7 @@ impl FinishRunningStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1785,6 +1809,7 @@ impl CancelStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1836,6 +1861,7 @@ impl SweepOrphanedStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1953,7 +1979,7 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
 pub struct RestartRequeueStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart_requeue() -> RestartRequeueStmt {
     RestartRequeueStmt(
-        "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), error_message = NULL, inputs_hash = NULL, started_at = NULL, orphaned_count = 0, superseded_by = NULL, trigger_kind = CASE WHEN e.trigger_kind = 'source_change' THEN 'manual' ELSE e.trigger_kind END, source_scope = NULL FROM jobsets j WHERE e.id = $1 AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', 'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN ('enabled', 'one_at_a_time'))) RETURNING e.*",
+        "UPDATE evaluations e SET status = 'pending', evaluation_time = NOW(), error_message = NULL, inputs_hash = NULL, started_at = NULL, orphaned_count = 0, superseded_by = NULL, trigger_kind = CASE WHEN e.trigger_kind = 'source_change' THEN 'manual' ELSE e.trigger_kind END, source_scope = NULL, source_base_commit = NULL FROM jobsets j WHERE e.id = $1 AND e.jobset_id = j.id AND e.status IN ('cancelled', 'failed', 'timed_out') AND (j.state = 'one_shot' OR (j.enabled AND j.state IN ('enabled', 'one_at_a_time'))) RETURNING e.*",
         None,
     )
 }
@@ -1995,6 +2021,7 @@ impl RestartRequeueStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -2169,6 +2196,7 @@ impl ListPageFilteredStmt {
                         orphaned_count: row.try_get(14)?,
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),

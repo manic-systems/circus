@@ -1,15 +1,16 @@
---: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?)
+--: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?, source_base_commit?)
 
---! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, source_scope?) : EvaluationRow
+--! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, source_scope?, source_base_commit?) : EvaluationRow
 INSERT INTO evaluations (
   jobset_id, commit_hash, status, trigger_kind,
   pr_number, pr_head_branch, pr_base_branch, pr_action, started_at,
-  source_scope
+  source_scope, source_base_commit
 )
 VALUES (
   :jobset_id, :commit_hash, :status, :trigger_kind,
   :pr_number, :pr_head_branch, :pr_base_branch, :pr_action,
-  CASE WHEN :status::text = 'running' THEN NOW() END, :source_scope
+  CASE WHEN :status::text = 'running' THEN NOW() END, :source_scope,
+  :source_base_commit
 )
 RETURNING *;
 
@@ -161,7 +162,7 @@ SET status = 'pending', evaluation_time = NOW(),
     started_at = NULL, orphaned_count = 0, superseded_by = NULL,
     trigger_kind = CASE WHEN e.trigger_kind = 'source_change'
       THEN 'manual' ELSE e.trigger_kind END,
-    source_scope = NULL
+    source_scope = NULL, source_base_commit = NULL
 FROM jobsets j
 WHERE e.id = :id AND e.jobset_id = j.id
   AND e.status IN ('cancelled', 'failed', 'timed_out')

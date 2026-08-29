@@ -4,6 +4,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use circus_types::validation as shared_validation;
 
+pub(crate) mod path_filter;
+
+use path_filter::{validate_path_filter_policy, validate_path_filters};
+
 /// Schemes considered insecure for repository URLs.
 const INSECURE_SCHEMES: &[&str] = &["file", "http"];
 
@@ -423,6 +427,12 @@ impl Validate for CreateJobset {
       self.trigger_mode.unwrap_or_default(),
       self.only_build_latest.unwrap_or(false),
     )?;
+    let path_filters = self.path_filters.as_deref().unwrap_or_default();
+    validate_path_filters(path_filters)?;
+    validate_path_filter_policy(
+      self.trigger_mode.unwrap_or_default() == JobsetTriggerMode::SourceChange,
+      path_filters,
+    )?;
     Ok(())
   }
 }
@@ -440,6 +450,9 @@ impl Validate for UpdateJobset {
     }
     if let Some(systems) = &self.systems {
       validate_systems(systems)?;
+    }
+    if let Some(filters) = &self.path_filters {
+      validate_path_filters(filters)?;
     }
     if let (Some(trigger_mode), Some(only_build_latest)) =
       (self.trigger_mode, self.only_build_latest)
@@ -645,6 +658,7 @@ mod tests {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     };
     assert!(j.validate().is_ok());
   }
@@ -667,6 +681,7 @@ mod tests {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     };
     assert!(j.validate().is_err());
   }
@@ -689,6 +704,7 @@ mod tests {
       keep_nr:           None,
       systems:           None,
       only_build_latest: Some(true),
+      path_filters:      None,
     };
     assert!(j.validate().is_err());
   }

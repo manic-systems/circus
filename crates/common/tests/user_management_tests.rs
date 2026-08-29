@@ -407,6 +407,7 @@ async fn test_starred_jobs_crud() {
     keep_nr:           None,
     systems:           None,
     only_build_latest: None,
+    path_filters:      None,
   })
   .await
   .expect("create jobset");
@@ -539,6 +540,7 @@ async fn test_starred_jobs_delete_by_job() {
     keep_nr:           None,
     systems:           None,
     only_build_latest: None,
+    path_filters:      None,
   })
   .await
   .expect("create jobset");

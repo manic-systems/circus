@@ -254,6 +254,7 @@ fn jobset_from_search_row(row: q::JobsetSearchRow) -> Result<Jobset> {
     keep_nr:           row.keep_nr,
     systems:           row.systems,
     only_build_latest: row.only_build_latest,
+    path_filters:      row.path_filters,
   })
 }
 
@@ -261,21 +262,22 @@ fn evaluation_from_search_row(
   row: q::EvaluationSearchRow,
 ) -> Result<Evaluation> {
   Ok(Evaluation {
-    id:              row.id,
-    jobset_id:       row.jobset_id,
-    commit_hash:     row.commit_hash,
-    evaluation_time: row.evaluation_time,
-    status:          row.status.parse().map_err(CiError::Internal)?,
-    error_message:   row.error_message,
-    inputs_hash:     row.inputs_hash,
-    trigger_kind:    row.trigger_kind.parse().map_err(CiError::Internal)?,
-    hidden:          row.hidden,
-    pr_number:       row.pr_number,
-    pr_head_branch:  row.pr_head_branch,
-    pr_base_branch:  row.pr_base_branch,
-    pr_action:       row.pr_action,
-    source_scope:    row.source_scope,
-    superseded_by:   row.superseded_by,
+    id:                 row.id,
+    jobset_id:          row.jobset_id,
+    commit_hash:        row.commit_hash,
+    evaluation_time:    row.evaluation_time,
+    status:             row.status.parse().map_err(CiError::Internal)?,
+    error_message:      row.error_message,
+    inputs_hash:        row.inputs_hash,
+    trigger_kind:       row.trigger_kind.parse().map_err(CiError::Internal)?,
+    hidden:             row.hidden,
+    pr_number:          row.pr_number,
+    pr_head_branch:     row.pr_head_branch,
+    pr_base_branch:     row.pr_base_branch,
+    pr_action:          row.pr_action,
+    source_scope:       row.source_scope,
+    superseded_by:      row.superseded_by,
+    source_base_commit: row.source_base_commit,
   })
 }
 

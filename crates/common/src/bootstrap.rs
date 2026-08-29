@@ -135,6 +135,7 @@ pub async fn run(
         keep_nr: decl_jobset.keep_nr,
         systems: decl_jobset.systems.clone(),
         only_build_latest: Some(decl_jobset.only_build_latest),
+        path_filters: Some(decl_jobset.path_filters.clone()),
       })
       .await?;
 

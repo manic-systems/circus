@@ -29,6 +29,14 @@ impl SourceOrder<'_> {
       },
     }
   }
+
+  fn base_commit(self, latest_commit: Option<String>) -> Option<String> {
+    match self {
+      Self::Unchecked => latest_commit,
+      Self::First => None,
+      Self::After(previous) => Some(previous.to_owned()),
+    }
+  }
 }
 
 impl TryFrom<q::EvaluationRow> for Evaluation {
@@ -36,21 +44,22 @@ impl TryFrom<q::EvaluationRow> for Evaluation {
 
   fn try_from(r: q::EvaluationRow) -> Result<Self> {
     Ok(Self {
-      id:              r.id,
-      jobset_id:       r.jobset_id,
-      commit_hash:     r.commit_hash,
-      evaluation_time: r.evaluation_time,
-      status:          r.status.parse().map_err(CiError::Internal)?,
-      error_message:   r.error_message,
-      inputs_hash:     r.inputs_hash,
-      trigger_kind:    r.trigger_kind.parse().map_err(CiError::Internal)?,
-      hidden:          r.hidden,
-      pr_number:       r.pr_number,
-      pr_head_branch:  r.pr_head_branch,
-      pr_base_branch:  r.pr_base_branch,
-      pr_action:       r.pr_action,
-      source_scope:    r.source_scope,
-      superseded_by:   r.superseded_by,
+      id:                 r.id,
+      jobset_id:          r.jobset_id,
+      commit_hash:        r.commit_hash,
+      evaluation_time:    r.evaluation_time,
+      status:             r.status.parse().map_err(CiError::Internal)?,
+      error_message:      r.error_message,
+      inputs_hash:        r.inputs_hash,
+      trigger_kind:       r.trigger_kind.parse().map_err(CiError::Internal)?,
+      hidden:             r.hidden,
+      pr_number:          r.pr_number,
+      pr_head_branch:     r.pr_head_branch,
+      pr_base_branch:     r.pr_base_branch,
+      pr_action:          r.pr_action,
+      source_scope:       r.source_scope,
+      superseded_by:      r.superseded_by,
+      source_base_commit: r.source_base_commit,
     })
   }
 }
@@ -178,6 +187,7 @@ async fn create_with_kind(
       &input.pr_base_branch,
       &input.pr_action,
       &source_scope,
+      &None::<&str>,
     )
     .one()
     .await
@@ -212,17 +222,16 @@ async fn create_automated(
     })?;
 
   let scope = Some(source_scope);
-  if only_build_latest {
-    let latest_commit = q::get_source_head()
-      .bind(&tx, &input.jobset_id, &source_scope)
-      .opt()
-      .await?;
-    if !source_order.accepts(latest_commit.as_deref()) {
-      return Err(CiError::Conflict(format!(
-        "Source update for '{source_scope}' is older than the current revision"
-      )));
-    }
+  let latest_commit = q::get_source_head()
+    .bind(&tx, &input.jobset_id, &source_scope)
+    .opt()
+    .await?;
+  if only_build_latest && !source_order.accepts(latest_commit.as_deref()) {
+    return Err(CiError::Conflict(format!(
+      "Source update for '{source_scope}' is older than the current revision"
+    )));
   }
+  let source_base_commit = source_order.base_commit(latest_commit);
   let row = q::create_with_kind()
     .bind(
       &tx,
@@ -235,6 +244,7 @@ async fn create_automated(
       &input.pr_base_branch,
       &input.pr_action,
       &scope,
+      &source_base_commit.as_deref(),
     )
     .one()
     .await

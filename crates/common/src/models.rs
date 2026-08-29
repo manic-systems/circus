@@ -48,25 +48,27 @@ pub struct Jobset {
   pub keep_nr:           i32,
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: bool,
+  pub path_filters:      Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Evaluation {
-  pub id:              Uuid,
-  pub jobset_id:       Uuid,
-  pub commit_hash:     String,
-  pub evaluation_time: DateTime<Utc>,
-  pub status:          EvaluationStatus,
-  pub error_message:   Option<String>,
-  pub inputs_hash:     Option<String>,
-  pub trigger_kind:    EvaluationTriggerKind,
-  pub hidden:          bool,
-  pub pr_number:       Option<i32>,
-  pub pr_head_branch:  Option<String>,
-  pub pr_base_branch:  Option<String>,
-  pub pr_action:       Option<String>,
-  pub source_scope:    Option<String>,
-  pub superseded_by:   Option<Uuid>,
+  pub id:                 Uuid,
+  pub jobset_id:          Uuid,
+  pub commit_hash:        String,
+  pub evaluation_time:    DateTime<Utc>,
+  pub status:             EvaluationStatus,
+  pub error_message:      Option<String>,
+  pub inputs_hash:        Option<String>,
+  pub trigger_kind:       EvaluationTriggerKind,
+  pub hidden:             bool,
+  pub pr_number:          Option<i32>,
+  pub pr_head_branch:     Option<String>,
+  pub pr_base_branch:     Option<String>,
+  pub pr_action:          Option<String>,
+  pub source_scope:       Option<String>,
+  pub superseded_by:      Option<Uuid>,
+  pub source_base_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -690,6 +692,7 @@ pub struct ActiveJobset {
   pub repository_url:    String,
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: bool,
+  pub path_filters:      Vec<String>,
 }
 
 /// Build statistics from the `build_stats` view.
@@ -1029,6 +1032,7 @@ pub struct CreateJobset {
   pub keep_nr:           Option<i32>,
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: Option<bool>,
+  pub path_filters:      Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1047,6 +1051,7 @@ pub struct UpdateJobset {
   pub keep_nr:           Option<i32>,
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: Option<bool>,
+  pub path_filters:      Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
