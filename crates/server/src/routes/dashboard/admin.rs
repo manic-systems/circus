@@ -841,6 +841,12 @@ pub(super) async fn jobset_delete(
     .map_err(|e| {
       (StatusCode::NOT_FOUND, format!("Jobset not found: {e}")).into_response()
     })?;
+  crate::routes::declarative::require_project_mutable(
+    &state,
+    jobset.project_id,
+  )
+  .await
+  .map_err(IntoResponse::into_response)?;
   let project_id = jobset.project_id;
   circus_common::repo::jobsets::delete(&state.pool, jobset_id)
     .await
@@ -957,6 +963,9 @@ pub(super) async fn notifications_page(
   .unwrap_or_default();
   let tmpl = NotificationsTemplate {
     ui: ui_config(&state),
+    project_mutable: crate::routes::declarative::project_is_mutable(
+      &state, &project,
+    ),
     project,
     configs,
     is_admin: ctx.is_admin,
@@ -976,6 +985,9 @@ pub(super) async fn notifications_create(
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
   ctx.check_csrf(&form.csrf_token)?;
+  crate::routes::declarative::require_project_mutable(&state, project_id)
+    .await
+    .map_err(IntoResponse::into_response)?;
   let parsed: serde_json::Value = serde_json::from_str(form.config.trim())
     .map_err(|e| {
       (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response()
@@ -1037,6 +1049,9 @@ pub(super) async fn notifications_delete(
     return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
   }
   ctx.check_csrf(&form.csrf_token)?;
+  crate::routes::declarative::require_project_mutable(&state, project_id)
+    .await
+    .map_err(IntoResponse::into_response)?;
   circus_common::repo::notification_configs::delete_for_project(
     &state.pool,
     project_id,

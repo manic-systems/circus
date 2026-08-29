@@ -100,6 +100,7 @@ async fn update_project(
   Path(id): Path<Uuid>,
   Json(input): Json<UpdateProject>,
 ) -> Result<Json<Project>, ApiError> {
+  crate::routes::declarative::require_project_mutable(&state, id).await?;
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
@@ -120,11 +121,9 @@ async fn delete_project(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  // Capture the name before deletion so the audit row remains readable.
-  let project_name = circus_common::repo::projects::get(&state.pool, id)
-    .await
-    .ok()
-    .map(|p| p.name);
+  let project =
+    crate::routes::declarative::require_project_mutable(&state, id).await?;
+  let project_name = project.name;
 
   circus_common::repo::projects::delete(&state.pool, id).await?;
 
@@ -190,6 +189,8 @@ async fn create_project_jobset(
   Json(body): Json<CreateJobsetBody>,
 ) -> Result<Json<Jobset>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
+  crate::routes::declarative::require_project_mutable(&state, project_id)
+    .await?;
   let input = CreateJobset {
     project_id,
     name: body.name,
@@ -361,6 +362,8 @@ async fn create_project_webhook(
   Json(body): Json<CreateWebhookBody>,
 ) -> Result<Json<WebhookConfigResponse>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
+  crate::routes::declarative::require_project_mutable(&state, project_id)
+    .await?;
 
   if body.secret.trim().is_empty() {
     return Err(ApiError(circus_common::CiError::Validation(
@@ -406,6 +409,9 @@ async fn delete_project_webhook(
       "Webhook not found for this project".to_string(),
     )));
   }
+
+  crate::routes::declarative::require_project_mutable(&state, params.id)
+    .await?;
 
   circus_common::repo::webhook_configs::delete(&state.pool, params.webhook_id)
     .await?;

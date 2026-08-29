@@ -30,30 +30,38 @@
     <p>
         <strong>Created:</strong> {{ project.created_at.format("%Y-%m-%d %H:%M") }}
     </p>
+    {% if project.managed_declaratively && !project_mutable %}
+        <p class="flash-message">Managed by declarative configuration. Runtime changes are disabled.</p>
+    {% endif %}
 
     {% if is_admin %}
         <div class="page-actions">
-            <button type="button"
-                    class="btn btn-small btn-secondary"
-                    onclick="document.getElementById('add-jobset-dialog').showModal()">
-                Add Jobset
-            </button>
+            {% if project_mutable %}
+                <button type="button"
+                        class="btn btn-small btn-secondary"
+                        onclick="document.getElementById('add-jobset-dialog').showModal()">
+                    Add Jobset
+                </button>
+            {% endif %}
             <a class="btn btn-small btn-secondary" href="/project/{{ project.id }}/notifications">Notifications</a>
-            <button type="button" class="btn btn-small btn-danger" onclick="deleteProject()">Delete Project</button>
+            {% if project_mutable %}
+                <button type="button" class="btn btn-small btn-danger" onclick="deleteProject()">Delete Project</button>
+            {% endif %}
         </div>
 
-        <dialog id="add-jobset-dialog">
-            <div class="dialog-header">
-                <h2>Add Jobset</h2>
-                <button type="button"
-                        class="btn-ghost dialog-close"
-                        onclick="document.getElementById('add-jobset-dialog').close()"
-                        aria-label="Close">
-                    &times;
-                </button>
-            </div>
-            <div class="dialog-body">
-                <form id="create-jobset-form">
+        {% if project_mutable %}
+            <dialog id="add-jobset-dialog">
+                <div class="dialog-header">
+                    <h2>Add Jobset</h2>
+                    <button type="button"
+                            class="btn-ghost dialog-close"
+                            onclick="document.getElementById('add-jobset-dialog').close()"
+                            aria-label="Close">
+                        &times;
+                    </button>
+                </div>
+                <div class="dialog-body">
+                    <form id="create-jobset-form">
                     <div class="form-group">
                         <label for="js-name">Name</label>
                         <input type="text" id="js-name" required>
@@ -87,18 +95,19 @@
                                   placeholder="packages/hardened-kernel&#10;**/*.nix"></textarea>
                         <small>One Git pathspec per line. Evaluate when any matching path changes.</small>
                     </div>
-                </form>
-                <div id="jobset-msg"></div>
-            </div>
-            <div class="dialog-footer">
-                <button type="button"
-                        class="btn btn-secondary"
-                        onclick="document.getElementById('add-jobset-dialog').close()">
-                    Cancel
-                </button>
-                <button type="submit" class="btn" form="create-jobset-form">Add Jobset</button>
-            </div>
-        </dialog>
+                    </form>
+                    <div id="jobset-msg"></div>
+                </div>
+                <div class="dialog-footer">
+                    <button type="button"
+                            class="btn btn-secondary"
+                            onclick="document.getElementById('add-jobset-dialog').close()">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn" form="create-jobset-form">Add Jobset</button>
+                </div>
+            </dialog>
+        {% endif %}
     {% endif %}
 
     <section class="panel">
@@ -108,7 +117,7 @@
         {% if jobsets.is_empty() %}
             <div class="empty compact-empty">
                 <div class="empty-title">No jobsets configured</div>
-                {% if is_admin %}
+                {% if is_admin && project_mutable %}
                     <div class="empty-hint">Add a jobset above to start evaluating this project.</div>
                 {% endif %}
             </div>
@@ -123,7 +132,7 @@
                             <th>Enabled</th>
                             <th>Trigger</th>
                             <th>Interval</th>
-                            {% if is_admin %}<th>Actions</th>{% endif %}
+                            {% if is_admin && project_mutable %}<th>Actions</th>{% endif %}
                         </tr>
                     </thead>
                     <tbody>
@@ -158,7 +167,7 @@
                                     {% endmatch %}
                                 </td>
                                 <td>{{ j.check_interval }}s</td>
-                                {% if is_admin %}
+                                {% if is_admin && project_mutable %}
                                     <td>
                                         <form class="inline"
                                               method="POST"

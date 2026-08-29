@@ -318,6 +318,14 @@ in
           "curl -sf http://127.0.0.1:3000/api/v1/projects | jq -r '.items[] | select(.name==\"decl-project-1\") | .id'"
       ).strip()
 
+      with subtest("Declarative projects reject runtime mutation by default"):
+          code = machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' "
+              f"-X DELETE http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id} "
+              "-H 'Authorization: Bearer circus_decl_admin'"
+          )
+          assert code.strip() == "409", f"Expected 409, got {code.strip()}"
+
       with subtest("Declarative project has all jobsets"):
           result = machine.succeed(
               f"curl -sf http://127.0.0.1:3000/api/v1/projects/{decl_project_1_id}/jobsets | jq '.items | length'"

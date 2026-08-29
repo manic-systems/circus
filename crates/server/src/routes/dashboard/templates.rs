@@ -83,25 +83,27 @@ pub(super) struct ProjectsTemplate {
 #[derive(Template)]
 #[template(path = "project.html")]
 pub(super) struct ProjectTemplate {
-  pub(super) ui:           UiTemplateConfig,
-  pub(super) project:      Project,
-  pub(super) jobsets:      Vec<Jobset>,
-  pub(super) recent_evals: Vec<EvalView>,
-  pub(super) is_admin:     bool,
-  pub(super) auth_name:    String,
-  pub(super) csrf_token:   String,
+  pub(super) ui:              UiTemplateConfig,
+  pub(super) project:         Project,
+  pub(super) jobsets:         Vec<Jobset>,
+  pub(super) recent_evals:    Vec<EvalView>,
+  pub(super) project_mutable: bool,
+  pub(super) is_admin:        bool,
+  pub(super) auth_name:       String,
+  pub(super) csrf_token:      String,
 }
 
 #[derive(Template)]
 #[template(path = "jobset.html")]
 pub(super) struct JobsetTemplate {
-  pub(super) ui:             UiTemplateConfig,
-  pub(super) project:        Project,
-  pub(super) jobset:         Jobset,
-  pub(super) eval_summaries: Vec<EvalSummaryView>,
-  pub(super) is_admin:       bool,
-  pub(super) auth_name:      String,
-  pub(super) csrf_token:     String,
+  pub(super) ui:              UiTemplateConfig,
+  pub(super) project:         Project,
+  pub(super) jobset:          Jobset,
+  pub(super) eval_summaries:  Vec<EvalSummaryView>,
+  pub(super) project_mutable: bool,
+  pub(super) is_admin:        bool,
+  pub(super) auth_name:       String,
+  pub(super) csrf_token:      String,
 }
 
 #[derive(Template)]
@@ -336,6 +338,8 @@ pub(super) struct PinnedOutputView {
 
 #[cfg(test)]
 mod tests {
+  use chrono::Utc;
+  use circus_common::models::BinaryCacheUpstreams;
   use circus_config::UiConfig;
 
   use super::*;
@@ -422,6 +426,39 @@ mod tests {
       is_admin: true,
       auth_name: "operator".into(),
     }
+  }
+
+  #[test]
+  fn declarative_project_hides_mutation_controls() {
+    let html = ProjectTemplate {
+      ui:              UiTemplateConfig::from_config(&UiConfig::default()),
+      project:         Project {
+        id:                    Uuid::nil(),
+        name:                  "declarative".into(),
+        description:           None,
+        repository_url:        "https://example.com/project".into(),
+        cache_enabled:         false,
+        cache_url:             None,
+        cache_upstreams:       BinaryCacheUpstreams::default(),
+        managed_declaratively: true,
+        created_at:            Utc::now(),
+        updated_at:            Utc::now(),
+      },
+      jobsets:         Vec::new(),
+      recent_evals:    Vec::new(),
+      project_mutable: false,
+      is_admin:        true,
+      auth_name:       "admin".into(),
+      csrf_token:      "csrf".into(),
+    }
+    .render()
+    .expect("render project template");
+
+    assert!(html.contains("Managed by declarative configuration"));
+    assert!(html.contains(">Notifications</a>"));
+    assert!(!html.contains("Add Jobset"));
+    assert!(!html.contains("Delete Project"));
+    assert!(!html.contains("Delete Jobset"));
   }
 }
 
@@ -510,12 +547,13 @@ pub(super) struct MetricsTemplate {
 #[derive(Template)]
 #[template(path = "notifications.html")]
 pub(super) struct NotificationsTemplate {
-  pub(super) ui:         UiTemplateConfig,
-  pub(super) project:    Project,
-  pub(super) configs:    Vec<circus_common::models::NotificationConfig>,
-  pub(super) is_admin:   bool,
-  pub(super) auth_name:  String,
-  pub(super) csrf_token: String,
+  pub(super) ui:              UiTemplateConfig,
+  pub(super) project:         Project,
+  pub(super) configs:         Vec<circus_common::models::NotificationConfig>,
+  pub(super) project_mutable: bool,
+  pub(super) is_admin:        bool,
+  pub(super) auth_name:       String,
+  pub(super) csrf_token:      String,
 }
 
 /// One row in the unified Caches listing.

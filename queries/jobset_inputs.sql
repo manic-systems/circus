@@ -22,6 +22,12 @@ DELETE FROM jobset_inputs
 WHERE
   id =:id;
 
+--! delete_for_jobset
+DELETE FROM jobset_inputs
+WHERE
+  id =:id
+  AND jobset_id =:jobset_id;
+
 --! upsert (revision?) : JobsetInputRow
 INSERT INTO
   jobset_inputs (jobset_id, name, input_type, value, revision)

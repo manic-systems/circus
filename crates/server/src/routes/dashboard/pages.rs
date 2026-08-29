@@ -344,6 +344,9 @@ pub(super) async fn project_page(
 
   let tmpl = ProjectTemplate {
     ui: ui_config(&state),
+    project_mutable: crate::routes::declarative::project_is_mutable(
+      &state, &project,
+    ),
     project,
     jobsets,
     recent_evals: evals.iter().map(eval_view).collect(),
@@ -447,6 +450,9 @@ pub(super) async fn jobset_page(
 
   let tmpl = JobsetTemplate {
     ui: ui_config(&state),
+    project_mutable: crate::routes::declarative::project_is_mutable(
+      &state, &project,
+    ),
     project,
     jobset,
     eval_summaries: summaries,

@@ -6,6 +6,7 @@ pub mod cache;
 pub mod channel_manifests;
 pub mod channels;
 pub mod dashboard;
+pub(crate) mod declarative;
 pub mod evaluations;
 pub mod health;
 pub mod jobsets;

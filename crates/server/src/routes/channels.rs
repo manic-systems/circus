@@ -47,6 +47,8 @@ async fn create_channel(
   State(state): State<AppState>,
   Json(input): Json<CreateChannel>,
 ) -> Result<Json<Channel>, ApiError> {
+  crate::routes::declarative::require_project_mutable(&state, input.project_id)
+    .await?;
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
@@ -79,6 +81,12 @@ async fn delete_channel(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+  let channel = circus_common::repo::channels::get(&state.pool, id).await?;
+  crate::routes::declarative::require_project_mutable(
+    &state,
+    channel.project_id,
+  )
+  .await?;
   circus_common::repo::channels::delete(&state.pool, id).await?;
   Ok(Json(serde_json::json!({"deleted": true})))
 }

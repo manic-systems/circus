@@ -29,7 +29,11 @@
         <a href="/jobset/{{ jobset.id }}/jobs">Jobs</a>
     </nav>
 
-    {% if is_admin %}
+    {% if project.managed_declaratively && !project_mutable %}
+        <p class="flash-message">Managed by declarative configuration. Runtime changes are disabled.</p>
+    {% endif %}
+
+    {% if is_admin && project_mutable %}
         <div class="page-actions">
             <form class="inline"
                   method="POST"

@@ -26,6 +26,9 @@
 {% block content %}
     <h1>Notifications</h1>
     <p>Configure delivery channels for build events on this project.</p>
+    {% if !project_mutable %}
+        <p class="flash-message">Managed by declarative configuration. Runtime changes are disabled.</p>
+    {% endif %}
 
     <h2>Existing</h2>
     {% if configs.is_empty() %}
@@ -56,7 +59,7 @@
                             </td>
                             <td>{{ c.created_at }}</td>
                             <td>
-                                {% if is_admin %}
+                                {% if is_admin && project_mutable %}
                                     <form method="post"
                                           action="/project/{{ project.id }}/notifications/{{ c.id }}/delete"
                                           class="inline">
@@ -72,7 +75,7 @@
         </div>
     {% endif %}
 
-    {% if is_admin %}
+    {% if is_admin && project_mutable %}
         <h2>Add new</h2>
         <div class="form-card">
             <form method="post" action="/project/{{ project.id }}/notifications">

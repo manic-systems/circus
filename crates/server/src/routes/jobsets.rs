@@ -24,6 +24,7 @@ async fn update_jobset(
   Path((_project_id, id)): Path<(Uuid, Uuid)>,
   Json(input): Json<UpdateJobset>,
 ) -> Result<Json<Jobset>, ApiError> {
+  crate::routes::declarative::require_jobset_mutable(&state, id).await?;
   input
     .validate()
     .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
@@ -37,6 +38,7 @@ async fn delete_jobset(
   State(state): State<AppState>,
   Path((_project_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+  crate::routes::declarative::require_jobset_mutable(&state, id).await?;
   circus_common::repo::jobsets::delete(&state.pool, id).await?;
   Ok(Json(serde_json::json!({ "deleted": true })))
 }
@@ -67,6 +69,7 @@ async fn create_jobset_input(
   Path((_project_id, jobset_id)): Path<(Uuid, Uuid)>,
   Json(body): Json<CreateJobsetInputRequest>,
 ) -> Result<Json<JobsetInput>, ApiError> {
+  crate::routes::declarative::require_jobset_mutable(&state, jobset_id).await?;
   let input = circus_common::repo::jobset_inputs::create(
     &state.pool,
     jobset_id,
@@ -82,9 +85,15 @@ async fn create_jobset_input(
 async fn delete_jobset_input(
   _auth: RequireAdmin,
   State(state): State<AppState>,
-  Path((_project_id, _jobset_id, input_id)): Path<(Uuid, Uuid, Uuid)>,
+  Path((_project_id, jobset_id, input_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::jobset_inputs::delete(&state.pool, input_id).await?;
+  crate::routes::declarative::require_jobset_mutable(&state, jobset_id).await?;
+  circus_common::repo::jobset_inputs::delete_for_jobset(
+    &state.pool,
+    jobset_id,
+    input_id,
+  )
+  .await?;
   Ok(Json(serde_json::json!({ "deleted": true })))
 }
 

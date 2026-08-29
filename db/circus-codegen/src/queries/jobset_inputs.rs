@@ -13,6 +13,11 @@ pub struct CreateParams<
     pub value: T3,
     pub revision: Option<T4>,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct DeleteForJobsetParams {
+    pub id: uuid::Uuid,
+    pub jobset_id: uuid::Uuid,
+}
 #[derive(Debug)]
 pub struct UpsertParams<
     T1: crate::StringSql,
@@ -291,6 +296,52 @@ impl DeleteStmt {
         id: &'a uuid::Uuid,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[id]).await
+    }
+}
+pub struct DeleteForJobsetStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_for_jobset() -> DeleteForJobsetStmt {
+    DeleteForJobsetStmt(
+        "DELETE FROM jobset_inputs WHERE id =$1 AND jobset_id =$2",
+        None,
+    )
+}
+impl DeleteForJobsetStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+        jobset_id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[id, jobset_id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        DeleteForJobsetParams,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for DeleteForJobsetStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a DeleteForJobsetParams,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.id, &params.jobset_id))
     }
 }
 pub struct UpsertStmt(&'static str, Option<tokio_postgres::Statement>);

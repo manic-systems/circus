@@ -169,36 +169,39 @@ pub(super) async fn project_setup() -> Response {
 
 pub(super) async fn notifications() -> Response {
   render(NotificationsTemplate {
-    ui:         ui(),
-    project:    project_fixture(),
-    configs:    Vec::new(),
-    is_admin:   true,
-    auth_name:  "operator".into(),
-    csrf_token: csrf(),
+    ui:              ui(),
+    project:         project_fixture(),
+    configs:         Vec::new(),
+    project_mutable: true,
+    is_admin:        true,
+    auth_name:       "operator".into(),
+    csrf_token:      csrf(),
   })
 }
 
 pub(super) async fn project() -> Response {
   render(ProjectTemplate {
-    ui:           ui(),
-    project:      project_fixture(),
-    jobsets:      vec![jobset_fixture()],
-    recent_evals: evals_fixture(),
-    is_admin:     true,
-    auth_name:    "operator".into(),
-    csrf_token:   csrf(),
+    ui:              ui(),
+    project:         project_fixture(),
+    jobsets:         vec![jobset_fixture()],
+    recent_evals:    evals_fixture(),
+    project_mutable: true,
+    is_admin:        true,
+    auth_name:       "operator".into(),
+    csrf_token:      csrf(),
   })
 }
 
 pub(super) async fn jobset() -> Response {
   render(JobsetTemplate {
-    ui:             ui(),
-    project:        project_fixture(),
-    jobset:         jobset_fixture(),
-    eval_summaries: eval_summaries(),
-    is_admin:       true,
-    auth_name:      "operator".into(),
-    csrf_token:     csrf(),
+    ui:              ui(),
+    project:         project_fixture(),
+    jobset:          jobset_fixture(),
+    eval_summaries:  eval_summaries(),
+    project_mutable: true,
+    is_admin:        true,
+    auth_name:       "operator".into(),
+    csrf_token:      csrf(),
   })
 }
 

@@ -94,6 +94,27 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
   Ok(())
 }
 
+/// Delete a jobset input belonging to the specified jobset.
+///
+/// # Errors
+///
+/// Returns error if the database delete fails or the input does not belong to
+/// the jobset.
+pub async fn delete_for_jobset(
+  pool: &PgPool,
+  jobset_id: Uuid,
+  id: Uuid,
+) -> Result<()> {
+  let client = pool.get().await?;
+  let affected = q::delete_for_jobset()
+    .bind(&client, &id, &jobset_id)
+    .await?;
+  if affected == 0 {
+    return Err(CiError::NotFound(format!("Jobset input {id} not found")));
+  }
+  Ok(())
+}
+
 /// Upsert a jobset input (insert or update on conflict).
 ///
 /// # Errors
