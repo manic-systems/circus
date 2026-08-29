@@ -13,15 +13,16 @@ impl TryFrom<q::ProjectRow> for Project {
 
   fn try_from(r: q::ProjectRow) -> Result<Self> {
     Ok(Self {
-      id:              r.id,
-      name:            r.name,
-      description:     r.description,
-      repository_url:  r.repository_url,
-      cache_enabled:   r.cache_enabled,
-      cache_url:       r.cache_url,
-      cache_upstreams: serde_json::from_value(r.cache_upstreams)?,
-      created_at:      r.created_at,
-      updated_at:      r.updated_at,
+      id:                    r.id,
+      name:                  r.name,
+      description:           r.description,
+      repository_url:        r.repository_url,
+      cache_enabled:         r.cache_enabled,
+      cache_url:             r.cache_url,
+      cache_upstreams:       serde_json::from_value(r.cache_upstreams)?,
+      managed_declaratively: r.managed_declaratively,
+      created_at:            r.created_at,
+      updated_at:            r.updated_at,
     })
   }
 }
@@ -189,6 +190,46 @@ pub async fn upsert(pool: &PgPool, input: CreateProject) -> Result<Project> {
     .one()
     .await?;
   Project::try_from(row)
+}
+
+/// Insert or update a project managed by declarative configuration.
+///
+/// # Errors
+///
+/// Returns error if validation or the database operation fails.
+pub async fn upsert_declarative(
+  pool: &PgPool,
+  input: CreateProject,
+) -> Result<Project> {
+  input.validate().map_err(CiError::Validation)?;
+  let cache_upstreams = upstreams_to_value(&input.cache_upstreams)?;
+  let client = pool.get().await?;
+  let row = q::upsert_declarative()
+    .bind(
+      &client,
+      &input.name,
+      &input.description,
+      &input.repository_url,
+      &input.cache_enabled,
+      &input.cache_url,
+      &cache_upstreams,
+    )
+    .one()
+    .await?;
+  Project::try_from(row)
+}
+
+/// Delete declaratively managed projects not present in `names`.
+///
+/// # Errors
+///
+/// Returns error if the database operation fails.
+pub async fn delete_declarative_except(
+  pool: &PgPool,
+  names: &[&str],
+) -> Result<u64> {
+  let client = pool.get().await?;
+  Ok(q::delete_declarative_except().bind(&client, &names).await?)
 }
 
 /// List projects that have no active jobsets.

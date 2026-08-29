@@ -1947,20 +1947,21 @@ mod tests {
       ..Default::default()
     };
     let project = Project {
-      id:              Uuid::new_v4(),
-      name:            "project-a".to_string(),
-      description:     None,
-      repository_url:  "https://example.org/project-a.git".to_string(),
-      cache_enabled:   true,
-      cache_url:       Some(
+      id:                    Uuid::new_v4(),
+      name:                  "project-a".to_string(),
+      description:           None,
+      repository_url:        "https://example.org/project-a.git".to_string(),
+      cache_enabled:         true,
+      cache_url:             Some(
         "https://ci.example.org/projects/project-a/nix-cache/".to_string(),
       ),
-      cache_upstreams: BinaryCacheUpstreams(vec![BinaryCacheUpstream {
+      cache_upstreams:       BinaryCacheUpstreams(vec![BinaryCacheUpstream {
         url:        "https://cache.nixos.org/".to_string(),
         public_key: Some("cache.nixos.org-1:key".to_string()),
       }]),
-      created_at:      chrono::Utc::now(),
-      updated_at:      chrono::Utc::now(),
+      managed_declaratively: false,
+      created_at:            chrono::Utc::now(),
+      updated_at:            chrono::Utc::now(),
     };
 
     let args = cache_args_for_build(&cache_config, Some(&project));
@@ -1986,15 +1987,16 @@ mod tests {
       ..Default::default()
     };
     let project = Project {
-      id:              Uuid::new_v4(),
-      name:            "project-a".to_string(),
-      description:     None,
-      repository_url:  "https://example.org/project-a.git".to_string(),
-      cache_enabled:   true,
-      cache_url:       None,
-      cache_upstreams: BinaryCacheUpstreams::default(),
-      created_at:      chrono::Utc::now(),
-      updated_at:      chrono::Utc::now(),
+      id:                    Uuid::new_v4(),
+      name:                  "project-a".to_string(),
+      description:           None,
+      repository_url:        "https://example.org/project-a.git".to_string(),
+      cache_enabled:         true,
+      cache_url:             None,
+      cache_upstreams:       BinaryCacheUpstreams::default(),
+      managed_declaratively: false,
+      created_at:            chrono::Utc::now(),
+      updated_at:            chrono::Utc::now(),
     };
 
     let args = cache_args_for_build(&cache_config, Some(&project));
@@ -2018,20 +2020,21 @@ mod tests {
       ..Default::default()
     };
     let project = Project {
-      id:              Uuid::new_v4(),
-      name:            "project-a".to_string(),
-      description:     None,
-      repository_url:  "https://example.org/project-a.git".to_string(),
-      cache_enabled:   false,
-      cache_url:       Some(
+      id:                    Uuid::new_v4(),
+      name:                  "project-a".to_string(),
+      description:           None,
+      repository_url:        "https://example.org/project-a.git".to_string(),
+      cache_enabled:         false,
+      cache_url:             Some(
         "https://ci.example.org/projects/project-a/nix-cache/".to_string(),
       ),
-      cache_upstreams: BinaryCacheUpstreams(vec![BinaryCacheUpstream {
+      cache_upstreams:       BinaryCacheUpstreams(vec![BinaryCacheUpstream {
         url:        "https://cache.nixos.org/".to_string(),
         public_key: Some("cache.nixos.org-1:key".to_string()),
       }]),
-      created_at:      chrono::Utc::now(),
-      updated_at:      chrono::Utc::now(),
+      managed_declaratively: false,
+      created_at:            chrono::Utc::now(),
+      updated_at:            chrono::Utc::now(),
     };
 
     let args = cache_args_for_build(&cache_config, Some(&project));

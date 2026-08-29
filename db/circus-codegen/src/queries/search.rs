@@ -99,6 +99,7 @@ pub struct ProjectQuickSearchRow {
     pub cache_enabled: bool,
     pub cache_url: Option<String>,
     pub cache_upstreams: serde_json::Value,
+    pub managed_declaratively: bool,
 }
 pub struct ProjectQuickSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -110,6 +111,7 @@ pub struct ProjectQuickSearchRowBorrowed<'a> {
     pub cache_enabled: bool,
     pub cache_url: Option<&'a str>,
     pub cache_upstreams: postgres_types::Json<&'a serde_json::value::RawValue>,
+    pub managed_declaratively: bool,
 }
 impl<'a> From<ProjectQuickSearchRowBorrowed<'a>> for ProjectQuickSearchRow {
     fn from(
@@ -123,6 +125,7 @@ impl<'a> From<ProjectQuickSearchRowBorrowed<'a>> for ProjectQuickSearchRow {
             cache_enabled,
             cache_url,
             cache_upstreams,
+            managed_declaratively,
         }: ProjectQuickSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -135,6 +138,7 @@ impl<'a> From<ProjectQuickSearchRowBorrowed<'a>> for ProjectQuickSearchRow {
             cache_enabled,
             cache_url: cache_url.map(|v| v.into()),
             cache_upstreams: serde_json::from_str(cache_upstreams.0.get()).unwrap(),
+            managed_declaratively,
         }
     }
 }
@@ -836,6 +840,7 @@ impl QuickProjectsStmt {
                     cache_enabled: row.try_get(6)?,
                     cache_url: row.try_get(7)?,
                     cache_upstreams: row.try_get(8)?,
+                    managed_declaratively: row.try_get(9)?,
                 })
             },
             mapper: |it| ProjectQuickSearchRow::from(it),
@@ -998,6 +1003,7 @@ impl SearchProjectsStmt {
                     cache_enabled: row.try_get(6)?,
                     cache_url: row.try_get(7)?,
                     cache_upstreams: row.try_get(8)?,
+                    managed_declaratively: row.try_get(9)?,
                 })
             },
             mapper: |it| ProjectQuickSearchRow::from(it),

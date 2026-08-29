@@ -16,15 +16,16 @@ use crate::roles::{GlobalRole, ProjectRole};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
-  pub id:              Uuid,
-  pub name:            String,
-  pub description:     Option<String>,
-  pub repository_url:  String,
-  pub cache_enabled:   bool,
-  pub cache_url:       Option<String>,
-  pub cache_upstreams: BinaryCacheUpstreams,
-  pub created_at:      DateTime<Utc>,
-  pub updated_at:      DateTime<Utc>,
+  pub id:                    Uuid,
+  pub name:                  String,
+  pub description:           Option<String>,
+  pub repository_url:        String,
+  pub cache_enabled:         bool,
+  pub cache_url:             Option<String>,
+  pub cache_upstreams:       BinaryCacheUpstreams,
+  pub managed_declaratively: bool,
+  pub created_at:            DateTime<Utc>,
+  pub updated_at:            DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

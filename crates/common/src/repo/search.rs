@@ -221,15 +221,16 @@ fn project_from_quick_search_row(
   row: q::ProjectQuickSearchRow,
 ) -> Result<Project> {
   Ok(Project {
-    id:              row.id,
-    name:            row.name,
-    description:     row.description,
-    repository_url:  row.repository_url,
-    cache_enabled:   row.cache_enabled,
-    cache_url:       row.cache_url,
-    cache_upstreams: serde_json::from_value(row.cache_upstreams)?,
-    created_at:      row.created_at,
-    updated_at:      row.updated_at,
+    id:                    row.id,
+    name:                  row.name,
+    description:           row.description,
+    repository_url:        row.repository_url,
+    cache_enabled:         row.cache_enabled,
+    cache_url:             row.cache_url,
+    cache_upstreams:       serde_json::from_value(row.cache_upstreams)?,
+    managed_declaratively: row.managed_declaratively,
+    created_at:            row.created_at,
+    updated_at:            row.updated_at,
   })
 }
 

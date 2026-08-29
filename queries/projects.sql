@@ -33,6 +33,29 @@ SET description = EXCLUDED.description, repository_url = EXCLUDED.repository_url
     cache_upstreams = EXCLUDED.cache_upstreams
 RETURNING *;
 
+--! upsert_declarative (description?, cache_url?) : ProjectRow
+INSERT INTO projects (
+  name, description, repository_url, cache_enabled, cache_url,
+  cache_upstreams, managed_declaratively
+)
+VALUES (
+  :name, :description, :repository_url, :cache_enabled, :cache_url,
+  :cache_upstreams, true
+)
+ON CONFLICT (name) DO UPDATE
+SET description = EXCLUDED.description,
+    repository_url = EXCLUDED.repository_url,
+    cache_enabled = EXCLUDED.cache_enabled,
+    cache_url = EXCLUDED.cache_url,
+    cache_upstreams = EXCLUDED.cache_upstreams,
+    managed_declaratively = true
+RETURNING *;
+
+--! delete_declarative_except
+DELETE FROM projects
+WHERE managed_declaratively = true
+  AND NOT (name = ANY(:names));
+
 --! list_without_active_jobsets : ProjectRow
 SELECT p.*
 FROM projects p
