@@ -80,6 +80,8 @@
         <dd>
             {{ jobset.check_interval }}s
         </dd>
+        <dt>Only build latest</dt>
+        <dd>{% if jobset.only_build_latest %}Yes{% else %}No{% endif %}</dd>
         {% if let Some(systems) = jobset.systems %}
             <dt>Systems</dt>
             <dd>{{ systems|join(", ") }}</dd>

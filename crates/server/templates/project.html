@@ -74,6 +74,12 @@
                             <option value="interval">Interval rebuild</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="js-only-build-latest"> Only build latest revision
+                        </label>
+                        <small>Cancel older automated work in the same branch, change request, or tag stream.</small>
+                    </div>
                 </form>
                 <div id="jobset-msg"></div>
             </div>
@@ -236,6 +242,7 @@ name: document.getElementById('js-name').value,
 nix_expression: document.getElementById('js-expr').value,
 flake_mode: document.getElementById('js-flake').checked,
 trigger_mode: document.getElementById('js-trigger-mode').value,
+only_build_latest: document.getElementById('js-only-build-latest').checked,
 }),
 });
 if (!res.ok) {

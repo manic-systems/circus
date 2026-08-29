@@ -91,6 +91,7 @@ pub(super) fn jobset_fixture() -> Jobset {
     last_checked_at:   Some(Utc::now() - Duration::minutes(10)),
     keep_nr:           3,
     systems:           None,
+    only_build_latest: false,
   }
 }
 
@@ -291,6 +292,7 @@ pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
     error_message:  String::new(),
     error_segments: Vec::new(),
     hidden:         false,
+    superseded_by:  None,
     jobset_name:    "packages".into(),
     project_name:   "circus".into(),
   }

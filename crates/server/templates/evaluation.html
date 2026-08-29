@@ -69,6 +69,12 @@
     <p>
         <strong>Time:</strong> {{ eval.time }}
     </p>
+    {% if let Some(replacement) = eval.superseded_by %}
+        <p>
+            <strong>Superseded by:</strong>
+            <a href="/evaluation/{{ replacement }}">newer evaluation</a>
+        </p>
+    {% endif %}
     {% if !eval.error_message.is_empty() %}
         <section class="evaluation-diagnostics">
             <div class="section-heading">

@@ -185,6 +185,7 @@ pub(super) struct EvalView {
   pub(super) error_message:  String,
   pub(super) error_segments: Vec<DiagnosticSegment>,
   pub(super) hidden:         bool,
+  pub(super) superseded_by:  Option<Uuid>,
   pub(super) jobset_name:    String,
   pub(super) project_name:   String,
 }
@@ -898,6 +899,7 @@ impl From<&Evaluation> for EvalView {
         .map(parse_diagnostic_ansi)
         .unwrap_or_default(),
       hidden:         e.hidden,
+      superseded_by:  e.superseded_by,
       jobset_name:    String::new(),
       project_name:   String::new(),
     }
