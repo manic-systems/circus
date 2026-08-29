@@ -556,6 +556,14 @@ Jobset trigger modes:
 > annotated tags are ordered by tagger time; lightweight tags fall back to the
 > tagged commit time because Git does not record their creation time.
 
+Source-change jobsets can set `path_filters` to a list of Git pathspecs. Circus
+runs Nix evaluation when at least one changed path matches. A directory such as
+`packages/hardened-kernel`, an exact file such as
+`packages/hardened-kernel/default.nix`, and globs such as `**/*.nix` are
+accepted. An evaluation with no known base revision always runs. If a recorded
+base revision is unavailable after a force-push, Circus evaluates conservatively
+instead of silently dropping work.
+
 ### Evaluations
 
 An evaluation runs Nix evaluation for a jobset and creates builds. Users browse
