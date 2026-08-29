@@ -1235,7 +1235,7 @@ impl MarkStartedNotifiedStmt {
 pub struct RequeueStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn requeue() -> RequeueStmt {
     RequeueStmt(
-        "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, effective_features = NULL WHERE id = $1 AND status = 'running' RETURNING * ), cleared AS ( DELETE FROM build_steps WHERE build_id = $1 AND EXISTS (SELECT 1 FROM bumped) ) SELECT * FROM bumped",
+        "WITH bumped AS ( UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, effective_features = NULL WHERE id = $1 AND status = 'running' RETURNING * ) SELECT * FROM bumped",
         None,
     )
 }
