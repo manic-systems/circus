@@ -5,7 +5,7 @@ use circus_common::{
 };
 
 pub enum ExistingEvaluationClaim {
-  Claimed(Evaluation),
+  Claimed(Box<Evaluation>),
   Completed { build_count: i64 },
   Running,
   Cancelled,
@@ -21,10 +21,9 @@ pub async fn claim_existing(
       Ok(
         repo::evaluations::try_claim_pending(pool, existing.id)
           .await?
-          .map_or(
-            ExistingEvaluationClaim::Running,
-            ExistingEvaluationClaim::Claimed,
-          ),
+          .map_or(ExistingEvaluationClaim::Running, |evaluation| {
+            ExistingEvaluationClaim::Claimed(Box::new(evaluation))
+          }),
       )
     },
     EvaluationStatus::Failed | EvaluationStatus::TimedOut => {
@@ -37,10 +36,9 @@ pub async fn claim_existing(
       Ok(
         repo::evaluations::try_claim_pending(pool, existing.id)
           .await?
-          .map_or(
-            ExistingEvaluationClaim::Running,
-            ExistingEvaluationClaim::Claimed,
-          ),
+          .map_or(ExistingEvaluationClaim::Running, |evaluation| {
+            ExistingEvaluationClaim::Claimed(Box::new(evaluation))
+          }),
       )
     },
     EvaluationStatus::Completed => {
@@ -50,7 +48,7 @@ pub async fn claim_existing(
       if build_count > 0 {
         return Ok(ExistingEvaluationClaim::Completed { build_count });
       }
-      Ok(ExistingEvaluationClaim::Claimed(
+      Ok(ExistingEvaluationClaim::Claimed(Box::new(
         repo::evaluations::update_status(
           pool,
           existing.id,
@@ -58,7 +56,7 @@ pub async fn claim_existing(
           None,
         )
         .await?,
-      ))
+      )))
     },
     EvaluationStatus::Running => Ok(ExistingEvaluationClaim::Running),
     EvaluationStatus::Cancelled => Ok(ExistingEvaluationClaim::Cancelled),

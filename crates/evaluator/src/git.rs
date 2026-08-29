@@ -90,6 +90,21 @@ pub struct DiscoveredRef {
   pub kind:        RefKind,
   pub name:        String,
   pub commit_hash: String,
+  pub ref_time:    i64,
+}
+
+pub fn retain_newest_tag(refs: &mut Vec<DiscoveredRef>) {
+  let newest_tag = refs
+    .iter()
+    .filter(|git_ref| git_ref.kind == RefKind::Tag)
+    .max_by(|a, b| {
+      a.ref_time
+        .cmp(&b.ref_time)
+        .then_with(|| a.name.cmp(&b.name))
+    })
+    .cloned();
+  refs.retain(|git_ref| git_ref.kind == RefKind::Branch);
+  refs.extend(newest_tag);
 }
 
 fn resolve_ref(
@@ -158,6 +173,7 @@ pub fn list_matching_refs(
         kind:        RefKind::Branch,
         name:        name.to_string(),
         commit_hash: commit.id().to_string(),
+        ref_time:    commit.time().seconds(),
       });
     }
   }
@@ -176,10 +192,16 @@ pub fn list_matching_refs(
         continue;
       }
       let commit = reference.peel_to_commit()?;
+      let ref_time = reference
+        .peel_to_tag()
+        .ok()
+        .and_then(|tag| tag.tagger().map(|tagger| tagger.when().seconds()))
+        .unwrap_or_else(|| commit.time().seconds());
       refs.push(DiscoveredRef {
-        kind:        RefKind::Tag,
-        name:        name.to_string(),
+        kind: RefKind::Tag,
+        name: name.to_string(),
         commit_hash: commit.id().to_string(),
+        ref_time,
       });
     }
   }

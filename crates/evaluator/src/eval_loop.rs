@@ -127,7 +127,7 @@ async fn run_cycle(
 
   let mut pending_jobset_ids: std::collections::HashSet<Uuid> =
     std::collections::HashSet::new();
-  let mut pending_tasks: Vec<(Evaluation, ActiveJobset)> = Vec::new();
+  let mut pending_tasks = Vec::new();
 
   for eval in pending {
     let Some(jobset) = active_by_id.get(&eval.jobset_id) else {
@@ -154,7 +154,7 @@ async fn run_cycle(
   }
 
   if !pending_tasks.is_empty() {
-    tracing::info!("Draining {} pending evaluation(s)", pending_tasks.len());
+    tracing::info!(count = pending_tasks.len(), "Draining pending evaluations");
   }
 
   stream::iter(pending_tasks)
@@ -181,7 +181,7 @@ async fn run_cycle(
           );
 
           let msg = e.to_string();
-          if let Err(mark_err) = repo::evaluations::update_status(
+          if let Err(mark_err) = repo::evaluations::finish_running(
             pool,
             eval.id,
             EvaluationStatus::Failed,
@@ -579,6 +579,305 @@ async fn watch_evaluation_cancellation(
   }
 }
 
+async fn evaluate_matching_refs(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  config: &EvaluatorConfig,
+  notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
+  nix_timeout: Duration,
+  git_timeout: Duration,
+) -> color_eyre::Result<()> {
+  let branch_pattern = jobset.branch_pattern.clone();
+  let tag_pattern = jobset.tag_pattern.clone();
+  let discover_url = jobset.repository_url.clone();
+  let discover_work_dir = config.work_dir.clone();
+  let discover_project_name = jobset.project_name.clone();
+  let mut refs = tokio::time::timeout(
+    git_timeout,
+    tokio::task::spawn_blocking(move || {
+      crate::git::list_matching_refs(
+        &discover_url,
+        &discover_work_dir,
+        &discover_project_name,
+        branch_pattern.as_deref(),
+        tag_pattern.as_deref(),
+      )
+    }),
+  )
+  .await
+  .map_err(|_| {
+    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
+  })???;
+
+  if jobset.only_build_latest {
+    crate::git::retain_newest_tag(&mut refs);
+  }
+
+  tracing::info!(
+    jobset = %jobset.name,
+    refs = refs.len(),
+    "Discovered matching repository refs"
+  );
+
+  for git_ref in refs {
+    let create_eval = CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    git_ref.commit_hash.clone(),
+      pr_number:      None,
+      pr_head_branch: match git_ref.kind {
+        crate::git::RefKind::Branch => Some(git_ref.name.clone()),
+        crate::git::RefKind::Tag => None,
+      },
+      pr_base_branch: None,
+      pr_action:      match git_ref.kind {
+        crate::git::RefKind::Branch => None,
+        crate::git::RefKind::Tag => Some(format!("tag:{}", git_ref.name)),
+      },
+    };
+    let source_scope = match git_ref.kind {
+      crate::git::RefKind::Branch => format!("branch:{}", git_ref.name),
+      crate::git::RefKind::Tag => "tags".to_string(),
+    };
+
+    match repo::evaluations::enqueue_source(
+      pool,
+      create_eval,
+      &source_scope,
+      repo::evaluations::SourceOrder::Unchecked,
+    )
+    .await
+    {
+      Ok(eval) => {
+        evaluate_pending_eval(
+          pool,
+          &eval,
+          jobset,
+          config,
+          notifications_config,
+          notification_secret_key,
+          nix_timeout,
+          git_timeout,
+        )
+        .await?;
+      },
+      Err(CiError::Conflict(_)) => {
+        tracing::debug!(
+          jobset = %jobset.name,
+          commit = %git_ref.commit_hash,
+          "Evaluation already exists for matched ref"
+        );
+      },
+      Err(e) => return Err(color_eyre::eyre::eyre!(e)),
+    }
+  }
+
+  repo::jobsets::update_last_checked(pool, jobset.id).await?;
+  Ok(())
+}
+
+async fn create_or_claim_evaluation(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  commit_hash: &str,
+  create_eval: CreateEvaluation,
+) -> color_eyre::Result<Option<Evaluation>> {
+  let result = if jobset.trigger_mode == JobsetTriggerMode::Interval {
+    repo::evaluations::create_interval(pool, create_eval).await
+  } else {
+    let source_scope =
+      format!("branch:{}", jobset.branch.as_deref().unwrap_or("HEAD"));
+    repo::evaluations::create_running_source_change(
+      pool,
+      create_eval,
+      &source_scope,
+    )
+    .await
+  };
+
+  match result {
+    Ok(eval) => Ok(Some(eval)),
+    Err(CiError::Conflict(_)) => {
+      tracing::info!(
+        jobset = %jobset.name,
+        commit = commit_hash,
+        "Evaluation already exists (conflict), fetching existing record"
+      );
+      let existing = repo::evaluations::get_by_jobset_and_commit(
+        pool,
+        jobset.id,
+        commit_hash,
+      )
+      .await?
+      .ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+          "Evaluation conflict but not found: {}/{}",
+          jobset.id,
+          commit_hash
+        )
+      })?;
+
+      match claim_existing(pool, existing).await? {
+        ExistingEvaluationClaim::Claimed(eval) => Ok(Some(*eval)),
+        ExistingEvaluationClaim::Completed { build_count } => {
+          info!(
+            "Evaluation already completed with {} builds, skipping nix \
+             evaluation jobset={} commit={}",
+            build_count, jobset.name, commit_hash
+          );
+          if let Err(e) =
+            repo::jobsets::update_last_checked(pool, jobset.id).await
+          {
+            tracing::warn!(
+              jobset = %jobset.name,
+              "Failed to update last_checked_at: {e}"
+            );
+          }
+          Ok(None)
+        },
+        ExistingEvaluationClaim::Running => {
+          tracing::info!(
+            jobset = %jobset.name,
+            commit = commit_hash,
+            "Evaluation is already running, skipping duplicate poll"
+          );
+          if let Err(e) =
+            repo::jobsets::update_last_checked(pool, jobset.id).await
+          {
+            tracing::warn!(jobset = %jobset.name, "Failed to update last_checked_at: {e}");
+          }
+          Ok(None)
+        },
+        ExistingEvaluationClaim::Cancelled => {
+          tracing::info!(
+            jobset = %jobset.name,
+            commit = commit_hash,
+            "Evaluation was cancelled, skipping duplicate poll"
+          );
+          Ok(None)
+        },
+      }
+    },
+    Err(e) => {
+      Err(color_eyre::eyre::eyre!(e)).with_context(|| {
+        format!("failed to create evaluation for jobset {}", jobset.name)
+      })
+    },
+  }
+}
+
+async fn evaluate_single_ref(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  config: &EvaluatorConfig,
+  notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
+  nix_timeout: Duration,
+  git_timeout: Duration,
+) -> color_eyre::Result<()> {
+  let url = jobset.repository_url.clone();
+  let work_dir = config.work_dir.clone();
+  let project_name = jobset.project_name.clone();
+  let branch = jobset.branch.clone();
+  let (repo_path, commit_hash) = tokio::time::timeout(
+    git_timeout,
+    tokio::task::spawn_blocking(move || {
+      crate::git::clone_or_fetch(
+        &url,
+        &work_dir,
+        &project_name,
+        branch.as_deref(),
+      )
+    }),
+  )
+  .await
+  .map_err(|_| {
+    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
+  })???;
+
+  let inputs = repo::jobset_inputs::list_for_jobset(pool, jobset.id)
+    .await
+    .unwrap_or_default();
+  let inputs_hash = compute_inputs_hash(&commit_hash, &inputs);
+
+  if jobset.trigger_mode == JobsetTriggerMode::SourceChange
+    && let Ok(Some(cached)) =
+      repo::evaluations::get_by_inputs_hash(pool, jobset.id, &inputs_hash).await
+  {
+    tracing::debug!(
+      jobset = %jobset.name,
+      commit = %commit_hash,
+      cached_eval = %cached.id,
+      "Inputs unchanged (hash: {}), skipping evaluation",
+      &inputs_hash[..16],
+    );
+    repo::jobsets::update_last_checked(pool, jobset.id).await?;
+    return Ok(());
+  }
+
+  tracing::info!(
+    jobset = %jobset.name,
+    commit = %commit_hash,
+    "Starting evaluation"
+  );
+  let Some(eval) =
+    create_or_claim_evaluation(pool, jobset, &commit_hash, CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    commit_hash.clone(),
+      pr_number:      None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action:      None,
+    })
+    .await?
+  else {
+    return Ok(());
+  };
+
+  if let Err(e) =
+    repo::evaluations::set_inputs_hash(pool, eval.id, &inputs_hash).await
+  {
+    tracing::warn!(eval_id = %eval.id, "Failed to set evaluation inputs hash: {e}");
+  }
+
+  sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
+  run_nix_and_record_builds(
+    pool,
+    jobset,
+    &eval,
+    &repo_path,
+    &inputs,
+    config,
+    notifications_config,
+    notification_secret_key,
+    nix_timeout,
+  )
+  .await?;
+
+  if let Err(e) = repo::jobsets::update_last_checked(pool, jobset.id).await {
+    tracing::warn!(
+      jobset = %jobset.name,
+      "Failed to update last_checked_at: {e}"
+    );
+  }
+
+  if jobset.state == JobsetState::OneShot {
+    tracing::info!(
+      jobset = %jobset.name,
+      "One-shot evaluation complete, disabling jobset"
+    );
+    if let Err(e) = repo::jobsets::mark_one_shot_complete(pool, jobset.id).await
+    {
+      tracing::error!(
+        jobset = %jobset.name,
+        "Failed to mark one-shot complete: {e}"
+      );
+    }
+  }
+
+  Ok(())
+}
+
 async fn evaluate_jobset(
   pool: &PgPool,
   jobset: &circus_common::models::ActiveJobset,
@@ -599,275 +898,36 @@ async fn evaluate_jobset(
     return Ok(());
   }
 
-  let url = jobset.repository_url.clone();
-  let work_dir = config.work_dir.clone();
-  let project_name = jobset.project_name.clone();
-  let branch = jobset.branch.clone();
-
   tracing::info!(
       jobset = %jobset.name,
-      project = %project_name,
+      project = %jobset.project_name,
       "Starting evaluation cycle"
   );
 
-  log_disk_space(&work_dir, &jobset.name);
+  log_disk_space(&config.work_dir, &jobset.name);
 
   if jobset.branch_pattern.is_some() || jobset.tag_pattern.is_some() {
-    let branch_pattern = jobset.branch_pattern.clone();
-    let tag_pattern = jobset.tag_pattern.clone();
-    let discover_url = url.clone();
-    let discover_work_dir = work_dir.clone();
-    let discover_project_name = project_name.clone();
-    let refs = tokio::time::timeout(
+    return evaluate_matching_refs(
+      pool,
+      jobset,
+      config,
+      notifications_config,
+      notification_secret_key,
+      nix_timeout,
       git_timeout,
-      tokio::task::spawn_blocking(move || {
-        crate::git::list_matching_refs(
-          &discover_url,
-          &discover_work_dir,
-          &discover_project_name,
-          branch_pattern.as_deref(),
-          tag_pattern.as_deref(),
-        )
-      }),
     )
-    .await
-    .map_err(|_| {
-      color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
-    })???;
-
-    tracing::info!(
-      jobset = %jobset.name,
-      refs = refs.len(),
-      "Discovered matching repository refs"
-    );
-
-    for git_ref in refs {
-      let create_eval = CreateEvaluation {
-        jobset_id:      jobset.id,
-        commit_hash:    git_ref.commit_hash.clone(),
-        pr_number:      None,
-        pr_head_branch: match git_ref.kind {
-          crate::git::RefKind::Branch => Some(git_ref.name.clone()),
-          crate::git::RefKind::Tag => None,
-        },
-        pr_base_branch: None,
-        pr_action:      match git_ref.kind {
-          crate::git::RefKind::Branch => None,
-          crate::git::RefKind::Tag => Some(format!("tag:{}", git_ref.name)),
-        },
-      };
-
-      match repo::evaluations::create(pool, create_eval).await {
-        Ok(eval) => {
-          evaluate_pending_eval(
-            pool,
-            &eval,
-            jobset,
-            config,
-            notifications_config,
-            notification_secret_key,
-            nix_timeout,
-            git_timeout,
-          )
-          .await?;
-        },
-        Err(CiError::Conflict(_)) => {
-          tracing::debug!(
-            jobset = %jobset.name,
-            commit = %git_ref.commit_hash,
-            "Evaluation already exists for matched ref"
-          );
-        },
-        Err(e) => return Err(color_eyre::eyre::eyre!(e)),
-      }
-    }
-
-    repo::jobsets::update_last_checked(pool, jobset.id).await?;
-    return Ok(());
+    .await;
   }
-
-  // Clone/fetch in a blocking task (git2 is sync) with timeout
-  let (repo_path, commit_hash) = tokio::time::timeout(
-    git_timeout,
-    tokio::task::spawn_blocking(move || {
-      crate::git::clone_or_fetch(
-        &url,
-        &work_dir,
-        &project_name,
-        branch.as_deref(),
-      )
-    }),
-  )
-  .await
-  .map_err(|_| {
-    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
-  })???;
-
-  // Query jobset inputs
-  let inputs = repo::jobset_inputs::list_for_jobset(pool, jobset.id)
-    .await
-    .unwrap_or_default();
-
-  // Compute inputs hash for eval caching (commit + all input values/revisions)
-  let inputs_hash = compute_inputs_hash(&commit_hash, &inputs);
-
-  // Source-change jobsets only rebuild when source/input state changes.
-  // Interval jobsets intentionally create a fresh run every due tick.
-  if jobset.trigger_mode == JobsetTriggerMode::SourceChange
-    && let Ok(Some(cached)) =
-      repo::evaluations::get_by_inputs_hash(pool, jobset.id, &inputs_hash).await
-  {
-    tracing::debug!(
-        jobset = %jobset.name,
-        commit = %commit_hash,
-        cached_eval = %cached.id,
-        "Inputs unchanged (hash: {}), skipping evaluation",
-        &inputs_hash[..16],
-    );
-    repo::jobsets::update_last_checked(pool, jobset.id).await?;
-    return Ok(());
-  }
-
-  tracing::info!(
-      jobset = %jobset.name,
-      commit = %commit_hash,
-      "Starting evaluation"
-  );
-
-  // Create evaluation record. If it already exists (race condition), fetch the
-  // existing one and continue. Only update status if it's still pending.
-  let create_eval = CreateEvaluation {
-    jobset_id:      jobset.id,
-    commit_hash:    commit_hash.clone(),
-    pr_number:      None,
-    pr_head_branch: None,
-    pr_base_branch: None,
-    pr_action:      None,
-  };
-
-  let eval_result = if jobset.trigger_mode == JobsetTriggerMode::Interval {
-    repo::evaluations::create_interval(pool, create_eval).await
-  } else {
-    repo::evaluations::create_running_source_change(pool, create_eval).await
-  };
-
-  let eval = match eval_result {
-    Ok(eval) => eval,
-    Err(CiError::Conflict(_)) => {
-      tracing::info!(
-          jobset = %jobset.name,
-          commit = %commit_hash,
-          "Evaluation already exists (conflict), fetching existing record"
-      );
-      let existing = repo::evaluations::get_by_jobset_and_commit(
-        pool,
-        jobset.id,
-        &commit_hash,
-      )
-      .await?
-      .ok_or_else(|| {
-        color_eyre::eyre::eyre!(
-          "Evaluation conflict but not found: {}/{}",
-          jobset.id,
-          commit_hash
-        )
-      })?;
-
-      match claim_existing(pool, existing).await? {
-        ExistingEvaluationClaim::Claimed(eval) => eval,
-        ExistingEvaluationClaim::Completed { build_count } => {
-          info!(
-            "Evaluation already completed with {} builds, skipping nix \
-             evaluation jobset={} commit={}",
-            build_count, jobset.name, commit_hash
-          );
-          if let Err(e) =
-            repo::jobsets::update_last_checked(pool, jobset.id).await
-          {
-            tracing::warn!(
-              jobset = %jobset.name,
-              "Failed to update last_checked_at: {e}"
-            );
-          }
-          return Ok(());
-        },
-        ExistingEvaluationClaim::Running => {
-          tracing::info!(
-            jobset = %jobset.name,
-            commit = %commit_hash,
-            "Evaluation is already running, skipping duplicate poll"
-          );
-          if let Err(e) =
-            repo::jobsets::update_last_checked(pool, jobset.id).await
-          {
-            tracing::warn!(jobset = %jobset.name, "Failed to update last_checked_at: {e}");
-          }
-          return Ok(());
-        },
-        ExistingEvaluationClaim::Cancelled => {
-          tracing::info!(
-            jobset = %jobset.name,
-            commit = %commit_hash,
-            "Evaluation was cancelled, skipping duplicate poll"
-          );
-          return Ok(());
-        },
-      }
-    },
-    Err(e) => {
-      return Err(color_eyre::eyre::eyre!(e)).with_context(|| {
-        format!("failed to create evaluation for jobset {}", jobset.name)
-      });
-    },
-  };
-
-  // Set inputs hash (only needed for new evaluations, not existing ones)
-  if let Err(e) =
-    repo::evaluations::set_inputs_hash(pool, eval.id, &inputs_hash).await
-  {
-    tracing::warn!(eval_id = %eval.id, "Failed to set evaluation inputs hash: {e}");
-  }
-
-  // Sync any jobsets declared in the repo's .circus.toml
-  sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
-
-  run_nix_and_record_builds(
+  evaluate_single_ref(
     pool,
     jobset,
-    &eval,
-    &repo_path,
-    &inputs,
     config,
     notifications_config,
     notification_secret_key,
     nix_timeout,
+    git_timeout,
   )
-  .await?;
-
-  // Update last_checked_at timestamp for per-jobset interval tracking
-  if let Err(e) = repo::jobsets::update_last_checked(pool, jobset.id).await {
-    tracing::warn!(
-      jobset = %jobset.name,
-      "Failed to update last_checked_at: {e}"
-    );
-  }
-
-  // Mark one-shot jobsets as complete (disabled) after evaluation
-  if jobset.state == JobsetState::OneShot {
-    tracing::info!(
-      jobset = %jobset.name,
-      "One-shot evaluation complete, disabling jobset"
-    );
-    if let Err(e) = repo::jobsets::mark_one_shot_complete(pool, jobset.id).await
-    {
-      tracing::error!(
-        jobset = %jobset.name,
-        "Failed to mark one-shot complete: {e}"
-      );
-    }
-  }
-
-  Ok(())
+  .await
 }
 
 /// Read the derivation's `requiredSystemFeatures` via `nix derivation show`.
@@ -935,6 +995,7 @@ async fn sync_repo_declarative_config(
       state,
       keep_nr: js.keep_nr,
       systems: js.systems.clone(),
+      only_build_latest: Some(js.only_build_latest),
     };
 
     match repo::jobsets::upsert(pool, input).await {
@@ -1030,6 +1091,7 @@ mod tests {
   use circus_common::models::{EvaluationTriggerKind, JobsetTriggerMode};
 
   use super::accepts_pending_evaluation;
+  use crate::git::{DiscoveredRef, RefKind, retain_newest_tag};
 
   #[test]
   fn interval_restarts_are_accepted_by_pending_queue() {
@@ -1041,5 +1103,35 @@ mod tests {
       JobsetTriggerMode::Interval,
       EvaluationTriggerKind::Manual,
     ));
+  }
+
+  #[test]
+  fn latest_only_keeps_each_branch_and_the_newest_tag() {
+    let mut refs = vec![
+      DiscoveredRef {
+        kind:        RefKind::Tag,
+        name:        "v1".into(),
+        commit_hash: "old".into(),
+        ref_time:    1,
+      },
+      DiscoveredRef {
+        kind:        RefKind::Branch,
+        name:        "main".into(),
+        commit_hash: "main".into(),
+        ref_time:    1,
+      },
+      DiscoveredRef {
+        kind:        RefKind::Tag,
+        name:        "v2".into(),
+        commit_hash: "new".into(),
+        ref_time:    2,
+      },
+    ];
+
+    retain_newest_tag(&mut refs);
+
+    assert_eq!(refs.len(), 2);
+    assert!(refs.iter().any(|git_ref| git_ref.name == "main"));
+    assert!(refs.iter().any(|git_ref| git_ref.name == "v2"));
   }
 }

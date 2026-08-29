@@ -634,6 +634,7 @@ mod tests {
       last_checked_at:   None,
       keep_nr:           3,
       systems:           None,
+      only_build_latest: false,
     }
   }
 
@@ -655,6 +656,8 @@ mod tests {
       pr_head_branch: pr_head_branch.map(str::to_owned),
       pr_base_branch: pr_head_branch.map(|_| "main".to_owned()),
       pr_action: None,
+      source_scope: None,
+      superseded_by: None,
     }
   }
 

@@ -2,7 +2,7 @@
 //! Uses git2 to create a temporary repository, then exercises `clone_or_fetch`.
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "Fine in tests")]
 
-use git2::{Repository, Signature};
+use git2::{Repository, Signature, Time};
 use tempfile::TempDir;
 
 #[test]
@@ -148,4 +148,61 @@ fn test_clone_invalid_url_returns_error() {
     None,
   );
   assert!(result.is_err());
+}
+
+#[test]
+fn newest_annotated_tag_uses_tagger_time() {
+  let upstream_dir = TempDir::new().unwrap();
+  let work_dir = TempDir::new().unwrap();
+  let upstream = Repository::init(upstream_dir.path()).unwrap();
+  let old_sig =
+    Signature::new("Test", "test@example.com", &Time::new(1_000, 0)).unwrap();
+  let new_sig =
+    Signature::new("Test", "test@example.com", &Time::new(2_000, 0)).unwrap();
+  let tree_id = upstream.index().unwrap().write_tree().unwrap();
+  let tree = upstream.find_tree(tree_id).unwrap();
+  let old_id = upstream
+    .commit(Some("HEAD"), &old_sig, &old_sig, "old", &tree, &[])
+    .unwrap();
+  let old = upstream.find_commit(old_id).unwrap();
+  let new_id = upstream
+    .commit(Some("HEAD"), &new_sig, &new_sig, "new", &tree, &[&old])
+    .unwrap();
+  let new = upstream.find_commit(new_id).unwrap();
+  let recent_tagger =
+    Signature::new("Test", "test@example.com", &Time::new(3_000, 0)).unwrap();
+  let old_tagger =
+    Signature::new("Test", "test@example.com", &Time::new(1_500, 0)).unwrap();
+  upstream
+    .tag(
+      "recent-tag",
+      old.as_object(),
+      &recent_tagger,
+      "recent tag on old commit",
+      false,
+    )
+    .unwrap();
+  upstream
+    .tag(
+      "old-tag",
+      new.as_object(),
+      &old_tagger,
+      "old tag on new commit",
+      false,
+    )
+    .unwrap();
+
+  let url = format!("file://{}", upstream_dir.path().display());
+  let mut refs = circus_evaluator::git::list_matching_refs(
+    &url,
+    work_dir.path(),
+    "tag-project",
+    None,
+    Some("*"),
+  )
+  .unwrap();
+  circus_evaluator::git::retain_newest_tag(&mut refs);
+
+  assert_eq!(refs.len(), 1);
+  assert_eq!(refs[0].name, "recent-tag");
 }
