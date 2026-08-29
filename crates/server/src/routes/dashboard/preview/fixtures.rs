@@ -59,16 +59,17 @@ pub(super) const fn permissions() -> UiPermissions {
 
 pub(super) fn project_fixture() -> Project {
   Project {
-    id:                    id(1),
-    name:                  "circus".into(),
-    description:           Some("Nix-native CI control plane".into()),
-    repository_url:        "https://github.com/manic-systems/circus".into(),
-    cache_enabled:         true,
-    cache_url:             Some("https://cache.example.invalid".into()),
-    cache_upstreams:       BinaryCacheUpstreams::default(),
-    managed_declaratively: false,
-    created_at:            Utc::now() - Duration::days(30),
-    updated_at:            Utc::now() - Duration::minutes(5),
+    id:                     id(1),
+    name:                   "circus".into(),
+    description:            Some("Nix-native CI control plane".into()),
+    repository_url:         "https://github.com/manic-systems/circus".into(),
+    cache_enabled:          true,
+    cache_url:              Some("https://cache.example.invalid".into()),
+    cache_upstreams:        BinaryCacheUpstreams::default(),
+    managed_declaratively:  false,
+    allow_runtime_mutation: None,
+    created_at:             Utc::now() - Duration::days(30),
+    updated_at:             Utc::now() - Duration::minutes(5),
   }
 }
 

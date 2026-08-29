@@ -1,4 +1,4 @@
---: ProjectQuickSearchRow(description?, cache_url?)
+--: ProjectQuickSearchRow(description?, cache_url?, allow_runtime_mutation?)
 --: BuildQuickSearchRow(started_at?, completed_at?, log_path?, build_output_path?, error_message?, system?, notification_pending_since?, outputs?, constituents?, builder_id?, agent_machine_id?, fod_hash?, meta_description?, meta_license?, meta_homepage?, meta_maintainers?, started_notified_at?, effective_features?)
 
 --! quick_projects : ProjectQuickSearchRow

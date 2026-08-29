@@ -572,28 +572,30 @@ const fn default_speed_factor() -> i32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclarativeProject {
-  pub name:            String,
-  pub repository_url:  String,
-  pub description:     Option<String>,
+  pub name:                   String,
+  pub repository_url:         String,
+  pub description:            Option<String>,
+  /// Override the global declarative runtime-mutation policy for this project.
+  pub allow_runtime_mutation: Option<bool>,
   #[serde(default = "default_true")]
-  pub cache_enabled:   bool,
-  pub cache_url:       Option<String>,
+  pub cache_enabled:          bool,
+  pub cache_url:              Option<String>,
   #[serde(default)]
-  pub cache_upstreams: Vec<BinaryCacheUpstream>,
+  pub cache_upstreams:        Vec<BinaryCacheUpstream>,
   #[serde(default)]
-  pub jobsets:         Vec<DeclarativeJobset>,
+  pub jobsets:                Vec<DeclarativeJobset>,
   /// Notification configurations for this project
   #[serde(default)]
-  pub notifications:   Vec<DeclarativeNotification>,
+  pub notifications:          Vec<DeclarativeNotification>,
   /// Webhook configurations for this project
   #[serde(default)]
-  pub webhooks:        Vec<DeclarativeWebhook>,
+  pub webhooks:               Vec<DeclarativeWebhook>,
   /// Release channels for this project
   #[serde(default)]
-  pub channels:        Vec<DeclarativeChannel>,
+  pub channels:               Vec<DeclarativeChannel>,
   /// Project members with their roles
   #[serde(default)]
-  pub members:         Vec<DeclarativeProjectMember>,
+  pub members:                Vec<DeclarativeProjectMember>,
 }
 
 /// Declarative notification configuration.

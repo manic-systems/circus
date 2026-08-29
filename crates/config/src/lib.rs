@@ -101,6 +101,7 @@ mod tests {
             name = "my-project"
             repository_url = "https://github.com/test/repo"
             description = "Test project"
+            allow_runtime_mutation = true
 
             [[projects.jobsets]]
             name = "packages"
@@ -118,6 +119,7 @@ mod tests {
     let config: DeclarativeConfig = toml::from_str(toml_str).unwrap();
     assert_eq!(config.projects.len(), 1);
     assert_eq!(config.projects[0].name, "my-project");
+    assert_eq!(config.projects[0].allow_runtime_mutation, Some(true));
     assert_eq!(config.projects[0].jobsets.len(), 1);
     assert_eq!(config.projects[0].jobsets[0].name, "packages");
     assert!(config.projects[0].jobsets[0].enabled); // default true
@@ -164,13 +166,14 @@ mod tests {
     let config = DeclarativeConfig {
       allow_runtime_mutation: false,
       projects:               vec![DeclarativeProject {
-        name:            "test".to_string(),
-        repository_url:  "https://example.com/repo".to_string(),
-        description:     Some("desc".to_string()),
-        cache_enabled:   true,
-        cache_url:       None,
-        cache_upstreams: Vec::new(),
-        jobsets:         vec![DeclarativeJobset {
+        name:                   "test".to_string(),
+        repository_url:         "https://example.com/repo".to_string(),
+        description:            Some("desc".to_string()),
+        allow_runtime_mutation: None,
+        cache_enabled:          true,
+        cache_url:              None,
+        cache_upstreams:        Vec::new(),
+        jobsets:                vec![DeclarativeJobset {
           name:              "checks".to_string(),
           nix_expression:    "checks".to_string(),
           enabled:           true,
@@ -188,10 +191,10 @@ mod tests {
           path_filters:      Vec::new(),
           inputs:            vec![],
         }],
-        notifications:   vec![],
-        webhooks:        vec![],
-        channels:        vec![],
-        members:         vec![],
+        notifications:          vec![],
+        webhooks:               vec![],
+        channels:               vec![],
+        members:                vec![],
       }],
       api_keys:               vec![DeclarativeApiKey {
         name:     "test-key".to_string(),

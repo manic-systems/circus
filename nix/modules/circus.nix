@@ -72,6 +72,12 @@
         description = "Upstream caches this project's cache may fall through to.";
       };
 
+      allow_runtime_mutation = mkOption {
+        type = nullOr bool;
+        default = null;
+        description = "Override the global declarative runtime-mutation policy for this project.";
+      };
+
       jobsets = mkOption {
         type = listOf jobsetSettings;
         default = [];

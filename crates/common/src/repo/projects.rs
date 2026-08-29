@@ -13,16 +13,17 @@ impl TryFrom<q::ProjectRow> for Project {
 
   fn try_from(r: q::ProjectRow) -> Result<Self> {
     Ok(Self {
-      id:                    r.id,
-      name:                  r.name,
-      description:           r.description,
-      repository_url:        r.repository_url,
-      cache_enabled:         r.cache_enabled,
-      cache_url:             r.cache_url,
-      cache_upstreams:       serde_json::from_value(r.cache_upstreams)?,
-      managed_declaratively: r.managed_declaratively,
-      created_at:            r.created_at,
-      updated_at:            r.updated_at,
+      id:                     r.id,
+      name:                   r.name,
+      description:            r.description,
+      repository_url:         r.repository_url,
+      cache_enabled:          r.cache_enabled,
+      cache_url:              r.cache_url,
+      cache_upstreams:        serde_json::from_value(r.cache_upstreams)?,
+      managed_declaratively:  r.managed_declaratively,
+      allow_runtime_mutation: r.allow_runtime_mutation,
+      created_at:             r.created_at,
+      updated_at:             r.updated_at,
     })
   }
 }
@@ -200,6 +201,7 @@ pub async fn upsert(pool: &PgPool, input: CreateProject) -> Result<Project> {
 pub async fn upsert_declarative(
   pool: &PgPool,
   input: CreateProject,
+  allow_runtime_mutation: Option<bool>,
 ) -> Result<Project> {
   input.validate().map_err(CiError::Validation)?;
   let cache_upstreams = upstreams_to_value(&input.cache_upstreams)?;
@@ -213,13 +215,14 @@ pub async fn upsert_declarative(
       &input.cache_enabled,
       &input.cache_url,
       &cache_upstreams,
+      &allow_runtime_mutation,
     )
     .one()
     .await?;
   Project::try_from(row)
 }
 
-/// Delete declaratively managed projects not present in `names`.
+/// Delete immutable declarative projects not present in `names`.
 ///
 /// # Errors
 ///
@@ -227,9 +230,14 @@ pub async fn upsert_declarative(
 pub async fn delete_declarative_except(
   pool: &PgPool,
   names: &[&str],
+  allow_runtime_mutation_default: bool,
 ) -> Result<u64> {
   let client = pool.get().await?;
-  Ok(q::delete_declarative_except().bind(&client, &names).await?)
+  Ok(
+    q::delete_declarative_except()
+      .bind(&client, &allow_runtime_mutation_default, &names)
+      .await?,
+  )
 }
 
 /// List projects that have no active jobsets.

@@ -64,19 +64,24 @@ const fn should_reconcile(authoritative: bool, is_empty: bool) -> bool {
 async fn sync_declarative_project(
   pool: &PgPool,
   decl_project: &DeclarativeProject,
-  authoritative: bool,
+  allow_runtime_mutation: bool,
   webhook_secret_encryption_key: Option<&str>,
 ) -> Result<()> {
-  let project = repo::projects::upsert_declarative(pool, CreateProject {
-    name:            decl_project.name.clone(),
-    repository_url:  decl_project.repository_url.clone(),
-    description:     decl_project.description.clone(),
-    cache_enabled:   decl_project.cache_enabled,
-    cache_url:       decl_project.cache_url.clone(),
-    cache_upstreams: crate::models::BinaryCacheUpstreams(
-      decl_project.cache_upstreams.clone(),
-    ),
-  })
+  let authoritative = !allow_runtime_mutation;
+  let project = repo::projects::upsert_declarative(
+    pool,
+    CreateProject {
+      name:            decl_project.name.clone(),
+      repository_url:  decl_project.repository_url.clone(),
+      description:     decl_project.description.clone(),
+      cache_enabled:   decl_project.cache_enabled,
+      cache_url:       decl_project.cache_url.clone(),
+      cache_upstreams: crate::models::BinaryCacheUpstreams(
+        decl_project.cache_upstreams.clone(),
+      ),
+    },
+    decl_project.allow_runtime_mutation,
+  )
   .await?;
 
   tracing::info!(
@@ -174,24 +179,29 @@ async fn sync_declarative_projects(
   config: &DeclarativeConfig,
   webhook_secret_encryption_key: Option<&str>,
 ) -> Result<()> {
-  let authoritative = !config.allow_runtime_mutation;
   for project in &config.projects {
+    let allow_runtime_mutation = project
+      .allow_runtime_mutation
+      .unwrap_or(config.allow_runtime_mutation);
     sync_declarative_project(
       pool,
       project,
-      authoritative,
+      allow_runtime_mutation,
       webhook_secret_encryption_key,
     )
     .await?;
   }
-  if authoritative {
-    let names = config
-      .projects
-      .iter()
-      .map(|project| project.name.as_str())
-      .collect::<Vec<_>>();
-    repo::projects::delete_declarative_except(pool, &names).await?;
-  }
+  let names = config
+    .projects
+    .iter()
+    .map(|project| project.name.as_str())
+    .collect::<Vec<_>>();
+  repo::projects::delete_declarative_except(
+    pool,
+    &names,
+    config.allow_runtime_mutation,
+  )
+  .await?;
   Ok(())
 }
 
@@ -204,9 +214,10 @@ async fn sync_project_members(
     .into_iter()
     .map(|user| (user.username, user.id))
     .collect::<HashMap<_, _>>();
-  let authoritative = !config.allow_runtime_mutation;
-
   for declaration in &config.projects {
+    let authoritative = !declaration
+      .allow_runtime_mutation
+      .unwrap_or(config.allow_runtime_mutation);
     if !should_reconcile(authoritative, declaration.members.is_empty()) {
       continue;
     }
@@ -385,15 +396,6 @@ pub async fn run(
   config: &DeclarativeConfig,
   webhook_secret_encryption_key: Option<&str>,
 ) -> Result<()> {
-  if config.allow_runtime_mutation
-    && config.projects.is_empty()
-    && config.api_keys.is_empty()
-    && config.users.is_empty()
-    && config.remote_builders.is_empty()
-  {
-    return Ok(());
-  }
-
   let n_projects = config.projects.len();
   let n_jobsets: usize = config.projects.iter().map(|p| p.jobsets.len()).sum();
   let n_keys = config.api_keys.len();

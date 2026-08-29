@@ -1939,12 +1939,16 @@ async fn test_declarative_projects_are_reconciled_authoritatively() {
   let suffix = uuid::Uuid::new_v4();
   let kept_name = format!("decl-kept-{suffix}");
   let removed_name = format!("decl-removed-{suffix}");
+  let mutable_name = format!("decl-mutable-{suffix}");
   let unmanaged = create_test_project(&pool, "unmanaged").await;
   let initial: DeclarativeConfig = toml::from_str(&format!(
     r#"
+      allow_runtime_mutation = true
+
       [[projects]]
       name = "{kept_name}"
       repository_url = "https://example.com/kept"
+      allow_runtime_mutation = false
 
       [[projects.jobsets]]
       name = "keep"
@@ -1957,6 +1961,16 @@ async fn test_declarative_projects_are_reconciled_authoritatively() {
       [[projects]]
       name = "{removed_name}"
       repository_url = "https://example.com/removed"
+      allow_runtime_mutation = false
+
+      [[projects]]
+      name = "{mutable_name}"
+      repository_url = "https://example.com/mutable"
+      allow_runtime_mutation = true
+
+      [[projects.jobsets]]
+      name = "declared"
+      nix_expression = "packages"
     "#
   ))
   .expect("parse initial declarative config");
@@ -1975,15 +1989,32 @@ async fn test_declarative_projects_are_reconciled_authoritatively() {
       .len(),
     2
   );
+  let mutable = repo::projects::get_by_name(&pool, &mutable_name)
+    .await
+    .expect("get mutable declarative project");
+  assert_eq!(mutable.allow_runtime_mutation, Some(true));
+  create_test_jobset(&pool, mutable.id).await;
 
   let updated: DeclarativeConfig = toml::from_str(&format!(
     r#"
+      allow_runtime_mutation = true
+
       [[projects]]
       name = "{kept_name}"
       repository_url = "https://example.com/kept"
+      allow_runtime_mutation = false
 
       [[projects.jobsets]]
       name = "keep"
+      nix_expression = "packages"
+
+      [[projects]]
+      name = "{mutable_name}"
+      repository_url = "https://example.com/mutable"
+      allow_runtime_mutation = true
+
+      [[projects.jobsets]]
+      name = "declared"
       nix_expression = "packages"
     "#
   ))
@@ -2007,6 +2038,21 @@ async fn test_declarative_projects_are_reconciled_authoritatively() {
       .collect::<Vec<_>>(),
     ["keep"]
   );
+  assert_eq!(
+    repo::jobsets::list_for_project(&pool, mutable.id, 10, 0)
+      .await
+      .expect("list mutable project jobsets")
+      .len(),
+    2
+  );
+
+  let mut omitted = updated.clone();
+  omitted.allow_runtime_mutation = false;
+  omitted.projects.retain(|project| project.name == kept_name);
+  circus_common::bootstrap::run(&pool, &omitted, None)
+    .await
+    .expect("omit mutable declarative project");
+  assert!(repo::projects::get(&pool, mutable.id).await.is_ok());
 
   repo::projects::delete(&pool, kept.id)
     .await
@@ -2014,4 +2060,7 @@ async fn test_declarative_projects_are_reconciled_authoritatively() {
   repo::projects::delete(&pool, unmanaged.id)
     .await
     .expect("delete unmanaged project");
+  repo::projects::delete(&pool, mutable.id)
+    .await
+    .expect("delete mutable declarative project");
 }

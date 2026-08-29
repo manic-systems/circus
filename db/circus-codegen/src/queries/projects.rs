@@ -65,6 +65,12 @@ pub struct UpsertDeclarativeParams<
     pub cache_enabled: bool,
     pub cache_url: Option<T4>,
     pub cache_upstreams: T5,
+    pub allow_runtime_mutation: Option<bool>,
+}
+#[derive(Debug)]
+pub struct DeleteDeclarativeExceptParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T1>> {
+    pub allow_runtime_mutation_default: bool,
+    pub names: T2,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectRow {
@@ -78,6 +84,7 @@ pub struct ProjectRow {
     pub cache_url: Option<String>,
     pub cache_upstreams: serde_json::Value,
     pub managed_declaratively: bool,
+    pub allow_runtime_mutation: Option<bool>,
 }
 pub struct ProjectRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -90,6 +97,7 @@ pub struct ProjectRowBorrowed<'a> {
     pub cache_url: Option<&'a str>,
     pub cache_upstreams: postgres_types::Json<&'a serde_json::value::RawValue>,
     pub managed_declaratively: bool,
+    pub allow_runtime_mutation: Option<bool>,
 }
 impl<'a> From<ProjectRowBorrowed<'a>> for ProjectRow {
     fn from(
@@ -104,6 +112,7 @@ impl<'a> From<ProjectRowBorrowed<'a>> for ProjectRow {
             cache_url,
             cache_upstreams,
             managed_declaratively,
+            allow_runtime_mutation,
         }: ProjectRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -117,6 +126,7 @@ impl<'a> From<ProjectRowBorrowed<'a>> for ProjectRow {
             cache_url: cache_url.map(|v| v.into()),
             cache_upstreams: serde_json::from_str(cache_upstreams.0.get()).unwrap(),
             managed_declaratively,
+            allow_runtime_mutation,
         }
     }
 }
@@ -313,6 +323,7 @@ impl CreateStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -390,6 +401,7 @@ impl GetStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -431,6 +443,7 @@ impl GetByNameStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -476,6 +489,7 @@ impl ListStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -588,6 +602,7 @@ impl UpdateStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -691,6 +706,7 @@ impl UpsertStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -736,7 +752,7 @@ impl<
 pub struct UpsertDeclarativeStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn upsert_declarative() -> UpsertDeclarativeStmt {
     UpsertDeclarativeStmt(
-        "INSERT INTO projects ( name, description, repository_url, cache_enabled, cache_url, cache_upstreams, managed_declaratively ) VALUES ( $1, $2, $3, $4, $5, $6, true ) ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, repository_url = EXCLUDED.repository_url, cache_enabled = EXCLUDED.cache_enabled, cache_url = EXCLUDED.cache_url, cache_upstreams = EXCLUDED.cache_upstreams, managed_declaratively = true RETURNING *",
+        "INSERT INTO projects ( name, description, repository_url, cache_enabled, cache_url, cache_upstreams, managed_declaratively, allow_runtime_mutation ) VALUES ( $1, $2, $3, $4, $5, $6, true, $7 ) ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, repository_url = EXCLUDED.repository_url, cache_enabled = EXCLUDED.cache_enabled, cache_url = EXCLUDED.cache_url, cache_upstreams = EXCLUDED.cache_upstreams, managed_declaratively = true, allow_runtime_mutation = EXCLUDED.allow_runtime_mutation RETURNING *",
         None,
     )
 }
@@ -767,7 +783,8 @@ impl UpsertDeclarativeStmt {
         cache_enabled: &'a bool,
         cache_url: &'a Option<T4>,
         cache_upstreams: &'a T5,
-    ) -> ProjectRowQuery<'c, 'a, 's, C, ProjectRow, 6> {
+        allow_runtime_mutation: &'a Option<bool>,
+    ) -> ProjectRowQuery<'c, 'a, 's, C, ProjectRow, 7> {
         ProjectRowQuery {
             client,
             params: [
@@ -777,6 +794,7 @@ impl UpsertDeclarativeStmt {
                 cache_enabled,
                 cache_url,
                 cache_upstreams,
+                allow_runtime_mutation,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -793,6 +811,7 @@ impl UpsertDeclarativeStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
@@ -815,7 +834,7 @@ impl<
         'a,
         's,
         UpsertDeclarativeParams<T1, T2, T3, T4, T5>,
-        ProjectRowQuery<'c, 'a, 's, C, ProjectRow, 6>,
+        ProjectRowQuery<'c, 'a, 's, C, ProjectRow, 7>,
         C,
     > for UpsertDeclarativeStmt
 {
@@ -823,7 +842,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a UpsertDeclarativeParams<T1, T2, T3, T4, T5>,
-    ) -> ProjectRowQuery<'c, 'a, 's, C, ProjectRow, 6> {
+    ) -> ProjectRowQuery<'c, 'a, 's, C, ProjectRow, 7> {
         self.bind(
             client,
             &params.name,
@@ -832,13 +851,14 @@ impl<
             &params.cache_enabled,
             &params.cache_url,
             &params.cache_upstreams,
+            &params.allow_runtime_mutation,
         )
     }
 }
 pub struct DeleteDeclarativeExceptStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn delete_declarative_except() -> DeleteDeclarativeExceptStmt {
     DeleteDeclarativeExceptStmt(
-        "DELETE FROM projects WHERE managed_declaratively = true AND NOT (name = ANY($1))",
+        "DELETE FROM projects WHERE managed_declaratively = true AND NOT COALESCE(allow_runtime_mutation, $1) AND NOT (name = ANY($2))",
         None,
     )
 }
@@ -860,9 +880,38 @@ impl DeleteDeclarativeExceptStmt {
     >(
         &'s self,
         client: &'c C,
+        allow_runtime_mutation_default: &'a bool,
         names: &'a T2,
     ) -> Result<u64, tokio_postgres::Error> {
-        client.execute(self.0, &[names]).await
+        client
+            .execute(self.0, &[allow_runtime_mutation_default, names])
+            .await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::ArraySql<Item = T1>>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        DeleteDeclarativeExceptParams<T1, T2>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for DeleteDeclarativeExceptStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a DeleteDeclarativeExceptParams<T1, T2>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.allow_runtime_mutation_default,
+            &params.names,
+        ))
     }
 }
 pub struct ListWithoutActiveJobsetsStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -902,6 +951,7 @@ impl ListWithoutActiveJobsetsStmt {
                         cache_url: row.try_get(7)?,
                         cache_upstreams: row.try_get(8)?,
                         managed_declaratively: row.try_get(9)?,
+                        allow_runtime_mutation: row.try_get(10)?,
                     })
                 },
             mapper: |it| ProjectRow::from(it),
