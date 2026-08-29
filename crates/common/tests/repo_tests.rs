@@ -20,6 +20,7 @@ use circus_common::{
 };
 use circus_config::{
   DeclarativeChannel,
+  DeclarativeConfig,
   DeclarativeJobsetInput,
   DeclarativeNotification,
   DeclarativeProjectMember,
@@ -1927,4 +1928,90 @@ async fn test_build_outputs_cascade_delete() {
 
   // Cleanup
   let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_declarative_projects_are_reconciled_authoritatively() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let suffix = uuid::Uuid::new_v4();
+  let kept_name = format!("decl-kept-{suffix}");
+  let removed_name = format!("decl-removed-{suffix}");
+  let unmanaged = create_test_project(&pool, "unmanaged").await;
+  let initial: DeclarativeConfig = toml::from_str(&format!(
+    r#"
+      [[projects]]
+      name = "{kept_name}"
+      repository_url = "https://example.com/kept"
+
+      [[projects.jobsets]]
+      name = "keep"
+      nix_expression = "packages"
+
+      [[projects.jobsets]]
+      name = "remove"
+      nix_expression = "checks"
+
+      [[projects]]
+      name = "{removed_name}"
+      repository_url = "https://example.com/removed"
+    "#
+  ))
+  .expect("parse initial declarative config");
+
+  circus_common::bootstrap::run(&pool, &initial, None)
+    .await
+    .expect("apply initial declarative config");
+  let kept = repo::projects::get_by_name(&pool, &kept_name)
+    .await
+    .expect("get declarative project");
+  assert!(kept.managed_declaratively);
+  assert_eq!(
+    repo::jobsets::list_for_project(&pool, kept.id, 10, 0)
+      .await
+      .expect("list initial jobsets")
+      .len(),
+    2
+  );
+
+  let updated: DeclarativeConfig = toml::from_str(&format!(
+    r#"
+      [[projects]]
+      name = "{kept_name}"
+      repository_url = "https://example.com/kept"
+
+      [[projects.jobsets]]
+      name = "keep"
+      nix_expression = "packages"
+    "#
+  ))
+  .expect("parse updated declarative config");
+  circus_common::bootstrap::run(&pool, &updated, None)
+    .await
+    .expect("reconcile declarative config");
+
+  assert!(
+    repo::projects::get_by_name(&pool, &removed_name)
+      .await
+      .is_err()
+  );
+  assert!(repo::projects::get(&pool, unmanaged.id).await.is_ok());
+  assert_eq!(
+    repo::jobsets::list_for_project(&pool, kept.id, 10, 0)
+      .await
+      .expect("list reconciled jobsets")
+      .iter()
+      .map(|jobset| jobset.name.as_str())
+      .collect::<Vec<_>>(),
+    ["keep"]
+  );
+
+  repo::projects::delete(&pool, kept.id)
+    .await
+    .expect("delete declarative project");
+  repo::projects::delete(&pool, unmanaged.id)
+    .await
+    .expect("delete unmanaged project");
 }

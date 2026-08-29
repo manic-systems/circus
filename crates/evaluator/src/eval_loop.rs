@@ -980,47 +980,51 @@ async fn evaluate_jobset(
   .await
 }
 
-/// Read the derivation's `requiredSystemFeatures` via `nix derivation show`.
-/// Failure returns an empty list, mirroring the SSH path which treats absence
-/// as "no constraint".
-/// This is called both after cloning during a normal evaluation and during the
-/// project-discovery pass for projects that have no active jobsets yet.
+#[derive(serde::Deserialize)]
+struct RepoConfig {
+  #[serde(default)]
+  jobsets: Vec<DeclarativeJobset>,
+}
+
+fn repo_config_path(repo_path: &std::path::Path) -> Option<std::path::PathBuf> {
+  let primary = repo_path.join(".circus.toml");
+  if primary.exists() {
+    return Some(primary);
+  }
+  let alternate = repo_path.join(".circus/config.toml");
+  alternate.exists().then_some(alternate)
+}
+
+fn read_repo_config(repo_path: &std::path::Path) -> Option<RepoConfig> {
+  let path = repo_config_path(repo_path)?;
+  let content = match std::fs::read_to_string(&path) {
+    Ok(content) => content,
+    Err(error) => {
+      tracing::warn!("Failed to read repo config {}: {error}", path.display());
+      return None;
+    },
+  };
+  match toml::from_str(&content) {
+    Ok(config) => Some(config),
+    Err(error) => {
+      tracing::warn!("Failed to parse repo config {}: {error}", path.display());
+      None
+    },
+  }
+}
+
+/// Synchronize jobsets declared in a repository-local Circus configuration.
 async fn sync_repo_declarative_config(
   pool: &PgPool,
   repo_path: &std::path::Path,
   project_id: Uuid,
 ) {
-  #[derive(serde::Deserialize)]
-  struct RepoConfig {
-    #[serde(default)]
-    jobsets: Vec<DeclarativeJobset>,
+  if !project_allows_repo_config(pool, project_id).await {
+    return;
   }
 
-  let config_path = repo_path.join(".circus.toml");
-  let alt_config_path = repo_path.join(".circus/config.toml");
-
-  let path = if config_path.exists() {
-    config_path
-  } else if alt_config_path.exists() {
-    alt_config_path
-  } else {
+  let Some(config) = read_repo_config(repo_path) else {
     return;
-  };
-
-  let content = match std::fs::read_to_string(&path) {
-    Ok(c) => c,
-    Err(e) => {
-      tracing::warn!("Failed to read repo config {}: {e}", path.display());
-      return;
-    },
-  };
-
-  let config: RepoConfig = match toml::from_str(&content) {
-    Ok(c) => c,
-    Err(e) => {
-      tracing::warn!("Failed to parse repo config {}: {e}", path.display());
-      return;
-    },
   };
 
   for js in &config.jobsets {
@@ -1073,6 +1077,16 @@ async fn sync_repo_declarative_config(
         );
       },
     }
+  }
+}
+
+async fn project_allows_repo_config(pool: &PgPool, project_id: Uuid) -> bool {
+  match repo::projects::get(pool, project_id).await {
+    Ok(project) => !project.managed_declaratively,
+    Err(error) => {
+      tracing::warn!(%project_id, "Failed to determine project ownership: {error}");
+      false
+    },
   }
 }
 

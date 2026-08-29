@@ -531,11 +531,13 @@ pub struct S3CacheConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct DeclarativeConfig {
-  pub projects:        Vec<DeclarativeProject>,
-  pub api_keys:        Vec<DeclarativeApiKey>,
-  pub users:           Vec<DeclarativeUser>,
+  /// Allow API and dashboard mutations of declaratively managed projects.
+  pub allow_runtime_mutation: bool,
+  pub projects:               Vec<DeclarativeProject>,
+  pub api_keys:               Vec<DeclarativeApiKey>,
+  pub users:                  Vec<DeclarativeUser>,
   /// Remote builder definitions for distributed builds
-  pub remote_builders: Vec<DeclarativeRemoteBuilder>,
+  pub remote_builders:        Vec<DeclarativeRemoteBuilder>,
 }
 
 /// Declarative remote builder configuration.

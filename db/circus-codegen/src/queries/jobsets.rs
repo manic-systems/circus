@@ -69,6 +69,11 @@ pub struct UpdateParams<
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
+pub struct DeleteExceptParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T1>> {
+    pub project_id: uuid::Uuid,
+    pub names: T2,
+}
+#[derive(Debug)]
 pub struct UpsertParams<
     T1: crate::StringSql,
     T2: crate::StringSql,
@@ -1114,6 +1119,59 @@ impl DeleteStmt {
         id: &'a uuid::Uuid,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[id]).await
+    }
+}
+pub struct DeleteExceptStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_except() -> DeleteExceptStmt {
+    DeleteExceptStmt(
+        "DELETE FROM jobsets WHERE project_id = $1 AND NOT (name = ANY($2))",
+        None,
+    )
+}
+impl DeleteExceptStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::ArraySql<Item = T1>,
+    >(
+        &'s self,
+        client: &'c C,
+        project_id: &'a uuid::Uuid,
+        names: &'a T2,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[project_id, names]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::ArraySql<Item = T1>>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        DeleteExceptParams<T1, T2>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for DeleteExceptStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a DeleteExceptParams<T1, T2>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.project_id, &params.names))
     }
 }
 pub struct UpsertStmt(&'static str, Option<tokio_postgres::Statement>);

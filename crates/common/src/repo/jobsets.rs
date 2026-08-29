@@ -310,6 +310,24 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<()> {
   Ok(())
 }
 
+/// Delete jobsets outside the authoritative declarative set for a project.
+///
+/// # Errors
+///
+/// Returns error if the database operation fails.
+pub async fn delete_except(
+  pool: &PgPool,
+  project_id: Uuid,
+  names: &[&str],
+) -> Result<u64> {
+  let client = pool.get().await?;
+  Ok(
+    q::delete_except()
+      .bind(&client, &project_id, &names)
+      .await?,
+  )
+}
+
 /// Insert or update a jobset by name.
 ///
 /// # Errors

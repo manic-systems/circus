@@ -30,6 +30,11 @@ RETURNING *;
 --! delete
 DELETE FROM jobsets WHERE id = :id;
 
+--! delete_except
+DELETE FROM jobsets
+WHERE project_id = :project_id
+  AND NOT (name = ANY(:names));
+
 --! upsert (branch?, branch_pattern?, tag_pattern?, systems?) : JobsetRow
 INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest, path_filters)
 VALUES (:project_id, :name, :nix_expression, :enabled, :flake_mode, :check_interval, :trigger_mode, :branch, :branch_pattern, :tag_pattern, :scheduling_shares, :state, :keep_nr, :systems, :only_build_latest, :path_filters)

@@ -131,6 +131,11 @@
         type = submodule {
           freeformType = settingsType;
           options = {
+            allow_runtime_mutation = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Allow runtime mutation of declaratively managed projects.";
+            };
             projects = mkOption {
               type = listOf projectSettings;
             };

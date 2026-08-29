@@ -82,8 +82,16 @@ mod tests {
   #[test]
   fn test_declarative_config_default_is_empty() {
     let config = DeclarativeConfig::default();
+    assert!(!config.allow_runtime_mutation);
     assert!(config.projects.is_empty());
     assert!(config.api_keys.is_empty());
+  }
+
+  #[test]
+  fn test_declarative_runtime_mutation_can_be_enabled() {
+    let config: DeclarativeConfig =
+      toml::from_str("allow_runtime_mutation = true").unwrap();
+    assert!(config.allow_runtime_mutation);
   }
 
   #[test]
@@ -154,7 +162,8 @@ mod tests {
   #[test]
   fn test_declarative_config_serialization_roundtrip() {
     let config = DeclarativeConfig {
-      projects:        vec![DeclarativeProject {
+      allow_runtime_mutation: false,
+      projects:               vec![DeclarativeProject {
         name:            "test".to_string(),
         repository_url:  "https://example.com/repo".to_string(),
         description:     Some("desc".to_string()),
@@ -184,14 +193,14 @@ mod tests {
         channels:        vec![],
         members:         vec![],
       }],
-      api_keys:        vec![DeclarativeApiKey {
+      api_keys:               vec![DeclarativeApiKey {
         name:     "test-key".to_string(),
         key:      Some("circus_test".to_string()),
         key_file: None,
         role:     GlobalRole::Admin,
       }],
-      users:           vec![],
-      remote_builders: vec![],
+      users:                  vec![],
+      remote_builders:        vec![],
     };
 
     let json = serde_json::to_string(&config).unwrap();
