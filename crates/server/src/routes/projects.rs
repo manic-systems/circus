@@ -180,6 +180,7 @@ struct CreateJobsetBody {
   state:             Option<circus_common::models::JobsetState>,
   systems:           Option<Vec<String>>,
   only_build_latest: Option<bool>,
+  path_filters:      Option<Vec<String>>,
 }
 
 async fn create_project_jobset(
@@ -205,6 +206,7 @@ async fn create_project_jobset(
     keep_nr: None,
     systems: body.systems,
     only_build_latest: body.only_build_latest,
+    path_filters: body.path_filters,
   };
   input
     .validate()
@@ -316,6 +318,7 @@ async fn setup_project(
       keep_nr:           None,
       systems:           js_input.systems,
       only_build_latest: None,
+      path_filters:      None,
     };
     input
       .validate()

@@ -158,7 +158,8 @@ fn document_value() -> Value {
             "branch_pattern": { "type": ["string", "null"] },
             "tag_pattern":    { "type": ["string", "null"] },
             "systems":        { "type": ["array", "null"], "items": { "type": "string" } },
-            "only_build_latest": { "type": "boolean", "default": false }
+            "only_build_latest": { "type": "boolean", "default": false },
+            "path_filters":      { "type": "array", "items": { "type": "string" }, "default": [] }
           }
         },
         "JobsetInput": {
@@ -184,7 +185,8 @@ fn document_value() -> Value {
             "trigger_kind":    { "type": "string", "enum": ["source_change", "manual", "interval"] },
             "hidden":          { "type": "boolean" },
             "source_scope":    { "type": ["string", "null"] },
-            "superseded_by":   { "type": ["string", "null"], "format": "uuid" }
+            "superseded_by":   { "type": ["string", "null"], "format": "uuid" },
+            "source_base_commit": { "type": ["string", "null"] }
           }
         },
         "Channel": {

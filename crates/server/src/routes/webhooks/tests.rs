@@ -87,6 +87,7 @@ fn test_jobset(
     keep_nr:           3,
     systems:           None,
     only_build_latest: false,
+    path_filters:      Vec::new(),
   }
 }
 

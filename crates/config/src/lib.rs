@@ -99,6 +99,7 @@ mod tests {
             nix_expression = "packages"
             trigger_mode = "source_change"
             only_build_latest = true
+            path_filters = ["packages/**", "flake.nix"]
             systems = ["x86_64-linux"]
 
             [[api_keys]]
@@ -118,6 +119,10 @@ mod tests {
       Some("source_change")
     );
     assert!(config.projects[0].jobsets[0].only_build_latest);
+    assert_eq!(config.projects[0].jobsets[0].path_filters, [
+      "packages/**",
+      "flake.nix"
+    ]);
     assert_eq!(
       config.projects[0].jobsets[0].systems.as_deref(),
       Some(["x86_64-linux".to_string()].as_slice())
@@ -171,6 +176,7 @@ mod tests {
           keep_nr:           None,
           systems:           Some(vec!["x86_64-linux".to_string()]),
           only_build_latest: false,
+          path_filters:      Vec::new(),
           inputs:            vec![],
         }],
         notifications:   vec![],

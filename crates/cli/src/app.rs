@@ -238,6 +238,7 @@ impl CommandRunner {
         flake_mode,
         check_interval,
         only_build_latest,
+        path_filter,
       } => {
         let mut body = Map::new();
         body.insert("name".to_string(), Value::String(name));
@@ -247,6 +248,12 @@ impl CommandRunner {
         insert_optional_bool(&mut body, "flake_mode", flake_mode);
         insert_optional_i32(&mut body, "check_interval", check_interval);
         insert_optional_bool(&mut body, "only_build_latest", only_build_latest);
+        if let Some(path_filters) = path_filter {
+          body.insert(
+            "path_filters".to_string(),
+            serde_json::json!(path_filters),
+          );
+        }
         let response = self
           .api
           .post(

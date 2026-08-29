@@ -671,6 +671,9 @@ pub struct DeclarativeJobset {
   /// Cancel older automated work when a newer revision enters the same stream.
   #[serde(default)]
   pub only_build_latest: bool,
+  /// Git pathspecs; a source evaluation runs when any matching path changes.
+  #[serde(default)]
+  pub path_filters:      Vec<String>,
   /// Jobset inputs for parameterized evaluations
   #[serde(default)]
   pub inputs:            Vec<DeclarativeJobsetInput>,

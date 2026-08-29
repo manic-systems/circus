@@ -170,6 +170,9 @@ pub(super) enum JobsetCommand {
     check_interval:    Option<i32>,
     #[arg(long)]
     only_build_latest: Option<bool>,
+    /// Git pathspecs that must match at least one changed path.
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    path_filter:       Option<Vec<String>>,
   },
   /// Show a jobset.
   Show {
