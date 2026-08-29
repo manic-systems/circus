@@ -82,6 +82,14 @@
         </dd>
         <dt>Only build latest</dt>
         <dd>{% if jobset.only_build_latest %}Yes{% else %}No{% endif %}</dd>
+        {% if !jobset.path_filters.is_empty() %}
+            <dt>Path filters</dt>
+            <dd>
+                <ul>
+                    {% for path_filter in jobset.path_filters %}<li><code>{{ path_filter }}</code></li>{% endfor %}
+                </ul>
+            </dd>
+        {% endif %}
         {% if let Some(systems) = jobset.systems %}
             <dt>Systems</dt>
             <dd>{{ systems|join(", ") }}</dd>

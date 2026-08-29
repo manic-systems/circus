@@ -80,6 +80,13 @@
                         </label>
                         <small>Cancel older automated work in the same branch, change request, or tag stream.</small>
                     </div>
+                    <div class="form-group">
+                        <label for="js-path-filters">Path filters</label>
+                        <textarea id="js-path-filters"
+                                  rows="3"
+                                  placeholder="packages/hardened-kernel&#10;**/*.nix"></textarea>
+                        <small>One Git pathspec per line. Evaluate when any matching path changes.</small>
+                    </div>
                 </form>
                 <div id="jobset-msg"></div>
             </div>
@@ -243,6 +250,8 @@ nix_expression: document.getElementById('js-expr').value,
 flake_mode: document.getElementById('js-flake').checked,
 trigger_mode: document.getElementById('js-trigger-mode').value,
 only_build_latest: document.getElementById('js-only-build-latest').checked,
+path_filters: document.getElementById('js-path-filters').value
+  .split('\n').map(value => value.trim()).filter(Boolean),
 }),
 });
 if (!res.ok) {

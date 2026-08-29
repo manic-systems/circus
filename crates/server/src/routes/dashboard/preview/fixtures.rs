@@ -92,6 +92,7 @@ pub(super) fn jobset_fixture() -> Jobset {
     keep_nr:           3,
     systems:           None,
     only_build_latest: false,
+    path_filters:      Vec::new(),
   }
 }
 
