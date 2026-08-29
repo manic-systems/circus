@@ -359,7 +359,7 @@ async fn evaluate_pending_eval(
 
   sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
 
-  run_nix_and_record_builds(
+  let evaluated = run_path_filtered_evaluation(
     pool,
     jobset,
     &claimed,
@@ -372,7 +372,7 @@ async fn evaluate_pending_eval(
   )
   .await?;
 
-  if jobset.state == JobsetState::OneShot {
+  if evaluated && jobset.state == JobsetState::OneShot {
     tracing::info!(
       jobset = %jobset.name,
       "One-shot evaluation complete, disabling jobset"
@@ -414,6 +414,56 @@ fn log_disk_space(work_dir: &std::path::Path, jobset_name: &str) {
       );
     },
   }
+}
+
+#[expect(
+  clippy::too_many_arguments,
+  reason = "path-filter policy wraps the shared evaluation back-half"
+)]
+async fn run_path_filtered_evaluation(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  eval: &Evaluation,
+  repo_path: &std::path::Path,
+  inputs: &[JobsetInput],
+  config: &EvaluatorConfig,
+  notifications_config: &NotificationsConfig,
+  notification_secret_key: Option<&str>,
+  nix_timeout: Duration,
+) -> color_eyre::Result<bool> {
+  if crate::path_filter::should_evaluate(repo_path, eval, jobset).await {
+    run_nix_and_record_builds(
+      pool,
+      jobset,
+      eval,
+      repo_path,
+      inputs,
+      config,
+      notifications_config,
+      notification_secret_key,
+      nix_timeout,
+    )
+    .await?;
+    return Ok(true);
+  }
+
+  if repo::evaluations::finish_running(
+    pool,
+    eval.id,
+    EvaluationStatus::Completed,
+    None,
+  )
+  .await?
+  .is_some()
+  {
+    tracing::info!(
+      eval_id = %eval.id,
+      jobset = %jobset.name,
+      filters = ?jobset.path_filters,
+      "Skipping evaluation because no configured source paths changed"
+    );
+  }
+  Ok(false)
 }
 
 /// Shared back-half: invoke nix, persist builds, dispatch notifications,
@@ -841,7 +891,7 @@ async fn evaluate_single_ref(
   }
 
   sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
-  run_nix_and_record_builds(
+  let evaluated = run_path_filtered_evaluation(
     pool,
     jobset,
     &eval,
@@ -861,7 +911,7 @@ async fn evaluate_single_ref(
     );
   }
 
-  if jobset.state == JobsetState::OneShot {
+  if evaluated && jobset.state == JobsetState::OneShot {
     tracing::info!(
       jobset = %jobset.name,
       "One-shot evaluation complete, disabling jobset"
@@ -996,6 +1046,7 @@ async fn sync_repo_declarative_config(
       keep_nr: js.keep_nr,
       systems: js.systems.clone(),
       only_build_latest: Some(js.only_build_latest),
+      path_filters: Some(js.path_filters.clone()),
     };
 
     match repo::jobsets::upsert(pool, input).await {

@@ -1783,6 +1783,7 @@ mod tests {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     })
     .await
     .expect("create jobset");

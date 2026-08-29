@@ -635,6 +635,7 @@ mod tests {
       keep_nr:           3,
       systems:           None,
       only_build_latest: false,
+      path_filters:      Vec::new(),
     }
   }
 
@@ -658,6 +659,7 @@ mod tests {
       pr_action: None,
       source_scope: None,
       superseded_by: None,
+      source_base_commit: None,
     }
   }
 

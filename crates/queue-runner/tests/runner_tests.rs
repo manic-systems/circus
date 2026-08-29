@@ -350,6 +350,7 @@ async fn test_fair_share_scheduling() {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     },
   )
   .await
@@ -373,6 +374,7 @@ async fn test_fair_share_scheduling() {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     },
   )
   .await
@@ -583,6 +585,7 @@ async fn test_atomic_build_claiming() {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     },
   )
   .await
@@ -676,6 +679,7 @@ async fn test_orphan_build_reset() {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     },
   )
   .await
@@ -786,6 +790,7 @@ async fn test_get_cancelled_among() {
       keep_nr:           None,
       systems:           None,
       only_build_latest: None,
+      path_filters:      None,
     },
   )
   .await
