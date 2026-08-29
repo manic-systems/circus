@@ -668,6 +668,9 @@ pub struct DeclarativeJobset {
   pub keep_nr:           Option<i32>,
   #[serde(default)]
   pub systems:           Option<Vec<String>>,
+  /// Cancel older automated work when a newer revision enters the same stream.
+  #[serde(default)]
+  pub only_build_latest: bool,
   /// Jobset inputs for parameterized evaluations
   #[serde(default)]
   pub inputs:            Vec<DeclarativeJobsetInput>,

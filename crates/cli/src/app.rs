@@ -237,6 +237,7 @@ impl CommandRunner {
         enabled,
         flake_mode,
         check_interval,
+        only_build_latest,
       } => {
         let mut body = Map::new();
         body.insert("name".to_string(), Value::String(name));
@@ -245,6 +246,7 @@ impl CommandRunner {
         insert_optional_bool(&mut body, "enabled", enabled);
         insert_optional_bool(&mut body, "flake_mode", flake_mode);
         insert_optional_i32(&mut body, "check_interval", check_interval);
+        insert_optional_bool(&mut body, "only_build_latest", only_build_latest);
         let response = self
           .api
           .post(

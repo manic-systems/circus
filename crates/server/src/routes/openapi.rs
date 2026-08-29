@@ -157,7 +157,8 @@ fn document_value() -> Value {
             "branch":         { "type": ["string", "null"] },
             "branch_pattern": { "type": ["string", "null"] },
             "tag_pattern":    { "type": ["string", "null"] },
-            "systems":        { "type": ["array", "null"], "items": { "type": "string" } }
+            "systems":        { "type": ["array", "null"], "items": { "type": "string" } },
+            "only_build_latest": { "type": "boolean", "default": false }
           }
         },
         "JobsetInput": {
@@ -181,7 +182,9 @@ fn document_value() -> Value {
             "evaluation_time": { "$ref": "#/components/schemas/Timestamp" },
             "status":          { "type": "string" },
             "trigger_kind":    { "type": "string", "enum": ["source_change", "manual", "interval"] },
-            "hidden":          { "type": "boolean" }
+            "hidden":          { "type": "boolean" },
+            "source_scope":    { "type": ["string", "null"] },
+            "superseded_by":   { "type": ["string", "null"], "format": "uuid" }
           }
         },
         "Channel": {

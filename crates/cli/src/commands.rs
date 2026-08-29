@@ -157,17 +157,19 @@ pub(super) enum JobsetCommand {
   },
   /// Create a jobset under a project.
   Create {
-    project_id:     String,
+    project_id:        String,
     #[arg(long)]
-    name:           String,
+    name:              String,
     #[arg(long)]
-    nix_expression: String,
+    nix_expression:    String,
     #[arg(long)]
-    enabled:        Option<bool>,
+    enabled:           Option<bool>,
     #[arg(long)]
-    flake_mode:     Option<bool>,
+    flake_mode:        Option<bool>,
     #[arg(long)]
-    check_interval: Option<i32>,
+    check_interval:    Option<i32>,
+    #[arg(long)]
+    only_build_latest: Option<bool>,
   },
   /// Show a jobset.
   Show {

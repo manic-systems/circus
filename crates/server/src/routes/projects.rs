@@ -179,6 +179,7 @@ struct CreateJobsetBody {
   scheduling_shares: Option<i32>,
   state:             Option<circus_common::models::JobsetState>,
   systems:           Option<Vec<String>>,
+  only_build_latest: Option<bool>,
 }
 
 async fn create_project_jobset(
@@ -203,6 +204,7 @@ async fn create_project_jobset(
     state: body.state,
     keep_nr: None,
     systems: body.systems,
+    only_build_latest: body.only_build_latest,
   };
   input
     .validate()
@@ -313,6 +315,7 @@ async fn setup_project(
       state:             None,
       keep_nr:           None,
       systems:           js_input.systems,
+      only_build_latest: None,
     };
     input
       .validate()

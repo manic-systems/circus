@@ -97,7 +97,8 @@ mod tests {
             [[projects.jobsets]]
             name = "packages"
             nix_expression = "packages"
-            trigger_mode = "interval"
+            trigger_mode = "source_change"
+            only_build_latest = true
             systems = ["x86_64-linux"]
 
             [[api_keys]]
@@ -114,8 +115,9 @@ mod tests {
     assert!(config.projects[0].jobsets[0].flake_mode); // default true
     assert_eq!(
       config.projects[0].jobsets[0].trigger_mode.as_deref(),
-      Some("interval")
+      Some("source_change")
     );
+    assert!(config.projects[0].jobsets[0].only_build_latest);
     assert_eq!(
       config.projects[0].jobsets[0].systems.as_deref(),
       Some(["x86_64-linux".to_string()].as_slice())
@@ -168,6 +170,7 @@ mod tests {
           scheduling_shares: 100,
           keep_nr:           None,
           systems:           Some(vec!["x86_64-linux".to_string()]),
+          only_build_latest: false,
           inputs:            vec![],
         }],
         notifications:   vec![],

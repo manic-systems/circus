@@ -1457,6 +1457,7 @@ async fn test_channel_binary_cache_url_uses_active_project_cache_when_global_dis
       state:             None,
       keep_nr:           None,
       systems:           None,
+      only_build_latest: None,
     })
     .await
     .unwrap();
@@ -2226,6 +2227,7 @@ async fn test_admin_global_cache_includes_signed_local_build_products() {
       state:             None,
       keep_nr:           None,
       systems:           None,
+      only_build_latest: None,
     })
     .await
     .unwrap();
@@ -2433,6 +2435,7 @@ async fn test_project_cache_includes_local_product_when_other_project_uploaded_s
       state:             None,
       keep_nr:           None,
       systems:           None,
+      only_build_latest: None,
     })
     .await
     .unwrap();
