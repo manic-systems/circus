@@ -397,7 +397,12 @@ role = "admin"
 
 Inline `password` and `key` fields exist for testing, but avoid them in
 production. Secrets in config files are not encrypted at rest. The server
-reconciles declarative config with the database on every startup.
+reconciles declarative config with the database on every startup. Declarative
+projects are read-only by default, and removed declarations remove their managed
+database records. Set `declarative.allow_runtime_mutation = true` to allow
+dashboard and API changes and preserve omitted projects and jobsets. Set
+`allow_runtime_mutation` on an individual `[[declarative.projects]]` entry to
+override the global policy for that project.
 
 ### Manual database insertion (any setup)
 

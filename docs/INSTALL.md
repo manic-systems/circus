@@ -347,6 +347,7 @@ configuration or the Nix store.
 | `oauth`              | `github.client_secret_file`                            | none                                                | File containing GitHub OAuth secret                                       |
 | `oauth`              | `github.redirect_uri`                                  | none                                                | OAuth redirect URI                                                        |
 | `declarative`        | `projects`                                             | `[]`                                                | Declarative project definitions                                           |
+| `declarative`        | `allow_runtime_mutation`                               | `false`                                             | Permit API and dashboard changes to declarative projects                  |
 | `declarative`        | `api_keys`                                             | `[]`                                                | Declarative API key definitions                                           |
 | `declarative`        | `users`                                                | `[]`                                                | Declarative user definitions                                              |
 | `declarative`        | `remote_builders`                                      | `[]`                                                | Declarative remote builder definitions                                    |
@@ -503,11 +504,25 @@ name = "my-project"
 repository_url = "https://github.com/example/my-project"
 cache_enabled = true
 cache_url = "https://ci.example.org/projects/my-project/nix-cache/"
+allow_runtime_mutation = true
 
 [[declarative.projects.cache_upstreams]]
 url = "https://cache.nixos.org/"
 public_key = "cache.nixos.org-1:..."
 ```
+
+By default, declarative projects are read-only in the dashboard and API. On
+startup, Circus updates declared projects and jobsets, removes undeclared
+jobsets from those projects, and removes declaratively managed projects that no
+longer appear in the configuration. Removing a project also removes its build
+history through the database's normal cascading deletes. A declaration adopts an
+existing project with the same name into declarative management.
+
+Set `declarative.allow_runtime_mutation = true` to permit dashboard and API
+changes. Declarations are still applied at startup, but Circus then preserves
+projects and jobsets omitted from the configuration. A project may override that
+default with `allow_runtime_mutation = true` or `false` in its own
+`[[declarative.projects]]` entry.
 
 Users add the cache and its upstreams to `nix.conf` manually:
 
@@ -1004,11 +1019,11 @@ Circus exposes a Prometheus-compatible metrics endpoint at `/prometheus`.
 
 ```yaml
 scrape_configs:
-  - job_name: "circus-ci"
-    static_configs:
-      - targets: ["ci.example.org:3000"]
-    metrics_path: "/prometheus"
-    scrape_interval: 30s
+    - job_name: "circus-ci"
+      static_configs:
+          - targets: ["ci.example.org:3000"]
+      metrics_path: "/prometheus"
+      scrape_interval: 30s
 ```
 
 The `/health` endpoint reports database and service status. Administrative
