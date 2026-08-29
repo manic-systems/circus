@@ -58,6 +58,7 @@ impl SignedPushProvider {
 struct GiteaCompatiblePushPayload {
   #[serde(alias = "ref")]
   git_ref:    Option<String>,
+  before:     Option<String>,
   after:      Option<String>,
   repository: Option<GiteaCompatibleRepo>,
 }
@@ -128,8 +129,14 @@ async fn process_push(
     .as_deref()
     .map_or(PushedRef::Other(""), parse_push_ref);
 
-  let triggered =
-    trigger_push_evaluations(&state, project_id, &commit, pushed_ref).await?;
+  let triggered = trigger_push_evaluations(
+    &state,
+    project_id,
+    &commit,
+    payload.before.as_deref(),
+    pushed_ref,
+  )
+  .await?;
 
   Ok(triggered_push_response(triggered, &commit))
 }
@@ -144,6 +151,7 @@ mod tests {
   fn test_parse_gitea_compatible_push_payload() {
     let payload = r#"{
       "ref": "refs/heads/main",
+      "before": "def456",
       "after": "abc123def456789012345678901234567890abcd"
     }"#;
 
@@ -153,6 +161,7 @@ mod tests {
       parsed.after,
       Some("abc123def456789012345678901234567890abcd".to_string())
     );
+    assert_eq!(parsed.before, Some("def456".to_string()));
     assert_eq!(parsed.git_ref, Some("refs/heads/main".to_string()));
   }
 }

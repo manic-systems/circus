@@ -35,6 +35,7 @@ const EVENT_HEADER: &str = "x-github-event";
 struct GithubPushPayload {
   #[serde(alias = "ref")]
   git_ref:    Option<String>,
+  before:     Option<String>,
   after:      Option<String>,
   repository: Option<GithubRepo>,
 }
@@ -48,6 +49,7 @@ struct GithubRepo {
 #[derive(Debug, Deserialize)]
 struct GithubPullRequestPayload {
   action:       Option<String>,
+  before:       Option<String>,
   number:       Option<u64>,
   pull_request: Option<GithubPullRequest>,
 }
@@ -139,8 +141,14 @@ async fn handle_push(
     .as_deref()
     .map_or(PushedRef::Other(""), parse_push_ref);
 
-  let triggered =
-    trigger_push_evaluations(&state, project_id, &commit, pushed_ref).await?;
+  let triggered = trigger_push_evaluations(
+    &state,
+    project_id,
+    &commit,
+    payload.before.as_deref(),
+    pushed_ref,
+  )
+  .await?;
 
   Ok(triggered_push_response(triggered, &commit))
 }
@@ -213,11 +221,13 @@ async fn handle_pull_request(
     &state,
     project_id,
     &ChangeRequestEvaluation {
-      commit:      commit.clone(),
-      number:      pr_number,
-      head_branch: pr_head_branch,
-      base_branch: pr_base_branch,
-      action:      pr_action,
+      commit:          commit.clone(),
+      previous_commit: payload.before,
+      first:           action == "opened",
+      number:          pr_number,
+      head_branch:     pr_head_branch,
+      base_branch:     pr_base_branch,
+      action:          pr_action,
     },
   )
   .await?;
@@ -244,6 +254,7 @@ mod tests {
   fn test_parse_github_push_payload() {
     let payload = r#"{
       "ref": "refs/heads/main",
+      "before": "def456",
       "after": "abc123def456789012345678901234567890abcd"
     }"#;
 
@@ -252,6 +263,7 @@ mod tests {
       parsed.after,
       Some("abc123def456789012345678901234567890abcd".to_string())
     );
+    assert_eq!(parsed.before, Some("def456".to_string()));
     assert_eq!(parsed.git_ref, Some("refs/heads/main".to_string()));
   }
 
@@ -259,6 +271,7 @@ mod tests {
   fn test_parse_github_pr_payload() {
     let payload = r#"{
       "action": "opened",
+      "before": "def456",
       "number": 42,
       "pull_request": {
         "head": {"sha": "abc123", "ref": "feature-branch"},
@@ -270,6 +283,7 @@ mod tests {
     let parsed: GithubPullRequestPayload =
       serde_json::from_str(payload).unwrap();
     assert_eq!(parsed.action, Some("opened".to_string()));
+    assert_eq!(parsed.before, Some("def456".to_string()));
     assert_eq!(parsed.number, Some(42));
 
     let pr = parsed.pull_request.unwrap();

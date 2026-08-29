@@ -32,6 +32,7 @@ const EVENT_HEADER: &str = "x-gitlab-event";
 struct GitLabPushPayload {
   #[serde(alias = "ref")]
   git_ref:      Option<String>,
+  before:       Option<String>,
   after:        Option<String>,
   checkout_sha: Option<String>,
   project:      Option<GitLabProject>,
@@ -60,6 +61,7 @@ struct GitLabMergeRequestAttributes {
   source_branch:    Option<String>,
   target_branch:    Option<String>,
   last_commit:      Option<GitLabCommit>,
+  oldrev:           Option<String>,
   work_in_progress: Option<bool>,
   draft:            Option<bool>,
 }
@@ -149,8 +151,14 @@ async fn handle_push(
     .as_deref()
     .map_or(PushedRef::Other(""), parse_push_ref);
 
-  let triggered =
-    trigger_push_evaluations(&state, project_id, &commit, pushed_ref).await?;
+  let triggered = trigger_push_evaluations(
+    &state,
+    project_id,
+    &commit,
+    payload.before.as_deref(),
+    pushed_ref,
+  )
+  .await?;
 
   Ok(triggered_push_response(triggered, &commit))
 }
@@ -244,11 +252,13 @@ async fn handle_merge_request(
     &state,
     project_id,
     &ChangeRequestEvaluation {
-      commit:      commit.clone(),
-      number:      pr_number,
-      head_branch: pr_head_branch,
-      base_branch: pr_base_branch,
-      action:      pr_action,
+      commit:          commit.clone(),
+      previous_commit: attrs.oldrev,
+      first:           action == "open",
+      number:          pr_number,
+      head_branch:     pr_head_branch,
+      base_branch:     pr_base_branch,
+      action:          pr_action,
     },
   )
   .await?;
@@ -288,6 +298,7 @@ mod tests {
   fn test_parse_gitlab_push_payload() {
     let payload = r#"{
       "ref": "refs/heads/main",
+      "before": "abc123",
       "after": "abc123",
       "checkout_sha": "def456789012345678901234567890abcdef12"
     }"#;
@@ -297,6 +308,7 @@ mod tests {
       parsed.checkout_sha,
       Some("def456789012345678901234567890abcdef12".to_string())
     );
+    assert_eq!(parsed.before, Some("abc123".to_string()));
     assert_eq!(parsed.after, Some("abc123".to_string()));
   }
 
@@ -307,6 +319,7 @@ mod tests {
       "object_attributes": {
         "iid": 123,
         "action": "open",
+        "oldrev": "def456",
         "source_branch": "feature",
         "target_branch": "main",
         "last_commit": {"id": "abc123def456"},
@@ -320,6 +333,7 @@ mod tests {
     let attrs = parsed.object_attributes.unwrap();
     assert_eq!(attrs.iid, Some(123));
     assert_eq!(attrs.action, Some("open".to_string()));
+    assert_eq!(attrs.oldrev, Some("def456".to_string()));
     assert_eq!(attrs.source_branch, Some("feature".to_string()));
     assert_eq!(attrs.target_branch, Some("main".to_string()));
     assert_eq!(attrs.draft, Some(false));

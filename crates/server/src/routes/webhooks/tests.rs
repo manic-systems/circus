@@ -86,6 +86,7 @@ fn test_jobset(
     last_checked_at:   None,
     keep_nr:           3,
     systems:           None,
+    only_build_latest: false,
   }
 }
 
@@ -94,6 +95,16 @@ fn parse_push_ref_handles_branches_tags_and_unknown_refs() {
   assert_eq!(parse_push_ref("refs/heads/main"), PushedRef::Branch("main"));
   assert_eq!(parse_push_ref("refs/tags/v1.0"), PushedRef::Tag("v1.0"));
   assert_eq!(parse_push_ref("feature"), PushedRef::Other("feature"));
+  assert_eq!(push_source_scope(PushedRef::Branch("main")), "branch:main");
+  assert_eq!(push_source_scope(PushedRef::Tag("v1.0")), "tags");
+  assert!(matches!(
+    push_source_order(PushedRef::Branch("main"), Some("previous")),
+    repo::evaluations::SourceOrder::After("previous")
+  ));
+  assert!(matches!(
+    push_source_order(PushedRef::Branch("main"), None),
+    repo::evaluations::SourceOrder::First
+  ));
 }
 
 #[test]

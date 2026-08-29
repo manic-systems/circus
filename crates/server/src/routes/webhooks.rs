@@ -136,44 +136,27 @@ fn is_deleted_commit(commit: &str) -> bool {
   commit.is_empty() || commit == "0000000000000000000000000000000000000000"
 }
 
-/// Cancel pending evaluations obsoleted by a newer commit on the same ref.
-///
-/// Scoped to a single change request or a jobset tracking one concrete
-/// branch. Pattern jobsets span refs the rows do not record, so their
-/// pending evaluations are never superseded.
-async fn supersede_pending(
-  state: &AppState,
-  jobset_id: Uuid,
-  pr_number: Option<i32>,
-  commit: &str,
-) {
-  let result = match pr_number {
-    Some(number) => {
-      repo::evaluations::supersede_pending_change_request(
-        &state.pool,
-        jobset_id,
-        number,
-        commit,
+fn push_source_scope(pushed_ref: PushedRef<'_>) -> String {
+  match pushed_ref {
+    PushedRef::Branch(branch) => format!("branch:{branch}"),
+    PushedRef::Tag(_) => "tags".to_string(),
+    PushedRef::Other(git_ref) => format!("ref:{git_ref}"),
+  }
+}
+
+fn push_source_order<'a>(
+  pushed_ref: PushedRef<'_>,
+  previous_commit: Option<&'a str>,
+) -> repo::evaluations::SourceOrder<'a> {
+  match pushed_ref {
+    PushedRef::Branch(_) => {
+      previous_commit.map_or(
+        repo::evaluations::SourceOrder::First,
+        repo::evaluations::SourceOrder::After,
       )
-      .await
     },
-    None => {
-      repo::evaluations::supersede_pending_push(&state.pool, jobset_id, commit)
-        .await
-    },
-  };
-  match result {
-    Ok(superseded) if !superseded.is_empty() => {
-      tracing::info!(
-        %jobset_id,
-        commit,
-        count = superseded.len(),
-        "Cancelled superseded pending evaluations"
-      );
-    },
-    Ok(_) => {},
-    Err(e) => {
-      tracing::warn!(%jobset_id, "Failed to supersede pending evaluations: {e}");
+    PushedRef::Tag(_) | PushedRef::Other(_) => {
+      repo::evaluations::SourceOrder::Unchecked
     },
   }
 }
@@ -182,6 +165,7 @@ async fn trigger_push_evaluations(
   state: &AppState,
   project_id: Uuid,
   commit: &str,
+  previous_commit: Option<&str>,
   pushed_ref: PushedRef<'_>,
 ) -> Result<usize, ApiError> {
   let jobsets =
@@ -195,26 +179,24 @@ async fn trigger_push_evaluations(
     if !jobset_matches_push_ref(jobset, pushed_ref) {
       continue;
     }
-    match repo::evaluations::create(&state.pool, CreateEvaluation {
-      jobset_id:      jobset.id,
-      commit_hash:    commit.to_string(),
-      pr_number:      None,
-      pr_head_branch: None,
-      pr_base_branch: None,
-      pr_action:      None,
-    })
+    let source_scope = push_source_scope(pushed_ref);
+    let source_order = push_source_order(pushed_ref, previous_commit);
+    match repo::evaluations::enqueue_source(
+      &state.pool,
+      CreateEvaluation {
+        jobset_id:      jobset.id,
+        commit_hash:    commit.to_string(),
+        pr_number:      None,
+        pr_head_branch: None,
+        pr_base_branch: None,
+        pr_action:      None,
+      },
+      &source_scope,
+      source_order,
+    )
     .await
     {
-      Ok(_) => {
-        triggered += 1;
-        if matches!(pushed_ref, PushedRef::Branch(_))
-          && jobset.branch.is_some()
-          && jobset.branch_pattern.is_none()
-          && jobset.tag_pattern.is_none()
-        {
-          supersede_pending(state, jobset.id, None, commit).await;
-        }
-      },
+      Ok(_) => triggered += 1,
       Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
@@ -224,11 +206,13 @@ async fn trigger_push_evaluations(
 }
 
 struct ChangeRequestEvaluation {
-  commit:      String,
-  number:      Option<i32>,
-  head_branch: Option<String>,
-  base_branch: Option<String>,
-  action:      Option<String>,
+  commit:          String,
+  previous_commit: Option<String>,
+  first:           bool,
+  number:          Option<i32>,
+  head_branch:     Option<String>,
+  base_branch:     Option<String>,
+  action:          Option<String>,
 }
 
 async fn trigger_change_request_evaluations(
@@ -249,23 +233,39 @@ async fn trigger_change_request_evaluations(
     if !jobset_matches_branch(jobset, base) {
       continue;
     }
-    match repo::evaluations::create(&state.pool, CreateEvaluation {
-      jobset_id:      jobset.id,
-      commit_hash:    input.commit.clone(),
-      pr_number:      input.number,
-      pr_head_branch: input.head_branch.clone(),
-      pr_base_branch: input.base_branch.clone(),
-      pr_action:      input.action.clone(),
-    })
+    let source_scope = input.number.map_or_else(
+      || {
+        format!(
+          "change-request:{}",
+          input.head_branch.as_deref().unwrap_or("unknown")
+        )
+      },
+      |number| format!("change-request:{number}"),
+    );
+    let source_order = if input.first {
+      repo::evaluations::SourceOrder::First
+    } else {
+      input.previous_commit.as_deref().map_or(
+        repo::evaluations::SourceOrder::Unchecked,
+        repo::evaluations::SourceOrder::After,
+      )
+    };
+    match repo::evaluations::enqueue_source(
+      &state.pool,
+      CreateEvaluation {
+        jobset_id:      jobset.id,
+        commit_hash:    input.commit.clone(),
+        pr_number:      input.number,
+        pr_head_branch: input.head_branch.clone(),
+        pr_base_branch: input.base_branch.clone(),
+        pr_action:      input.action.clone(),
+      },
+      &source_scope,
+      source_order,
+    )
     .await
     {
-      Ok(_) => {
-        triggered += 1;
-        if let Some(number) = input.number {
-          supersede_pending(state, jobset.id, Some(number), &input.commit)
-            .await;
-        }
-      },
+      Ok(_) => triggered += 1,
       Err(circus_common::CiError::Conflict(_)) => {},
       Err(e) => tracing::warn!("Failed to create evaluation: {e}"),
     }
