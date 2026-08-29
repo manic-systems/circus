@@ -547,6 +547,15 @@ Jobset trigger modes:
 - Interval jobsets intentionally create a fresh run every due tick, even for the
   same commit/input hash.
 
+> [!TIP]
+> Source-change jobsets keep every triggered revision by default. Set
+> `only_build_latest = true` on a declarative jobset (or
+> `only_build_latest: true` through the API) to cancel older automated
+> evaluations and builds in the same branch, change-request, or tag stream.
+> Manual triggers and restarts are never superseded. During pattern polling,
+> annotated tags are ordered by tagger time; lightweight tags fall back to the
+> tagged commit time because Git does not record their creation time.
+
 ### Evaluations
 
 An evaluation runs Nix evaluation for a jobset and creates builds. Users browse
