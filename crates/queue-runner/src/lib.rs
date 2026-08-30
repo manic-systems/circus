@@ -1,4 +1,5 @@
 pub mod builder;
+mod cache_gc;
 pub mod caps;
 pub mod cli;
 pub mod context;

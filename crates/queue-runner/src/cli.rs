@@ -10,8 +10,10 @@ use std::{
 
 use circus_common::{database::Database, gc_roots, repo};
 use circus_config::{
+  CacheGcConfig,
   CacheUploadConfig,
   Config,
+  EphemeralPoolConfig,
   GcConfig,
   HotConfig,
   RpcConfig,
@@ -92,8 +94,10 @@ where
   let signing_config = config.signing;
   let signing_config_for_rpc = signing_config.clone();
   let cache_config = config.cache;
+  let cache_gc_config = cache_config.gc.clone();
   let cache_upload_config = config.cache_upload;
   let cache_upload_for_rpc = cache_upload_config.clone();
+  let cache_upload_for_gc = cache_upload_config.clone();
   let qr_config = config.queue_runner;
   let ephemeral_pools = qr_config.ephemeral_pools.clone();
   let nix_store_dir = config.nix.store_dir;
@@ -215,35 +219,15 @@ where
   }
 
   let gha_shutdown = CancellationToken::new();
-  let gha_handles = if ephemeral_pools.is_empty() {
-    tracing::info!("no ephemeral pools configured");
-    Vec::new()
-  } else {
-    ephemeral_pools
-      .into_iter()
-      .map(|pool_cfg| {
-        let shutdown = gha_shutdown.clone();
-        let pool = db.pool().clone();
-        let agents = Arc::clone(&agent_pool);
-        let pool_name = pool_cfg.name.clone();
-        tokio::spawn(async move {
-          match Autoscaler::new(pool_cfg, pool, agents, shutdown).await
-          {
-            Ok(autoscaler) => autoscaler.run().await,
-            Err(e) => tracing::error!(%pool_name, "GitHub Actions autoscaler disabled: {e}"),
-          }
-        })
-      })
-      .collect()
-  };
-
+  let gha_handles =
+    start_autoscalers(ephemeral_pools, &gha_shutdown, db.pool(), &agent_pool);
   tokio::select! {
       result = runner_loop::run(db.pool().clone(), worker_pool, Arc::clone(&hot_config), wakeup, strict_errors, failed_paths_cache, unsupported_timeout) => {
           if let Err(e) = result {
               tracing::error!("Runner loop failed: {e}");
           }
       }
-      () = gc_loop(gc_config_for_loop, database_url.clone(), db.pool().clone()) => {}
+      () = gc_loops(gc_config_for_loop, cache_gc_config, cache_upload_for_gc, database_url.clone(), db.pool().clone()) => {}
       () = failed_paths_cleanup_loop(db.pool().clone(), Arc::clone(&hot_config), failed_paths_cache) => {}
       () = cancel_checker_loop(db.pool().clone(), active_builds) => {}
       () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
@@ -270,6 +254,53 @@ where
   db.close();
 
   Ok(())
+}
+
+fn start_autoscalers(
+  pools: Vec<EphemeralPoolConfig>,
+  shutdown: &CancellationToken,
+  pool: &circus_common::PgPool,
+  agents: &Arc<AgentPool>,
+) -> Vec<tokio::task::JoinHandle<()>> {
+  if pools.is_empty() {
+    tracing::info!("no ephemeral pools configured");
+    return Vec::new();
+  }
+
+  pools
+    .into_iter()
+    .map(|pool_config| {
+      let shutdown = shutdown.clone();
+      let pool = pool.clone();
+      let agents = Arc::clone(agents);
+      let pool_name = pool_config.name.clone();
+      tokio::spawn(async move {
+        match Autoscaler::new(pool_config, pool, agents, shutdown).await {
+          Ok(autoscaler) => autoscaler.run().await,
+          Err(error) => {
+            tracing::error!(
+              %pool_name,
+              %error,
+              "GitHub Actions autoscaler disabled"
+            );
+          },
+        }
+      })
+    })
+    .collect()
+}
+
+async fn gc_loops(
+  roots: GcConfig,
+  cache: CacheGcConfig,
+  upload: CacheUploadConfig,
+  database_url: String,
+  pool: circus_common::PgPool,
+) {
+  tokio::join!(
+    gc_loop(roots, database_url, pool.clone()),
+    crate::cache_gc::run(cache, upload, pool),
+  );
 }
 
 /// Spawn the capnp-rpc agent listener on its own current-thread runtime.
