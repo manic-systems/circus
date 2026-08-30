@@ -185,23 +185,6 @@ fn document_value() -> Value {
             "current_evaluation_id": { "type": ["string", "null"], "format": "uuid" }
           }
         },
-        "RemoteBuilder": {
-          "type": "object",
-          "required": ["id", "name", "ssh_uri", "systems", "max_jobs"],
-          "properties": {
-            "id":                  { "$ref": "#/components/schemas/Uuid" },
-            "name":                { "type": "string" },
-            "ssh_uri":             { "type": "string" },
-            "ssh_key_file":        { "type": ["string", "null"] },
-            "systems":             { "type": "array", "items": { "type": "string" } },
-            "max_jobs":            { "type": "integer" },
-            "speed_factor":        { "type": "integer" },
-            "cpu_cores":           { "type": ["integer", "null"] },
-            "supported_features":  { "type": "array", "items": { "type": "string" } },
-            "mandatory_features":  { "type": "array", "items": { "type": "string" } },
-            "enabled":             { "type": "boolean" }
-          }
-        },
         "User": {
           "type": "object",
           "required": ["id", "username", "user_type"],
@@ -683,26 +666,6 @@ fn document_value() -> Value {
         "get": { "summary": "System status",
           "responses": { "200": { "description": "Status",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SystemStatus" } } } } } }
-      },
-      "/admin/builders": {
-        "get":  { "summary": "List remote builders",
-          "responses": { "200": { "description": "Array",
-            "content": { "application/json": {
-              "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RemoteBuilder" } }
-            } } } } },
-        "post": { "summary": "Register a builder",
-          "responses": { "200": { "description": "Builder" } } }
-      },
-      "/admin/builders/{id}": {
-        "get":    { "summary": "Get a builder",
-          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
-          "responses": { "200": { "description": "Builder" } } },
-        "put":    { "summary": "Update a builder",
-          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
-          "responses": { "200": { "description": "Updated" } } },
-        "delete": { "summary": "Remove a builder",
-          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
-          "responses": { "204": { "description": "Deleted" } } }
       },
       "/admin/builders/sessions": {
         "get": { "summary": "List all persistent builder agent sessions (connected + historical)",
