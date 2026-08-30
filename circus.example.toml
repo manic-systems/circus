@@ -54,6 +54,17 @@ poll_interval = 5
 work_dir      = "/tmp/circus-queue-runner"
 workers       = 4
 
+[tracing]
+format          = "compact"
+level           = "info"
+show_targets    = true
+show_timestamps = true
+
+# [tracing.otlp]
+# enabled      = true
+# endpoint     = "http://localhost:4317"
+# sample_ratio = 0.1
+
 [cache]
 enabled = true
 # cache_url = "https://ci.example.org/nix-cache/"
