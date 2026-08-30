@@ -138,7 +138,7 @@
           freeformType = settingsType;
           options = {
             allow_runtime_mutation = mkOption {
-              type = types.bool;
+              type = bool;
               default = false;
               description = "Allow runtime mutation of declaratively managed projects.";
             };
