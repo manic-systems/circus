@@ -82,7 +82,8 @@ where
   let config_path = cli.config.clone();
 
   let config = Config::load(cli.config.as_deref())?;
-  circus_common::init_tracing(&config.tracing);
+  let _tracing =
+    circus_common::init_tracing(&config.tracing, "circus-queue-runner")?;
 
   tracing::info!("Starting CI Queue Runner");
 

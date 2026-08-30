@@ -7,7 +7,7 @@ mod redact;
 mod structs;
 mod validation;
 
-pub use circus_logs::TracingConfig;
+pub use circus_logs::{OtlpConfig, TracingConfig};
 pub use circus_types::BinaryCacheUpstream;
 #[cfg(test)]
 pub(crate) use env::{apply_env_vars, parse_env_value, set_nested};
@@ -54,6 +54,47 @@ mod tests {
     let config = Config::default();
     assert!(config.validate().is_ok());
     assert!(!config.cache.gc.is_enabled());
+    assert!(!config.tracing.otlp.enabled);
+  }
+
+  #[test]
+  fn otlp_tracing_loads_from_toml() {
+    let config = Config::from_toml_with_defaults(
+      r#"
+        [tracing.otlp]
+        enabled = true
+        endpoint = "https://otel.example.org:4317"
+        service_name = "circus-production"
+        sample_ratio = 0.25
+      "#,
+    )
+    .unwrap();
+
+    assert!(config.tracing.otlp.enabled);
+    assert_eq!(
+      config.tracing.otlp.endpoint,
+      "https://otel.example.org:4317"
+    );
+    assert_eq!(
+      config.tracing.otlp.service_name.as_deref(),
+      Some("circus-production")
+    );
+    assert!((config.tracing.otlp.sample_ratio - 0.25).abs() < f64::EPSILON);
+  }
+
+  #[test]
+  fn otlp_tracing_rejects_invalid_sampling_ratio() {
+    let error = Config::from_toml_with_defaults(
+      r"
+        [tracing.otlp]
+        enabled = true
+        sample_ratio = 1.1
+      ",
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("sample_ratio must be between 0.0 and 1.0"));
   }
 
   #[test]

@@ -77,7 +77,8 @@ where
 }
 
 async fn run_async(config: Config) -> color_eyre::Result<()> {
-  circus_common::init_tracing(&config.tracing);
+  let _tracing =
+    circus_common::init_tracing(&config.tracing, "circus-evaluator")?;
 
   tracing::info!("Starting CI Evaluator");
   tracing::info!("Configuration loaded");

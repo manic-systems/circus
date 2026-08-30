@@ -1,5 +1,10 @@
 #[cfg(not(unix))] use std::future::pending;
-use std::{ffi::OsString, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+  ffi::OsString,
+  net::SocketAddr,
+  path::{Path, PathBuf},
+  sync::Arc,
+};
 
 use circus_common::Database;
 use circus_config::Config;
@@ -33,6 +38,16 @@ struct Cli {
   /// Force mounting the bundled dashboard UI even if config disables it.
   #[arg(long)]
   ui: bool,
+}
+
+impl Cli {
+  const fn apply_ui_override(&self, config: &mut Config) {
+    if self.headless {
+      config.ui.enabled = false;
+    } else if self.ui {
+      config.ui.enabled = true;
+    }
+  }
 }
 
 #[expect(
@@ -100,16 +115,11 @@ where
 {
   let cli = Cli::parse_from(args);
 
-  let mut config = Config::load(cli.config.as_deref())?;
-  circus_common::init_tracing(&config.tracing);
+  let (mut config, _tracing) = load_config_with_tracing(cli.config.as_deref())?;
 
+  cli.apply_ui_override(&mut config);
   let host = cli.host.unwrap_or_else(|| config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);
-  if cli.headless {
-    config.ui.enabled = false;
-  } else if cli.ui {
-    config.ui.enabled = true;
-  }
 
   circus_common::validate::warn_insecure_schemes(
     &config.server.allowed_url_schemes,
@@ -219,4 +229,12 @@ where
   db.close();
 
   Ok(())
+}
+
+fn load_config_with_tracing(
+  path: Option<&Path>,
+) -> color_eyre::Result<(Config, circus_common::TracingGuard)> {
+  let config = Config::load(path)?;
+  let tracing = circus_common::init_tracing(&config.tracing, "circus-server")?;
+  Ok((config, tracing))
 }

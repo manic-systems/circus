@@ -121,6 +121,30 @@ impl DatabaseConfig {
 }
 
 impl Config {
+  fn validate_observability(&self) -> eyre::Result<()> {
+    self
+      .tracing
+      .validate()
+      .map_err(|error| eyre::eyre!(error))?;
+    if self.logs.log_dir.as_os_str().is_empty() {
+      bail!("Log directory cannot be empty");
+    }
+    Ok(())
+  }
+
+  fn validate_ui(&self) -> eyre::Result<()> {
+    if self.ui.brand_name.trim().is_empty() {
+      bail!("ui.brand_name cannot be empty");
+    }
+    for (name, value) in &self.ui.css_variables {
+      validate_css_variable_name(name)?;
+      if value.trim().is_empty() {
+        bail!("ui.css_variables.{name} cannot be empty");
+      }
+    }
+    Ok(())
+  }
+
   fn validate_global_cache(&self) -> eyre::Result<()> {
     if let Some(url) = self.cache.cache_url.as_deref() {
       validate_shared(validate_cache_url(url, "cache.cache_url"))?;
@@ -162,6 +186,8 @@ impl Config {
   ///
   /// Returns error if any configuration section is invalid.
   pub fn validate(&self) -> eyre::Result<()> {
+    self.validate_observability()?;
+
     // Validate database URL
     if self.database.url.is_empty() {
       bail!("Database URL cannot be empty");
@@ -183,16 +209,7 @@ impl Config {
       bail!("Server port must be greater than 0");
     }
 
-    if self.ui.brand_name.trim().is_empty() {
-      bail!("ui.brand_name cannot be empty");
-    }
-
-    for (name, value) in &self.ui.css_variables {
-      validate_css_variable_name(name)?;
-      if value.trim().is_empty() {
-        bail!("ui.css_variables.{name} cannot be empty");
-      }
-    }
+    self.validate_ui()?;
 
     // Validate evaluator settings
     if self.evaluator.poll_interval == 0 {
@@ -487,11 +504,6 @@ impl Config {
     // Validate GC config
     if self.gc.enabled && self.gc.gc_roots_dir.as_os_str().is_empty() {
       bail!("GC roots directory cannot be empty when GC is enabled");
-    }
-
-    // Validate log config
-    if self.logs.log_dir.as_os_str().is_empty() {
-      bail!("Log directory cannot be empty");
     }
 
     // OAuth: when GitHub OAuth is configured, a client secret must be
