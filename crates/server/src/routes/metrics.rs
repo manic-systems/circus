@@ -226,16 +226,6 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
     overview_counts.channel_count
   );
 
-  output.push_str(
-    "\n# HELP circus_remote_builders_active Active remote builders\n",
-  );
-  output.push_str("# TYPE circus_remote_builders_active gauge\n");
-  let _ = writeln!(
-    output,
-    "circus_remote_builders_active {}",
-    overview_counts.builder_count
-  );
-
   // Per-project build counts
   if !per_project.is_empty() {
     output.push_str(

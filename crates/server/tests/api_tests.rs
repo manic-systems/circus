@@ -1936,7 +1936,7 @@ async fn test_admin_reads_require_admin() {
   let response = app
     .oneshot(
       Request::builder()
-        .uri("/api/v1/admin/builders")
+        .uri("/api/v1/admin/system")
         .header("authorization", format!("Bearer {READ_TOKEN}"))
         .body(Body::empty())
         .unwrap(),

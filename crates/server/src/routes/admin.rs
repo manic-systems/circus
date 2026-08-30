@@ -6,16 +6,8 @@ use axum::{
 };
 use circus_common::{
   PaginatedResponse,
-  Validate,
   audit::AuditEntry,
-  models::{
-    Build,
-    CreateRemoteBuilder,
-    NotificationTask,
-    RemoteBuilder,
-    SystemStatus,
-    UpdateRemoteBuilder,
-  },
+  models::{Build, NotificationTask, SystemStatus},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -29,15 +21,6 @@ use crate::{
 
 fn config_file_path() -> Option<std::path::PathBuf> {
   std::env::var_os("CIRCUS_CONFIG_FILE").map(std::path::PathBuf::from)
-}
-
-async fn list_builders(
-  _auth: RequireAdmin,
-  State(state): State<AppState>,
-) -> Result<Json<Vec<RemoteBuilder>>, ApiError> {
-  let builders =
-    circus_common::repo::remote_builders::list(&state.pool).await?;
-  Ok(Json(builders))
 }
 
 /// All builder sessions known to the cluster, connected or not. Backed by
@@ -79,105 +62,6 @@ async fn get_builder_session(
   let session =
     circus_common::repo::builder_sessions::get(&state.pool, machine_id).await?;
   Ok(Json(session))
-}
-
-async fn get_builder(
-  _auth: RequireAdmin,
-  State(state): State<AppState>,
-  Path(id): Path<Uuid>,
-) -> Result<Json<RemoteBuilder>, ApiError> {
-  let builder =
-    circus_common::repo::remote_builders::get(&state.pool, id).await?;
-  Ok(Json(builder))
-}
-
-async fn create_builder(
-  auth: RequireAdmin,
-  State(state): State<AppState>,
-  Json(input): Json<CreateRemoteBuilder>,
-) -> Result<Json<RemoteBuilder>, ApiError> {
-  input
-    .validate()
-    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let builder =
-    circus_common::repo::remote_builders::create(&state.pool, input).await?;
-
-  crate::audit::record_for_key(
-    &state.pool,
-    &auth.0,
-    "BUILDER_CREATE",
-    Some("builder"),
-    Some(&builder.id.to_string()),
-    serde_json::json!({
-      "name": builder.name,
-      "ssh_uri": builder.ssh_uri,
-      "ssh_key_file": builder.ssh_key_file,
-      "host_key_pinned": builder.public_host_key.is_some(),
-    }),
-  )
-  .await;
-
-  Ok(Json(builder))
-}
-
-async fn update_builder(
-  auth: RequireAdmin,
-  State(state): State<AppState>,
-  Path(id): Path<Uuid>,
-  Json(input): Json<UpdateRemoteBuilder>,
-) -> Result<Json<RemoteBuilder>, ApiError> {
-  input
-    .validate()
-    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-
-  // Capture which security-relevant fields the request changed before `input`
-  // is moved into the update, so key rotations and host-key changes are
-  // auditable.
-  let ssh_uri_changed = input.ssh_uri.is_some();
-  let ssh_key_file_changed = input.ssh_key_file.is_some();
-  let public_host_key_changed = input.public_host_key.is_some();
-
-  let builder =
-    circus_common::repo::remote_builders::update(&state.pool, id, input)
-      .await?;
-
-  crate::audit::record_for_key(
-    &state.pool,
-    &auth.0,
-    "BUILDER_UPDATE",
-    Some("builder"),
-    Some(&builder.id.to_string()),
-    serde_json::json!({
-      "name": builder.name,
-      "enabled": builder.enabled,
-      "ssh_uri_changed": ssh_uri_changed,
-      "ssh_key_file_changed": ssh_key_file_changed,
-      "public_host_key_changed": public_host_key_changed,
-    }),
-  )
-  .await;
-
-  Ok(Json(builder))
-}
-
-async fn delete_builder(
-  auth: RequireAdmin,
-  State(state): State<AppState>,
-  Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-  circus_common::repo::remote_builders::delete(&state.pool, id).await?;
-
-  crate::audit::record_for_key(
-    &state.pool,
-    &auth.0,
-    "BUILDER_DELETE",
-    Some("builder"),
-    Some(&id.to_string()),
-    serde_json::Value::Null,
-  )
-  .await;
-
-  Ok(Json(serde_json::json!({"deleted": true})))
 }
 
 async fn system_status(
@@ -747,11 +631,6 @@ pub fn router() -> Router<AppState> {
       get(cache_traffic_timeseries),
     )
     .route("/admin/caches/{name}/nars", get(list_cache_nars))
-    .route("/admin/builders", get(list_builders).post(create_builder))
-    .route(
-      "/admin/builders/{id}",
-      get(get_builder).put(update_builder).delete(delete_builder),
-    )
     .route("/admin/builders/sessions", get(list_builder_sessions))
     .route(
       "/admin/builders/sessions/connected",
