@@ -191,6 +191,36 @@
               default = [];
               description = "Upstream caches the global cache may fall through to.";
             };
+
+            gc = mkOption {
+              type = submodule {
+                freeformType = settingsType;
+                options = {
+                  max_size_bytes = mkOption {
+                    type = nullOr int;
+                    default = null;
+                    description = "Start deleting least-recently used uploaded NARs above this size.";
+                  };
+                  target_size_bytes = mkOption {
+                    type = nullOr int;
+                    default = null;
+                    description = "Continue size-pressure cleanup until uploaded NARs fit below this size.";
+                  };
+                  max_age_days = mkOption {
+                    type = nullOr int;
+                    default = null;
+                    description = "Delete uploaded NARs not fetched within this many days.";
+                  };
+                  cleanup_interval = mkOption {
+                    type = int;
+                    default = 3600;
+                    description = "Seconds between automatic binary-cache cleanup cycles.";
+                  };
+                };
+              };
+              default = {};
+              description = "Retention and size-pressure policy for uploaded S3 NAR objects.";
+            };
           };
         };
         default = {};
