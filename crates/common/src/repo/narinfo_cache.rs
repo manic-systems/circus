@@ -368,6 +368,26 @@ pub struct DeletedNar {
   pub bytes:      i64,
 }
 
+/// A remotely stored NAR selected by the configured cache cleanup policy.
+#[derive(Debug, Clone)]
+pub struct CacheGcCandidate {
+  pub store_path: String,
+  /// Cache-relative object URL (`nar/...`).
+  pub url:        String,
+  /// Stored bytes reclaimed when the object is deleted.
+  pub bytes:      i64,
+}
+
+impl From<q::CacheGcCandidateRow> for CacheGcCandidate {
+  fn from(r: q::CacheGcCandidateRow) -> Self {
+    Self {
+      store_path: r.store_path,
+      url:        r.url,
+      bytes:      r.bytes,
+    }
+  }
+}
+
 impl From<q::DeletedNarRow> for DeletedNar {
   fn from(r: q::DeletedNarRow) -> Self {
     Self {
@@ -411,4 +431,45 @@ pub async fn delete_stale(
   };
   tx.commit().await?;
   Ok(rows.into_iter().map(DeletedNar::from).collect())
+}
+
+/// Select uploaded NAR objects eligible for age- or size-based cleanup.
+/// Age-eligible objects are accounted for before size-pressure candidates are
+/// selected, preventing the two rules from deleting beyond the target.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn list_gc_candidates(
+  pool: &PgPool,
+  cutoff: Option<DateTime<Utc>>,
+  max_size_bytes: Option<i64>,
+  target_size_bytes: Option<i64>,
+) -> Result<Vec<CacheGcCandidate>> {
+  let client = pool.get().await?;
+  let rows = q::list_gc_candidates()
+    .bind(&client, &cutoff, &max_size_bytes, &target_size_bytes)
+    .all()
+    .await?;
+  Ok(rows.into_iter().map(CacheGcCandidate::from).collect())
+}
+
+/// Remove metadata for uploaded NAR objects that were successfully deleted.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn delete_gc_candidates(
+  pool: &PgPool,
+  store_paths: &[String],
+) -> Result<u64> {
+  if store_paths.is_empty() {
+    return Ok(0);
+  }
+  let client = pool.get().await?;
+  Ok(
+    q::delete_gc_candidates()
+      .bind(&client, &store_paths)
+      .await?,
+  )
 }

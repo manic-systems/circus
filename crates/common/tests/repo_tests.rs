@@ -1931,6 +1931,112 @@ async fn test_build_outputs_cascade_delete() {
 }
 
 #[tokio::test]
+async fn test_cache_gc_combines_age_and_size_rules_without_over_deleting() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let suffix = uuid::Uuid::new_v4().simple().to_string();
+  let entries = [
+    (format!("/nix/store/{suffix}-aged"), 40_i64, 100_i64, None),
+    (format!("/nix/store/{suffix}-lru"), 60, 100, Some(20_i64)),
+    (format!("/nix/store/{suffix}-middle"), 60, 10, None),
+    (format!("/nix/store/{suffix}-newest"), 60, 1, None),
+  ];
+
+  for (store_path, bytes, created_days_ago, fetched_days_ago) in &entries {
+    repo::narinfo_cache::upsert(&pool, repo::narinfo_cache::UpsertNarInfo {
+      store_path,
+      nar_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      nar_size: *bytes,
+      file_hash: Some(
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      ),
+      file_size: Some(*bytes),
+      compression: "zstd",
+      url: &format!(
+        "nar/{}.nar.zst",
+        store_path.trim_start_matches("/nix/store/")
+      ),
+      deriver: None,
+      references: &[],
+      sig: None,
+      ca: None,
+      build_id: None,
+      project_id: None,
+    })
+    .await
+    .expect("seed uploaded NAR");
+
+    let client = pool.get().await.expect("get database client");
+    client
+      .execute(
+        "UPDATE narinfo_cache SET created_at = NOW() - ($1 * INTERVAL '1 \
+         day'), last_fetched_at = CASE WHEN $2::bigint IS NULL THEN NULL ELSE \
+         NOW() - ($2 * INTERVAL '1 day') END WHERE store_path = $3",
+        &[created_days_ago, fetched_days_ago, store_path],
+      )
+      .await
+      .expect("age uploaded NAR");
+  }
+
+  let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+  let age_candidates =
+    repo::narinfo_cache::list_gc_candidates(&pool, Some(cutoff), None, None)
+      .await
+      .expect("select age-based cache GC candidates");
+  assert_eq!(
+    age_candidates
+      .iter()
+      .map(|candidate| candidate.store_path.as_str())
+      .collect::<Vec<_>>(),
+    [entries[0].0.as_str()]
+  );
+
+  let candidates = repo::narinfo_cache::list_gc_candidates(
+    &pool,
+    Some(cutoff),
+    Some(120),
+    Some(60),
+  )
+  .await
+  .expect("select cache GC candidates");
+  assert_eq!(
+    candidates
+      .iter()
+      .map(|candidate| candidate.store_path.as_str())
+      .collect::<Vec<_>>(),
+    [
+      entries[0].0.as_str(),
+      entries[1].0.as_str(),
+      entries[2].0.as_str(),
+    ]
+  );
+
+  let selected_paths = candidates
+    .into_iter()
+    .map(|candidate| candidate.store_path)
+    .collect::<Vec<_>>();
+  assert_eq!(
+    repo::narinfo_cache::delete_gc_candidates(&pool, &selected_paths)
+      .await
+      .expect("delete selected cache entries"),
+    3
+  );
+  assert!(
+    repo::narinfo_cache::list_gc_candidates(&pool, None, Some(120), Some(60),)
+      .await
+      .expect("recheck cache size policy")
+      .is_empty()
+  );
+
+  let remaining = vec![entries[3].0.clone()];
+  repo::narinfo_cache::delete_gc_candidates(&pool, &remaining)
+    .await
+    .expect("clean up remaining cache entry");
+}
+
+#[tokio::test]
 async fn test_declarative_projects_are_reconciled_authoritatively() {
   let Some(pool) = get_pool().await else {
     return;

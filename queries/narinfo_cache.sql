@@ -1,6 +1,7 @@
 -- Project visibility includes direct and shared ownership.
 --: NarinfoCacheRow(file_hash?, file_size?, deriver?, sig?, ca?, build_id?, project_id?, last_fetched_at?)
 --: DeletedNarRow()
+--: CacheGcCandidateRow()
 
 --! upsert (file_hash?, file_size?, deriver?, sig?, ca?, build_id?, project_id?)
 INSERT INTO
@@ -259,6 +260,69 @@ WHERE (:hash_prefix::text IS NULL
 
 --! touch_last_fetched
 UPDATE narinfo_cache SET last_fetched_at = NOW() WHERE store_path = :store_path;
+
+-- Select remotely uploaded NAR objects eligible for automatic cleanup. Age
+-- candidates are removed from the size calculation first, then least-recently
+-- used entries are selected until the configured target would be reached.
+-- A non-null file hash distinguishes verified object uploads from metadata for
+-- NARs served directly from the local Nix store.
+--! list_gc_candidates (cutoff?, max_size_bytes?, target_size_bytes?) : CacheGcCandidateRow
+WITH uploaded AS (
+  SELECT
+    store_path,
+    url,
+    GREATEST(COALESCE(file_size, nar_size), 0)::bigint AS bytes,
+    COALESCE(last_fetched_at, created_at) AS last_used_at
+  FROM narinfo_cache
+  WHERE file_hash IS NOT NULL
+),
+aged AS (
+  SELECT *
+  FROM uploaded
+  WHERE :cutoff::timestamptz IS NOT NULL
+    AND last_used_at < :cutoff
+),
+remaining AS (
+  SELECT uploaded.*
+  FROM uploaded
+  WHERE NOT EXISTS (
+    SELECT 1 FROM aged WHERE aged.store_path = uploaded.store_path
+  )
+),
+remaining_total AS (
+  SELECT COALESCE(SUM(bytes), 0)::bigint AS bytes FROM remaining
+),
+ranked AS (
+  SELECT
+    remaining.*,
+    remaining_total.bytes AS total_bytes,
+    (SUM(remaining.bytes) OVER (
+      ORDER BY remaining.last_used_at, remaining.store_path
+    ))::bigint AS reclaimed_bytes
+  FROM remaining
+  CROSS JOIN remaining_total
+),
+quota AS (
+  SELECT store_path, url, bytes, last_used_at
+  FROM ranked
+  WHERE :max_size_bytes::bigint IS NOT NULL
+    AND total_bytes > :max_size_bytes
+    AND reclaimed_bytes - bytes
+      < total_bytes - COALESCE(:target_size_bytes, :max_size_bytes)
+),
+selected AS (
+  SELECT store_path, url, bytes, last_used_at FROM aged
+  UNION ALL
+  SELECT store_path, url, bytes, last_used_at FROM quota
+)
+SELECT store_path, url, bytes
+FROM selected
+ORDER BY last_used_at, store_path;
+
+--! delete_gc_candidates
+DELETE FROM narinfo_cache
+WHERE file_hash IS NOT NULL
+  AND store_path = ANY(:store_paths);
 
 --! delete_stale_project_owners (cutoff?)
 DELETE FROM narinfo_cache_projects ncp

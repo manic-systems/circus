@@ -58,6 +58,12 @@ pub struct CountFilteredParams<T1: crate::StringSql, T2: crate::StringSql> {
     pub package_query: Option<T2>,
 }
 #[derive(Clone, Copy, Debug)]
+pub struct ListGcCandidatesParams {
+    pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
+    pub max_size_bytes: Option<i64>,
+    pub target_size_bytes: Option<i64>,
+}
+#[derive(Clone, Copy, Debug)]
 pub struct DeleteStaleProjectOwnersParams {
     pub project_id: uuid::Uuid,
     pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
@@ -195,6 +201,32 @@ impl<'a> From<ListFilteredBorrowed<'a>> for ListFiltered {
             compression: compression.into(),
             created_at,
             last_fetched_at,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct CacheGcCandidateRow {
+    pub store_path: String,
+    pub url: String,
+    pub bytes: i64,
+}
+pub struct CacheGcCandidateRowBorrowed<'a> {
+    pub store_path: &'a str,
+    pub url: &'a str,
+    pub bytes: i64,
+}
+impl<'a> From<CacheGcCandidateRowBorrowed<'a>> for CacheGcCandidateRow {
+    fn from(
+        CacheGcCandidateRowBorrowed {
+            store_path,
+            url,
+            bytes,
+        }: CacheGcCandidateRowBorrowed<'a>,
+    ) -> Self {
+        Self {
+            store_path: store_path.into(),
+            url: url.into(),
+            bytes,
         }
     }
 }
@@ -508,6 +540,74 @@ where
         mapper: fn(ListFilteredBorrowed) -> R,
     ) -> ListFilteredQuery<'c, 'a, 's, C, R, N> {
         ListFilteredQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct CacheGcCandidateRowQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor:
+        fn(&tokio_postgres::Row) -> Result<CacheGcCandidateRowBorrowed, tokio_postgres::Error>,
+    mapper: fn(CacheGcCandidateRowBorrowed) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> CacheGcCandidateRowQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(
+        self,
+        mapper: fn(CacheGcCandidateRowBorrowed) -> R,
+    ) -> CacheGcCandidateRowQuery<'c, 'a, 's, C, R, N> {
+        CacheGcCandidateRowQuery {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -1231,6 +1331,99 @@ impl TouchLastFetchedStmt {
         store_path: &'a T1,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[store_path]).await
+    }
+}
+pub struct ListGcCandidatesStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn list_gc_candidates() -> ListGcCandidatesStmt {
+    ListGcCandidatesStmt(
+        "WITH uploaded AS ( SELECT store_path, url, GREATEST(COALESCE(file_size, nar_size), 0)::bigint AS bytes, COALESCE(last_fetched_at, created_at) AS last_used_at FROM narinfo_cache WHERE file_hash IS NOT NULL ), aged AS ( SELECT * FROM uploaded WHERE $1::timestamptz IS NOT NULL AND last_used_at < $1 ), remaining AS ( SELECT uploaded.* FROM uploaded WHERE NOT EXISTS ( SELECT 1 FROM aged WHERE aged.store_path = uploaded.store_path ) ), remaining_total AS ( SELECT COALESCE(SUM(bytes), 0)::bigint AS bytes FROM remaining ), ranked AS ( SELECT remaining.*, remaining_total.bytes AS total_bytes, (SUM(remaining.bytes) OVER ( ORDER BY remaining.last_used_at, remaining.store_path ))::bigint AS reclaimed_bytes FROM remaining CROSS JOIN remaining_total ), quota AS ( SELECT store_path, url, bytes, last_used_at FROM ranked WHERE $2::bigint IS NOT NULL AND total_bytes > $2 AND reclaimed_bytes - bytes < total_bytes - COALESCE($3, $2) ), selected AS ( SELECT store_path, url, bytes, last_used_at FROM aged UNION ALL SELECT store_path, url, bytes, last_used_at FROM quota ) SELECT store_path, url, bytes FROM selected ORDER BY last_used_at, store_path",
+        None,
+    )
+}
+impl ListGcCandidatesStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+        max_size_bytes: &'a Option<i64>,
+        target_size_bytes: &'a Option<i64>,
+    ) -> CacheGcCandidateRowQuery<'c, 'a, 's, C, CacheGcCandidateRow, 3> {
+        CacheGcCandidateRowQuery {
+            client,
+            params: [cutoff, max_size_bytes, target_size_bytes],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |
+                row: &tokio_postgres::Row,
+            | -> Result<CacheGcCandidateRowBorrowed, tokio_postgres::Error> {
+                Ok(CacheGcCandidateRowBorrowed {
+                    store_path: row.try_get(0)?,
+                    url: row.try_get(1)?,
+                    bytes: row.try_get(2)?,
+                })
+            },
+            mapper: |it| CacheGcCandidateRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ListGcCandidatesParams,
+        CacheGcCandidateRowQuery<'c, 'a, 's, C, CacheGcCandidateRow, 3>,
+        C,
+    > for ListGcCandidatesStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ListGcCandidatesParams,
+    ) -> CacheGcCandidateRowQuery<'c, 'a, 's, C, CacheGcCandidateRow, 3> {
+        self.bind(
+            client,
+            &params.cutoff,
+            &params.max_size_bytes,
+            &params.target_size_bytes,
+        )
+    }
+}
+pub struct DeleteGcCandidatesStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_gc_candidates() -> DeleteGcCandidatesStmt {
+    DeleteGcCandidatesStmt(
+        "DELETE FROM narinfo_cache WHERE file_hash IS NOT NULL AND store_path = ANY($1)",
+        None,
+    )
+}
+impl DeleteGcCandidatesStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::ArraySql<Item = T1>,
+    >(
+        &'s self,
+        client: &'c C,
+        store_paths: &'a T2,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[store_paths]).await
     }
 }
 pub struct DeleteStaleProjectOwnersStmt(&'static str, Option<tokio_postgres::Statement>);
