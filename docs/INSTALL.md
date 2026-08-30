@@ -293,6 +293,10 @@ configuration or the Nix store.
 | `cache`              | `secret_key_file`                                      | none                                                | Deprecated; outputs are signed via `[signing]`                            |
 | `cache`              | `cache_url`                                            | none                                                | Public cache URL for channel manifests                                    |
 | `cache`              | `upstreams`                                            | `[]`                                                | Upstream binary caches used by global builds                              |
+| `cache`              | `gc.max_size_bytes`                                    | none                                                | Start LRU cleanup above this uploaded-object size                         |
+| `cache`              | `gc.target_size_bytes`                                 | none                                                | Continue LRU cleanup to this uploaded-object size                         |
+| `cache`              | `gc.max_age_days`                                      | none                                                | Remove uploaded NARs not fetched within N days                            |
+| `cache`              | `gc.cleanup_interval`                                  | `3600`                                              | Automatic cache cleanup interval (seconds)                                |
 | `signing`            | `enabled`                                              | `false`                                             | Sign build outputs                                                        |
 | `signing`            | `key_file`                                             | none                                                | Signing key file path                                                     |
 | `cache_upload`       | `enabled`                                              | `false`                                             | Upload builds to external cache store                                     |
@@ -479,6 +483,42 @@ a short-lived S3 GET URL and redirects the client.
 If both `store_uri` and `s3.prefix` contain paths, Circus combines them. For
 example, `store_uri = "s3://bucket/root"` plus `s3.prefix = "nix-cache"` writes
 objects below `root/nix-cache/`.
+
+### Automatic Cache Cleanup
+
+Configure `[cache.gc]` to bound verified S3 uploads tracked by Circus. An age
+rule removes objects whose most recent fetch (or creation, when never fetched)
+is older than `max_age_days`. A size rule starts when tracked object storage
+exceeds `max_size_bytes` and removes least-recently used objects until
+`target_size_bytes` is reached. If no target is set, cleanup stops at the
+maximum.
+
+```toml
+[cache.gc]
+max_size_bytes = 536870912000    # 500 GiB
+target_size_bytes = 483183820800 # 450 GiB
+max_age_days = 90
+cleanup_interval = 3600
+
+[cache_upload]
+enabled = true
+store_uri = "s3://circus-cache"
+
+[cache_upload.s3]
+access_key_id = "circus"
+secret_access_key_file = "/run/secrets/circus-s3-secret"
+```
+
+At least one age or size rule enables automatic cleanup. The target must be
+smaller than the maximum. Cleanup requires an S3 upload target and explicit
+credentials because Circus deletes objects before removing their database
+metadata; failed object deletions remain indexed and are retried later.
+
+The policy covers presigned agent uploads, whose object sizes and keys Circus
+verifies and records. Objects written directly by `nix copy` are not indexed
+with their stored object size and remain the responsibility of the backing
+store's lifecycle policy. Local Nix-store outputs remain governed by `[gc]` and
+pinned builds.
 
 ### Public Binary Cache Use
 
@@ -1019,11 +1059,11 @@ Circus exposes a Prometheus-compatible metrics endpoint at `/prometheus`.
 
 ```yaml
 scrape_configs:
-    - job_name: "circus-ci"
-      static_configs:
-          - targets: ["ci.example.org:3000"]
-      metrics_path: "/prometheus"
-      scrape_interval: 30s
+  - job_name: "circus-ci"
+    static_configs:
+      - targets: ["ci.example.org:3000"]
+    metrics_path: "/prometheus"
+    scrape_interval: 30s
 ```
 
 The `/health` endpoint reports database and service status. Administrative

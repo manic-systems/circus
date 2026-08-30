@@ -334,6 +334,12 @@ inventory: filter by store-path hash prefix or package name, and inspect each
 NAR's sizes, upload time, and last-fetched time. The matching JSON lives under
 `GET /api/v1/admin/caches/{name}/nars`.
 
+Operators can configure automatic age and size-pressure cleanup under
+`[cache.gc]`. Cleanup applies globally to verified S3 objects tracked from agent
+uploads, removes least-recently used objects first, and retries objects whose
+deletion fails. See "Automatic Cache Cleanup" in [INSTALL.md](./INSTALL.md) for
+the policy and its storage boundaries.
+
 ## First-Time Bootstrapping
 
 On a fresh installation there are no users or API keys yet. You need an admin
