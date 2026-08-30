@@ -5,7 +5,7 @@
 //! order, so a non-admin attempting to forge a request never reaches the
 //! database.
 
-use std::{cmp::Ordering, collections::HashMap, env};
+use std::{cmp::Ordering, env};
 
 use axum::{
   Form,
@@ -36,7 +36,6 @@ use super::{
   templates::{
     AdminTemplate,
     AgentView,
-    BuilderView,
     NewsTemplate,
     NotificationTaskView,
     NotificationsTemplate,
@@ -300,55 +299,6 @@ pub(super) async fn admin_page(
     remote_builders:   builders_count,
     channels_count:    channels,
   };
-  let raw_builders = circus_common::repo::remote_builders::list(pool)
-    .await
-    .unwrap_or_default();
-
-  // Get running builds to calculate builder load
-  let running_builds = circus_common::repo::builds::list_filtered(
-    pool,
-    None,
-    Some("running"),
-    None,
-    None,
-    1000,
-    0,
-  )
-  .await
-  .unwrap_or_default();
-
-  // Count builds per builder
-  let mut builds_per_builder: HashMap<Uuid, i64> = HashMap::new();
-  for build in &running_builds {
-    if let Some(builder_id) = build.builder_id {
-      *builds_per_builder.entry(builder_id).or_insert(0) += 1;
-    }
-  }
-
-  // Convert to BuilderView with load info
-  let builders: Vec<BuilderView> = raw_builders
-    .into_iter()
-    .map(|b| {
-      let current_builds = *builds_per_builder.get(&b.id).unwrap_or(&0);
-      let load_percent = if b.max_jobs > 0 {
-        (current_builds * 100) / i64::from(b.max_jobs)
-      } else {
-        0
-      };
-      BuilderView {
-        id: b.id,
-        name: b.name,
-        ssh_uri: b.ssh_uri,
-        systems: b.systems.join(", "),
-        max_jobs: b.max_jobs,
-        enabled: b.enabled,
-        current_builds,
-        load_percent,
-        last_activity: b.created_at.format("%Y-%m-%d").to_string(),
-      }
-    })
-    .collect();
-
   // Fetch connected agents
   let raw_sessions = circus_common::repo::builder_sessions::list(pool)
     .await
@@ -480,7 +430,6 @@ pub(super) async fn admin_page(
   let tmpl = AdminTemplate {
     ui: ui_config(&state),
     status,
-    builders,
     agents,
     agent_sort_headers,
     agent_sort_key: agent_sort.as_param().to_string(),

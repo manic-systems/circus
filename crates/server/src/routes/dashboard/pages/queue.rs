@@ -79,12 +79,6 @@ pub(in crate::routes::dashboard) async fn queue_page(
     Vec::new()
   };
 
-  let builders = circus_common::repo::remote_builders::list(&state.pool)
-    .await
-    .unwrap_or_default();
-  let builder_map: HashMap<Uuid, String> =
-    builders.into_iter().map(|b| (b.id, b.name)).collect();
-
   let agent_map = circus_common::repo::builder_sessions::list(&state.pool)
     .await
     .unwrap_or_default()
@@ -139,12 +133,8 @@ pub(in crate::routes::dashboard) async fn queue_page(
         format_elapsed(dur.num_seconds())
       });
       let builder_name = b
-        .builder_id
-        .and_then(|id| builder_map.get(&id).cloned())
-        .or_else(|| {
-          b.agent_machine_id
-            .and_then(|id| agent_map.get(&id).cloned())
-        });
+        .agent_machine_id
+        .and_then(|id| agent_map.get(&id).cloned());
       let (project_id, project_name, jobset_id, jobset_name) = context_for(b);
       QueueBuildView {
         id: b.id,
