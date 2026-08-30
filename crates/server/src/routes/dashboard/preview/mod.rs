@@ -43,11 +43,6 @@ pub fn router() -> Router {
       post(api::api_ok),
     )
     .route("/api/v1/admin/pinned-builds/{id}/unpin", post(api::api_ok))
-    .route("/api/v1/admin/builders", post(api::api_builder_create))
-    .route(
-      "/api/v1/admin/builders/{id}",
-      put(api::api_ok).delete(api::api_ok),
-    )
     .route(
       "/api/v1/metrics/timeseries/builds",
       get(api::api_metrics_builds),

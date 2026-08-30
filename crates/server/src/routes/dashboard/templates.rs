@@ -274,19 +274,6 @@ pub(super) struct NewsTemplate {
   pub(super) csrf_token: String,
 }
 
-/// Builder info with load and activity metrics
-pub(super) struct BuilderView {
-  pub(super) id:             Uuid,
-  pub(super) name:           String,
-  pub(super) ssh_uri:        String,
-  pub(super) systems:        String,
-  pub(super) max_jobs:       i32,
-  pub(super) enabled:        bool,
-  pub(super) current_builds: i64,
-  pub(super) load_percent:   i64,
-  pub(super) last_activity:  String,
-}
-
 pub(super) struct AgentView {
   pub(super) machine_id:       Uuid,
   pub(super) name:             String,
@@ -470,7 +457,6 @@ mod tests {
 pub(super) struct AdminTemplate {
   pub(super) ui:                      UiTemplateConfig,
   pub(super) status:                  SystemStatus,
-  pub(super) builders:                Vec<BuilderView>,
   pub(super) agents:                  Vec<AgentView>,
   pub(super) agent_sort_headers:      Vec<SortHeaderView>,
   pub(super) agent_sort_key:          String,
