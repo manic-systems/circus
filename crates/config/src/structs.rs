@@ -437,6 +437,28 @@ pub struct CacheConfig {
   pub cache_url:       Option<String>,
   #[serde(default)]
   pub upstreams:       Vec<BinaryCacheUpstream>,
+  /// Retention and size-pressure policy for uploaded NAR objects.
+  pub gc:              CacheGcConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CacheGcConfig {
+  /// Start size-pressure cleanup above this many stored bytes.
+  pub max_size_bytes:    Option<i64>,
+  /// Continue cleanup until stored bytes are at or below this value.
+  pub target_size_bytes: Option<i64>,
+  /// Delete uploaded NARs not fetched within this many days.
+  pub max_age_days:      Option<u32>,
+  /// Seconds between automatic cache cleanup cycles.
+  pub cleanup_interval:  u64,
+}
+
+impl CacheGcConfig {
+  #[must_use]
+  pub const fn is_enabled(&self) -> bool {
+    self.max_size_bytes.is_some() || self.max_age_days.is_some()
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -863,6 +885,18 @@ impl Default for CacheConfig {
       secret_key_file: None,
       cache_url:       None,
       upstreams:       Vec::new(),
+      gc:              CacheGcConfig::default(),
+    }
+  }
+}
+
+impl Default for CacheGcConfig {
+  fn default() -> Self {
+    Self {
+      max_size_bytes:    None,
+      target_size_bytes: None,
+      max_age_days:      None,
+      cleanup_interval:  3600,
     }
   }
 }

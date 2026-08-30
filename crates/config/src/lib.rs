@@ -53,6 +53,57 @@ mod tests {
   fn test_default_config() {
     let config = Config::default();
     assert!(config.validate().is_ok());
+    assert!(!config.cache.gc.is_enabled());
+  }
+
+  #[test]
+  fn cache_gc_policy_loads_from_toml() {
+    let config = Config::from_toml_with_defaults(
+      r#"
+        [cache.gc]
+        max_size_bytes = 10737418240
+        target_size_bytes = 8589934592
+        max_age_days = 45
+        cleanup_interval = 900
+
+        [cache_upload]
+        store_uri = "s3://circus-cache"
+
+        [cache_upload.s3]
+        access_key_id = "test-access-key"
+        secret_access_key = "test-secret-key"
+      "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.cache.gc.max_size_bytes, Some(10_737_418_240));
+    assert_eq!(config.cache.gc.target_size_bytes, Some(8_589_934_592));
+    assert_eq!(config.cache.gc.max_age_days, Some(45));
+    assert_eq!(config.cache.gc.cleanup_interval, 900);
+  }
+
+  #[test]
+  fn cache_gc_rejects_invalid_or_unenforceable_policies() {
+    let invalid_target = Config::from_toml_with_defaults(
+      r"
+        [cache.gc]
+        max_size_bytes = 100
+        target_size_bytes = 100
+      ",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(invalid_target.contains("target_size_bytes must be less"));
+
+    let missing_storage = Config::from_toml_with_defaults(
+      r"
+        [cache.gc]
+        max_age_days = 30
+      ",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(missing_storage.contains("requires an S3 cache_upload.store_uri"));
   }
 
   #[test]

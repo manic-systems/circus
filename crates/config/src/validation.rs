@@ -4,7 +4,78 @@ use circus_types::validation::{
 };
 use color_eyre::eyre::{self, WrapErr, bail};
 
-use crate::{Config, DatabaseConfig, EvaluatorSystems};
+use crate::{
+  CacheGcConfig,
+  CacheUploadConfig,
+  Config,
+  DatabaseConfig,
+  EvaluatorSystems,
+};
+
+impl CacheGcConfig {
+  fn validate(&self, upload: &CacheUploadConfig) -> eyre::Result<()> {
+    self.validate_policy()?;
+    if self.is_enabled() {
+      Self::validate_storage(upload)?;
+    }
+    Ok(())
+  }
+
+  fn validate_policy(&self) -> eyre::Result<()> {
+    if self.max_size_bytes.is_some_and(|bytes| bytes <= 0) {
+      bail!("cache.gc.max_size_bytes must be greater than 0");
+    }
+    if self.target_size_bytes.is_some_and(|bytes| bytes <= 0) {
+      bail!("cache.gc.target_size_bytes must be greater than 0");
+    }
+    if self
+      .max_age_days
+      .is_some_and(|days| !(1..=36_500).contains(&days))
+    {
+      bail!("cache.gc.max_age_days must be between 1 and 36500");
+    }
+    if let Some(target) = self.target_size_bytes {
+      let Some(maximum) = self.max_size_bytes else {
+        bail!("cache.gc.target_size_bytes requires cache.gc.max_size_bytes");
+      };
+      if target >= maximum {
+        bail!(
+          "cache.gc.target_size_bytes must be less than \
+           cache.gc.max_size_bytes"
+        );
+      }
+    }
+    if !self.is_enabled() {
+      return Ok(());
+    }
+    if self.cleanup_interval == 0 {
+      bail!("cache.gc.cleanup_interval must be greater than 0");
+    }
+    Ok(())
+  }
+
+  fn validate_storage(upload: &CacheUploadConfig) -> eyre::Result<()> {
+    if upload
+      .store_uri
+      .as_deref()
+      .is_none_or(|uri| !uri.starts_with("s3://"))
+    {
+      bail!("cache.gc requires an S3 cache_upload.store_uri");
+    }
+    let Some(s3) = upload.s3.as_ref() else {
+      bail!("cache.gc requires cache_upload.s3 credentials");
+    };
+    if s3.access_key_id.is_none()
+      || (s3.secret_access_key.is_none() && s3.secret_access_key_file.is_none())
+    {
+      bail!(
+        "cache.gc requires cache_upload.s3.access_key_id and a secret access \
+         key"
+      );
+    }
+    Ok(())
+  }
+}
 
 fn validate_css_variable_name(name: &str) -> eyre::Result<()> {
   let name = name.trim_start_matches("--");
@@ -50,6 +121,41 @@ impl DatabaseConfig {
 }
 
 impl Config {
+  fn validate_global_cache(&self) -> eyre::Result<()> {
+    if let Some(url) = self.cache.cache_url.as_deref() {
+      validate_shared(validate_cache_url(url, "cache.cache_url"))?;
+    }
+    for (idx, upstream) in self.cache.upstreams.iter().enumerate() {
+      validate_shared(validate_binary_cache_upstream(
+        upstream,
+        &format!("cache.upstreams[{idx}]"),
+      ))?;
+    }
+    self.cache.gc.validate(&self.cache_upload)
+  }
+
+  fn validate_project_caches(&self) -> eyre::Result<()> {
+    for (project_idx, project) in self.declarative.projects.iter().enumerate() {
+      if let Some(url) = project.cache_url.as_deref() {
+        validate_shared(validate_cache_url(
+          url,
+          &format!("declarative.projects[{project_idx}].cache_url"),
+        ))?;
+      }
+      for (upstream_idx, upstream) in project.cache_upstreams.iter().enumerate()
+      {
+        validate_shared(validate_binary_cache_upstream(
+          upstream,
+          &format!(
+            "declarative.projects[{project_idx}].\
+             cache_upstreams[{upstream_idx}]"
+          ),
+        ))?;
+      }
+    }
+    Ok(())
+  }
+
   /// Validate all configuration sections.
   ///
   /// # Errors
@@ -116,33 +222,8 @@ impl Config {
       _ => {},
     }
 
-    if let Some(url) = self.cache.cache_url.as_deref() {
-      validate_shared(validate_cache_url(url, "cache.cache_url"))?;
-    }
-    for (idx, upstream) in self.cache.upstreams.iter().enumerate() {
-      validate_shared(validate_binary_cache_upstream(
-        upstream,
-        &format!("cache.upstreams[{idx}]"),
-      ))?;
-    }
-    for (project_idx, project) in self.declarative.projects.iter().enumerate() {
-      if let Some(url) = project.cache_url.as_deref() {
-        validate_shared(validate_cache_url(
-          url,
-          &format!("declarative.projects[{project_idx}].cache_url"),
-        ))?;
-      }
-      for (upstream_idx, upstream) in project.cache_upstreams.iter().enumerate()
-      {
-        validate_shared(validate_binary_cache_upstream(
-          upstream,
-          &format!(
-            "declarative.projects[{project_idx}].\
-             cache_upstreams[{upstream_idx}]"
-          ),
-        ))?;
-      }
-    }
+    self.validate_global_cache()?;
+    self.validate_project_caches()?;
 
     // Validate queue runner settings
     if let Some(t) = self.queue_runner.psi_threshold
