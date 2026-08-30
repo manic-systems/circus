@@ -12,9 +12,9 @@ CREATE TABLE evaluation_source_heads (
   PRIMARY KEY (jobset_id, source_scope)
 );
 
-CREATE INDEX idx_evaluations_active_source_scope
-ON evaluations (jobset_id, source_scope, evaluation_time)
-WHERE trigger_kind = 'source_change';
+CREATE INDEX idx_evaluations_active_source_scope ON evaluations (jobset_id, source_scope, evaluation_time)
+WHERE
+  trigger_kind = 'source_change';
 
 CREATE OR REPLACE VIEW active_jobsets AS
 SELECT
@@ -39,15 +39,18 @@ SELECT
   j.trigger_mode,
   j.systems,
   j.only_build_latest
-FROM jobsets j
-JOIN projects p ON j.project_id = p.id
-WHERE j.state IN ('enabled', 'one_shot', 'one_at_a_time')
+FROM
+  jobsets j
+  JOIN projects p ON j.project_id = p.id
+WHERE
+  j.state IN ('enabled', 'one_shot', 'one_at_a_time')
   AND j.enabled = true;
 
 DROP TRIGGER IF EXISTS trg_jobsets_update_notify ON jobsets;
 
 CREATE TRIGGER trg_jobsets_update_notify
-AFTER UPDATE ON jobsets FOR EACH ROW WHEN (
+AFTER
+UPDATE ON jobsets FOR EACH ROW WHEN (
   OLD.enabled IS DISTINCT FROM NEW.enabled
   OR OLD.state IS DISTINCT FROM NEW.state
   OR OLD.nix_expression IS DISTINCT FROM NEW.nix_expression
