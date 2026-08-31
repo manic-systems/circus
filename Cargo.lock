@@ -945,9 +945,13 @@ dependencies = [
  "opentelemetry_sdk",
  "serde",
  "thiserror 2.0.19",
+ "tokio",
+ "tonic",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]

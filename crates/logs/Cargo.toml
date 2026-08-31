@@ -12,7 +12,11 @@ opentelemetry-otlp.workspace    = true
 opentelemetry_sdk.workspace     = true
 serde.workspace                 = true
 thiserror.workspace             = true
+tokio.workspace                 = true
+tonic.workspace                 = true
 tracing.workspace               = true
+url.workspace                   = true
+urlencoding.workspace           = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace    = true
 

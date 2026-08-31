@@ -83,6 +83,34 @@ mod tests {
   }
 
   #[test]
+  fn otlp_tracing_accepts_integer_sampling_ratio() {
+    let config = Config::from_toml_with_defaults(
+      r"
+        [tracing.otlp]
+        enabled = true
+        sample_ratio = 1
+      ",
+    )
+    .unwrap();
+
+    assert_eq!(config.tracing.otlp.sample_ratio, 1.0);
+  }
+
+  #[test]
+  fn tracing_rejects_invalid_filter() {
+    let error = Config::from_toml_with_defaults(
+      r#"
+        [tracing]
+        level = "[not a filter"
+      "#,
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("tracing.level is invalid"));
+  }
+
+  #[test]
   fn otlp_tracing_rejects_invalid_sampling_ratio() {
     let error = Config::from_toml_with_defaults(
       r"
