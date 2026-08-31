@@ -759,43 +759,6 @@ pub struct Channel {
   pub updated_at:            DateTime<Utc>,
 }
 
-/// Remote builder for multi-machine / multi-arch builds.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteBuilder {
-  pub id:                   Uuid,
-  pub name:                 String,
-  pub ssh_uri:              String,
-  pub systems:              Vec<String>,
-  pub max_jobs:             i32,
-  pub speed_factor:         i32,
-  pub supported_features:   Vec<String>,
-  pub mandatory_features:   Vec<String>,
-  pub enabled:              bool,
-  pub public_host_key:      Option<String>,
-  #[serde(skip_serializing)]
-  pub ssh_key_file:         Option<String>,
-  pub created_at:           DateTime<Utc>,
-  pub consecutive_failures: i32,
-  pub disabled_until:       Option<DateTime<Utc>>,
-  pub last_failure:         Option<DateTime<Utc>>,
-  pub cpu_cores:            Option<i32>,
-}
-
-/// Parameters for creating or updating a remote builder.
-#[derive(Debug, Clone)]
-pub struct RemoteBuilderParams<'a> {
-  pub name:               &'a str,
-  pub ssh_uri:            &'a str,
-  pub systems:            &'a [String],
-  pub max_jobs:           i32,
-  pub speed_factor:       i32,
-  pub supported_features: &'a [String],
-  pub mandatory_features: &'a [String],
-  pub enabled:            bool,
-  pub public_host_key:    Option<&'a str>,
-  pub ssh_key_file:       Option<&'a str>,
-}
-
 /// User account for authentication and personalization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -1116,33 +1079,6 @@ pub struct UpdateChannel {
   pub jobset_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateRemoteBuilder {
-  pub name:               String,
-  pub ssh_uri:            String,
-  pub systems:            Vec<String>,
-  pub max_jobs:           Option<i32>,
-  pub speed_factor:       Option<i32>,
-  pub supported_features: Option<Vec<String>>,
-  pub mandatory_features: Option<Vec<String>>,
-  pub public_host_key:    Option<String>,
-  pub ssh_key_file:       Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateRemoteBuilder {
-  pub name:               Option<String>,
-  pub ssh_uri:            Option<String>,
-  pub systems:            Option<Vec<String>>,
-  pub max_jobs:           Option<i32>,
-  pub speed_factor:       Option<i32>,
-  pub supported_features: Option<Vec<String>>,
-  pub mandatory_features: Option<Vec<String>>,
-  pub enabled:            Option<bool>,
-  pub public_host_key:    Option<String>,
-  pub ssh_key_file:       Option<String>,
-}
-
 /// Summary of system status for the admin API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemStatus {
@@ -1153,7 +1089,6 @@ pub struct SystemStatus {
   pub builds_running:    i64,
   pub builds_completed:  i64,
   pub builds_failed:     i64,
-  pub remote_builders:   i64,
   pub channels_count:    i64,
 }
 

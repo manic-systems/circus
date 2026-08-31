@@ -359,20 +359,6 @@ async fn sync_users(
   Ok(())
 }
 
-async fn sync_remote_builders(
-  pool: &PgPool,
-  config: &DeclarativeConfig,
-) -> Result<()> {
-  if !config.remote_builders.is_empty() {
-    repo::remote_builders::sync_all(pool, &config.remote_builders).await?;
-    tracing::info!(
-      builders = config.remote_builders.len(),
-      "Synced declarative remote builders"
-    );
-  }
-  Ok(())
-}
-
 async fn notify_evaluator(pool: &PgPool) {
   if let Err(error) =
     crate::pg_notify::notify(pool, crate::pg_notify::CHANNEL_JOBSETS_CHANGED)
@@ -400,14 +386,12 @@ pub async fn run(
   let n_jobsets: usize = config.projects.iter().map(|p| p.jobsets.len()).sum();
   let n_keys = config.api_keys.len();
   let n_users = config.users.len();
-  let n_builders = config.remote_builders.len();
 
   tracing::info!(
     projects = n_projects,
     jobsets = n_jobsets,
     api_keys = n_keys,
     users = n_users,
-    remote_builders = n_builders,
     "Bootstrapping declarative configuration"
   );
 
@@ -416,7 +400,6 @@ pub async fn run(
 
   sync_api_keys(pool, &config.api_keys).await?;
   sync_users(pool, &config.users).await?;
-  sync_remote_builders(pool, config).await?;
   sync_project_members(pool, config).await?;
   notify_evaluator(pool).await;
 

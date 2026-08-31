@@ -196,15 +196,7 @@ SELECT
       COUNT(*)
     FROM
       channels
-  ) AS channel_count,
-  (
-    SELECT
-      COUNT(*)
-    FROM
-      remote_builders
-    WHERE
-      enabled = true
-  ) AS builder_count;
+  ) AS channel_count;
 
 --! per_project_build_counts
 SELECT

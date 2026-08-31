@@ -64,9 +64,7 @@ async fn test_worker_pool_drain_stops_dispatch() {
     failed_paths_ttl:        0,
     scheduling_strategy:     BuilderSchedulingStrategy::default(),
     psi_threshold:           None,
-    psi_check_timeout:       std::time::Duration::from_secs(5),
     extra_nix_build_args:    Vec::new(),
-    ssh_require_host_key:    false,
   }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
@@ -184,9 +182,7 @@ async fn test_worker_pool_active_builds_cancel() {
     failed_paths_ttl:        0,
     scheduling_strategy:     BuilderSchedulingStrategy::default(),
     psi_threshold:           None,
-    psi_check_timeout:       std::time::Duration::from_secs(5),
     extra_nix_build_args:    Vec::new(),
-    ssh_require_host_key:    false,
   }));
   let worker_pool = circus_queue_runner::worker::WorkerPool::new(
     pool,
