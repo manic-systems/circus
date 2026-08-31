@@ -107,15 +107,11 @@ where
   let cli = Cli::parse_from(args);
   let mut cfg = load_config(&cli)?;
 
-  let (rt, tracing_guard) = runtime_with_tracing(&cfg.tracing)?;
-
   // `--ephemeral` enables it without an `[agent.ephemeral]` table.
   if cli.ephemeral && cfg.agent.ephemeral.is_none() {
     cfg.agent.ephemeral = Some(EphemeralConfig::default());
   }
   let ephemeral = cfg.agent.ephemeral.is_some();
-  tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
-
   let machine_id = resolve_machine_id(&cfg, ephemeral)?;
 
   // Uniquify the shared name so concurrent CI runs don't collide.
@@ -124,17 +120,20 @@ where
   {
     cfg.agent.name = unique_ephemeral_name(&cfg.agent.name, machine_id);
   }
-  tracing::info!(machine_id = %machine_id, name = %cfg.agent.name, "agent identity resolved");
-
   prepare_rootless(&cfg.agent)?;
 
-  let local = tokio::task::LocalSet::new();
+  let (rt, tracing_guard) = runtime_with_tracing(&cfg.tracing)?;
+  tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
+  tracing::info!(machine_id = %machine_id, name = %cfg.agent.name, "agent identity resolved");
 
-  let result = rt.block_on(
-    local.run_until(async move { run_supervisor(cfg.agent, machine_id).await }),
-  );
-  drop(tracing_guard);
-  result
+  let local = tokio::task::LocalSet::new();
+  rt.block_on(async move {
+    let result = local
+      .run_until(async move { run_supervisor(cfg.agent, machine_id).await })
+      .await;
+    tracing_guard.shutdown().await;
+    result
+  })
 }
 
 fn prepare_rootless(agent: &Agent) -> Result<()> {
@@ -142,7 +141,7 @@ fn prepare_rootless(agent: &Agent) -> Result<()> {
     return Ok(());
   }
   if let Some(dir) = &agent.rootless_data_dir {
-    // SAFETY: this is before the runtime starts.
+    // SAFETY: this is before the runtime is built or any worker is spawned.
     unsafe { std::env::set_var(sandbox::DATA_DIR_ENV, dir) };
   }
   sandbox::preflight()

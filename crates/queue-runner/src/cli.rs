@@ -82,8 +82,10 @@ where
   let config_path = cli.config.clone();
 
   let config = Config::load(cli.config.as_deref())?;
-  let _tracing =
+  let tracing_guard =
     circus_common::init_tracing(&config.tracing, "circus-queue-runner")?;
+
+  let result = async {
 
   tracing::info!("Starting CI Queue Runner");
 
@@ -254,7 +256,11 @@ where
   tracing::info!("Queue runner shutting down, closing database pool");
   db.close();
 
-  Ok(())
+    Ok(())
+  }
+  .await;
+  tracing_guard.shutdown().await;
+  result
 }
 
 fn start_autoscalers(

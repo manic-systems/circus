@@ -115,120 +115,127 @@ where
 {
   let cli = Cli::parse_from(args);
 
-  let (mut config, _tracing) = load_config_with_tracing(cli.config.as_deref())?;
+  let (mut config, tracing_guard) =
+    load_config_with_tracing(cli.config.as_deref())?;
 
-  cli.apply_ui_override(&mut config);
-  let host = cli.host.unwrap_or_else(|| config.server.host.clone());
-  let port = cli.port.unwrap_or(config.server.port);
+  let result = async {
+    cli.apply_ui_override(&mut config);
+    let host = cli.host.unwrap_or_else(|| config.server.host.clone());
+    let port = cli.port.unwrap_or(config.server.port);
 
-  circus_common::validate::warn_insecure_schemes(
-    &config.server.allowed_url_schemes,
-  );
-
-  if config.cache.secret_key_file.is_some() {
-    tracing::warn!(
-      "[cache] secret_key_file no longer signs narinfos on the fly; configure \
-       [signing] on the queue-runner so outputs are signed at build time"
+    circus_common::validate::warn_insecure_schemes(
+      &config.server.allowed_url_schemes,
     );
-  }
 
-  let db = Database::new(config.database.clone()).await?;
+    if config.cache.secret_key_file.is_some() {
+      tracing::warn!(
+        "[cache] secret_key_file no longer signs narinfos on the fly; \
+         configure [signing] on the queue-runner so outputs are signed at \
+         build time"
+      );
+    }
 
-  // Bootstrap declarative projects, jobsets, and API keys from config.
-  // Notification secrets are validated and encrypted here, before bootstrap
-  // stores the config blobs verbatim, so circus-common needs no dependency on
-  // circus-notification.
-  let mut declarative = config.declarative.clone();
-  circus_notification::encrypt_declarative_notifications(
-    &mut declarative,
-    config.server.webhook_secret_encryption_key.as_deref(),
-  )?;
-  circus_common::bootstrap::run(
-    db.pool(),
-    &declarative,
-    config.server.webhook_secret_encryption_key.as_deref(),
-  )
-  .await?;
+    let db = Database::new(config.database.clone()).await?;
 
-  // Per-process CSRF secret. Concatenating two v4 UUIDs gives 32 bytes of
-  // entropy from the system CSPRNG with no extra dependency.
-  let mut csrf_secret = [0u8; 32];
-  csrf_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-  csrf_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-
-  let email_regex = config
-    .server
-    .email_validation_regex
-    .as_deref()
-    .map(|pat| {
-      regex::Regex::new(pat).map(Arc::new).map_err(|e| {
-        color_eyre::eyre::eyre!("Invalid email_validation_regex: {e}")
-      })
-    })
-    .transpose()?;
-
-  let nix_store = NixStore::new(config.nix.store_dir.clone())
-    .map_err(|e| color_eyre::eyre::eyre!(e))?;
-
-  // Fail fast on a signing config whose key cannot be used.
-  let cache_public_key = match signing::signing_public_key(&config) {
-    Some(key) => {
-      Some(Arc::new(key.parse().map_err(|e| {
-        color_eyre::eyre::eyre!(
-          "signing.key_file yields an unusable public key: {e:?}"
-        )
-      })?))
-    },
-    None if config.signing.enabled && config.signing.key_file.is_some() => {
-      return Err(color_eyre::eyre::eyre!(
-        "signing is enabled but no public key could be derived from \
-         signing.key_file"
-      ));
-    },
-    None => None,
-  };
-
-  let state = AppState {
-    pool: db.pool().clone(),
-    nix_store,
-    config: config.clone(),
-    sessions: Arc::new(dashmap::DashMap::new()),
-    narinfo_cache: AppState::new_narinfo_cache(),
-    http_client: reqwest::Client::new(),
-    csrf_secret: Arc::new(csrf_secret),
-    email_regex,
-    cache_traffic: Arc::new(dashmap::DashMap::new()),
-    cache_public_key,
-  };
-
-  // Start background session cleanup to prevent memory leaks
-  state.spawn_session_cleanup();
-  // Drain in-memory cache-serving counters into the cache_traffic table.
-  state.spawn_cache_traffic_flush();
-
-  let app = routes::router(state, &config);
-
-  let bind_addr = format!("{host}:{port}");
-  tracing::info!(
-    mode = if config.ui.enabled {
-      "full"
-    } else {
-      "headless"
-    },
-    "Starting CI Server on {}",
-    bind_addr
-  );
-
-  let listener = TcpListener::bind(&bind_addr).await?;
-  let app = app.into_make_service_with_connect_info::<SocketAddr>();
-  axum::serve(listener, app)
-    .with_graceful_shutdown(shutdown_signal())
+    // Bootstrap declarative projects, jobsets, and API keys from config.
+    // Notification secrets are validated and encrypted here, before bootstrap
+    // stores the config blobs verbatim, so circus-common needs no dependency on
+    // circus-notification.
+    let mut declarative = config.declarative.clone();
+    circus_notification::encrypt_declarative_notifications(
+      &mut declarative,
+      config.server.webhook_secret_encryption_key.as_deref(),
+    )?;
+    circus_common::bootstrap::run(
+      db.pool(),
+      &declarative,
+      config.server.webhook_secret_encryption_key.as_deref(),
+    )
     .await?;
 
-  tracing::info!("Server shutting down, closing database pool");
-  db.close();
+    // Per-process CSRF secret. Concatenating two v4 UUIDs gives 32 bytes of
+    // entropy from the system CSPRNG with no extra dependency.
+    let mut csrf_secret = [0u8; 32];
+    csrf_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    csrf_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
 
-  Ok(())
+    let email_regex = config
+      .server
+      .email_validation_regex
+      .as_deref()
+      .map(|pat| {
+        regex::Regex::new(pat).map(Arc::new).map_err(|e| {
+          color_eyre::eyre::eyre!("Invalid email_validation_regex: {e}")
+        })
+      })
+      .transpose()?;
+
+    let nix_store = NixStore::new(config.nix.store_dir.clone())
+      .map_err(|e| color_eyre::eyre::eyre!(e))?;
+
+    // Fail fast on a signing config whose key cannot be used.
+    let cache_public_key = match signing::signing_public_key(&config) {
+      Some(key) => {
+        Some(Arc::new(key.parse().map_err(|e| {
+          color_eyre::eyre::eyre!(
+            "signing.key_file yields an unusable public key: {e:?}"
+          )
+        })?))
+      },
+      None if config.signing.enabled && config.signing.key_file.is_some() => {
+        return Err(color_eyre::eyre::eyre!(
+          "signing is enabled but no public key could be derived from \
+           signing.key_file"
+        ));
+      },
+      None => None,
+    };
+
+    let state = AppState {
+      pool: db.pool().clone(),
+      nix_store,
+      config: config.clone(),
+      sessions: Arc::new(dashmap::DashMap::new()),
+      narinfo_cache: AppState::new_narinfo_cache(),
+      http_client: reqwest::Client::new(),
+      csrf_secret: Arc::new(csrf_secret),
+      email_regex,
+      cache_traffic: Arc::new(dashmap::DashMap::new()),
+      cache_public_key,
+    };
+
+    // Start background session cleanup to prevent memory leaks
+    state.spawn_session_cleanup();
+    // Drain in-memory cache-serving counters into the cache_traffic table.
+    state.spawn_cache_traffic_flush();
+
+    let app = routes::router(state, &config);
+
+    let bind_addr = format!("{host}:{port}");
+    tracing::info!(
+      mode = if config.ui.enabled {
+        "full"
+      } else {
+        "headless"
+      },
+      "Starting CI Server on {}",
+      bind_addr
+    );
+
+    let listener = TcpListener::bind(&bind_addr).await?;
+    let app = app.into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, app)
+      .with_graceful_shutdown(shutdown_signal())
+      .await?;
+
+    tracing::info!("Server shutting down, closing database pool");
+    db.close();
+
+    Ok(())
+  }
+  .await;
+  tracing_guard.shutdown().await;
+  result
 }
 
 fn load_config_with_tracing(
