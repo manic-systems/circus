@@ -14,7 +14,6 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
-  dispatch::supports_required_features,
   helpers::{get_project_for_build, is_interval_rebuild},
   worker::{ActiveBuilds, WorkerPool},
 };
@@ -250,9 +249,8 @@ pub async fn run(
       poll_interval,
       notifications_config,
       notification_secret_key,
-      scheduling_strategy,
+      _scheduling_strategy,
       _psi_threshold,
-      _psi_check_timeout,
     ) = {
       let hot = hot_config.read().await;
       (
@@ -261,7 +259,6 @@ pub async fn run(
         hot.notification_secret_key.clone(),
         hot.scheduling_strategy.clone(),
         hot.psi_threshold,
-        hot.psi_check_timeout,
       )
     };
 
@@ -502,49 +499,24 @@ pub async fn run(
           }
 
           if let Some(timeout) = unsupported_timeout {
-            // Builders and agents are system-keyed, but a system-less build can
-            // only run on the runner host.
-            let (has_builder, has_agent) = if let Some(system) = &build.system {
-              match repo::remote_builders::find_for_system(
-                &pool,
-                system,
-                &scheduling_strategy,
-              )
-              .await
-              {
-                Ok(builders) => {
-                  let has_builder = builders.iter().any(|builder| {
-                    supports_required_features(
-                      build.scheduling_features(),
-                      &builder.supported_features,
-                      &builder.mandatory_features,
-                    )
-                  });
-                  let has_agent = worker_pool
-                    .agent_pool()
-                    .snapshot_all()
-                    .iter()
-                    .any(|agent| {
-                      agent.systems.iter().any(|s| s == system)
-                        && agent.supports_features(build.scheduling_features())
-                    });
-                  (has_builder, has_agent)
-                },
-                Err(e) => {
-                  tracing::error!(
-                    build_id = %build.id,
-                    "Failed to check builders for unsupported system: {e}"
-                  );
-                  continue;
-                },
-              }
+            // Agents are system-keyed, but a system-less build can only run
+            // on the runner host.
+            let has_agent = if let Some(system) = &build.system {
+              worker_pool
+                .agent_pool()
+                .snapshot_all()
+                .iter()
+                .any(|agent| {
+                  agent.systems.iter().any(|s| s == system)
+                    && agent.supports_features(build.scheduling_features())
+                })
             } else {
-              (false, false)
+              false
             };
             let has_runner = worker_pool
               .runner_caps()
               .supports(build.system.as_deref(), build.scheduling_features());
-            if !has_builder && !has_agent && !has_runner {
+            if !has_agent && !has_runner {
               let timeout_at = build.created_at + timeout;
               if chrono::Utc::now() > timeout_at {
                 tracing::info!(

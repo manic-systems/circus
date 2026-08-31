@@ -12,7 +12,7 @@ use circus_config::{
 };
 use tokio::sync::Semaphore;
 
-use crate::{caps::RunnerCaps, psi::PsiCache, rpc::AgentPool};
+use crate::{caps::RunnerCaps, rpc::AgentPool};
 
 pub struct BuildContext {
   pub pool:                    PgPool,
@@ -32,11 +32,8 @@ pub struct BuildContext {
   pub worker_semaphore:        Arc<Semaphore>,
   pub scheduling_strategy:     BuilderSchedulingStrategy,
   pub psi_threshold:           Option<f64>,
-  pub psi_check_timeout:       Duration,
-  pub psi_cache:               Arc<PsiCache>,
   pub extra_nix_args:          Arc<Vec<String>>,
   pub agent_pool:              Arc<AgentPool>,
   pub runner_caps:             Arc<RunnerCaps>,
   pub heartbeat_ttl:           Duration,
-  pub require_host_key:        bool,
 }

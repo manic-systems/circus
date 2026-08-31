@@ -23,7 +23,6 @@ use circus_common::{
 };
 use circus_config::{
   AlertConfig,
-  BuilderSchedulingStrategy,
   CacheConfig,
   CacheUploadConfig,
   GcConfig,
@@ -47,10 +46,9 @@ use crate::{
   builder::{self as build_runner, BuildResult},
   caps::RunnerCaps,
   context::BuildContext,
-  dispatch::{self, supports_required_features},
+  dispatch,
   features,
   helpers::{get_project_for_build, is_interval_rebuild},
-  psi::{self, PsiCache},
   rpc::AgentPool,
 };
 
@@ -82,7 +80,6 @@ pub struct WorkerPool {
   cache_config:        Arc<CacheConfig>,
   cache_upload_config: Arc<CacheUploadConfig>,
   alert_manager:       Arc<Option<AlertManager>>,
-  psi_cache:           Arc<PsiCache>,
   agent_pool:          Arc<AgentPool>,
   runner_caps:         Arc<RunnerCaps>,
   heartbeat_ttl:       Duration,
@@ -128,7 +125,6 @@ impl WorkerPool {
       cache_config: Arc::new(cache_config),
       cache_upload_config: Arc::new(cache_upload_config),
       alert_manager: Arc::new(alert_manager),
-      psi_cache: PsiCache::new(),
       agent_pool,
       runner_caps,
       heartbeat_ttl,
@@ -210,7 +206,6 @@ impl WorkerPool {
     let cache_config = Arc::clone(&self.cache_config);
     let cache_upload_config = Arc::clone(&self.cache_upload_config);
     let alert_manager = Arc::clone(&self.alert_manager);
-    let psi_cache = Arc::clone(&self.psi_cache);
     let agent_pool = Arc::clone(&self.agent_pool);
     let runner_caps = Arc::clone(&self.runner_caps);
     let heartbeat_ttl = self.heartbeat_ttl;
@@ -233,9 +228,7 @@ impl WorkerPool {
           notification_secret_key,
           scheduling_strategy,
           psi_threshold,
-          psi_check_timeout,
           extra_nix_args,
-          ssh_require_host_key,
         ) = {
           let hot = hot_config.read().await;
           (
@@ -245,9 +238,7 @@ impl WorkerPool {
             hot.notification_secret_key.clone(),
             hot.scheduling_strategy.clone(),
             hot.psi_threshold,
-            hot.psi_check_timeout,
             Arc::new(hot.extra_nix_build_args.clone()),
-            hot.ssh_require_host_key,
           )
         };
 
@@ -269,13 +260,10 @@ impl WorkerPool {
           worker_semaphore: semaphore,
           scheduling_strategy,
           psi_threshold,
-          psi_check_timeout,
-          psi_cache,
           extra_nix_args,
           agent_pool,
           runner_caps,
           heartbeat_ttl,
-          require_host_key: ssh_require_host_key,
         };
 
         if let Err(e) = run_build(ctx, &build).await {
@@ -855,138 +843,6 @@ fn presigned_s3_upload_available(config: &CacheUploadConfig) -> bool {
   circus_s3::Presigner::from_config(store_uri, s3_config).is_some()
 }
 
-/// Try to run the build on a remote builder if one is available for the build's
-/// system.
-#[expect(
-  clippy::too_many_arguments,
-  reason = "SSH fallback needs the same scheduling and execution context as \
-            agent dispatch"
-)]
-async fn try_remote_build(
-  pool: &PgPool,
-  build: &Build,
-  drv_path: &str,
-  work_dir: &Path,
-  timeout: Duration,
-  live_log_path: Option<&Path>,
-  strategy: &BuilderSchedulingStrategy,
-  psi_threshold: Option<f64>,
-  psi_check_timeout: Duration,
-  psi_cache: &PsiCache,
-  extra_nix_args: &[String],
-  require_host_key: bool,
-) -> Option<BuildResult> {
-  let system = build.system.as_deref()?;
-
-  let builders = repo::remote_builders::find_for_system(pool, system, strategy)
-    .await
-    .ok()?;
-
-  for builder in &builders {
-    // Refuse unpinned builders when host-key verification is mandatory, rather
-    // than silently falling back to trust-on-first-use.
-    if require_host_key && builder.public_host_key.is_none() {
-      tracing::warn!(
-        build_id = %build.id,
-        builder = %builder.name,
-        "skipping builder: ssh_require_host_key is set but no public_host_key \
-         is recorded"
-      );
-      continue;
-    }
-    // Leave the build pending for a builder with the right feature set.
-    if !supports_required_features(
-      build.scheduling_features(),
-      &builder.supported_features,
-      &builder.mandatory_features,
-    ) {
-      tracing::debug!(
-        build_id = %build.id,
-        builder = %builder.name,
-        required = ?build.scheduling_features(),
-        supported = ?builder.supported_features,
-        mandatory = ?builder.mandatory_features,
-        "skipping builder: missing required_features"
-      );
-      continue;
-    }
-    if let Some(threshold) = psi_threshold
-      && let Some(snap) =
-        psi::read_cached(psi_cache, &builder.ssh_uri, psi_check_timeout).await
-      && snap.exceeds(threshold)
-    {
-      tracing::debug!(
-        build_id = %build.id,
-        builder = %builder.name,
-        cpu_avg10 = snap.cpu_avg10,
-        memory_avg10 = snap.memory_avg10,
-        io_avg10 = snap.io_avg10,
-        threshold,
-        "PSI: builder overloaded, skipping"
-      );
-      continue;
-    }
-    tracing::info!(
-        build_id = %build.id,
-        builder = %builder.name,
-        "Attempting remote build on {}",
-        builder.ssh_uri,
-    );
-
-    // Set builder_id
-    if let Err(e) = repo::builds::set_builder(pool, build.id, builder.id).await
-    {
-      tracing::warn!(build_id = %build.id, builder = %builder.name, "Failed to set builder_id: {e}");
-    }
-
-    // Build remotely via --store
-    // Allow ssh-ng but default to ssh.
-    let store_uri = if builder.ssh_uri.starts_with("ssh://")
-      || builder.ssh_uri.starts_with("ssh-ng://")
-    {
-      builder.ssh_uri.clone()
-    } else {
-      format!("ssh://{}", builder.ssh_uri)
-    };
-    let result = build_runner::run_nix_build_remote(
-      drv_path,
-      work_dir,
-      timeout,
-      &store_uri,
-      builder.ssh_key_file.as_deref(),
-      builder.public_host_key.as_deref(),
-      live_log_path,
-      extra_nix_args,
-    )
-    .await;
-
-    match result {
-      Ok(r) => {
-        if let Err(e) =
-          repo::remote_builders::record_success(pool, builder.id).await
-        {
-          tracing::warn!(builder = %builder.name, "Failed to record builder success: {e}");
-        }
-        return Some(r);
-      },
-      Err(e) => {
-        tracing::warn!(
-            build_id = %build.id,
-            builder = %builder.name,
-            "Remote build failed: {e}, trying next builder"
-        );
-        if let Err(e) =
-          repo::remote_builders::record_failure(pool, builder.id).await
-        {
-          tracing::warn!(builder = %builder.name, "Failed to record builder failure: {e}");
-        }
-      },
-    }
-  }
-
-  None
-}
-
 #[expect(clippy::ref_option, reason = "used as fn parameter pattern")]
 async fn collect_metrics_and_alert(
   pool: &PgPool,
@@ -1047,56 +903,31 @@ async fn collect_metrics_and_alert(
   }
 }
 
-/// Runs with a worker permit, trying configured SSH builders before local
-/// execution. `Ok(None)` means no venue could take the build.
+/// Runs a local `nix build` under a worker permit. `Ok(None)` means the
+/// runner host cannot take the build (wrong system/features); the caller
+/// requeues it.
 #[expect(
   clippy::too_many_arguments,
-  reason = "on-runner execution needs the full SSH/local scheduling context"
+  reason = "on-runner execution needs the full local build context"
 )]
 async fn run_on_runner(
   permit: OwnedSemaphorePermit,
-  pool: &PgPool,
   build: &Build,
   drv_path: &str,
   work_dir: &Path,
   timeout: Duration,
   live_log_path: &Path,
-  scheduling_strategy: &BuilderSchedulingStrategy,
-  psi_threshold: Option<f64>,
-  psi_check_timeout: Duration,
-  psi_cache: &Arc<PsiCache>,
   extra_nix_args: &[String],
   runner_caps: &RunnerCaps,
-  require_host_key: bool,
 ) -> circus_common::error::Result<Option<BuildResult>> {
   let _permit = permit;
-  if build.system.is_some()
-    && let Some(r) = try_remote_build(
-      pool,
-      build,
-      drv_path,
-      work_dir,
-      timeout,
-      Some(live_log_path),
-      scheduling_strategy,
-      psi_threshold,
-      psi_check_timeout,
-      psi_cache,
-      extra_nix_args,
-      require_host_key,
-    )
-    .await
-  {
-    return Ok(Some(r));
-  }
   if !runner_caps.supports(build.system.as_deref(), build.scheduling_features())
   {
     tracing::warn!(
       build_id = %build.id,
       system = ?build.system,
       features = ?build.scheduling_features(),
-      "no capable SSH builder and the runner host lacks the required \
-       system/features; requeueing"
+      "the runner host lacks the required system/features; requeueing"
     );
     return Ok(None);
   }
@@ -1137,13 +968,8 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     alert_manager,
     upload_semaphore,
     worker_semaphore,
-    scheduling_strategy,
-    psi_threshold,
-    psi_check_timeout,
-    psi_cache,
     extra_nix_args,
     runner_caps,
-    require_host_key,
     ..
   } = ctx;
   let pool = &pool;
@@ -1253,19 +1079,13 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
       {
         run_on_runner(
           permit,
-          pool,
           build,
           drv_path,
           work_dir,
           timeout,
           &live_log_path,
-          &scheduling_strategy,
-          psi_threshold,
-          psi_check_timeout,
-          &psi_cache,
           &build_extra_nix_args,
           &runner_caps,
-          require_host_key,
         )
         .await
       } else {
@@ -1275,19 +1095,13 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     dispatch::ExecutionReservation::Runner(permit) => {
       run_on_runner(
         permit,
-        pool,
         build,
         drv_path,
         work_dir,
         timeout,
         &live_log_path,
-        &scheduling_strategy,
-        psi_threshold,
-        psi_check_timeout,
-        &psi_cache,
         &build_extra_nix_args,
         &runner_caps,
-        require_host_key,
       )
       .await
     },
