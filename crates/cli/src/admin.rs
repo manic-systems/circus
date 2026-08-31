@@ -5,11 +5,7 @@ use color_eyre::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-  app::{
-    CommandRunner,
-    insert_optional,
-    with_query,
-  },
+  app::{CommandRunner, insert_optional, with_query},
   commands::{
     AdminCommand,
     ApiKeyCommand,
