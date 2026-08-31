@@ -501,18 +501,12 @@ pub async fn run(
           if let Some(timeout) = unsupported_timeout {
             // Agents are system-keyed, but a system-less build can only run
             // on the runner host.
-            let has_agent = if let Some(system) = &build.system {
-              worker_pool
-                .agent_pool()
-                .snapshot_all()
-                .iter()
-                .any(|agent| {
-                  agent.systems.iter().any(|s| s == system)
-                    && agent.supports_features(build.scheduling_features())
-                })
-            } else {
-              false
-            };
+            let has_agent = build.system.as_ref().is_some_and(|system| {
+              worker_pool.agent_pool().snapshot_all().iter().any(|agent| {
+                agent.systems.iter().any(|s| s == system)
+                  && agent.supports_features(build.scheduling_features())
+              })
+            });
             let has_runner = worker_pool
               .runner_caps()
               .supports(build.system.as_deref(), build.scheduling_features());
