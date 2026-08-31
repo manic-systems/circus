@@ -24,7 +24,6 @@ use circus_config::{
   DeclarativeJobsetInput,
   DeclarativeNotification,
   DeclarativeProjectMember,
-  DeclarativeRemoteBuilder,
   DeclarativeWebhook,
 };
 
@@ -202,21 +201,6 @@ async fn composite_operations_work_with_one_pool_connection() {
       let project = create_test_project(&pool, "single-connection").await;
       let jobset = create_test_jobset(&pool, project.id).await;
       let evaluation = create_test_eval(&pool, jobset.id).await;
-
-      let builder_name = format!("builder-{}", uuid::Uuid::new_v4());
-      repo::remote_builders::sync_all(&pool, &[DeclarativeRemoteBuilder {
-        name:               builder_name,
-        ssh_uri:            "ssh://builder.example".to_string(),
-        systems:            vec!["x86_64-linux".to_string()],
-        max_jobs:           1,
-        speed_factor:       1,
-        supported_features: Vec::new(),
-        mandatory_features: Vec::new(),
-        ssh_key_file:       None,
-        public_host_key:    None,
-        enabled:            true,
-      }])
-      .await?;
 
       repo::jobset_inputs::sync_for_jobset(&pool, jobset.id, &[
         DeclarativeJobsetInput {

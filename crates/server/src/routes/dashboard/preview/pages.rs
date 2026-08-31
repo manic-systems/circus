@@ -430,7 +430,6 @@ pub(super) async fn admin() -> Response {
       builds_running:    3,
       builds_completed:  1710,
       builds_failed:     27,
-      remote_builders:   3,
       channels_count:    2,
     },
     agents:                  vec![AgentView {

@@ -254,7 +254,6 @@ mod tests {
         role:     GlobalRole::Admin,
       }],
       users:                  vec![],
-      remote_builders:        vec![],
     };
 
     let json = serde_json::to_string(&config).unwrap();

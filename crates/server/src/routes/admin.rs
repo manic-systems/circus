@@ -75,7 +75,6 @@ async fn system_status(
   let evaluations = circus_common::repo::evaluations::count(pool).await?;
 
   let build_stats = circus_common::repo::builds::get_stats(pool).await?;
-  let builders = circus_common::repo::remote_builders::count(pool).await?;
 
   let channels = circus_common::repo::channels::count(pool).await?;
 
@@ -87,7 +86,6 @@ async fn system_status(
     builds_running:    build_stats.running_builds.unwrap_or(0),
     builds_completed:  build_stats.completed_builds.unwrap_or(0),
     builds_failed:     build_stats.failed_builds.unwrap_or(0),
-    remote_builders:   builders,
     channels_count:    channels,
   }))
 }

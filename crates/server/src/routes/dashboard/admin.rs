@@ -281,9 +281,6 @@ pub(super) async fn admin_page(
   let build_stats = circus_common::repo::builds::get_stats(pool)
     .await
     .unwrap_or_default();
-  let builders_count = circus_common::repo::remote_builders::count(pool)
-    .await
-    .unwrap_or(0);
   let channels = circus_common::repo::channels::count(pool)
     .await
     .unwrap_or(0);
@@ -296,7 +293,6 @@ pub(super) async fn admin_page(
     builds_running:    build_stats.running_builds.unwrap_or(0),
     builds_completed:  build_stats.completed_builds.unwrap_or(0),
     builds_failed:     build_stats.failed_builds.unwrap_or(0),
-    remote_builders:   builders_count,
     channels_count:    channels,
   };
   // Fetch connected agents

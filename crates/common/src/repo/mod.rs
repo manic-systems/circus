@@ -18,7 +18,6 @@ pub mod notification_configs;
 pub mod notification_tasks;
 pub mod project_members;
 pub mod projects;
-pub mod remote_builders;
 pub mod search;
 pub mod starred_jobs;
 pub mod users;

@@ -302,7 +302,7 @@ async fn select_and_reserve_agent(
     return None;
   }
 
-  // Missing or stale heartbeats are treated as unknown to match the SSH path.
+  // Missing or stale heartbeats are treated as unknown.
   let cutoff = Instant::now().checked_sub(ctx.heartbeat_ttl);
   if let Some(t) = ctx.psi_threshold {
     let t = t as f32;

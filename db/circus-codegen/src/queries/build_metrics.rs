@@ -156,7 +156,6 @@ impl<'a> From<EvaluationsByStatusBorrowed<'a>> for EvaluationsByStatus {
 pub struct OverviewCounts {
     pub project_count: i64,
     pub channel_count: i64,
-    pub builder_count: i64,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct PerProjectBuildCounts {
@@ -1374,7 +1373,7 @@ impl EvaluationsByStatusStmt {
 pub struct OverviewCountsStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn overview_counts() -> OverviewCountsStmt {
     OverviewCountsStmt(
-        "SELECT ( SELECT COUNT(*) FROM projects ) AS project_count, ( SELECT COUNT(*) FROM channels ) AS channel_count, ( SELECT COUNT(*) FROM remote_builders WHERE enabled = true ) AS builder_count",
+        "SELECT ( SELECT COUNT(*) FROM projects ) AS project_count, ( SELECT COUNT(*) FROM channels ) AS channel_count",
         None,
     )
 }
@@ -1400,7 +1399,6 @@ impl OverviewCountsStmt {
                     Ok(OverviewCounts {
                         project_count: row.try_get(0)?,
                         channel_count: row.try_get(1)?,
-                        builder_count: row.try_get(2)?,
                     })
                 },
             mapper: |it| OverviewCounts::from(it),

@@ -558,38 +558,6 @@ pub struct DeclarativeConfig {
   pub projects:               Vec<DeclarativeProject>,
   pub api_keys:               Vec<DeclarativeApiKey>,
   pub users:                  Vec<DeclarativeUser>,
-  /// Remote builder definitions for distributed builds
-  pub remote_builders:        Vec<DeclarativeRemoteBuilder>,
-}
-
-/// Declarative remote builder configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeclarativeRemoteBuilder {
-  pub name:               String,
-  pub ssh_uri:            String,
-  pub systems:            Vec<String>,
-  #[serde(default = "default_max_jobs")]
-  pub max_jobs:           i32,
-  #[serde(default = "default_speed_factor")]
-  pub speed_factor:       i32,
-  #[serde(default)]
-  pub supported_features: Vec<String>,
-  #[serde(default)]
-  pub mandatory_features: Vec<String>,
-  /// Path to SSH private key file (for production)
-  pub ssh_key_file:       Option<String>,
-  /// SSH public host key for verification
-  pub public_host_key:    Option<String>,
-  #[serde(default = "default_true")]
-  pub enabled:            bool,
-}
-
-const fn default_max_jobs() -> i32 {
-  1
-}
-
-const fn default_speed_factor() -> i32 {
-  1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -915,9 +883,7 @@ pub struct HotConfig {
   pub failed_paths_ttl:        u64,
   pub scheduling_strategy:     BuilderSchedulingStrategy,
   pub psi_threshold:           Option<f64>,
-  pub psi_check_timeout:       Duration,
   pub extra_nix_build_args:    Vec<String>,
-  pub ssh_require_host_key:    bool,
 }
 
 impl HotConfig {
@@ -942,11 +908,7 @@ impl HotConfig {
       failed_paths_ttl:        config.queue_runner.failed_paths_ttl,
       scheduling_strategy:     config.queue_runner.scheduling_strategy.clone(),
       psi_threshold:           config.queue_runner.psi_threshold,
-      psi_check_timeout:       Duration::from_secs(
-        config.queue_runner.psi_check_timeout,
-      ),
       extra_nix_build_args:    config.queue_runner.extra_nix_build_args.clone(),
-      ssh_require_host_key:    config.queue_runner.ssh_require_host_key,
     }
   }
 }

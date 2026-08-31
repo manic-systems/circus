@@ -42,7 +42,6 @@ pub struct EvaluationStatusCount {
 pub struct OverviewCounts {
   pub project_count: i64,
   pub channel_count: i64,
-  pub builder_count: i64,
 }
 
 /// Build success/failure counters grouped by project name.
@@ -292,7 +291,6 @@ pub async fn overview_counts(pool: &PgPool) -> Result<OverviewCounts> {
   Ok(OverviewCounts {
     project_count: row.project_count,
     channel_count: row.channel_count,
-    builder_count: row.builder_count,
   })
 }
 
