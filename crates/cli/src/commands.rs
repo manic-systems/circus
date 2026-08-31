@@ -94,7 +94,7 @@ pub(super) enum AdminCommand {
     #[command(subcommand)]
     command: UserCommand,
   },
-  /// Manage remote builders and agent sessions.
+  /// Manage builder agent sessions.
   Builders {
     #[command(subcommand)]
     command: BuilderCommand,

@@ -309,7 +309,7 @@ GET /api/v1/admin/audit-log
 ```
 
 The dashboard admin page at `/admin` summarizes system status, pinned build
-outputs, remote builders, API keys, and notification tasks.
+outputs, API keys, and notification tasks.
 
 ### Binary Cache Observability
 
@@ -679,45 +679,10 @@ $ curl -X POST -H "Authorization: Bearer $CIRCUS_API_KEY" \
     "$CIRCUS_URL/api/v1/admin/pinned-builds/<build-id>/unpin"
 ```
 
-### Remote Builders and Agents
+### Build Agents
 
-Circus supports two distributed build paths:
-
-- SSH remote builders, configured through the admin API or `circusctl`.
-- Persistent `circus-agent` processes that connect to the queue-runner over
-  Cap'n Proto RPC.
-
-SSH remote builder commands:
-
-```bash
-# List all builders
-$ circusctl admin builders list
-
-# Add a new builder
-$ circusctl admin builders add \
-  --name builder-1 \
-  --ssh-uri builder-1.example.org \
-  --systems x86_64-linux,aarch64-linux \
-  --max-jobs 4 \
-  --speed-factor 1
-
-# Temporarily disable a builder
-$ circusctl admin builders disable <builder-id>
-
-# Re-enable a builder
-$ circusctl admin builders enable <builder-id>
-
-# Remove a builder
-$ circusctl admin builders remove <builder-id>
-```
-
-Optional builder metadata:
-
-- `--supported-features kvm,nixos-test` advertises build capabilities.
-- `--mandatory-features big-parallel` limits the builder to builds requiring
-  those features.
-- `--public-host-key` pins SSH host identity.
-- `--ssh-key-file` selects a non-default SSH key.
+Circus dispatches distributed builds to persistent `circus-agent` processes that
+connect to the queue-runner over Cap'n Proto RPC.
 
 Persistent agent sessions are visible through the admin API:
 
@@ -897,7 +862,7 @@ Recommended alerts:
 - `/health` is not healthy.
 - Queue depth grows for longer than expected.
 - Builds fail at an unusual rate.
-- Remote builders or agents disappear.
+- Agents disappear.
 - Notification retry tasks accumulate.
 - Disk space for logs, GC roots, or builder work directories is low.
 
@@ -923,7 +888,6 @@ builders' stores may require rebuilding outputs.
   when Circus is behind an HTTPS reverse proxy.
 - Keep page access private where project metadata or logs are sensitive.
 - Use narrow roles for automation keys.
-- Keep remote builder SSH host keys pinned when using SSH builders.
 
 If using distributed agents:
 
