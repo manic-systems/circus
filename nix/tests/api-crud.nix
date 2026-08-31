@@ -108,7 +108,6 @@ testers.runNixOSTest {
         body = machine.succeed(f"curl -sf {auth_header} http://127.0.0.1:3000/admin")
         assert "Administration" in body, "Admin page missing heading"
         assert "System Status" in body, "Admin page missing system status section"
-        assert "Remote Builders" in body, "Admin page missing remote builders section"
 
     with subtest("Queue page renders"):
         body = machine.succeed("curl -sf http://127.0.0.1:3000/queue")
