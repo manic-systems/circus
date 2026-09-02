@@ -5,7 +5,7 @@
 
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
-use circus_logs::init_tracing;
+use circus_logs::{TracingGuard, init_tracing};
 use clap::Parser;
 use color_eyre::eyre::{Result, bail, eyre};
 use uuid::Uuid;
@@ -106,15 +106,12 @@ where
 
   let cli = Cli::parse_from(args);
   let mut cfg = load_config(&cli)?;
-  init_tracing(&cfg.tracing);
 
   // `--ephemeral` enables it without an `[agent.ephemeral]` table.
   if cli.ephemeral && cfg.agent.ephemeral.is_none() {
     cfg.agent.ephemeral = Some(EphemeralConfig::default());
   }
   let ephemeral = cfg.agent.ephemeral.is_some();
-  tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
-
   let machine_id = resolve_machine_id(&cfg, ephemeral)?;
 
   // Uniquify the shared name so concurrent CI runs don't collide.
@@ -123,24 +120,43 @@ where
   {
     cfg.agent.name = unique_ephemeral_name(&cfg.agent.name, machine_id);
   }
+  prepare_rootless(&cfg.agent)?;
+
+  let (rt, tracing_guard) = runtime_with_tracing(&cfg.tracing)?;
+  tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
   tracing::info!(machine_id = %machine_id, name = %cfg.agent.name, "agent identity resolved");
 
-  if cfg.agent.rootless {
-    if let Some(dir) = &cfg.agent.rootless_data_dir {
-      // SAFETY: this is before the runtime starts
-      unsafe { std::env::set_var(sandbox::DATA_DIR_ENV, dir) };
-    }
-    sandbox::preflight()?;
-  }
+  let local = tokio::task::LocalSet::new();
+  rt.block_on(async move {
+    let result = local
+      .run_until(async move { run_supervisor(cfg.agent, machine_id).await })
+      .await;
+    tracing_guard.shutdown().await;
+    result
+  })
+}
 
-  let rt = tokio::runtime::Builder::new_current_thread()
+fn prepare_rootless(agent: &Agent) -> Result<()> {
+  if !agent.rootless {
+    return Ok(());
+  }
+  if let Some(dir) = &agent.rootless_data_dir {
+    // SAFETY: this is before the runtime is built or any worker is spawned.
+    unsafe { std::env::set_var(sandbox::DATA_DIR_ENV, dir) };
+  }
+  sandbox::preflight()
+}
+
+fn runtime_with_tracing(
+  config: &TracingConfig,
+) -> Result<(tokio::runtime::Runtime, TracingGuard)> {
+  let runtime = tokio::runtime::Builder::new_current_thread()
     .enable_all()
     .build()?;
-  let local = tokio::task::LocalSet::new();
-
-  rt.block_on(
-    local.run_until(async move { run_supervisor(cfg.agent, machine_id).await }),
-  )
+  let runtime_context = runtime.enter();
+  let tracing = init_tracing(config, "circus-agent")?;
+  drop(runtime_context);
+  Ok((runtime, tracing))
 }
 
 fn load_config(cli: &Cli) -> Result<AgentConfig> {

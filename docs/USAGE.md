@@ -901,6 +901,11 @@ Recommended alerts:
 - Notification retry tasks accumulate.
 - Disk space for logs, GC roots, or builder work directories is low.
 
+For distributed traces, enable `[tracing.otlp]` in the service configuration.
+Circus exports spans over OTLP/gRPC and keeps Prometheus as its metrics
+interface. See [INSTALL.md § Monitoring](./INSTALL.md#monitoring) for the
+collector configuration and sampling controls.
+
 ### Backup and Recovery
 
 Circus state is primarily PostgreSQL plus build logs on disk. Back up:

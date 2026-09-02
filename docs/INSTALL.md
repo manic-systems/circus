@@ -346,6 +346,10 @@ configuration or the Nix store.
 | `tracing`            | `format`                                               | `compact`                                           | Log output format                                                         |
 | `tracing`            | `show_targets`                                         | `true`                                              | Show module path in log messages                                          |
 | `tracing`            | `show_timestamps`                                      | `true`                                              | Show timestamps in log messages                                           |
+| `tracing`            | `otlp.enabled`                                         | `false`                                             | Export tracing spans over OTLP/gRPC                                       |
+| `tracing`            | `otlp.endpoint`                                        | `http://localhost:4317`                             | OTLP/gRPC collector endpoint                                              |
+| `tracing`            | `otlp.service_name`                                    | daemon name                                         | Override the OpenTelemetry `service.name`                                 |
+| `tracing`            | `otlp.sample_ratio`                                    | `1.0`                                               | Parent-based trace sampling ratio from `0.0` through `1.0`                |
 | `oauth`              | `github.client_id`                                     | none                                                | GitHub OAuth App client ID                                                |
 | `oauth`              | `github.client_secret`                                 | none                                                | GitHub OAuth App client secret                                            |
 | `oauth`              | `github.client_secret_file`                            | none                                                | File containing GitHub OAuth secret                                       |
@@ -1068,6 +1072,24 @@ scrape_configs:
 
 The `/health` endpoint reports database and service status. Administrative
 status is available through `circusctl admin status` or `/api/v1/admin/system`.
+
+Circus can also export its structured tracing spans to an OpenTelemetry
+collector over OTLP/gRPC:
+
+```toml
+[tracing.otlp]
+enabled = true
+endpoint = "http://otel-collector:4317"
+sample_ratio = 0.1
+```
+
+When `service_name` is omitted, each process uses its binary name, such as
+`circus-server` or `circus-queue-runner`. Set it explicitly only when the
+collector needs a deployment-specific override. The exporter honors the standard
+`OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` environment
+variables for collector authentication. OTLP export covers traces; `/prometheus`
+remains the metrics interface. Pending spans are flushed during orderly process
+shutdown.
 
 ## Backup and Restore
 
