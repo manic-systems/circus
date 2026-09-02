@@ -239,6 +239,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -477,7 +478,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "clamp_min(sum(circus_builds_total{status=\"all\", job=~\"$job\", instance=~\"$instance\"}) - sum(min_over_time(circus_builds_total{status=\"all\", job=~\"$job\", instance=~\"$instance\"}[24h])), 0)",
+          "expr": "clamp_min(sum(circus_builds_total{status=~\"succeeded|failed\", job=~\"$job\", instance=~\"$instance\"}) - sum(min_over_time(circus_builds_total{status=~\"succeeded|failed\", job=~\"$job\", instance=~\"$instance\"}[24h])), 0)",
           "refId": "A"
         }
       ]
@@ -499,6 +500,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1196,7 +1198,7 @@
       "title": "Evaluations (all time)",
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 12,
         "y": 8
       },
@@ -1236,8 +1238,8 @@
       "title": "Projects",
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
+        "w": 3,
+        "x": 15,
         "y": 8
       },
       "datasource": {
@@ -1271,13 +1273,53 @@
       ]
     },
     {
+      "id": 21,
+      "type": "stat",
+      "title": "Channels",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(circus_channels_total{job=~\"$job\", instance=~\"$instance\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 19,
       "type": "stat",
       "title": "Remote builders (enabled)",
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 3,
+        "x": 21,
         "y": 8
       },
       "datasource": {
@@ -1325,7 +1367,7 @@
         "type": "loki",
         "uid": "${logs}"
       },
-      "description": "Optional. Needs a Loki data source with circus journald logs. Adjust the label selector to your shipper - `unit` is what Grafana Alloy / Loki's journal source use.",
+      "description": "Optional. Needs a Loki data source with circus journald logs. Adjust the label selector to your shipper - `unit` is what Grafana Alloy / Loki's journal source use. The line filter matches the level token printed by both the `compact` and `json` tracing formats.",
       "options": {
         "showTime": true,
         "wrapLogMessage": true,
@@ -1340,7 +1382,7 @@
             "type": "loki",
             "uid": "${logs}"
           },
-          "expr": "{unit=~\"circus-.+\"} | logfmt | level=~\"warn|error\"",
+          "expr": "{unit=~\"circus-.+\"} |~ `\\b(WARN|ERROR)\\b`",
           "refId": "A"
         }
       ]
