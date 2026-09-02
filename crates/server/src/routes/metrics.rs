@@ -63,6 +63,24 @@ fn escape_prometheus_label(s: &str) -> String {
     .replace('\n', "\\n")
 }
 
+/// `evaluations_by_status` groups existing rows, so a status with no rows
+/// would otherwise be a missing series rather than a zero.
+fn evaluation_status_counts(
+  rows: &[circus_common::repo::build_metrics::EvaluationStatusCount],
+) -> Vec<(&'static str, i64)> {
+  circus_common::models::EvaluationStatus::ALL
+    .iter()
+    .map(|status| {
+      let db_str = status.as_db_str();
+      let count = rows
+        .iter()
+        .find(|row| row.status == db_str)
+        .map_or(0, |row| row.count);
+      (db_str, count)
+    })
+    .collect()
+}
+
 async fn prometheus_metrics(State(state): State<AppState>) -> Response {
   use std::fmt::Write;
 
@@ -173,12 +191,10 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
   output
     .push_str("\n# HELP circus_evaluations_by_status Evaluations by status\n");
   output.push_str("# TYPE circus_evaluations_by_status gauge\n");
-  for item in &eval_by_status {
+  for (status, count) in evaluation_status_counts(&eval_by_status) {
     let _ = writeln!(
       output,
-      "circus_evaluations_by_status{{status=\"{}\"}} {}",
-      escape_prometheus_label(&item.status),
-      item.count
+      "circus_evaluations_by_status{{status=\"{status}\"}} {count}",
     );
   }
 
@@ -388,5 +404,23 @@ mod tests {
   #[test]
   fn test_escape_prometheus_label_combined() {
     assert_eq!(escape_prometheus_label("a\\b\n\"c\""), r#"a\\b\n\"c\""#);
+  }
+
+  #[test]
+  fn test_evaluation_status_counts_fills_absent_statuses() {
+    let rows =
+      vec![circus_common::repo::build_metrics::EvaluationStatusCount {
+        status: "completed".to_string(),
+        count:  7,
+      }];
+
+    assert_eq!(evaluation_status_counts(&rows), vec![
+      ("pending", 0),
+      ("running", 0),
+      ("completed", 7),
+      ("failed", 0),
+      ("cancelled", 0),
+      ("timed_out", 0),
+    ]);
   }
 }

@@ -85,6 +85,15 @@ pub enum EvaluationStatus {
 }
 
 impl EvaluationStatus {
+  pub const ALL: [Self; 6] = [
+    Self::Pending,
+    Self::Running,
+    Self::Completed,
+    Self::Failed,
+    Self::Cancelled,
+    Self::TimedOut,
+  ];
+
   #[must_use]
   pub const fn as_db_str(&self) -> &'static str {
     match self {
