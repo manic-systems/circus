@@ -395,6 +395,9 @@ async fn evaluate_flake(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
+    // Keep evix's independent eval limit aligned with Circus's effective
+    // evaluation timeout.
+    item_timeout_seconds: timeout.as_secs(),
     // evix uses this as a post-attribute recycle threshold; RLIMIT_AS is the
     // corresponding hard ceiling while an attribute is still evaluating.
     max_memory_size: crate::memory::MemoryLimit::from(config)
@@ -603,6 +606,7 @@ async fn evaluate_legacy(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
+    item_timeout_seconds: timeout.as_secs(),
     max_memory_size: crate::memory::MemoryLimit::from(config)
       .evix_mb()
       .map_err(|e| CiError::NixEval(e.to_string()))?,
