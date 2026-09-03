@@ -8,6 +8,38 @@ use tokio_util::sync::CancellationToken;
 
 use super::{EvalResult, nix_job_from_derivation};
 
+const MAX_REPORTED_ERRORS: usize = 3;
+const MAX_REPORTED_ERROR_CHARS: usize = 1024;
+
+fn reported_error(attr: &str, error: &str) -> String {
+  let message = format!("{attr}: {error}");
+  let mut chars = message.chars();
+  let reported: String =
+    chars.by_ref().take(MAX_REPORTED_ERROR_CHARS).collect();
+  if chars.next().is_some() {
+    format!("{reported}...")
+  } else {
+    reported
+  }
+}
+
+fn empty_evaluation_error(error_count: usize, errors: &[String]) -> String {
+  if error_count == 0 {
+    return "evaluation discovered no buildable derivations".to_string();
+  }
+  let detail = errors.join("; ");
+  let omitted = error_count.saturating_sub(errors.len());
+  let suffix = if omitted == 0 {
+    String::new()
+  } else {
+    format!("; {omitted} additional attribute error(s) omitted")
+  };
+  format!(
+    "evaluation discovered no buildable derivations; evix reported \
+     {error_count} attribute error(s): {detail}{suffix}"
+  )
+}
+
 /// Nix evaluation settings derived from the evaluator configuration, forwarded
 /// to evix as `(key, value)` options.
 pub(super) struct NixEvalPolicy {
@@ -83,7 +115,7 @@ impl From<&EvaluatorConfig> for NixEvalPolicy {
 ///
 /// [`CiError::Timeout`] if evaluation exceeds `timeout`, or
 /// [`CiError::NixEval`] if the evaluation fails fatally or the blocking task
-/// cannot be joined.
+/// cannot be joined, including when it discovers no buildable derivations.
 pub(super) async fn run_eval(
   config: evix::Config,
   timeout: Duration,
@@ -102,6 +134,7 @@ pub(super) async fn run_eval(
     let mut events = session.stream();
     let mut jobs = Vec::new();
     let mut error_count = 0usize;
+    let mut errors = Vec::new();
 
     while let Some(event) = events.next().await {
       match event
@@ -113,11 +146,18 @@ pub(super) async fn run_eval(
         evix::Event::Error(err) => {
           tracing::warn!(job = %err.attr, "evix reported error: {}", err.error);
           error_count += 1;
+          if errors.len() < MAX_REPORTED_ERRORS {
+            errors.push(reported_error(&err.attr, &err.error));
+          }
         },
         evix::Event::AttrSet { .. } => {},
       }
     }
-    Ok::<EvalResult, CiError>(EvalResult { jobs, error_count })
+    Ok::<EvalResult, CiError>(EvalResult {
+      jobs,
+      error_count,
+      errors,
+    })
   };
 
   tokio::select! {
@@ -130,8 +170,11 @@ pub(super) async fn run_eval(
           "{description} evix reported errors for some jobs"
         );
       }
-      if result.jobs.is_empty() && result.error_count == 0 {
-        tracing::warn!("{description} evix returned no jobs");
+      if result.jobs.is_empty() {
+        return Err(CiError::NixEval(empty_evaluation_error(
+          result.error_count,
+          &result.errors,
+        )));
       }
       Ok(result)
     },
@@ -146,6 +189,30 @@ pub(super) async fn run_eval(
       session.cancel();
       Err(CiError::NixEval("Nix evaluation was cancelled".to_string()))
     },
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::empty_evaluation_error;
+
+  #[test]
+  fn empty_evaluation_with_attribute_errors_preserves_diagnostics() {
+    let message = empty_evaluation_error(2, &["packages.kernel: evaluation \
+                                               aborted"
+      .to_string()]);
+
+    assert!(message.contains("no buildable derivations"));
+    assert!(message.contains("packages.kernel: evaluation aborted"));
+    assert!(message.contains("1 additional attribute error"));
+  }
+
+  #[test]
+  fn empty_evaluation_without_attribute_errors_is_not_a_success() {
+    assert_eq!(
+      empty_evaluation_error(0, &[]),
+      "evaluation discovered no buildable derivations"
+    );
   }
 }
 
