@@ -164,6 +164,9 @@ fn parse_meta(v: Option<&serde_json::Value>) -> NixMeta {
 pub struct EvalResult {
   pub jobs:        Vec<NixJob>,
   pub error_count: usize,
+  /// A bounded sample of attribute failures, retained so an evaluation that
+  /// produced no jobs can report the cause to its operator.
+  pub errors:      Vec<String>,
 }
 
 /// Evaluate nix expressions and return discovered jobs.
@@ -507,6 +510,7 @@ async fn evaluate_all_nixos_configs(
   Ok(EvalResult {
     jobs,
     error_count: 0,
+    errors: Vec::new(),
   })
 }
 
