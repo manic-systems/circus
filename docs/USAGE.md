@@ -570,9 +570,10 @@ Source-change jobsets can set `path_filters` to a list of Git pathspecs. Circus
 runs Nix evaluation when at least one changed path matches. A directory such as
 `packages/hardened-kernel`, an exact file such as
 `packages/hardened-kernel/default.nix`, and globs such as `**/*.nix` are
-accepted. An evaluation with no known base revision always runs. If a recorded
-base revision is unavailable after a force-push, Circus evaluates conservatively
-instead of silently dropping work.
+accepted. Non-matching source updates are not recorded as evaluations. An
+evaluation with no known base revision always runs. If a recorded base revision
+is unavailable after a force-push, Circus evaluates conservatively instead of
+silently dropping work.
 
 ### Evaluations
 
