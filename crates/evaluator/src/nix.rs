@@ -13,6 +13,10 @@ use eval_command::NixEvalPolicy;
 pub use eval_command::error_chain;
 use flake_ref::SourceFlakeRef;
 
+fn evix_item_timeout_seconds(timeout: Duration) -> u64 {
+  timeout.as_secs().max(1)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NixMeta {
   pub description: Option<String>,
@@ -395,9 +399,7 @@ async fn evaluate_flake(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
-    // Keep evix's independent eval limit aligned with Circus's effective
-    // evaluation timeout.
-    item_timeout_seconds: timeout.as_secs(),
+    item_timeout_seconds: evix_item_timeout_seconds(timeout),
     // evix uses this as a post-attribute recycle threshold; RLIMIT_AS is the
     // corresponding hard ceiling while an attribute is still evaluating.
     max_memory_size: crate::memory::MemoryLimit::from(config)
@@ -606,7 +608,7 @@ async fn evaluate_legacy(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
-    item_timeout_seconds: timeout.as_secs(),
+    item_timeout_seconds: evix_item_timeout_seconds(timeout),
     max_memory_size: crate::memory::MemoryLimit::from(config)
       .evix_mb()
       .map_err(|e| CiError::NixEval(e.to_string()))?,
@@ -738,6 +740,13 @@ mod meta_tests {
   use std::collections::BTreeMap;
 
   use super::*;
+
+  #[test]
+  fn evix_item_timeout_is_positive() {
+    assert_eq!(evix_item_timeout_seconds(Duration::ZERO), 1);
+    assert_eq!(evix_item_timeout_seconds(Duration::from_millis(999)), 1);
+    assert_eq!(evix_item_timeout_seconds(Duration::from_secs(2)), 2);
+  }
 
   #[test]
   fn license_string() {
