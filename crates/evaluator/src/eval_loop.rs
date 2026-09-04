@@ -447,15 +447,7 @@ async fn run_path_filtered_evaluation(
     return Ok(true);
   }
 
-  if repo::evaluations::finish_running(
-    pool,
-    eval.id,
-    EvaluationStatus::Completed,
-    None,
-  )
-  .await?
-  .is_some()
-  {
+  if repo::evaluations::discard_filtered_running(pool, eval.id).await? {
     tracing::info!(
       eval_id = %eval.id,
       jobset = %jobset.name,

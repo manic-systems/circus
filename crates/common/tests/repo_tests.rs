@@ -675,6 +675,37 @@ async fn test_source_evaluations_keep_every_revision_by_default() {
 }
 
 #[tokio::test]
+async fn test_discarding_filtered_evaluation_preserves_source_head() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "discard-filtered-evaluation").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let skipped = repo::evaluations::create_running_source_change(
+    &pool,
+    source_evaluation(jobset.id),
+    "branch:main",
+  )
+  .await
+  .expect("create source evaluation");
+
+  assert!(
+    repo::evaluations::discard_filtered_running(&pool, skipped.id)
+      .await
+      .expect("discard filtered evaluation")
+  );
+  assert!(repo::evaluations::get(&pool, skipped.id).await.is_err());
+
+  let next = enqueue_test_source(&pool, jobset.id, "branch:main").await;
+  assert_eq!(
+    next.source_base_commit.as_deref(),
+    Some(skipped.commit_hash.as_str())
+  );
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
 async fn test_latest_only_cancels_active_work_but_keeps_successes() {
   let Some(pool) = get_pool().await else {
     return;
