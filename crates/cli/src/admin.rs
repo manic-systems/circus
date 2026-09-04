@@ -1,17 +1,11 @@
 use color_eyre::{
   Result,
-  eyre::{Context, bail, eyre},
+  eyre::{Context, eyre},
 };
 use serde_json::{Map, Value, json};
 
 use crate::{
-  app::{
-    CommandRunner,
-    insert_optional,
-    insert_optional_i32,
-    insert_optional_vec,
-    with_query,
-  },
+  app::{CommandRunner, insert_optional, with_query},
   commands::{
     AdminCommand,
     ApiKeyCommand,
@@ -25,7 +19,6 @@ use crate::{
     field,
     items,
     print_builder_sessions,
-    print_builders,
     print_builds,
     print_json,
     print_page,
@@ -52,7 +45,6 @@ impl CommandRunner {
         "Running",
         "Completed",
         "Failed",
-        "Builders",
         "Channels",
       ],
       &[vec![
@@ -63,7 +55,6 @@ impl CommandRunner {
         field(&response, "builds_running"),
         field(&response, "builds_completed"),
         field(&response, "builds_failed"),
-        field(&response, "remote_builders"),
         field(&response, "channels_count"),
       ]],
     );
@@ -217,71 +208,6 @@ impl CommandRunner {
 
   pub(super) async fn builders(&self, command: BuilderCommand) -> Result<()> {
     match command {
-      BuilderCommand::List => {
-        let response = self.api.get("api/v1/admin/builders", false).await?;
-        if self.json_output {
-          return print_json(&response);
-        }
-        print_builders(&response);
-      },
-      BuilderCommand::Add {
-        name,
-        ssh_uri,
-        systems,
-        max_jobs,
-        speed_factor,
-        supported_features,
-        mandatory_features,
-        public_host_key,
-        ssh_key_file,
-      } => {
-        if systems.is_empty() {
-          bail!("at least one --systems value is required");
-        }
-        let mut body = Map::new();
-        body.insert("name".to_string(), Value::String(name));
-        body.insert("ssh_uri".to_string(), Value::String(ssh_uri));
-        body.insert("systems".to_string(), json!(systems));
-        insert_optional_i32(&mut body, "max_jobs", max_jobs);
-        insert_optional_i32(&mut body, "speed_factor", speed_factor);
-        insert_optional_vec(
-          &mut body,
-          "supported_features",
-          &supported_features,
-        );
-        insert_optional_vec(
-          &mut body,
-          "mandatory_features",
-          &mandatory_features,
-        );
-        insert_optional(&mut body, "public_host_key", public_host_key);
-        insert_optional(&mut body, "ssh_key_file", ssh_key_file);
-        let response = self
-          .api
-          .post("api/v1/admin/builders", Value::Object(body), true)
-          .await?;
-        if self.json_output {
-          return print_json(&response);
-        }
-        println!("Registered builder {}", field(&response, "name"));
-        print_builders(&response);
-      },
-      BuilderCommand::Enable { id } => {
-        self.update_builder_enabled(&id, true).await?;
-      },
-      BuilderCommand::Disable { id } => {
-        self.update_builder_enabled(&id, false).await?;
-      },
-      BuilderCommand::Remove { id } => {
-        let response = self
-          .api
-          .delete(&format!("api/v1/admin/builders/{id}"), true)
-          .await?;
-        if self.json_output {
-          return print_json(&response);
-        }
-        println!("Removed builder {id}");
-      },
       BuilderCommand::Sessions { connected } => {
         let path = if connected {
           "api/v1/admin/builders/sessions/connected"
@@ -308,30 +234,6 @@ impl CommandRunner {
         print_builder_sessions(&response);
       },
     }
-    Ok(())
-  }
-
-  async fn update_builder_enabled(
-    &self,
-    id: &str,
-    enabled: bool,
-  ) -> Result<()> {
-    let response = self
-      .api
-      .put(
-        &format!("api/v1/admin/builders/{id}"),
-        json!({ "enabled": enabled }),
-        true,
-      )
-      .await?;
-    if self.json_output {
-      return print_json(&response);
-    }
-    println!(
-      "{} builder {id}",
-      if enabled { "Enabled" } else { "Disabled" }
-    );
-    print_builders(&response);
     Ok(())
   }
 

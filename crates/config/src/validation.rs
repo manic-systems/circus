@@ -231,9 +231,6 @@ impl Config {
     {
       bail!("queue_runner.psi_threshold must be in [0.0, 100.0], got {t}");
     }
-    if self.queue_runner.psi_check_timeout == 0 {
-      bail!("queue_runner.psi_check_timeout must be greater than 0 seconds");
-    }
     if let Some(rpc) = self.queue_runner.rpc.as_ref() {
       if rpc.max_connections == 0 {
         bail!("queue_runner.rpc.max_connections must be greater than 0");

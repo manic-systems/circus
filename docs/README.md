@@ -73,8 +73,6 @@ main feature areas of Circus are:
 - Agent heartbeats with load, memory, disk, and PSI pressure data.
 - Scheduling by system, supported features, mandatory features, current load,
   speed factor, and optional PSI thresholds.
-- Legacy SSH remote builders remain supported, with hardened SSH options and
-  optional pinned host-key enforcement.
 - Local queue-runner builds remain available when the runner host advertises the
   required system and features.
 
@@ -116,12 +114,11 @@ main feature areas of Circus are:
 ### Configuration and operations
 
 - Declarative configuration for projects, jobsets, users, API keys, channels,
-  project members, and remote builders.
+  and project members.
 - NixOS modules for Circus services and `circus-agent` deployments.
 - PostgreSQL-backed state with SQL migrations and a dedicated migration CLI.
 - Runtime configuration validation for database settings, URLs, auth tokens,
-  webhook targets, SSH builder settings, OIDC settings, and GHA autoscaling
-  requirements.
+  webhook targets, OIDC settings, and GHA autoscaling requirements.
 - Admin CLI for common API-backed administrative workflows.
 - Structured tracing configuration for service logs.
 

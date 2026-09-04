@@ -37,18 +37,9 @@ pub struct QueueRunnerConfig {
   #[serde(default)]
   pub scheduling_strategy: BuilderSchedulingStrategy,
 
-  /// Skip builders whose PSI avg10 exceeds this threshold (0.0-100.0).
-  /// `None` disables PSI checking.
+  /// Skip build agents whose heartbeat PSI avg10 exceeds this threshold
+  /// (0.0-100.0). `None` disables PSI checking.
   pub psi_threshold: Option<f64>,
-
-  /// Timeout in seconds for SSH PSI checks (default 5).
-  #[serde(default = "default_psi_check_timeout")]
-  pub psi_check_timeout: u64,
-
-  /// Skip SSH `remote_builders` with no `public_host_key` recorded instead of
-  /// falling back to `accept-new`. Default false.
-  #[serde(default)]
-  pub ssh_require_host_key: bool,
 
   /// Extra arguments appended to every `nix build` invocation.
   #[serde(default)]
@@ -85,8 +76,6 @@ impl Default for QueueRunnerConfig {
       unsupported_timeout:  None,
       scheduling_strategy:  BuilderSchedulingStrategy::SpeedFactorOnly,
       psi_threshold:        None,
-      psi_check_timeout:    5,
-      ssh_require_host_key: false,
       extra_nix_build_args: Vec::new(),
       local_systems:        None,
       local_features:       None,
@@ -287,10 +276,6 @@ const fn default_heartbeat_ttl_secs() -> u64 {
 
 const fn default_presign_expiry_secs() -> u64 {
   3600
-}
-
-const fn default_psi_check_timeout() -> u64 {
-  5
 }
 
 const fn default_true() -> bool {

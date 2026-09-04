@@ -688,13 +688,3 @@ fn insert_optional_bool(
     map.insert(key.to_string(), Value::Bool(value));
   }
 }
-
-pub(super) fn insert_optional_vec(
-  map: &mut Map<String, Value>,
-  key: &str,
-  value: &[String],
-) {
-  if !value.is_empty() {
-    map.insert(key.to_string(), json!(value));
-  }
-}

@@ -8,8 +8,8 @@ build host. Agents connect outbound to the queue-runner over a TCP socket; the
 runner pushes work down the connection, and the agent streams logs, results, and
 outputs back up. Agents may be long-running hosts or single-session CI machines
 such as GitHub Actions runners. This document covers the protocol, lifecycle,
-failure model, trust boundaries, and how the agent path coexists with legacy SSH
-dispatch.
+failure model, trust boundaries, and how the agent path coexists with local
+runner builds.
 
 ## Why not Hydra's (gRPC) Design?
 
@@ -218,32 +218,13 @@ with a target `system`:
    partially-loaded faster one.
 5. Try candidates in order, sending a `DispatchCommand` through the per-agent
    mpsc. On `Disconnected`, fall through to the next candidate.
-6. If no agent matches, fall back to SSH dispatch (legacy path) when a
-   `remote_builders` row matches by system, then to the queue-runner host when
+6. If no agent matches, fall back to the queue-runner host when
    `local_systems`/`local_features` allow it. If no venue can run the build,
    leave it pending and try again on the next tick.
 
 PSI is local to the queue-runner: the agent reports raw numbers in each
 heartbeat, the runner caches the most recent snapshot per agent and the
-scheduler reads from that cache. No SSH probing in the agent path.
-
-## Coexistence with SSH dispatch
-
-The existing `run_nix_build_remote` path (SSH + `nix build --store ssh://...`)
-stays. The scheduler tries the agent pool first; only when no agent advertises
-the required `system` does it look at the legacy `remote_builders` table. This
-lets clusters mix:
-
-- Hosts that run `circus-agent` and get push-based dispatch with real-time
-  heartbeats and PSI gating.
-- Hosts reachable only by SSH, treated as pull-by-the-runner like before.
-
-A `remote_builder` row whose `name` matches a connected agent is upgraded: the
-SSH path becomes a cold standby and the agent path is preferred.
-
-When `[queue_runner].ssh_require_host_key = true`, the SSH path only uses remote
-builders that have a recorded `public_host_key`. Without it, the runner skips
-that row instead of relying on OpenSSH `accept-new`.
+scheduler reads from that cache.
 
 ## Cluster setup
 
@@ -255,7 +236,6 @@ Single queue-runner, multiple agents:
 poll_interval = 5
 work_dir      = "/var/lib/circus/queue-runner"
 psi_threshold = 80.0 # 0..100, advisory; null disables
-ssh_require_host_key = true
 
 [queue_runner.rpc]
 bind               = "0.0.0.0:8443"
@@ -401,12 +381,6 @@ If you have a setup already, existing clusters keep working. To migrate a host:
 3. Confirm the host appears connected on the admin API:
    `GET /api/v1/admin/builders/sessions/connected` (live) or
    `GET /api/v1/admin/builders/sessions/{machine_id}` (single row).
-4. Leave the `remote_builders` row in place. Once the agent is healthy you can
-   drop the row, or keep it as a cold standby for the SSH path.
-
-There is no flag day. The runner prefers connected agents over SSH on a
-per-dispatch basis; flipping a host between the two transports is purely a
-matter of which service is running.
 
 `--ephemeral` enables the table with defaults when the config file does not
 contain `[agent.ephemeral]`. When `unique_name = true`, the agent appends a
@@ -535,6 +509,6 @@ Operational notes:
   rejects mismatches without persisting anything. Pending upload expectations
   are discarded when the dispatch finishes.
 - OIDC-authenticated agents only receive trusted-ref builds. PR/MR evaluations
-  and jobsets without a concrete branch stay on persistent agents, local builds,
-  or the SSH path. Ephemeral lifecycle alone does not make an internal
+  and jobsets without a concrete branch stay on persistent agents or local
+  builds. Ephemeral lifecycle alone does not make an internal
   token-authenticated agent external.

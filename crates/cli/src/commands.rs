@@ -94,7 +94,7 @@ pub(super) enum AdminCommand {
     #[command(subcommand)]
     command: UserCommand,
   },
-  /// Manage remote builders and agent sessions.
+  /// Manage builder agent sessions.
   Builders {
     #[command(subcommand)]
     command: BuilderCommand,
@@ -275,35 +275,6 @@ pub(super) enum UserCommand {
 
 #[derive(Subcommand)]
 pub(super) enum BuilderCommand {
-  /// List remote builders.
-  List,
-  /// Register a remote builder.
-  Add {
-    #[arg(long)]
-    name:               String,
-    #[arg(long)]
-    ssh_uri:            String,
-    #[arg(long, value_delimiter = ',', num_args = 1..)]
-    systems:            Vec<String>,
-    #[arg(long)]
-    max_jobs:           Option<i32>,
-    #[arg(long)]
-    speed_factor:       Option<i32>,
-    #[arg(long, value_delimiter = ',')]
-    supported_features: Vec<String>,
-    #[arg(long, value_delimiter = ',')]
-    mandatory_features: Vec<String>,
-    #[arg(long)]
-    public_host_key:    Option<String>,
-    #[arg(long)]
-    ssh_key_file:       Option<String>,
-  },
-  /// Enable a remote builder.
-  Enable { id: String },
-  /// Disable a remote builder.
-  Disable { id: String },
-  /// Remove a remote builder.
-  Remove { id: String },
   /// List builder agent sessions.
   Sessions {
     #[arg(long)]

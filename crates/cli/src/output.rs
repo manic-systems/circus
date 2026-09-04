@@ -21,28 +21,6 @@ pub(super) fn print_users(value: &Value) {
   );
 }
 
-pub(super) fn print_builders(value: &Value) {
-  print_table(
-    &[
-      "ID", "Name", "SSH URI", "Systems", "Jobs", "Speed", "Enabled",
-    ],
-    &items(value)
-      .iter()
-      .map(|builder| {
-        vec![
-          field(builder, "id"),
-          field(builder, "name"),
-          field(builder, "ssh_uri"),
-          field(builder, "systems"),
-          field(builder, "max_jobs"),
-          field(builder, "speed_factor"),
-          field(builder, "enabled"),
-        ]
-      })
-      .collect::<Vec<_>>(),
-  );
-}
-
 pub(super) fn print_builder_sessions(value: &Value) {
   print_table(
     &[

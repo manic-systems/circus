@@ -98,14 +98,6 @@
     };
   };
 
-  remoteBuilderSettings = submodule {
-    freeformType = settingsType;
-    options = {
-      name = mkOption {type = str;};
-      ssh_uri = mkOption {type = str;};
-    };
-  };
-
   settingsSubmodule = submodule {
     freeformType = settingsType;
     options = {
@@ -150,9 +142,6 @@
             };
             users = mkOption {
               type = listOf userSettings;
-            };
-            remote_builders = mkOption {
-              type = listOf remoteBuilderSettings;
             };
           };
         };

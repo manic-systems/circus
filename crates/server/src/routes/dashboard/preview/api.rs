@@ -139,21 +139,6 @@ pub(super) async fn api_user_create(
   }))
 }
 
-pub(super) async fn api_builder_create(
-  Json(body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-  let name = body
-    .get("name")
-    .and_then(serde_json::Value::as_str)
-    .unwrap_or("preview-builder");
-
-  Json(serde_json::json!({
-    "id": "00000000-0000-0000-0000-000000000029",
-    "name": name,
-    "enabled": true
-  }))
-}
-
 pub(super) async fn api_metrics_builds() -> Json<serde_json::Value> {
   Json(serde_json::json!({
     "timestamps": [

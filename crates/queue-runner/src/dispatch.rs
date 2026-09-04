@@ -27,7 +27,6 @@ use tokio::{
 use crate::{
   builder::BuildResult,
   context::BuildContext,
-  psi,
   rpc::{
     AgentPool,
     AgentSnapshot,
@@ -273,57 +272,7 @@ pub async fn reserve_venue(
   }
 
   let features = build.scheduling_features();
-  let runner_ok = ctx.runner_caps.supports(system, features);
-  let ssh_ok = if runner_ok {
-    false // the runner already qualifies
-  } else if let Some(system) = system {
-    match repo::remote_builders::find_for_system(
-      &ctx.pool,
-      system,
-      &ctx.scheduling_strategy,
-    )
-    .await
-    {
-      Ok(builders) => {
-        let mut any = false;
-        for b in &builders {
-          // An unpinned builder is ineligible when host-key checking is
-          // mandatory.
-          if ctx.require_host_key && b.public_host_key.is_none() {
-            continue;
-          }
-          if !supports_required_features(
-            features,
-            &b.supported_features,
-            &b.mandatory_features,
-          ) {
-            continue;
-          }
-          if let Some(threshold) = ctx.psi_threshold
-            && let Some(snap) = psi::read_cached(
-              &ctx.psi_cache,
-              &b.ssh_uri,
-              ctx.psi_check_timeout,
-            )
-            .await
-            && snap.exceeds(threshold)
-          {
-            continue;
-          }
-          any = true;
-          break;
-        }
-        any
-      },
-      Err(e) => {
-        tracing::warn!(build_id = %build.id, "failed to check SSH builders for venue reservation: {e}");
-        false
-      },
-    }
-  } else {
-    false
-  };
-  if !runner_ok && !ssh_ok {
+  if !ctx.runner_caps.supports(system, features) {
     tracing::debug!(
       build_id = %build.id,
       ?features,
@@ -353,7 +302,7 @@ async fn select_and_reserve_agent(
     return None;
   }
 
-  // Missing or stale heartbeats are treated as unknown to match the SSH path.
+  // Missing or stale heartbeats are treated as unknown.
   let cutoff = Instant::now().checked_sub(ctx.heartbeat_ttl);
   if let Some(t) = ctx.psi_threshold {
     let t = t as f32;

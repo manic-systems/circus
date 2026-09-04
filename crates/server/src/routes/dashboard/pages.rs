@@ -901,10 +901,6 @@ pub(super) async fn build_page(
     circus_common::repo::builder_sessions::get(&state.pool, machine_id)
       .await
       .map_or_else(|_| "local".to_string(), |s| s.name)
-  } else if let Some(builder_id) = build.builder_id {
-    circus_common::repo::remote_builders::get(&state.pool, builder_id)
-      .await
-      .map_or_else(|_| "local".to_string(), |b| b.name)
   } else {
     "local".to_string()
   };

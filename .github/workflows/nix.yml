@@ -142,8 +142,6 @@ jobs:
             check: agent-dispatch
           - name: GC Pinning
             check: gc-pinning
-          - name: Machine Health
-            check: machine-health
           - name: Channel Tarball
             check: channel-tarball
           - name: Capability Scheduling
