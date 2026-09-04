@@ -110,6 +110,13 @@ UPDATE evaluations SET status = :status, error_message = :error_message
 WHERE id = :id AND status = 'running'
 RETURNING *;
 
+--! discard_filtered_running
+DELETE FROM evaluations
+WHERE id = :id AND status = 'running'
+  AND NOT EXISTS (
+    SELECT 1 FROM builds WHERE evaluation_id = evaluations.id
+  );
+
 --! cancel : EvaluationRow
 UPDATE evaluations SET status = 'cancelled', error_message = NULL
 WHERE id = :id AND status IN ('pending', 'running')

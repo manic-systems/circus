@@ -559,6 +559,17 @@ pub async fn finish_running(
     .transpose()
 }
 
+/// Remove a claimed source update that path filters excluded before it created
+/// any builds.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn discard_filtered_running(pool: &PgPool, id: Uuid) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(q::discard_filtered_running().bind(&client, &id).await? == 1)
+}
+
 /// Cancel an evaluation that has not reached a terminal state.
 ///
 /// # Errors
