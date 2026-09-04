@@ -1764,6 +1764,29 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>
         self.bind(client, &params.status, &params.error_message, &params.id)
     }
 }
+pub struct DiscardFilteredRunningStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn discard_filtered_running() -> DiscardFilteredRunningStmt {
+    DiscardFilteredRunningStmt(
+        "DELETE FROM evaluations WHERE id = $1 AND status = 'running' AND NOT EXISTS ( SELECT 1 FROM builds WHERE evaluation_id = evaluations.id )",
+        None,
+    )
+}
+impl DiscardFilteredRunningStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[id]).await
+    }
+}
 pub struct CancelStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn cancel() -> CancelStmt {
     CancelStmt(
