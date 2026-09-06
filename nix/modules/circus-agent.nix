@@ -1,4 +1,4 @@
-{
+self: {
   config,
   pkgs,
   lib,
@@ -13,8 +13,9 @@
     agent.auth_token = "@CIRCUS_AGENT_AUTH_TOKEN@";
     tracing.show_timestamps = false;
   });
+
 in {
-  imports = [./circus-agent-options.nix];
+  imports = [(import ./circus-agent-options.nix self)];
 
   config = mkIf cfg.enable {
     users.users.circus-agent = {
