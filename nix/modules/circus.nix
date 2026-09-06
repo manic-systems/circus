@@ -1,16 +1,18 @@
-{
+self: {
   config,
   pkgs,
   lib,
   ...
 }: let
   inherit (lib.modules) mkIf mkDefault mkMerge;
-  inherit (lib.options) mkEnableOption mkOption;
+  inherit (lib.options) mkEnableOption mkOption mkPackageOption;
   inherit (lib.types) bool int listOf nullOr package path str submodule;
   inherit (lib.lists) concatMap optional;
   inherit (lib.meta) getExe';
 
   cfg = config.services.circus;
+
+  selfPkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
 
   settingsFormat = pkgs.formats.toml {};
   settingsType = settingsFormat.type;
@@ -341,25 +343,10 @@ in {
   options.services.circus = {
     enable = mkEnableOption "circus system";
 
-    package = mkOption {
-      type = package;
-      description = "The circus server package.";
-    };
-
-    evaluatorPackage = mkOption {
-      type = package;
-      description = "The circus evaluator package.";
-    };
-
-    queueRunnerPackage = mkOption {
-      type = package;
-      description = "The circus queue runner package.";
-    };
-
-    migratePackage = mkOption {
-      type = package;
-      description = "The circus migration CLI package.";
-    };
+    package = mkPackageOption selfPkgs "circus-server" {};
+    evaluatorPackage = mkPackageOption selfPkgs "circus-evaluator" {};
+    queueRunnerPackage = mkPackageOption selfPkgs "circus-queue-runner" {};
+    migratePackage = mkPackageOption selfPkgs "circus-cli" {};
 
     settings = mkOption {
       type = settingsSubmodule;

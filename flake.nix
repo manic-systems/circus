@@ -109,30 +109,12 @@
       circus = {
         _file = ./flake.nix;
         key = "circus/nixosModules/circus";
-        imports = [
-          ./nix/modules/circus.nix
-          ({pkgs, ...}: let
-            packages = self.lib.mkPackages pkgs;
-          in {
-            services.circus = {
-              package = lib.mkDefault packages.circus-server;
-              evaluatorPackage = lib.mkDefault packages.circus-evaluator;
-              queueRunnerPackage = lib.mkDefault packages.circus-queue-runner;
-              migratePackage = lib.mkDefault packages.circus-cli;
-            };
-          })
-        ];
+        imports = [ (import ./nix/modules/circus.nix self) ];
       };
       circus-agent = {
         _file = ./flake.nix;
         key = "circus/nixosModules/circus-agent";
-        imports = [
-          ./nix/modules/circus-agent.nix
-          ({pkgs, ...}: {
-            services.circus-agent.package =
-              lib.mkDefault (self.lib.mkPackages pkgs).circus-agent;
-          })
-        ];
+        imports = [ (import ./nix/modules/circus-agent.nix self) ];
       };
       default = self.nixosModules.circus; # agent is optional
     };

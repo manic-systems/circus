@@ -1,19 +1,18 @@
-{
+self: {
   pkgs,
   lib,
   ...
 }: let
-  inherit (lib.options) mkOption mkEnableOption;
+  inherit (lib.options) mkOption mkEnableOption mkPackageOption;
   inherit (lib.types) listOf package str path ints submodule;
   settingsFormat = pkgs.formats.toml {};
+
+  selfPkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
 in {
   options.services.circus-agent = {
     enable = mkEnableOption "Circus distributed build agent";
 
-    package = mkOption {
-      type = package;
-      description = "circus-agent package to use.";
-    };
+    package = mkPackageOption selfPkgs "circus-agent" {};
 
     authTokenFile = mkOption {
       type = path;
