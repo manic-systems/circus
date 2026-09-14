@@ -122,6 +122,14 @@ pub(super) async fn run_eval(
   description: &'static str,
   cancel: &CancellationToken,
 ) -> Result<EvalResult> {
+  // evix rejects a zero item timeout instead of treating it as a timeout, so
+  // enforce an immediate timeout here rather than letting the session start.
+  if timeout.is_zero() {
+    return Err(CiError::Timeout(format!(
+      "Nix evaluation timed out after {timeout:?}"
+    )));
+  }
+
   tracing::info!(
     evaluation = description,
     nix_options = ?config.nix_options,
