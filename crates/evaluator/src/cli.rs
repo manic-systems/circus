@@ -77,7 +77,10 @@ where
 }
 
 async fn run_async(config: Config) -> color_eyre::Result<()> {
-  circus_common::init_tracing(&config.tracing);
+  let tracing_guard =
+    circus_common::init_tracing(&config.tracing, "circus-evaluator")?;
+
+  let result = async {
 
   tracing::info!("Starting CI Evaluator");
   tracing::info!("Configuration loaded");
@@ -120,7 +123,11 @@ async fn run_async(config: Config) -> color_eyre::Result<()> {
   tracing::info!("Evaluator shutting down, closing database pool");
   db.close();
 
-  Ok(())
+    Ok(())
+  }
+  .await;
+  tracing_guard.shutdown().await;
+  result
 }
 
 /// Write a service heartbeat on every poll tick so the server's /health

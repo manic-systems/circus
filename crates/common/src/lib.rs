@@ -25,7 +25,13 @@ pub mod validate;
 pub mod validation;
 pub mod version;
 
-pub use circus_logs::{TracingConfig, init_tracing};
+pub use circus_logs::{
+  OtlpConfig,
+  TracingConfig,
+  TracingError,
+  TracingGuard,
+  init_tracing,
+};
 pub use circus_types::{
   AuthKind,
   ForgeType,
