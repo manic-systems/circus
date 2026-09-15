@@ -241,8 +241,6 @@ configuration or the Nix store.
 | `queue_runner`       | `unsupported_timeout`                                  | none                                                | Timeout for unsupported system builds                                     |
 | `queue_runner`       | `scheduling_strategy`                                  | `speed_factor_only`                                 | Builder selection strategy                                                |
 | `queue_runner`       | `psi_threshold`                                        | none                                                | PSI pressure threshold (skip builders)                                    |
-| `queue_runner`       | `psi_check_timeout`                                    | `5`                                                 | SSH PSI check timeout (seconds)                                           |
-| `queue_runner`       | `ssh_require_host_key`                                 | `false`                                             | Skip SSH builders without pinned host keys                                |
 | `queue_runner`       | `extra_nix_build_args`                                 | `[]`                                                | Extra arguments passed to `nix build`                                     |
 | `queue_runner`       | `local_systems`                                        | none                                                | Systems the runner host may build locally                                 |
 | `queue_runner`       | `local_features`                                       | none                                                | System features available on local builds                                 |
@@ -354,7 +352,6 @@ configuration or the Nix store.
 | `declarative`        | `allow_runtime_mutation`                               | `false`                                             | Permit API and dashboard changes to declarative projects                  |
 | `declarative`        | `api_keys`                                             | `[]`                                                | Declarative API key definitions                                           |
 | `declarative`        | `users`                                                | `[]`                                                | Declarative user definitions                                              |
-| `declarative`        | `remote_builders`                                      | `[]`                                                | Declarative remote builder definitions                                    |
 | `nix`                | `store_dir`                                            | `/nix/store`                                        | Nix store directory                                                       |
 
 <!-- markdownlint-enable MD013 -->
@@ -469,7 +466,7 @@ exact substituter URL, public key, and `nix.conf` snippet for each project
 cache, so operators rarely have to assemble these by hand.
 
 Set `[cache_upload].enabled = true` and `store_uri = "s3://bucket[/prefix]"` to
-push completed outputs to S3. SSH/local runner builds use `nix copy --to`; agent
+push completed outputs to S3. Local runner builds use `nix copy --to`; agent
 builds use presigned PUT URLs and persist narinfo rows in the database. When a
 client later requests those NARs through `/nix-cache/nar/...`, the server signs
 a short-lived S3 GET URL and redirects the client.
@@ -866,13 +863,12 @@ Run all service binaries with the same `--config <path>` or
 
 ## Distributed Builders
 
-Circus supports SSH remote builders and persistent `circus-agent` builders.
-Detailed usage and operations are covered in [USAGE.md](./USAGE.md); protocol
-details are covered in [DISTRIBUTED.md](./DISTRIBUTED.md). The agent package is
-also exposed for Darwin systems, and the flake ships a nix-darwin launchd module
-for macOS builder hosts. The Darwin agent section in
-[DISTRIBUTED.md](./DISTRIBUTED.md) covers the module shape and the Nix
-trusted-user caveats.
+Circus supports persistent `circus-agent` builders. Detailed usage and
+operations are covered in [USAGE.md](./USAGE.md); protocol details are covered
+in [DISTRIBUTED.md](./DISTRIBUTED.md). The agent package is also exposed for
+Darwin systems, and the flake ships a nix-darwin launchd module for macOS
+builder hosts. The Darwin agent section in [DISTRIBUTED.md](./DISTRIBUTED.md)
+covers the module shape and the Nix trusted-user caveats.
 
 Agent configuration is loaded from `/etc/circus-agent.toml`, the path passed to
 `--config`, or `CIRCUS_AGENT_CONFIG`. Environment overrides use the

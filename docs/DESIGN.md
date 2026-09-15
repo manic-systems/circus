@@ -102,9 +102,8 @@ Two dispatch paths:
 
 - **Persistent agents** &mdash; connected `circus-agent` processes receive work
   over Cap'n Proto RPC. This is the preferred path.
-- **Legacy SSH builders** &mdash; the runner shells out to remote Nix builds.
-  SSH builders serve as a fallback and for mixed clusters that mix agent-capable
-  hosts with older machines.
+- **Local runner builds** &mdash; the queue-runner host builds locally when it
+  advertises the required system and features.
 
 ### `circus-agent`
 
@@ -203,8 +202,8 @@ flowchart TD
     P["Pending build"] --> Q["Queue runner"]
     Q --> A{"Connected agent available?"}
     A -- yes --> R["Dispatch to circus-agent"]
-    A -- no --> S{"SSH builder matches?"}
-    S -- yes --> T["Run via remote Nix/SSH"]
+    A -- no --> S{"Runner host eligible?"}
+    S -- yes --> T["Run locally on queue-runner"]
     S -- no --> U["Keep pending and retry"]
     R --> V["Build results"]
     T --> V
@@ -212,9 +211,8 @@ flowchart TD
 ```
 
 The persistent agent path is used when the queue runner has an active connection
-to a suitable host. When no agent is available, the runner falls back to
-configured SSH builders. This means existing SSH-based clusters keep working as
-agent-capable hosts come online.
+to a suitable host. When no agent is available, the runner falls back to the
+local queue-runner host when its configured systems and features allow it.
 
 ## Distributed Builds
 
@@ -231,7 +229,7 @@ flowchart LR
 
 The agent connection is long-lived, so the queue runner has a live view of which
 machines are available, what they can build, and how loaded they are. The runner
-prefers a connected agent over an SSH builder when both are valid.
+prefers a connected agent over a local build on the queue-runner host.
 
 If the connection drops, the runner marks that agent as unavailable and retries
 the build elsewhere on the next pass. Dropped connections do not need operator
@@ -334,4 +332,4 @@ Hydra-compatible channel endpoints: `git-revision`, `binary-cache-url`,
 Circus reads a TOML file. Environment variables override any field. All daemons
 share the same configuration tree, but each only reads the sections it needs. On
 server startup, declarative startup data bootstraps projects, jobsets, users,
-API keys, and remote builders from config.
+API keys, and users from config.

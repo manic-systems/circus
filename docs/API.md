@@ -24,14 +24,9 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | Method | Endpoint | Description | Responses |
 | ------ | -------- | ----------- | --------- |
 | GET | `/api/v1/admin/audit-log` | Paginated audit log (admin only) | 200 |
-| GET | `/api/v1/admin/builders` | List remote builders | 200 |
-| POST | `/api/v1/admin/builders` | Register a builder | 200 |
 | GET | `/api/v1/admin/builders/sessions` | List all persistent builder agent sessions (connected + historical) | 200 |
 | GET | `/api/v1/admin/builders/sessions/connected` | List currently-connected builder agents | 200 |
 | GET | `/api/v1/admin/builders/sessions/{machine_id}` | Get a single builder agent session by its stable machine_id | 200, 404 |
-| GET | `/api/v1/admin/builders/{id}` | Get a builder | 200 |
-| PUT | `/api/v1/admin/builders/{id}` | Update a builder | 200 |
-| DELETE | `/api/v1/admin/builders/{id}` | Remove a builder | 204 |
 | GET | `/api/v1/admin/caches` | List binary caches (global + per-project) with storage and last-hour request counts | 200 |
 | GET | `/api/v1/admin/caches/{name}` | Binary cache detail: substituter URL, public key, nix.conf snippet, storage, last-hour traffic | 200, 404 |
 | GET | `/api/v1/admin/caches/{name}/nars` | Filtered, paginated NAR inventory for a cache | 200 |

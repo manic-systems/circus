@@ -94,26 +94,6 @@ testers.runNixOSTest {
         )
         assert code.strip() == "403", f"Expected 403, got {code.strip()}"
 
-    with subtest("Read-only key POST admin/builders returns 403"):
-        code = machine.succeed(
-            "curl -s -o /dev/null -w '%{http_code}' "
-            "-X POST http://127.0.0.1:3000/api/v1/admin/builders "
-            f"{ro_header} "
-            "-H 'Content-Type: application/json' "
-            "-d '{\"name\": \"bad-builder\", \"ssh_uri\": \"ssh://x@y\", \"systems\": [\"x86_64-linux\"]}'"
-        )
-        assert code.strip() == "403", f"Expected 403, got {code.strip()}"
-
-    with subtest("Admin key POST admin/builders returns 200"):
-        code = machine.succeed(
-            "curl -s -o /dev/null -w '%{http_code}' "
-            "-X POST http://127.0.0.1:3000/api/v1/admin/builders "
-            f"{auth_header} "
-            "-H 'Content-Type: application/json' "
-            "-d '{\"name\": \"test-builder\", \"ssh_uri\": \"ssh://nix@builder\", \"systems\": [\"x86_64-linux\"], \"max_jobs\": 2}'"
-        )
-        assert code.strip() == "200", f"Expected 200, got {code.strip()}"
-
     with subtest("Admin key create and delete API key"):
         # Create
         result = machine.succeed(
