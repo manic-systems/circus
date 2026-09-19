@@ -121,7 +121,7 @@
         _file = ./flake.nix;
         key = "circus/nixosModules/circus-agent";
         imports = [ ./nix/modules/circus-agent.nix ];
-        services.circus-agent.package = lib.mkDefault self.packages.${stdenv.hostPlatform.system}.circus-agent;
+        services.circus-agent.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
       };
       default = self.nixosModules.circus; # agent is optional
     };
@@ -131,7 +131,7 @@
         _file = ./flake.nix;
         key = "circus/darwinModules/circus-agent";
         imports = [ ./nix/modules/circus-agent-darwin.nix ];
-        services.circus-agent.package = lib.mkDefault self.packages.${stdenv.hostPlatform.system}.circus-agent;
+        services.circus-agent.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
       };
       default = self.darwinModules.circus-agent;
     };
