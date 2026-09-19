@@ -106,10 +106,14 @@
 
     # NixOS modules for Circus and components
     nixosModules = {
-      circus = {pkgs, lib, ...}: {
+      circus = {
+        pkgs,
+        lib,
+        ...
+      }: {
         _file = ./flake.nix;
         key = "circus/nixosModules/circus";
-        imports = [ ./nix/modules/circus.nix ];
+        imports = [./nix/modules/circus.nix];
         services.circus = {
           package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-server;
           evaluatorPackage = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-evaluator;
@@ -117,20 +121,28 @@
           migratePackage = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-cli;
         };
       };
-      circus-agent = {pkgs, lib, ...}: {
+      circus-agent = {
+        pkgs,
+        lib,
+        ...
+      }: {
         _file = ./flake.nix;
         key = "circus/nixosModules/circus-agent";
-        imports = [ ./nix/modules/circus-agent.nix ];
+        imports = [./nix/modules/circus-agent.nix];
         services.circus-agent.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
       };
       default = self.nixosModules.circus; # agent is optional
     };
 
     darwinModules = {
-      circus-agent = {pkgs, lib, ...}: {
+      circus-agent = {
+        pkgs,
+        lib,
+        ...
+      }: {
         _file = ./flake.nix;
         key = "circus/darwinModules/circus-agent";
-        imports = [ ./nix/modules/circus-agent-darwin.nix ];
+        imports = [./nix/modules/circus-agent-darwin.nix];
         services.circus-agent.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-agent;
       };
       default = self.darwinModules.circus-agent;

@@ -4,13 +4,13 @@ destination = "db/circus-codegen"
 rust-type = "chrono::DateTime<chrono::Utc>"
 
 [manifest.package]
-license = "MPL-2.0"
-name = "circus-codegen"
-version = "0.14.0"
-description = "Generated PostgreSQL bindings for Circus"
-repository = "https://github.com/manic-systems/circus"
-edition = "2024"
+description  = "Generated PostgreSQL bindings for Circus"
+edition      = "2024"
+license      = "MPL-2.0"
+name         = "circus-codegen"
+repository   = "https://github.com/manic-systems/circus"
 rust-version = "1.85"
+version      = "0.14.0"
 
 [manifest.dependencies]
 chrono = { version = "0.4", features = [ "serde" ] }
