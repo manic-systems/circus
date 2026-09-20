@@ -91,9 +91,10 @@
                     Clear failed paths cache and requeue cached failures
                 </button>
                 <p class="empty-hint">
-                    Removes Circus's PostgreSQL failed-path skip records and requeues builds previously
-                    marked <code>cached_failure</code> for those derivations. This does not delete Nix
-                    store paths, build logs, or historical build rows.
+                    Removes Circus's PostgreSQL failed-path skip records and requeues cached failures
+                    for those derivations. If the cache was already cleared, it requeues all remaining
+                    <code>cached_failure</code> builds. This does not delete Nix store paths, build
+                    logs, or historical build rows.
                 </p>
             </div>
         </section>

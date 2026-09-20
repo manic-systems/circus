@@ -48,7 +48,10 @@ WITH cleared AS (
       effective_features = NULL,
       retry_count = retry_count + 1
   WHERE b.status = 'cached_failure'
-    AND b.drv_path IN (SELECT drv_path FROM cleared)
+    AND (
+      b.drv_path IN (SELECT drv_path FROM cleared)
+      OR NOT EXISTS (SELECT 1 FROM cleared)
+    )
   RETURNING b.id
 )
 SELECT
