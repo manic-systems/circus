@@ -30,6 +30,21 @@ fn help_succeeds_and_lists_core_subcommands() {
 }
 
 #[test]
+fn admin_failed_paths_cache_help_lists_clear() {
+  let output = Command::new(bin())
+    .args(["admin", "failed-paths-cache", "--help"])
+    .output()
+    .expect("run failed-paths-cache help");
+
+  assert!(
+    output.status.success(),
+    "failed-paths-cache --help should exit 0"
+  );
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  assert!(stdout.contains("clear"), "help should mention `clear`");
+}
+
+#[test]
 fn no_args_exits_nonzero() {
   let output = Command::new(bin())
     .output()

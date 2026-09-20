@@ -11,6 +11,7 @@ use crate::{
     ApiKeyCommand,
     BuilderCommand,
     ConfigCommand,
+    FailedPathsCacheCommand,
     NotificationCommand,
     PinnedOutputCommand,
     UserCommand,
@@ -58,6 +59,28 @@ impl CommandRunner {
         field(&response, "channels_count"),
       ]],
     );
+    Ok(())
+  }
+
+  async fn failed_paths_cache(
+    &self,
+    command: FailedPathsCacheCommand,
+  ) -> Result<()> {
+    match command {
+      FailedPathsCacheCommand::Clear => {
+        let response = self
+          .api
+          .post("api/v1/admin/failed-paths-cache/clear", json!({}), true)
+          .await?;
+        if self.json_output {
+          return print_json(&response);
+        }
+        println!(
+          "Cleared {} failed-path cache entries.",
+          field(&response, "deleted")
+        );
+      },
+    }
     Ok(())
   }
 
@@ -243,6 +266,9 @@ impl CommandRunner {
       AdminCommand::ApiKeys { command } => self.api_keys(command).await,
       AdminCommand::Users { command } => self.users(command).await,
       AdminCommand::Builders { command } => self.builders(command).await,
+      AdminCommand::FailedPathsCache { command } => {
+        self.failed_paths_cache(command).await
+      },
       AdminCommand::Notifications { command } => {
         self.notifications(command).await
       },

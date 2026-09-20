@@ -104,6 +104,11 @@ pub(super) enum AdminCommand {
     #[command(subcommand)]
     command: NotificationCommand,
   },
+  /// Clear Circus's PostgreSQL failed-path cache skip records.
+  FailedPathsCache {
+    #[command(subcommand)]
+    command: FailedPathsCacheCommand,
+  },
   /// Inspect or unpin kept build outputs.
   PinnedOutputs {
     #[command(subcommand)]
@@ -362,6 +367,12 @@ pub(super) enum PinnedOutputCommand {
   },
   /// Clear the keep flag for a build and make its outputs GC-eligible.
   Unpin { build_id: String },
+}
+
+#[derive(Subcommand)]
+pub(super) enum FailedPathsCacheCommand {
+  /// Delete all failed-path cache skip records.
+  Clear,
 }
 
 #[derive(Subcommand)]
