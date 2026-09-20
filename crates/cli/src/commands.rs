@@ -104,7 +104,7 @@ pub(super) enum AdminCommand {
     #[command(subcommand)]
     command: NotificationCommand,
   },
-  /// Clear Circus's PostgreSQL failed-path cache skip records.
+  /// Clear Circus's `PostgreSQL` failed-path cache skip records.
   FailedPathsCache {
     #[command(subcommand)]
     command: FailedPathsCacheCommand,
