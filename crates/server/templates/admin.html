@@ -85,6 +85,16 @@
                         manual cycle cannot be requested.
                     </p>
                 {% endif %}
+                <div id="failed-paths-cache-msg"></div>
+                <button type="button" class="btn btn-danger"
+                        onclick="clearFailedPathsCache()">
+                    Clear failed paths cache
+                </button>
+                <p class="empty-hint">
+                    Removes Circus's PostgreSQL failed-path skip records only. This does not delete
+                    Nix store paths, build logs, or historical build rows. Builds already marked
+                    <code>cached_failure</code> still need individual restart.
+                </p>
             </div>
         </section>
 
@@ -580,6 +590,19 @@ throw new Error(err.error || err.message || 'Failed to unpin build');
 window.location.reload();
 } catch(err) {
 alert(escapeHtml(err.message));
+}
+}
+async function clearFailedPathsCache() {
+if (!confirm('Clear all failed-path cache records? This only removes Circus skip records; it does not delete Nix store paths, logs, or build history.')) return;
+const msg = document.getElementById('failed-paths-cache-msg');
+try {
+const res = await fetch('/api/v1/admin/failed-paths-cache/clear', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
+const data = await res.json().catch(() => ({}));
+if (!res.ok) throw new Error(data.error || data.message || 'Failed to clear failed paths cache');
+msg.innerHTML = '<div class="flash-message flash-success">Cleared ' + escapeHtml(String(data.deleted ?? 0)) + ' failed-path cache entries.</div>';
+setTimeout(() => window.location.reload(), 1000);
+} catch(err) {
+showError(msg, err.message);
 }
 }
 document.getElementById('config-form')?.addEventListener('submit', async (e) => {

@@ -5,6 +5,7 @@ compact_arrays = false
 reorder_keys   = true
 
 [[rule]]
+exclude = [ "db/circus-codegen" ]
 include = [ "**/Cargo.toml" ]
 keys    = [ "package", "workspace.package" ]
 

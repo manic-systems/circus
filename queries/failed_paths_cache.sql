@@ -31,3 +31,5 @@ WHERE
 DELETE FROM failed_paths_cache
 WHERE
   failed_at < NOW() - make_interval(secs =>:ttl_seconds);
+--! clear_all
+DELETE FROM failed_paths_cache; 

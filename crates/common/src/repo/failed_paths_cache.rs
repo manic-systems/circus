@@ -66,3 +66,13 @@ pub async fn cleanup_expired(pool: &PgPool, ttl_seconds: u64) -> Result<u64> {
       .await?,
   )
 }
+
+/// Remove every entry from the failed paths cache.
+///
+/// # Errors
+///
+/// Returns error if database delete fails.
+pub async fn clear_all(pool: &PgPool) -> Result<u64> {
+  let client = pool.get().await?;
+  Ok(q::clear_all().bind(&client).await?)
+}
