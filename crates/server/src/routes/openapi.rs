@@ -663,12 +663,15 @@ fn document_value() -> Value {
           "responses": { "200": { "description": "NAR list with totals, summary, and extremes" } } }
       },
       "/admin/failed-paths-cache/clear": {
-        "post": { "summary": "Clear all failed-path cache skip records (admin only; does not delete Nix store paths, logs, or build history)",
-          "responses": { "200": { "description": "Number of deleted failed-path cache entries",
+        "post": { "summary": "Clear failed-path cache records and requeue matching cached failures (admin only; does not delete Nix store paths, logs, or build history)",
+          "responses": { "200": { "description": "Deleted cache entries and requeued cached failures",
             "content": { "application/json": { "schema": {
               "type": "object",
-              "required": ["deleted"],
-              "properties": { "deleted": { "type": "integer", "format": "int64", "minimum": 0 } }
+              "required": ["deleted", "restarted"],
+              "properties": {
+                "deleted": { "type": "integer", "format": "int64", "minimum": 0 },
+                "restarted": { "type": "integer", "format": "int64", "minimum": 0 }
+              }
             } } } } } }
       },
       "/admin/system": {

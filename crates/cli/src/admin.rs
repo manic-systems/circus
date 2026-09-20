@@ -76,8 +76,10 @@ impl CommandRunner {
           return print_json(&response);
         }
         println!(
-          "Cleared {} failed-path cache entries.",
-          field(&response, "deleted")
+          "Cleared {} failed-path cache entries and requeued {} cached \
+           failures.",
+          field(&response, "deleted"),
+          field(&response, "restarted")
         );
       },
     }

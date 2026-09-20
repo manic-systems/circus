@@ -31,5 +31,26 @@ WHERE
 DELETE FROM failed_paths_cache
 WHERE
   failed_at < NOW() - make_interval(secs =>:ttl_seconds);
+--: FailedPathsCacheClearResult(deleted, restarted)
 --! clear_all
-DELETE FROM failed_paths_cache; 
+WITH cleared AS (
+  DELETE FROM failed_paths_cache
+  RETURNING drv_path
+), restarted AS (
+  UPDATE builds AS b
+  SET status = 'pending',
+      started_at = NULL,
+      completed_at = NULL,
+      log_path = NULL,
+      build_output_path = NULL,
+      error_message = NULL,
+      started_notified_at = NULL,
+      effective_features = NULL,
+      retry_count = retry_count + 1
+  WHERE b.status = 'cached_failure'
+    AND b.drv_path IN (SELECT drv_path FROM cleared)
+  RETURNING b.id
+)
+SELECT
+  (SELECT COUNT(*)::bigint FROM cleared) AS deleted,
+  (SELECT COUNT(*)::bigint FROM restarted) AS restarted;

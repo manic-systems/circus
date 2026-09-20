@@ -94,7 +94,7 @@ async fn clear_failed_paths_cache(
   auth: RequireAdmin,
   State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-  let deleted =
+  let result =
     circus_common::repo::failed_paths_cache::clear_all(&state.pool).await?;
 
   crate::audit::record_for_key(
@@ -103,11 +103,17 @@ async fn clear_failed_paths_cache(
     "FAILED_PATHS_CACHE_CLEAR",
     Some("failed_paths_cache"),
     None,
-    serde_json::json!({ "deleted": deleted }),
+    serde_json::json!({
+      "deleted": result.deleted,
+      "restarted": result.restarted,
+    }),
   )
   .await;
 
-  Ok(Json(serde_json::json!({ "deleted": deleted })))
+  Ok(Json(serde_json::json!({
+    "deleted": result.deleted,
+    "restarted": result.restarted,
+  })))
 }
 
 async fn list_notification_tasks(

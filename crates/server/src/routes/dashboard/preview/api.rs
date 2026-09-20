@@ -13,7 +13,7 @@ pub(super) async fn api_ok() -> Json<serde_json::Value> {
 }
 
 pub(super) async fn api_failed_paths_cache_clear() -> Json<serde_json::Value> {
-  Json(serde_json::json!({ "deleted": 0 }))
+  Json(serde_json::json!({ "deleted": 0, "restarted": 0 }))
 }
 
 pub(super) async fn api_project_create(

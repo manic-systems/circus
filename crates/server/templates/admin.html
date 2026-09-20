@@ -88,12 +88,12 @@
                 <div id="failed-paths-cache-msg"></div>
                 <button type="button" class="btn btn-danger"
                         onclick="clearFailedPathsCache()">
-                    Clear failed paths cache
+                    Clear failed paths cache and requeue cached failures
                 </button>
                 <p class="empty-hint">
-                    Removes Circus's PostgreSQL failed-path skip records only. This does not delete
-                    Nix store paths, build logs, or historical build rows. Builds already marked
-                    <code>cached_failure</code> still need individual restart.
+                    Removes Circus's PostgreSQL failed-path skip records and requeues builds previously
+                    marked <code>cached_failure</code> for those derivations. This does not delete Nix
+                    store paths, build logs, or historical build rows.
                 </p>
             </div>
         </section>
@@ -593,13 +593,13 @@ alert(escapeHtml(err.message));
 }
 }
 async function clearFailedPathsCache() {
-if (!confirm('Clear all failed-path cache records? This only removes Circus skip records; it does not delete Nix store paths, logs, or build history.')) return;
+if (!confirm('Clear all failed-path cache records and requeue matching cached failures? This does not delete Nix store paths, logs, or build history.')) return;
 const msg = document.getElementById('failed-paths-cache-msg');
 try {
 const res = await fetch('/api/v1/admin/failed-paths-cache/clear', { method: 'POST', headers: {'x-csrf-token': CSRF_TOKEN} });
 const data = await res.json().catch(() => ({}));
 if (!res.ok) throw new Error(data.error || data.message || 'Failed to clear failed paths cache');
-msg.innerHTML = '<div class="flash-message flash-success">Cleared ' + escapeHtml(String(data.deleted ?? 0)) + ' failed-path cache entries.</div>';
+msg.innerHTML = '<div class="flash-message flash-success">Cleared ' + escapeHtml(String(data.deleted ?? 0)) + ' entries and requeued ' + escapeHtml(String(data.restarted ?? 0)) + ' cached failures.</div>';
 setTimeout(() => window.location.reload(), 1000);
 } catch(err) {
 showError(msg, err.message);
