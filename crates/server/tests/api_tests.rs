@@ -1934,16 +1934,82 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
     circus_common::roles::GlobalRole::ReadOnly,
   )
   .await;
+  let project = circus_common::repo::projects::create(
+    &pool,
+    circus_common::CreateProject {
+      name:            format!("failed-cache-{}", uuid::Uuid::new_v4()),
+      repository_url:  "https://github.com/test/failed-cache".to_string(),
+      cache_enabled:   true,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+      description:     None,
+    },
+  )
+  .await
+  .unwrap();
+  let jobset =
+    circus_common::repo::jobsets::create(&pool, circus_common::CreateJobset {
+      project_id:        project.id,
+      name:              "default".to_string(),
+      nix_expression:    "packages".to_string(),
+      enabled:           Some(true),
+      flake_mode:        Some(true),
+      check_interval:    Some(300),
+      trigger_mode:      None,
+      branch:            None,
+      branch_pattern:    None,
+      tag_pattern:       None,
+      scheduling_shares: None,
+      state:             None,
+      keep_nr:           None,
+      systems:           None,
+      only_build_latest: None,
+      path_filters:      None,
+    })
+    .await
+    .unwrap();
+  let evaluation = circus_common::repo::evaluations::create(
+    &pool,
+    circus_common::CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    uuid::Uuid::new_v4().simple().to_string(),
+      pr_number:      None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action:      None,
+    },
+  )
+  .await
+  .unwrap();
+  let cached_drv =
+    format!("/nix/store/{}-cached-failure.drv", unique_nix_hash());
+  let cached_build =
+    circus_common::repo::builds::create(&pool, circus_common::CreateBuild {
+      evaluation_id: evaluation.id,
+      job_name: "cached-failure".to_string(),
+      drv_path: cached_drv.clone(),
+      system: Some("x86_64-linux".to_string()),
+      ..Default::default()
+    })
+    .await
+    .unwrap();
+  circus_common::repo::builds::complete(
+    &pool,
+    cached_build.id,
+    circus_common::BuildStatus::CachedFailure,
+    None,
+    None,
+    Some("cached failure"),
+  )
+  .await
+  .unwrap();
 
   let client = pool.get().await.unwrap();
   client
     .execute(
       "INSERT INTO failed_paths_cache (drv_path, failure_status) VALUES ($1, \
        'failed'), ($2, 'timeout')",
-      &[
-        &"/nix/store/failed-cache-one.drv",
-        &"/nix/store/failed-cache-two.drv",
-      ],
+      &[&cached_drv, &"/nix/store/failed-cache-two.drv"],
     )
     .await
     .unwrap();
@@ -1968,6 +2034,11 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
     .unwrap();
   let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
   assert_eq!(json["deleted"], 2);
+  assert_eq!(json["restarted"], 1);
+  let restarted = circus_common::repo::builds::get(&pool, cached_build.id)
+    .await
+    .unwrap();
+  assert_eq!(restarted.status, circus_common::BuildStatus::Pending);
 
   let client = pool.get().await.unwrap();
   let remaining: i64 = client
@@ -1996,6 +2067,7 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
     .unwrap();
   let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
   assert_eq!(json["deleted"], 0);
+  assert_eq!(json["restarted"], 0);
 
   let response = app
     .clone()

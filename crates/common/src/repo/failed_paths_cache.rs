@@ -67,12 +67,26 @@ pub async fn cleanup_expired(pool: &PgPool, ttl_seconds: u64) -> Result<u64> {
   )
 }
 
-/// Remove every entry from the failed paths cache.
+/// Counts from clearing failed-path skip records and requeuing matching builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClearResult {
+  pub deleted:   u64,
+  pub restarted: u64,
+}
+
+/// Clear every failed-path skip record and requeue builds skipped by those
+/// records.
 ///
 /// # Errors
 ///
-/// Returns error if database delete fails.
-pub async fn clear_all(pool: &PgPool) -> Result<u64> {
-  let client = pool.get().await?;
-  Ok(q::clear_all().bind(&client).await?)
+/// Returns error if the database transaction fails.
+pub async fn clear_all(pool: &PgPool) -> Result<ClearResult> {
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  let result = q::clear_all().bind(&tx).one().await?;
+  tx.commit().await?;
+  Ok(ClearResult {
+    deleted:   result.deleted as u64,
+    restarted: result.restarted as u64,
+  })
 }

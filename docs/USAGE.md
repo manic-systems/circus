@@ -303,17 +303,18 @@ $ circusctl admin status
 
 The queue runner records failed derivation paths in Circus's PostgreSQL
 `failed_paths_cache` table to avoid immediately repeating known failures. Clear
-those skip records with the admin CLI or dashboard:
+those skip records and requeue matching `cached_failure` builds with the admin
+CLI or dashboard:
 
 ```bash
-# Remove all Circus failed-path skip records; requires an admin API key.
+# Remove skip records and retry matching cached failures; requires an admin API key.
 $ circusctl admin failed-paths-cache clear
 ```
 
 The command does not delete Nix store paths, build logs, or historical build
-rows. Builds already marked `cached_failure` still require their individual
-restart action. Clearing this cache also does not turn pending builds into
-running builds; queue-runner health and builder capacity are separate concerns.
+rows. It only requeues builds whose derivation paths were in the cleared cache.
+It also does not turn unrelated pending builds into running builds; queue-runner
+health and builder capacity remain separate concerns.
 
 Operational HTTP endpoints:
 
