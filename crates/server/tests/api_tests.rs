@@ -2048,6 +2048,16 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
     .get(0);
   assert_eq!(remaining, 0);
   drop(client);
+  circus_common::repo::builds::complete(
+    &pool,
+    cached_build.id,
+    circus_common::BuildStatus::CachedFailure,
+    None,
+    None,
+    Some("cached failure after prior clear"),
+  )
+  .await
+  .unwrap();
 
   let response = app
     .clone()
@@ -2067,7 +2077,11 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
     .unwrap();
   let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
   assert_eq!(json["deleted"], 0);
-  assert_eq!(json["restarted"], 0);
+  assert_eq!(json["restarted"], 1);
+  let recovered = circus_common::repo::builds::get(&pool, cached_build.id)
+    .await
+    .unwrap();
+  assert_eq!(recovered.status, circus_common::BuildStatus::Pending);
 
   let response = app
     .clone()
