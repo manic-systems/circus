@@ -199,3 +199,22 @@ impl CleanupExpiredStmt {
         client.execute(self.0, &[ttl_seconds]).await
     }
 }
+pub struct ClearAllStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn clear_all() -> ClearAllStmt {
+    ClearAllStmt("DELETE FROM failed_paths_cache", None)
+}
+impl ClearAllStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[]).await
+    }
+}

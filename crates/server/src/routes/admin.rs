@@ -90,6 +90,26 @@ async fn system_status(
   }))
 }
 
+async fn clear_failed_paths_cache(
+  auth: RequireAdmin,
+  State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+  let deleted =
+    circus_common::repo::failed_paths_cache::clear_all(&state.pool).await?;
+
+  crate::audit::record_for_key(
+    &state.pool,
+    &auth.0,
+    "FAILED_PATHS_CACHE_CLEAR",
+    Some("failed_paths_cache"),
+    None,
+    serde_json::json!({ "deleted": deleted }),
+  )
+  .await;
+
+  Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
 async fn list_notification_tasks(
   _auth: RequireAdmin,
   State(state): State<AppState>,
@@ -639,6 +659,10 @@ pub fn router() -> Router<AppState> {
       get(get_builder_session),
     )
     .route("/admin/system", get(system_status))
+    .route(
+      "/admin/failed-paths-cache/clear",
+      post(clear_failed_paths_cache),
+    )
     .route("/admin/notification-tasks", get(list_notification_tasks))
     .route(
       "/admin/notification-tasks/{id}/retry",

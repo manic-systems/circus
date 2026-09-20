@@ -44,6 +44,10 @@ pub fn router() -> Router {
     )
     .route("/api/v1/admin/pinned-builds/{id}/unpin", post(api::api_ok))
     .route(
+      "/api/v1/admin/failed-paths-cache/clear",
+      post(api::api_failed_paths_cache_clear),
+    )
+    .route(
       "/api/v1/metrics/timeseries/builds",
       get(api::api_metrics_builds),
     )

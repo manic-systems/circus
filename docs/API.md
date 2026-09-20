@@ -34,6 +34,7 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/admin/caches/{name}/traffic-timeseries` | Serving traffic time series (requests and bytes) for a cache | 200 |
 | GET | `/api/v1/admin/config` | Read the server config file | 200 |
 | PUT | `/api/v1/admin/config` | Replace the server config file | 200 |
+| POST | `/api/v1/admin/failed-paths-cache/clear` | Clear all failed-path cache skip records (admin only; does not delete Nix store paths, logs, or build history) | 200 |
 | GET | `/api/v1/admin/notification-tasks` | List pending notification delivery tasks | 200 |
 | POST | `/api/v1/admin/notification-tasks/{id}/retry` | Retry a notification delivery task | 202 |
 | GET | `/api/v1/admin/pinned-build-products` | List build products protected by kept builds | 200 |

@@ -1921,6 +1921,110 @@ async fn test_webhook_without_secret_is_not_configured() {
 }
 
 #[tokio::test]
+async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  ensure_api_key(&pool, ADMIN_TOKEN, circus_common::roles::GlobalRole::Admin)
+    .await;
+  ensure_api_key(
+    &pool,
+    READ_TOKEN,
+    circus_common::roles::GlobalRole::ReadOnly,
+  )
+  .await;
+
+  let client = pool.get().await.unwrap();
+  client
+    .execute(
+      "INSERT INTO failed_paths_cache (drv_path, failure_status) VALUES ($1, \
+       'failed'), ($2, 'timeout')",
+      &[
+        &"/nix/store/failed-cache-one.drv",
+        &"/nix/store/failed-cache-two.drv",
+      ],
+    )
+    .await
+    .unwrap();
+  drop(client);
+
+  let app = build_app(pool.clone());
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/admin/failed-paths-cache/clear")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["deleted"], 2);
+
+  let client = pool.get().await.unwrap();
+  let remaining: i64 = client
+    .query_one("SELECT COUNT(*) FROM failed_paths_cache", &[])
+    .await
+    .unwrap()
+    .get(0);
+  assert_eq!(remaining, 0);
+  drop(client);
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/admin/failed-paths-cache/clear")
+        .header("authorization", format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .unwrap();
+  let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+  assert_eq!(json["deleted"], 0);
+
+  let response = app
+    .clone()
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/admin/failed-paths-cache/clear")
+        .header("authorization", format!("Bearer {READ_TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+  let response = app
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/admin/failed-paths-cache/clear")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn test_admin_reads_require_admin() {
   let Some(pool) = get_pool().await else {
     return;
