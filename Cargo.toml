@@ -228,6 +228,7 @@ debug     = true
 opt-level = 0
 
 [profile.release]
-lto       = true
-opt-level = "z"
-strip     = true
+codegen-units = 1
+lto           = "thin"
+opt-level     = 3
+strip         = "symbols"
