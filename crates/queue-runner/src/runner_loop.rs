@@ -135,23 +135,28 @@ async fn mark_dependency_failed(
       failed_deps = failed_deps.len(),
       "Marking build as dependency_failed"
   );
-  if let Err(e) = mark_build_done(
-    pool,
-    build.id,
-    BuildStatus::DependencyFailed,
-    None,
-    None,
-    Some(&msg),
+  let updated_build = match repo::builds::complete_dependency_failed(
+    pool, build.id, &msg,
   )
   .await
   {
-    tracing::warn!(build_id = %build.id, "Failed to complete dependency-failed build: {e}");
-    return;
-  }
+    Ok(Some(updated_build)) => updated_build,
+    Ok(None) => {
+      tracing::debug!(
+        build_id = %build.id,
+        "Dependency was restarted before the build could be marked \
+         dependency_failed"
+      );
+      return;
+    },
+    Err(e) => {
+      tracing::warn!(build_id = %build.id, "Failed to complete dependency-failed build: {e}");
+      return;
+    },
+  };
 
-  if let Ok(updated_build) = repo::builds::get(pool, build.id).await
-    && let Some((project, commit_hash)) =
-      get_project_for_build(pool, &updated_build).await
+  if let Some((project, commit_hash)) =
+    get_project_for_build(pool, &updated_build).await
   {
     circus_notification::dispatch_build_finished(
       Some(pool),

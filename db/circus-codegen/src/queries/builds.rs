@@ -54,6 +54,11 @@ pub struct CompleteParams<
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
+pub struct CompleteDependencyFailedParams<T1: crate::StringSql> {
+    pub error_message: Option<T1>,
+    pub id: uuid::Uuid,
+}
+#[derive(Debug)]
 pub struct ListPendingInSchedulerOrderParams<T1: crate::StringSql, T2: crate::StringSql> {
     pub system: Option<T1>,
     pub job_name: Option<T2>,
@@ -1432,6 +1437,91 @@ impl<
             &params.error_message,
             &params.id,
         )
+    }
+}
+pub struct CompleteDependencyFailedStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn complete_dependency_failed() -> CompleteDependencyFailedStmt {
+    CompleteDependencyFailedStmt(
+        "UPDATE builds SET status = 'dependency_failed', completed_at = NOW(), error_message = $1 WHERE id = $2 AND status = 'pending' AND EXISTS ( SELECT 1 FROM build_dependencies bd JOIN builds dep ON dep.id = bd.dependency_build_id WHERE bd.build_id = builds.id AND dep.status NOT IN ('pending', 'running', 'succeeded') ) RETURNING *",
+        None,
+    )
+}
+impl CompleteDependencyFailedStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        error_message: &'a Option<T1>,
+        id: &'a uuid::Uuid,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+        BuildRowQuery {
+            client,
+            params: [error_message, id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BuildRowBorrowed, tokio_postgres::Error> {
+                    Ok(BuildRowBorrowed {
+                        id: row.try_get(0)?,
+                        evaluation_id: row.try_get(1)?,
+                        job_name: row.try_get(2)?,
+                        drv_path: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        started_at: row.try_get(5)?,
+                        completed_at: row.try_get(6)?,
+                        log_path: row.try_get(7)?,
+                        build_output_path: row.try_get(8)?,
+                        error_message: row.try_get(9)?,
+                        priority: row.try_get(10)?,
+                        retry_count: row.try_get(11)?,
+                        max_retries: row.try_get(12)?,
+                        notification_pending_since: row.try_get(13)?,
+                        outputs: row.try_get(14)?,
+                        is_aggregate: row.try_get(15)?,
+                        constituents: row.try_get(16)?,
+                        builder_id: row.try_get(17)?,
+                        signed: row.try_get(18)?,
+                        system: row.try_get(19)?,
+                        keep: row.try_get(20)?,
+                        created_at: row.try_get(21)?,
+                        is_fod: row.try_get(22)?,
+                        fod_hash: row.try_get(23)?,
+                        meta_description: row.try_get(24)?,
+                        meta_license: row.try_get(25)?,
+                        meta_homepage: row.try_get(26)?,
+                        meta_maintainers: row.try_get(27)?,
+                        required_features: row.try_get(28)?,
+                        agent_machine_id: row.try_get(29)?,
+                        started_notified_at: row.try_get(30)?,
+                        effective_features: row.try_get(31)?,
+                    })
+                },
+            mapper: |it| BuildRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        CompleteDependencyFailedParams<T1>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 2>,
+        C,
+    > for CompleteDependencyFailedStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a CompleteDependencyFailedParams<T1>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+        self.bind(client, &params.error_message, &params.id)
     }
 }
 pub struct ListPendingInSchedulerOrderStmt(&'static str, Option<tokio_postgres::Statement>);

@@ -1534,6 +1534,23 @@ async fn test_list_failed_dependencies() {
   assert_eq!(failed.len(), 1);
   assert_eq!(failed[0].id, dep_failed.id);
 
+  assert!(
+    repo::builds::complete_dependency_failed(&pool, dep_pending.id, "noop")
+      .await
+      .expect("refuse without a failed dep")
+      .is_none()
+  );
+  let marked =
+    repo::builds::complete_dependency_failed(&pool, main_build.id, "dep")
+      .await
+      .expect("mark dependency failed")
+      .expect("main build has a failed dep");
+  assert_eq!(marked.status, BuildStatus::DependencyFailed);
+  assert!(marked.started_at.is_none());
+  repo::builds::restart(&pool, main_build.id)
+    .await
+    .expect("restart for the sweep assertions below");
+
   let none =
     repo::build_dependencies::list_failed_dependencies(&pool, dep_pending.id)
       .await
