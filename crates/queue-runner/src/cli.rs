@@ -20,7 +20,8 @@ use circus_config::{
   SigningConfig,
 };
 use clap::Parser;
-use tokio::sync::RwLock;
+use color_eyre::eyre::{WrapErr as _, eyre};
+use tokio::sync::{RwLock, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -203,20 +204,22 @@ where
   // !Send; the rest of the queue-runner stays on the multi-threaded
   // runtime. The AgentPool (constructed above and shared with the
   // worker pool) bridges the boundary via per-agent channels.
-  if let Some(rpc_cfg) = qr_config.rpc.clone() {
-    spawn_rpc_thread(
+  let rpc_failure = if let Some(rpc_cfg) = qr_config.rpc.clone() {
+    Some(spawn_rpc_thread(
       rpc_cfg,
       cache_upload_for_rpc,
       signing_config_for_rpc,
       Arc::clone(&agent_pool),
       db.pool().clone(),
-    );
+    )?)
   } else {
     tracing::info!(
       "[queue_runner.rpc] not set; agent path disabled, falling back to SSH \
        dispatch only"
     );
-  }
+    None
+  };
+  let mut rpc_error = None;
 
   let gha_shutdown = CancellationToken::new();
   let gha_handles =
@@ -233,6 +236,10 @@ where
       () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
       () = sighup_loop(Arc::clone(&hot_config), config_path) => {}
       () = heartbeat_loop(db.pool().clone(), qr_config.poll_interval) => {}
+      error = rpc_thread_failure(rpc_failure) => {
+          tracing::error!("Agent RPC listener died, exiting so systemd restarts the runner: {error:#}");
+          rpc_error = Some(error);
+      }
       () = shutdown_signal() => {
           tracing::info!("Shutdown signal received, draining in-flight builds...");
           gha_shutdown.cancel();
@@ -253,7 +260,20 @@ where
   tracing::info!("Queue runner shutting down, closing database pool");
   db.close();
 
-  Ok(())
+  rpc_error.map_or(Ok(()), Err)
+}
+
+async fn rpc_thread_failure(
+  failure: Option<oneshot::Receiver<color_eyre::Report>>,
+) -> color_eyre::Report {
+  match failure {
+    Some(receiver) => {
+      receiver.await.unwrap_or_else(|_| {
+        eyre!("agent RPC thread exited without reporting an error")
+      })
+    },
+    None => pending().await,
+  }
 }
 
 fn start_autoscalers(
@@ -309,53 +329,54 @@ async fn gc_loops(
 /// driving the RPC system must live on a single thread. We isolate that
 /// to one OS thread; the main multi-threaded runtime is untouched. Cross
 /// the boundary via `Arc<AgentPool>` (channels inside).
+///
+/// The returned receiver resolves when the listener stops for any reason.
+/// A runner without its listener keeps polling the queue while every agent
+/// fails to connect, so the caller treats that as fatal.
 fn spawn_rpc_thread(
   cfg: RpcConfig,
   cache_cfg: CacheUploadConfig,
   signing_cfg: SigningConfig,
   pool: Arc<AgentPool>,
   db_pool: circus_common::PgPool,
-) {
+) -> color_eyre::Result<oneshot::Receiver<color_eyre::Report>> {
+  let (failed_tx, failed_rx) = oneshot::channel();
   Builder::new()
     .name("circus-rpc".into())
     .spawn(move || {
-      let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-      {
-        Ok(r) => r,
-        Err(e) => {
-          tracing::error!("rpc runtime build failed: {e}");
-          return;
-        },
-      };
-      let local = tokio::task::LocalSet::new();
-      let server_cfg = match RpcServerConfig::from_user(&cfg) {
-        Ok(c) => {
-          c.with_presigner_from(&cache_cfg).with_signing_key(
-            signing_cfg
-              .enabled
-              .then_some(signing_cfg.key_file)
-              .flatten(),
-          )
-        },
-        Err(e) => {
-          tracing::error!("rpc config error: {e}");
-          return;
-        },
-      };
-      rt.block_on(local.run_until(async move {
-        if let Err(e) = rpc::serve(server_cfg, pool, db_pool).await {
-          tracing::error!("rpc server ended: {e}");
-        }
-      }));
+      let error =
+        match run_rpc_thread(&cfg, &cache_cfg, signing_cfg, pool, db_pool) {
+          Ok(()) => eyre!("agent RPC listener stopped accepting connections"),
+          Err(error) => error,
+        };
+      let _ = failed_tx.send(error);
     })
-    .map_or_else(
-      |e| {
-        tracing::error!("failed to spawn rpc thread: {e}");
-      },
-      |_| {},
+    .wrap_err("spawn agent RPC thread")?;
+  Ok(failed_rx)
+}
+
+fn run_rpc_thread(
+  cfg: &RpcConfig,
+  cache_cfg: &CacheUploadConfig,
+  signing_cfg: SigningConfig,
+  pool: Arc<AgentPool>,
+  db_pool: circus_common::PgPool,
+) -> color_eyre::Result<()> {
+  let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .wrap_err("build agent RPC runtime")?;
+  let server_cfg = RpcServerConfig::from_user(cfg)
+    .wrap_err("agent RPC config")?
+    .with_presigner_from(cache_cfg)
+    .with_signing_key(
+      signing_cfg
+        .enabled
+        .then_some(signing_cfg.key_file)
+        .flatten(),
     );
+  let local = tokio::task::LocalSet::new();
+  rt.block_on(local.run_until(rpc::serve(server_cfg, pool, db_pool)))
 }
 
 async fn cleanup_stale_logs(log_dir: &Path) {
