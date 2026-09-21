@@ -250,6 +250,26 @@ pub async fn list_pending_with_failed_deps(
   rows.into_iter().map(Build::try_from).collect()
 }
 
+/// Mark a pending build `dependency_failed`. Returns `None` when no
+/// dependency is failed anymore, so a racing restart wins.
+///
+/// # Errors
+///
+/// Returns an error if the database update fails.
+pub async fn complete_dependency_failed(
+  pool: &PgPool,
+  id: Uuid,
+  error_message: &str,
+) -> Result<Option<Build>> {
+  let client = pool.get().await?;
+  q::complete_dependency_failed()
+    .bind(&client, &Some(error_message), &id)
+    .opt()
+    .await?
+    .map(Build::try_from)
+    .transpose()
+}
+
 /// Atomically claim a pending build by setting it to running. The advisory
 /// lock and the running twin check keep duplicate pending builds of one
 /// `drv_path` from both dispatching.
