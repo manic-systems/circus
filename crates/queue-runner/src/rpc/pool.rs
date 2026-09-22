@@ -72,6 +72,7 @@ pub enum DispatchResult {
   /// should treat this as a transient failure and retry on another
   /// agent.
   Disconnected,
+  Refused(String),
 }
 
 /// The metadata side of an agent. This is held in an [`AgentPool`] and shared
