@@ -564,6 +564,7 @@ in {
             ExecStart = getExe' cfg.queueRunnerPackage "circus-queue-runner";
             Restart = "on-failure";
             RestartSec = 10;
+            KillMode = "mixed";
             User = "circus";
             Group = "circus";
             StateDirectory = "circus";
