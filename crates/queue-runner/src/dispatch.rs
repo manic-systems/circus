@@ -22,6 +22,7 @@ use circus_config::BuilderSchedulingStrategy;
 use tokio::{
   process::Command,
   sync::{OwnedSemaphorePermit, oneshot},
+  time::sleep,
 };
 
 use crate::{
@@ -479,8 +480,20 @@ pub async fn run_on_agent(
       tracing::warn!(name = %snap.name, "agent disconnected mid-build; falling back");
       None
     },
+    Ok(DispatchResult::Refused(reason)) => {
+      tracing::warn!(
+        name = %snap.name,
+        reason,
+        "agent refused the assignment; retrying after {AGENT_REFUSAL_BACKOFF:?}"
+      );
+      sleep(AGENT_REFUSAL_BACKOFF).await;
+      None
+    },
   }
 }
+
+/// A refusal like "already running" only clears once the agent finishes.
+const AGENT_REFUSAL_BACKOFF: Duration = Duration::from_secs(30);
 
 pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
   try_read_drv_outputs(drv_path).await.unwrap_or_default()

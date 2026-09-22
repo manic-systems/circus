@@ -1167,7 +1167,11 @@ async fn dispatch_one(
     tracing::warn!(build_id = %cmd.build_id, "assign call failed: {e}");
     meta.active_builds.write().remove(&cmd.build_id);
     cfg.forget_uploads_for(machine_id, cmd.build_id);
-    return DispatchResult::Disconnected;
+    return if e.kind == capnp::ErrorKind::Disconnected {
+      DispatchResult::Disconnected
+    } else {
+      DispatchResult::Refused(e.to_string())
+    };
   }
 
   let out = match done_rx.await {
