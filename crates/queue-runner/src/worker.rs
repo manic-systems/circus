@@ -1707,8 +1707,9 @@ mod tests {
       build.id,
       std::slice::from_ref(&output_path),
       &SigningConfig {
-        enabled:  true,
-        key_file: Some(key_file),
+        enabled:    true,
+        key_file:   Some(key_file),
+        public_key: None,
       },
       Some(project.id),
     )

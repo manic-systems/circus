@@ -9,6 +9,7 @@ use circus_types::{
   NotificationType,
   ProjectRole,
 };
+use data_encoding::BASE64;
 use serde::{Deserialize, Serialize};
 
 use crate::queue::{BuilderSchedulingStrategy, QueueRunnerConfig};
@@ -511,8 +512,29 @@ impl CacheGcConfig {
 #[serde(default)]
 #[derive(Default)]
 pub struct SigningConfig {
-  pub enabled:  bool,
-  pub key_file: Option<PathBuf>,
+  pub enabled:    bool,
+  pub key_file:   Option<PathBuf>,
+  /// Lets the server advertise the key without being able to read the secret.
+  pub public_key: Option<String>,
+}
+
+/// Length of a full Nix secret key payload: 32-byte seed + 32-byte public key.
+const SECRET_KEY_BYTES: usize = 64;
+
+/// Pure transform of a `<name>:<base64(64 bytes)>` secret key into its
+/// `<name>:<base64(32-byte public)>` counterpart.
+#[must_use]
+pub fn public_key_from_secret(secret: &str) -> Option<String> {
+  let (name, b64) = secret.split_once(':')?;
+  if name.is_empty() {
+    return None;
+  }
+  let bytes = BASE64.decode(b64.trim().as_bytes()).ok()?;
+  if bytes.len() != SECRET_KEY_BYTES {
+    return None;
+  }
+  let public = BASE64.encode(&bytes[32..SECRET_KEY_BYTES]);
+  Some(format!("{name}:{public}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -957,5 +979,33 @@ impl HotConfig {
       psi_threshold:           config.queue_runner.psi_threshold,
       extra_nix_build_args:    config.queue_runner.extra_nix_build_args.clone(),
     }
+  }
+}
+
+#[cfg(test)]
+mod signing_tests {
+  use super::*;
+
+  #[test]
+  fn derives_public_from_secret() {
+    // 64 bytes: first 32 are the seed (0x00..), last 32 are the "public" half
+    // (0x01..). The derived key must echo the second half only.
+    let mut raw = vec![0u8; 32];
+    raw.extend(std::iter::repeat_n(1u8, 32));
+    let secret = format!("ci.example.org-1:{}", BASE64.encode(&raw));
+
+    let public = public_key_from_secret(&secret).expect("valid secret key");
+    let expected_b64 = BASE64.encode(&[1u8; 32]);
+    assert_eq!(public, format!("ci.example.org-1:{expected_b64}"));
+  }
+
+  #[test]
+  fn rejects_malformed() {
+    assert!(public_key_from_secret("no-colon").is_none());
+    assert!(public_key_from_secret(":onlybase64").is_none());
+    assert!(public_key_from_secret("name:not-base64!!").is_none());
+    // Wrong length (32 bytes, not 64).
+    let short = format!("name:{}", BASE64.encode(&[0u8; 32]));
+    assert!(public_key_from_secret(&short).is_none());
   }
 }

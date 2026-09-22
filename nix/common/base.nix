@@ -35,7 +35,7 @@ in {
     queueRunner.enable = true;
 
     settings = {
-      database.url = "postgresql:///circus?host=/run/postgresql";
+      database.url = "postgresql:///circus?host=/run/postgresql&user=circus";
       server = {
         host = "127.0.0.1";
         port = 3000;
@@ -63,7 +63,7 @@ in {
 
       evaluator = {
         poll_interval = 5;
-        work_dir = "/var/lib/circus/evaluator";
+        work_dir = "/var/lib/circus-evaluator";
         nix_timeout = 60;
         strict_errors = true;
       };

@@ -298,6 +298,7 @@ configuration or the Nix store.
 | `cache`              | `gc.cleanup_interval`                                  | `3600`                                              | Automatic cache cleanup interval (seconds)                                |
 | `signing`            | `enabled`                                              | `false`                                             | Sign build outputs                                                        |
 | `signing`            | `key_file`                                             | none                                                | Signing key file path                                                     |
+| `signing`            | `public_key`                                           | none                                                | Public half of `key_file`, for the server                                 |
 | `cache_upload`       | `enabled`                                              | `false`                                             | Upload builds to external cache store                                     |
 | `cache_upload`       | `store_uri`                                            | none                                                | Cache store URI (`s3://bucket/path`)                                      |
 | `cache_upload`       | `s3.region`                                            | none                                                | AWS region                                                                |
@@ -861,7 +862,7 @@ proxy:
     queueRunner.enable = true;
 
     settings = {
-      database.url = "postgresql:///circus?host=/run/postgresql";
+      database.url = "postgresql:///circus?host=/run/postgresql&user=circus";
       server.host = "127.0.0.1";
       server.port = 3000;
 
@@ -901,6 +902,33 @@ proxy:
   };
 }
 ```
+
+The NixOS module runs each daemon as its own Unix user, and only the queue
+runner is trusted by the Nix daemon.
+
+| Service      | Account            | Nix daemon access |
+| ------------ | ------------------ | ----------------- |
+| HTTP server  | `circus-server`    | Untrusted         |
+| Evaluator    | `circus-evaluator` | Untrusted         |
+| Queue runner | `circus`           | Trusted           |
+
+The server and evaluator keep their state in `/var/lib/circus-server` and
+`/var/lib/circus-evaluator`, and the runner keeps `/var/lib/circus`. Build logs
+belong to the `circus-logs` group so the server can read them. The evaluator
+cannot.
+
+Each unit gets its own config file, with only the secrets it needs. `*_file`
+settings are passed in through systemd `LoadCredential`, so keep the source
+files readable by root alone. Inline secrets still land in the world-readable
+Nix store.
+
+The signing key stays with the runner. Set `signing.public_key` alongside
+`signing.key_file` so the server can still advertise it. The server does keep
+the `cache_upload` S3 credentials, since it presigns NAR downloads.
+
+All three users share the `circus` database role through PostgreSQL peer
+authentication, which is why the URL needs `user=circus`. The split limits Nix
+and filesystem access, not database access.
 
 ### Multi-Machine Deployment
 

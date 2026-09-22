@@ -12,12 +12,13 @@ pkgs.testers.nixosTest {
     ];
     _module.args.self = self;
 
-    # Signing lets the "How to use" panel derive a public key. base.nix sets the
+    # Signing lets the "How to use" panel show a public key. base.nix sets the
     # global cache on and signing off, so force signing here. The secret key is
     # a throwaway generated for this test only.
     services.circus.settings.signing = {
       enabled = lib.mkForce true;
       key_file = "/etc/circus/cache-priv-key";
+      public_key = "circus-test-cache-1:U6Ab4WUaEAn8qfrMcL87i3AyX2PlHfTfzvL/aASjp58=";
     };
     services.circus.settings.cache.cache_url = "http://127.0.0.1:3000/nix-cache";
 

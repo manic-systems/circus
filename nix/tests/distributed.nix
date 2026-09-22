@@ -134,7 +134,7 @@ in {
         runner.succeed("cd /tmp/distributed-cache-work && git add -A && git commit -m 'initial flake'")
         runner.succeed("cd /tmp/distributed-cache-work && git remote add origin /var/lib/circus/test-repos/distributed-cache.git")
         runner.succeed("cd /tmp/distributed-cache-work && git push origin HEAD:refs/heads/master")
-        runner.succeed("chown -R circus:circus /var/lib/circus/test-repos")
+        runner.succeed("chown -R circus-evaluator:circus-evaluator /var/lib/circus/test-repos")
 
         project_id = runner.succeed(
             "curl -sf -X POST http://127.0.0.1:3000/api/v1/projects "

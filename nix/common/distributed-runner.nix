@@ -45,7 +45,7 @@ in {
     queueRunner.enable = true;
 
     settings = {
-      database.url = "postgresql:///circus?host=/run/postgresql";
+      database.url = "postgresql:///circus?host=/run/postgresql&user=circus";
       server = {
         host = "0.0.0.0";
         port = 3000;
@@ -58,6 +58,7 @@ in {
       signing = {
         enabled = true;
         key_file = "/etc/circus/cache-key.sec";
+        public_key = "circus-test-cache-1:umbC3dkmiWcreOM+p1+UWp0pJK4zOMcGqalT53h2PNw=";
       };
       tracing = {
         level = "info";

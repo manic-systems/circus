@@ -122,7 +122,7 @@ in {
         machine.succeed("cd /tmp/s3-test-flake && git add -A && git commit -m 'initial flake'")
         machine.succeed("cd /tmp/s3-test-flake && git remote add origin /var/lib/circus/test-repos/s3-test-flake.git")
         machine.succeed("cd /tmp/s3-test-flake && git push origin HEAD:refs/heads/master")
-        machine.succeed("chown -R circus:circus /var/lib/circus/test-repos")
+        machine.succeed("chown -R circus-evaluator:circus-evaluator /var/lib/circus/test-repos")
 
     # Create project + jobset
     with subtest("Create S3 test project and jobset"):

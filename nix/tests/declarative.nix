@@ -449,7 +449,7 @@ in
           machine.succeed("cd /tmp/decl-flake-work && git add -A && git commit -m 'initial declarative flake'")
           machine.succeed("cd /tmp/decl-flake-work && git remote add origin /var/lib/circus/test-repos/decl-flake.git")
           machine.succeed("cd /tmp/decl-flake-work && git push origin HEAD:refs/heads/master")
-          machine.succeed("chown -R circus:circus /var/lib/circus/test-repos")
+          machine.succeed("chown -R circus-evaluator:circus-evaluator /var/lib/circus/test-repos")
 
       with subtest("Resolve decl-e2e jobset IDs"):
           decl_e2e_id = machine.succeed(

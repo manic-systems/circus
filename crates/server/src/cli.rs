@@ -176,9 +176,7 @@ where
   let cache_public_key = match signing::signing_public_key(&config) {
     Some(key) => {
       Some(Arc::new(key.parse().map_err(|e| {
-        color_eyre::eyre::eyre!(
-          "signing.key_file yields an unusable public key: {e:?}"
-        )
+        color_eyre::eyre::eyre!("signing yields an unusable public key: {e:?}")
       })?))
     },
     None if config.signing.enabled && config.signing.key_file.is_some() => {

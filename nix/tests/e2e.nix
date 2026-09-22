@@ -97,8 +97,8 @@ in {
         machine.succeed("cd /tmp/test-flake-work && git remote add origin /var/lib/circus/test-repos/test-flake.git")
         machine.succeed("cd /tmp/test-flake-work && git push origin HEAD:refs/heads/master")
 
-        # Set ownership for circus user
-        machine.succeed("chown -R circus:circus /var/lib/circus/test-repos")
+        # Set ownership for circus-evaluator user
+        machine.succeed("chown -R circus-evaluator:circus-evaluator /var/lib/circus/test-repos")
 
     # Create project + jobset pointing to the local repo via API
     with subtest("Create E2E project and jobset via API"):

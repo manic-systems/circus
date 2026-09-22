@@ -230,8 +230,16 @@
               default = null;
               description = ''
                 Path to the Nix signing secret key file (`<name>:<base64>` form).
-                The server derives the public key from it for the dashboard's
-                "How to use" panel.
+                Only the queue runner reads it.
+              '';
+            };
+            public_key = mkOption {
+              type = nullOr str;
+              default = null;
+              example = "ci.example.org-1:base64...";
+              description = ''
+                Public half of `key_file`, shown in the dashboard's "How to use"
+                panel. Required with `key_file`.
               '';
             };
           };
@@ -325,7 +333,65 @@
     then map stripNulls value
     else value;
 
-  settingsFile = settingsFormat.generate "circus.toml" (stripNulls cfg.settings);
+  serviceFiles = name: settings: let
+    prepare = path: value:
+      if lib.isAttrs value
+      then let
+        children = lib.mapAttrs (key: child: prepare (path ++ [key]) child) value;
+      in {
+        settings = lib.mapAttrs (_: child: child.settings) children;
+        credentials = concatMap (child: child.credentials) (lib.attrValues children);
+      }
+      else if lib.isList value
+      then let
+        children = lib.imap0 (index: child: prepare (path ++ [(toString index)]) child) value;
+      in {
+        settings = map (child: child.settings) children;
+        credentials = concatMap (child: child.credentials) children;
+      }
+      else if lib.hasSuffix "_file" (lib.last path) && (lib.isString value || lib.isPath value)
+      then let
+        credential = lib.concatStringsSep "." path;
+      in {
+        settings = "/run/circus-credentials/${credential}";
+        credentials = ["${credential}:${value}"];
+      }
+      else {
+        settings = value;
+        credentials = [];
+      };
+    prepared = prepare [] (stripNulls settings);
+  in {
+    config = settingsFormat.generate "${name}.toml" prepared.settings;
+    inherit (prepared) credentials;
+  };
+
+  notificationSecrets =
+    lib.filterAttrs
+    (name: _: builtins.elem name ["webhook_secret_encryption_key" "webhook_secret_encryption_key_file"])
+    (cfg.settings.server or {});
+
+  serverFiles =
+    serviceFiles "circus-server"
+    ((builtins.removeAttrs cfg.settings ["notifications" "queue_runner"])
+      // {
+        cache = builtins.removeAttrs cfg.settings.cache ["secret_key_file"];
+        signing = builtins.removeAttrs cfg.settings.signing ["key_file"];
+      });
+  evaluatorFiles = serviceFiles "circus-evaluator" {
+    inherit (cfg.settings) database;
+    evaluator = cfg.settings.evaluator or {};
+    notifications = cfg.settings.notifications or {};
+    tracing = cfg.settings.tracing or {};
+    server = notificationSecrets;
+  };
+  runnerFiles =
+    serviceFiles "circus-queue-runner"
+    ((builtins.removeAttrs cfg.settings ["ui" "oauth" "declarative" "evaluator"])
+      // {server = notificationSecrets;});
+
+  logDirectory = cfg.settings.logs.log_dir;
+  evaluatorDirectory = cfg.settings.evaluator.work_dir;
 in {
   options.services.circus = {
     enable = mkEnableOption "circus system";
@@ -392,9 +458,35 @@ in {
       group = "circus";
       home = "/var/lib/circus";
       createHome = true;
+      # The server reaches the logs below it, and activation resets the mode.
+      homeMode = "711";
     };
 
     users.groups.circus = {};
+    users.users.circus-server = {
+      isSystemUser = true;
+      group = "circus-server";
+      extraGroups = ["circus-logs"];
+      home = "/var/lib/circus-server";
+    };
+    users.users.circus-evaluator = {
+      isSystemUser = true;
+      group = "circus-evaluator";
+      home = "/var/lib/circus-evaluator";
+    };
+    users.groups.circus-server = {};
+    users.groups.circus-evaluator = {};
+    users.groups.circus-logs = {};
+
+    assertions = [
+      {
+        assertion = let
+          signing = cfg.settings.signing;
+        in
+          !(cfg.server.enable && signing.enabled && signing.key_file != null) || signing.public_key != null;
+        message = "services.circus.settings.signing.public_key must be set, since the server no longer reads signing.key_file.";
+      }
+    ];
 
     warnings = let
       declarative = cfg.settings.declarative or {};
@@ -432,7 +524,7 @@ in {
       # NOTE: needed by the evaluator (evix) to access the Nix daemon.
       # This is completely undocumented but used by other projects in a similar
       # fashion to solve the same problem without clobbering `allowed-users`.
-      extra-allowed-users = ["circus"];
+      extra-allowed-users = ["circus" "circus-server" "circus-evaluator"];
 
       # The queue runner builds with `--option sandbox true` and
       # `--max-build-log-size`; these are restricted settings that the daemon
@@ -451,19 +543,37 @@ in {
           ensureDBOwnership = true;
         }
       ];
+      authentication = lib.mkBefore ''
+        local circus,postgres circus peer map=circus
+      '';
+      identMap = ''
+        circus circus circus
+        circus circus-server circus
+        circus circus-evaluator circus
+      '';
     };
 
-    services.circus.settings = mkDefault {
-      database.url = "postgresql:///circus?host=/run/postgresql";
+    services.circus.settings = {
+      database.url = mkDefault "postgresql:///circus?host=/run/postgresql&user=circus";
+      evaluator.work_dir = mkDefault "/var/lib/circus-evaluator";
+      logs.log_dir = mkDefault "/var/lib/circus/logs";
     };
 
     systemd = {
       tmpfiles.settings."10-circus" = mkMerge [
-        (mkIf cfg.server.enable {
-          "/var/lib/circus/logs".d = {
+        (mkIf (cfg.server.enable || cfg.queueRunner.enable) {
+          "${logDirectory}".d = {
             user = "circus";
-            group = "circus";
-            mode = "0750";
+            group = "circus-logs";
+            mode = "2750";
+          };
+        })
+
+        (mkIf cfg.evaluator.enable {
+          "${evaluatorDirectory}".d = {
+            user = "circus-evaluator";
+            group = "circus-evaluator";
+            mode = "0700";
           };
         })
 
@@ -490,12 +600,16 @@ in {
             ExecStart = getExe' cfg.package "circus-server";
             Restart = "on-failure";
             RestartSec = 5;
-            User = "circus";
-            Group = "circus";
-            StateDirectory = "circus";
-            LogsDirectory = "circus";
-            WorkingDirectory = "/var/lib/circus";
-            ReadWritePaths = ["/var/lib/circus"];
+            User = "circus-server";
+            Group = "circus-server";
+            StateDirectory = "circus-server";
+            StateDirectoryMode = "0700";
+            WorkingDirectory = "/var/lib/circus-server";
+            ReadWritePaths = ["/var/lib/circus-server"];
+            ReadOnlyPaths = [logDirectory];
+            UMask = "0027";
+            LoadCredential = serverFiles.credentials;
+            BindReadOnlyPaths = optional (serverFiles.credentials != []) "%d:/run/circus-credentials";
 
             # Hardening
             ProtectSystem = "strict";
@@ -508,7 +622,7 @@ in {
             RestrictSUIDSGID = true;
           };
 
-          environment.CIRCUS_CONFIG_FILE = "${settingsFile}";
+          environment.CIRCUS_CONFIG_FILE = "${serverFiles.config}";
         };
 
         circus-evaluator = mkIf cfg.evaluator.enable {
@@ -527,11 +641,15 @@ in {
             ExecStart = getExe' cfg.evaluatorPackage "circus-evaluator";
             Restart = "on-failure";
             RestartSec = 10;
-            User = "circus";
-            Group = "circus";
-            StateDirectory = "circus";
-            WorkingDirectory = "/var/lib/circus";
-            ReadWritePaths = ["/var/lib/circus"];
+            User = "circus-evaluator";
+            Group = "circus-evaluator";
+            StateDirectory = "circus-evaluator";
+            StateDirectoryMode = "0700";
+            WorkingDirectory = evaluatorDirectory;
+            ReadWritePaths = [evaluatorDirectory];
+            UMask = "0077";
+            LoadCredential = evaluatorFiles.credentials;
+            BindReadOnlyPaths = optional (evaluatorFiles.credentials != []) "%d:/run/circus-credentials";
             # A single Nix evaluator can keep more than systemd's default
             # soft limit of 1024 files open while traversing a large flake.
             LimitNOFILE = 65536;
@@ -547,7 +665,7 @@ in {
             RestrictSUIDSGID = true;
           };
 
-          environment.CIRCUS_CONFIG_FILE = "${settingsFile}";
+          environment.CIRCUS_CONFIG_FILE = "${evaluatorFiles.config}";
         };
 
         circus-queue-runner = mkIf cfg.queueRunner.enable {
@@ -569,12 +687,16 @@ in {
             User = "circus";
             Group = "circus";
             StateDirectory = "circus";
-            LogsDirectory = "circus";
+            StateDirectoryMode = "0711";
             WorkingDirectory = "/var/lib/circus";
             ReadWritePaths = [
               "/var/lib/circus"
               "/nix/var/nix/gcroots/per-user/circus"
+              logDirectory
             ];
+            UMask = "0027";
+            LoadCredential = runnerFiles.credentials;
+            BindReadOnlyPaths = optional (runnerFiles.credentials != []) "%d:/run/circus-credentials";
 
             # Hardening
             ProtectSystem = "strict";
@@ -587,7 +709,7 @@ in {
             RestrictSUIDSGID = true;
           };
 
-          environment.CIRCUS_CONFIG_FILE = "${settingsFile}";
+          environment.CIRCUS_CONFIG_FILE = "${runnerFiles.config}";
         };
       };
     };

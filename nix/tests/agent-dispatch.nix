@@ -88,7 +88,7 @@ in
                 "git -C /tmp/wc add -A",
                 "git -C /tmp/wc -c user.email=circus@manic.systems -c user.name=circus commit -qm flake",
                 "git -C /tmp/wc push -q /var/lib/circus/test-repos/test-flake.git HEAD:refs/heads/master",
-                "chown -R circus:circus /var/lib/circus/test-repos",
+                "chown -R circus-evaluator:circus-evaluator /var/lib/circus/test-repos",
             )
             runner.wait_for_open_port(8000)
             runner.succeed("curl -sf http://127.0.0.1:8000/hello.txt")

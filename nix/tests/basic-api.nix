@@ -257,9 +257,9 @@ testers.runNixOSTest {
             f"CORS should not allow arbitrary origins: {result}"
 
     # Systemd hardening
-    with subtest("circus-server runs as circus user"):
+    with subtest("circus-server runs as circus-server user"):
         result = machine.succeed("systemctl show circus-server --property=User --value")
-        assert result.strip() == "circus", f"Expected circus user, got '{result.strip()}'"
+        assert result.strip() == "circus-server", f"Expected circus-server user, got '{result.strip()}'"
 
     with subtest("circus-server has NoNewPrivileges"):
         result = machine.succeed("systemctl show circus-server --property=NoNewPrivileges --value")

@@ -18,6 +18,7 @@ use circus_config::{
   HotConfig,
   RpcConfig,
   SigningConfig,
+  public_key_from_secret,
 };
 use clap::Parser;
 use color_eyre::eyre::{WrapErr as _, eyre};
@@ -93,6 +94,21 @@ where
   let gc_config = config.gc;
   let gc_config_for_loop = gc_config.clone();
   let signing_config = config.signing;
+  if signing_config.enabled
+    && let (Some(path), Some(expected)) =
+      (&signing_config.key_file, &signing_config.public_key)
+  {
+    let secret = std::fs::read_to_string(path)
+      .wrap_err_with(|| format!("read {}", path.display()))?;
+    let derived = public_key_from_secret(secret.trim())
+      .ok_or_else(|| eyre!("signing.key_file is not a Nix secret key"))?;
+    if derived != *expected {
+      return Err(eyre!(
+        "signing.public_key does not match signing.key_file, which gives \
+         {derived}"
+      ));
+    }
+  }
   let signing_config_for_rpc = signing_config.clone();
   let cache_config = config.cache;
   let cache_gc_config = cache_config.gc.clone();
