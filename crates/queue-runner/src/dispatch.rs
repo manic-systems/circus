@@ -527,29 +527,32 @@ const AGENT_REFUSAL_BACKOFF: Duration = Duration::from_secs(30);
 
 /// Output transfer from the agent is best-effort, so a lost closure must
 /// not read as success.
-async fn invalid_store_paths(paths: &[String]) -> Result<Vec<String>, String> {
-  if paths.is_empty() {
-    return Ok(Vec::new());
+pub(crate) async fn invalid_store_paths(
+  paths: &[String],
+) -> Result<Vec<String>, String> {
+  let mut invalid = Vec::new();
+  // A whole closure on one command line can exceed ARG_MAX.
+  for batch in paths.chunks(1024) {
+    let out = Command::new("nix-store")
+      .args(["--check-validity", "--print-invalid"])
+      .args(batch)
+      .output()
+      .await
+      .map_err(|e| format!("nix-store --check-validity: {e}"))?;
+    if !out.status.success() {
+      return Err(format!(
+        "nix-store --check-validity exited with {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr).trim()
+      ));
+    }
+    invalid.extend(
+      String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned),
+    );
   }
-  let out = Command::new("nix-store")
-    .args(["--check-validity", "--print-invalid"])
-    .args(paths)
-    .output()
-    .await
-    .map_err(|e| format!("nix-store --check-validity: {e}"))?;
-  if !out.status.success() {
-    return Err(format!(
-      "nix-store --check-validity exited with {}: {}",
-      out.status,
-      String::from_utf8_lossy(&out.stderr).trim()
-    ));
-  }
-  Ok(
-    String::from_utf8_lossy(&out.stdout)
-      .lines()
-      .map(str::to_owned)
-      .collect(),
-  )
+  Ok(invalid)
 }
 
 pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {

@@ -78,6 +78,7 @@ interface LogSink {
 interface OutputSink {
   write @0 (chunk :Data) -> ();
   close @1 () -> ();
+  missing @2 (paths :List(Text)) -> (missing :List(Text));
 }
 
 # Agent-side sink for a derivation closure. The runner streams

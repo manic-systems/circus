@@ -374,6 +374,9 @@ fn fs_available_bytes(path: &Path) -> u64 {
   })
 }
 
+/// Well under the runner's `MAX_CLOSURE_PATHS` bound per `missing` call.
+const MISSING_QUERY_PATHS: usize = 8192;
+
 /// Process-global counter for concurrent builds. Bumped on `assign`,
 /// dropped on result. Exposed in heartbeats.
 static JOB_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -866,10 +869,20 @@ async fn export_outputs_to_sink(
     return Ok(());
   }
 
+  // An older runner answers Unimplemented and still wants everything.
+  let wanted = match runner_missing_paths(sink, &closure).await {
+    Ok(missing) => missing,
+    Err(e) if e.kind == capnp::ErrorKind::Unimplemented => closure,
+    Err(e) => return Err(eyre!("query runner for missing paths: {e}")),
+  };
+  if wanted.is_empty() {
+    return Ok(());
+  }
+
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
   cmd
     .arg("--export")
-    .args(&closure)
+    .args(&wanted)
     .stdout(std::process::Stdio::piped())
     .kill_on_drop(true);
   let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
@@ -910,6 +923,29 @@ async fn export_outputs_to_sink(
   close_res
     .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
   Ok(())
+}
+
+async fn runner_missing_paths(
+  sink: &output_sink::Client,
+  closure: &[String],
+) -> Result<Vec<String>, capnp::Error> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
+  let mut missing = Vec::new();
+  for chunk in closure.chunks(MISSING_QUERY_PATHS) {
+    let mut req = sink.missing_request();
+    let mut list = req.get().init_paths(chunk.len() as u32);
+    for (idx, path) in chunk.iter().enumerate() {
+      list.set(idx as u32, path);
+    }
+    let resp = req.send().promise.await?;
+    for path in resp.get()?.get_missing()? {
+      missing.push(path?.to_str()?.to_owned());
+    }
+  }
+  Ok(missing)
 }
 
 async fn query_requisites(
