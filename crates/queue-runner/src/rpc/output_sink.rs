@@ -12,6 +12,11 @@ use tokio::{
   sync::Mutex,
 };
 
+use crate::{
+  dispatch::invalid_store_paths,
+  rpc::server::read_bounded_text_list,
+};
+
 pub struct OutputSinkImpl {
   inner: Arc<Inner>,
 }
@@ -136,6 +141,47 @@ impl output_sink::Server for OutputSinkImpl {
           "nix-store --import failed for build {} ({status})",
           inner.build_id
         )));
+      }
+      Ok(())
+    })
+  }
+
+  fn missing(
+    self: capnp::capability::Rc<Self>,
+    params: output_sink::MissingParams,
+    mut results: output_sink::MissingResults,
+  ) -> Promise<(), capnp::Error> {
+    let inner = Arc::clone(&self.inner);
+    Promise::from_future(async move {
+      let paths = read_bounded_text_list(
+        params.get()?.get_paths()?,
+        "paths",
+        limits::MAX_CLOSURE_PATHS,
+        limits::MAX_STORE_PATH_LEN,
+      )?;
+      let queried = paths.len();
+      // Over-sending is harmless since import skips valid paths.
+      let missing = match invalid_store_paths(&paths).await {
+        Ok(missing) => missing,
+        Err(e) => {
+          tracing::warn!(
+            build_id = %inner.build_id,
+            error = %e,
+            "validity check failed, asking for every queried path"
+          );
+          paths
+        },
+      };
+      tracing::debug!(
+        build_id = %inner.build_id,
+        queried,
+        missing = missing.len(),
+        "output closure paths the runner lacks"
+      );
+
+      let mut out = results.get().init_missing(missing.len() as u32);
+      for (idx, path) in missing.iter().enumerate() {
+        out.set(idx as u32, path);
       }
       Ok(())
     })

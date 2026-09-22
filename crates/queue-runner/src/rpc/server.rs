@@ -1198,7 +1198,7 @@ fn parse_uuid_param(value: &str, name: &str) -> Result<Uuid, capnp::Error> {
     .map_err(|e| capnp::Error::failed(format!("bad {name}: {e}")))
 }
 
-fn read_bounded_text_list(
+pub(crate) fn read_bounded_text_list(
   list: capnp::text_list::Reader<'_>,
   field: &str,
   max_items: u32,

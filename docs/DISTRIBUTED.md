@@ -125,6 +125,7 @@ interface LogSink {
 interface OutputSink {
   write @0 (chunk :Data) -> ();
   close @1 () -> ();
+  missing @2 (paths :List(Text)) -> (missing :List(Text));
 }
 
 interface ResultSink {
@@ -170,9 +171,10 @@ The flow is as follows
    appends to the live log file and independently enforces the per-build log
    cap, while `report` accepts exactly one final result before waking the
    scheduler.
-6. For non-presigned uploads, the agent streams the output closure through
-   `OutputSink`. For S3 presigned uploads, `output` is null and the agent
-   uploads compressed NAR files directly to S3.
+6. For non-presigned uploads, the agent asks `output.missing(closure)` which
+   paths the runner lacks and streams only those through `OutputSink`. For S3
+   presigned uploads, `output` is null and the agent uploads compressed NAR
+   files directly to S3.
 7. The agent calls `session.heartbeat(ping)` every N seconds with load averages,
    memory, store/build-dir free, current job count, and PSI (`cpuAvg10`,
    `memAvg10`, `ioAvg10`). The runner uses these to gate subsequent dispatch
