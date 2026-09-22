@@ -462,6 +462,32 @@ pub async fn run_on_agent(
   match rx.await {
     Ok(DispatchResult::Succeeded { error_message }) => {
       let outputs = read_drv_outputs(drv_path).await;
+      if !opts.cache_upload_enabled_s3 {
+        match invalid_store_paths(&outputs).await {
+          Ok(missing) if missing.is_empty() => {},
+          Ok(missing) => {
+            return Some(result(
+              false,
+              1,
+              format!(
+                "build succeeded on {} but its outputs never reached the \
+                 runner: {}",
+                snap.name,
+                missing.join(" ")
+              ),
+              Vec::new(),
+            ));
+          },
+          Err(e) => {
+            return Some(result(
+              false,
+              1,
+              format!("could not verify the outputs on the runner: {e}"),
+              Vec::new(),
+            ));
+          },
+        }
+      }
       Some(result(true, 0, error_message.unwrap_or_default(), outputs))
     },
     Ok(DispatchResult::Failed(error_message)) => {
@@ -494,6 +520,33 @@ pub async fn run_on_agent(
 
 /// A refusal like "already running" only clears once the agent finishes.
 const AGENT_REFUSAL_BACKOFF: Duration = Duration::from_secs(30);
+
+/// Output transfer from the agent is best-effort, so a lost closure must
+/// not read as success.
+async fn invalid_store_paths(paths: &[String]) -> Result<Vec<String>, String> {
+  if paths.is_empty() {
+    return Ok(Vec::new());
+  }
+  let out = Command::new("nix-store")
+    .args(["--check-validity", "--print-invalid"])
+    .args(paths)
+    .output()
+    .await
+    .map_err(|e| format!("nix-store --check-validity: {e}"))?;
+  if !out.status.success() {
+    return Err(format!(
+      "nix-store --check-validity exited with {}: {}",
+      out.status,
+      String::from_utf8_lossy(&out.stderr).trim()
+    ));
+  }
+  Ok(
+    String::from_utf8_lossy(&out.stdout)
+      .lines()
+      .map(str::to_owned)
+      .collect(),
+  )
+}
 
 pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
   try_read_drv_outputs(drv_path).await.unwrap_or_default()
