@@ -167,6 +167,13 @@ async fn restart_build(
   Path(id): Path<Uuid>,
 ) -> Result<Json<Build>, ApiError> {
   permissions::require_api(&extensions, Permission::RestartJobs)?;
+  // Before the restart, the scheduler rechecks this cache on the NOTIFY.
+  let build = circus_common::repo::builds::get(&state.pool, id).await?;
+  circus_common::repo::failed_paths_cache::invalidate(
+    &state.pool,
+    &build.drv_path,
+  )
+  .await?;
   let build = circus_common::repo::builds::restart(&state.pool, id).await?;
 
   tracing::info!(
