@@ -398,6 +398,9 @@ fn child_enter_and_exec(
     unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)?;
     write_token(&child_tx, *b"6", "announce namespace")?;
     read_token(&parent_rx, *b"7", "parent wrote id maps")?;
+    let ca_bundle = HOST_CA_BUNDLES
+      .into_iter()
+      .find(|bundle| Path::new(bundle).exists());
     setup_pivot_root(paths)?;
 
     // The inherited environment references host paths that no longer exist
@@ -416,6 +419,9 @@ fn child_enter_and_exec(
       .env("NIX_CONF_DIR", "/nix/etc/nix")
       .env("NIX_CONFIG", "require-drop-supplementary-groups = false")
       .env("TMPDIR", "/tmp");
+    if let Some(bundle) = ca_bundle {
+      cmd.as_std_mut().env("NIX_SSL_CERT_FILE", bundle);
+    }
     let e = cmd.as_std_mut().exec();
     Err(e.into())
   })();
@@ -508,6 +514,13 @@ fn bind(
   Ok(())
 }
 
+/// Nix only probes the Debian path on its own.
+#[cfg(target_os = "linux")]
+const HOST_CA_BUNDLES: [&str; 2] = [
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+];
+
 #[cfg(target_os = "linux")]
 fn bind_if_exists(
   source: impl AsRef<Path>,
@@ -570,6 +583,8 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
   bind_if_exists("/etc/hosts", newroot.join("etc/hosts"))?;
   bind_if_exists("/etc/nsswitch.conf", newroot.join("etc/nsswitch.conf"))?;
   bind_if_exists("/etc/ssl/certs", newroot.join("etc/ssl/certs"))?;
+  // RHEL keeps the bundle here and /etc/ssl/certs only symlinks into it.
+  bind_if_exists("/etc/pki", newroot.join("etc/pki"))?;
 
   // Bind the host /proc rather than mounting a fresh procfs as it needs
   // CAP_SYS_ADMIN over the PID namespace it exposes, which this sandbox does
