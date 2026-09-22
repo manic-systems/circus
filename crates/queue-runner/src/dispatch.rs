@@ -385,10 +385,14 @@ async fn select_and_reserve_agent(
       HashSet::new()
     });
 
+  // A build back in the queue already failed or vanished on that agent.
+  let previous = build.agent_machine_id;
   eligible.sort_by(|a, b| {
     let sa = a.1.contended_surplus(build.scheduling_features(), &demand);
     let sb = b.1.contended_surplus(build.scheduling_features(), &demand);
-    sa.cmp(&sb)
+    (Some(a.1.machine_id) == previous)
+      .cmp(&(Some(b.1.machine_id) == previous))
+      .then_with(|| sa.cmp(&sb))
       .then_with(|| strategy_order(&ctx.scheduling_strategy, &a.1, &b.1))
       .then_with(|| a.1.machine_id.cmp(&b.1.machine_id))
   });
