@@ -32,7 +32,7 @@ use circus_config::{
   S3CacheConfig,
   SigningConfig,
 };
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
 use tokio::{
   fs,
   process::Command,
@@ -210,10 +210,17 @@ impl WorkerPool {
     let runner_caps = Arc::clone(&self.runner_caps);
     let heartbeat_ttl = self.heartbeat_ttl;
     let active_builds = Arc::clone(&self.active_builds);
-    let cancel_token = CancellationToken::new();
     let build_id = build.id;
 
-    active_builds.insert(build_id, cancel_token.clone());
+    // A claim's NOTIFY refetches pending rows before it commits, so the same
+    // build lands here twice.
+    let cancel_token = match active_builds.entry(build_id) {
+      Entry::Occupied(_) => {
+        tracing::debug!(build_id = %build_id, "Build already dispatched, skipping duplicate");
+        return;
+      },
+      Entry::Vacant(entry) => entry.insert(CancellationToken::new()).clone(),
+    };
 
     tokio::spawn(async move {
       let result = async {
