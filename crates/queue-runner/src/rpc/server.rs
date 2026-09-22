@@ -247,11 +247,22 @@ pub async fn serve(
         );
         return;
       };
-      if let Err(e) = serve_one(socket, peer, cfg, pool, db_pool).await {
-        tracing::warn!(?peer, "rpc session ended: {e}");
+      match serve_one(socket, peer, cfg, pool, db_pool).await {
+        Err(SessionEnd::Registered(e)) => {
+          tracing::warn!(?peer, "rpc session ended: {e}");
+        },
+        Err(SessionEnd::Unregistered(e)) => {
+          tracing::debug!(?peer, "rpc session ended before register: {e}");
+        },
+        Ok(()) => {},
       }
     });
   }
+}
+
+enum SessionEnd {
+  Registered(color_eyre::Report),
+  Unregistered(color_eyre::Report),
 }
 
 #[expect(clippy::future_not_send, reason = "capnp future")]
@@ -261,55 +272,22 @@ async fn serve_one(
   cfg: Arc<ServerConfig>,
   pool: Arc<AgentPool>,
   db_pool: PgPool,
-) -> color_eyre::Result<()> {
+) -> Result<(), SessionEnd> {
   let _ = socket.set_nodelay(true);
   tracing::info!(?peer, "incoming rpc connection");
 
   let registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>> =
     Arc::new(parking_lot::Mutex::new(None));
-  let registered_for_cleanup = Arc::clone(&registered_machine);
+  let rpc_result = run_rpc(
+    socket,
+    Arc::clone(&cfg),
+    Arc::clone(&pool),
+    db_pool.clone(),
+    Arc::clone(&registered_machine),
+  )
+  .await;
 
-  let rpc_result = if let Some(tls) = cfg.tls.as_ref() {
-    let stream = tls.acceptor.clone().accept(socket).await?;
-    let peer_cert = extract_peer_cert_identity(&stream);
-    let (rh, wh) = tokio::io::split(stream);
-    let network = twoparty::VatNetwork::new(
-      rh.compat(),
-      wh.compat_write(),
-      rpc_twoparty_capnp::Side::Server,
-      capnp::message::ReaderOptions::default(),
-    );
-    let runner_impl = RunnerImpl {
-      cfg: Arc::clone(&cfg),
-      pool: Arc::clone(&pool),
-      db_pool: db_pool.clone(),
-      registered_machine: Arc::clone(&registered_machine),
-      peer_cert,
-    };
-    let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
-    let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
-    rpc.await
-  } else {
-    let (read_half, write_half) = socket.into_split();
-    let network = twoparty::VatNetwork::new(
-      read_half.compat(),
-      write_half.compat_write(),
-      rpc_twoparty_capnp::Side::Server,
-      capnp::message::ReaderOptions::default(),
-    );
-    let runner_impl = RunnerImpl {
-      cfg:                Arc::clone(&cfg),
-      pool:               Arc::clone(&pool),
-      db_pool:            db_pool.clone(),
-      registered_machine: Arc::clone(&registered_machine),
-      peer_cert:          PeerCertIdentity::default(),
-    };
-    let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
-    let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
-    rpc.await
-  };
-
-  let registered = *registered_for_cleanup.lock();
+  let registered = *registered_machine.lock();
   if let Some(registered) = registered {
     let machine_id = registered.machine_id;
     if pool
@@ -330,7 +308,62 @@ async fn serve_one(
       );
     }
   }
-  rpc_result?;
+  rpc_result.map_err(|e| {
+    if registered.is_some() {
+      SessionEnd::Registered(e)
+    } else {
+      SessionEnd::Unregistered(e)
+    }
+  })
+}
+
+#[expect(clippy::future_not_send, reason = "capnp future")]
+async fn run_rpc(
+  socket: tokio::net::TcpStream,
+  cfg: Arc<ServerConfig>,
+  pool: Arc<AgentPool>,
+  db_pool: PgPool,
+  registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>>,
+) -> color_eyre::Result<()> {
+  if let Some(tls) = cfg.tls.as_ref() {
+    let stream = tls.acceptor.clone().accept(socket).await?;
+    let peer_cert = extract_peer_cert_identity(&stream);
+    let (rh, wh) = tokio::io::split(stream);
+    let network = twoparty::VatNetwork::new(
+      rh.compat(),
+      wh.compat_write(),
+      rpc_twoparty_capnp::Side::Server,
+      capnp::message::ReaderOptions::default(),
+    );
+    let runner_impl = RunnerImpl {
+      cfg: Arc::clone(&cfg),
+      pool,
+      db_pool,
+      registered_machine,
+      peer_cert,
+    };
+    let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
+    let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
+    rpc.await?;
+  } else {
+    let (read_half, write_half) = socket.into_split();
+    let network = twoparty::VatNetwork::new(
+      read_half.compat(),
+      write_half.compat_write(),
+      rpc_twoparty_capnp::Side::Server,
+      capnp::message::ReaderOptions::default(),
+    );
+    let runner_impl = RunnerImpl {
+      cfg: Arc::clone(&cfg),
+      pool,
+      db_pool,
+      registered_machine,
+      peer_cert: PeerCertIdentity::default(),
+    };
+    let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
+    let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
+    rpc.await?;
+  }
   Ok(())
 }
 
