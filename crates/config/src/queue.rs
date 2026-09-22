@@ -1,6 +1,8 @@
-use std::{path::PathBuf, time::Duration};
+use std::{fmt, path::PathBuf, str::FromStr, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use data_encoding::{HEXLOWER, HEXLOWER_PERMISSIVE};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -176,9 +178,9 @@ pub struct RpcConfig {
   /// Listen address, e.g. `"0.0.0.0:8443"` or `"[::]:8443"`.
   pub bind: String,
 
-  /// SHA-256 hex digests of accepted bearer tokens.
+  /// Bearer credentials bound to a machine ID and agent name.
   #[serde(default)]
-  pub auth_tokens: Vec<String>,
+  pub auth_tokens: Vec<RpcAgentToken>,
 
   /// Hard cap on concurrent connections; serves as a flood guard.
   #[serde(default = "default_max_rpc_conns")]
@@ -211,6 +213,67 @@ pub struct RpcConfig {
   /// Accept short-lived OIDC JWTs in place of a bearer token.
   #[serde(default)]
   pub oidc: Option<RpcOidcConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcAgentToken {
+  pub machine_id: Uuid,
+  pub name:       String,
+  pub token_hash: TokenHash,
+}
+
+/// SHA-256 digest of an agent bearer token, written as hex in config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TokenHash([u8; 32]);
+
+impl TokenHash {
+  #[must_use]
+  pub const fn as_bytes(&self) -> &[u8; 32] {
+    &self.0
+  }
+}
+
+impl From<[u8; 32]> for TokenHash {
+  fn from(digest: [u8; 32]) -> Self {
+    Self(digest)
+  }
+}
+
+impl FromStr for TokenHash {
+  type Err = String;
+
+  fn from_str(hex: &str) -> Result<Self, Self::Err> {
+    let decoded = HEXLOWER_PERMISSIVE
+      .decode(hex.trim().as_bytes())
+      .map_err(|error| format!("token_hash must be SHA-256 hex: {error}"))?;
+    let digest = <[u8; 32]>::try_from(decoded).map_err(|decoded| {
+      format!("token_hash must decode to 32 bytes, got {}", decoded.len())
+    })?;
+    Ok(Self(digest))
+  }
+}
+
+impl fmt::Display for TokenHash {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(&HEXLOWER.encode(&self.0))
+  }
+}
+
+impl Serialize for TokenHash {
+  fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(self)
+  }
+}
+
+impl<'de> Deserialize<'de> for TokenHash {
+  fn deserialize<D: Deserializer<'de>>(
+    deserializer: D,
+  ) -> Result<Self, D::Error> {
+    String::deserialize(deserializer)?
+      .parse()
+      .map_err(serde::de::Error::custom)
+  }
 }
 
 /// OIDC trust settings for the capnp-rpc endpoint.

@@ -1,9 +1,10 @@
+use std::collections::HashSet;
+
 use circus_types::validation::{
   validate_binary_cache_upstream,
   validate_cache_url,
 };
 use color_eyre::eyre::{self, WrapErr, bail};
-use data_encoding::HEXLOWER_PERMISSIVE;
 use url::{Host, Url};
 
 use crate::{
@@ -247,20 +248,33 @@ impl Config {
       if rpc.presign_expiry_secs == 0 {
         bail!("queue_runner.rpc.presign_expiry_secs must be greater than 0");
       }
-      for (idx, token_hash) in rpc.auth_tokens.iter().enumerate() {
-        let decoded = HEXLOWER_PERMISSIVE
-          .decode(token_hash.as_bytes())
-          .wrap_err_with(|| {
-            format!("queue_runner.rpc.auth_tokens[{idx}] must be SHA-256 hex")
-          })?;
-        if decoded.len() != 32 {
+      let mut machine_ids = HashSet::new();
+      let mut names = HashSet::new();
+      let mut token_hashes = HashSet::new();
+
+      for credential in &rpc.auth_tokens {
+        if credential.name.trim().is_empty()
+          || credential.name.chars().any(char::is_control)
+        {
           bail!(
-            "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got \
-             {}",
-            decoded.len()
+            "queue_runner.rpc.auth_tokens requires a nonempty agent name \
+             without control characters"
           );
         }
+
+        if !machine_ids.insert(credential.machine_id) {
+          bail!("queue_runner.rpc.auth_tokens repeats a machine ID");
+        }
+
+        if !names.insert(&credential.name) {
+          bail!("queue_runner.rpc.auth_tokens repeats an agent name");
+        }
+
+        if !token_hashes.insert(credential.token_hash) {
+          bail!("queue_runner.rpc.auth_tokens reuses a token across agents");
+        }
       }
+
       if let Some(oidc) = rpc.oidc.as_ref() {
         if !oidc.issuer.starts_with("https://") {
           bail!("queue_runner.rpc.oidc.issuer must be an https URL");

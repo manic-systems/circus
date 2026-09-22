@@ -109,7 +109,9 @@ SET
   auth_kind = EXCLUDED.auth_kind,
   connected = TRUE,
   last_seen = NOW(),
-  updated_at = NOW();
+  updated_at = NOW()
+WHERE
+  builder_sessions.auth_kind = EXCLUDED.auth_kind;
 
 --! mark_disconnected
 UPDATE builder_sessions

@@ -16,7 +16,8 @@ use std::{
 
 use capnp::capability::Promise;
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
-use circus_common::{PgPool, repo};
+use circus_common::{PgPool, models::AuthKind, repo};
+use circus_config::{RpcAgentToken, RpcConfig};
 use circus_proto::{
   PROTO_VERSION,
   agent_session,
@@ -28,8 +29,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
-use color_eyre::eyre::{Context as _, bail};
-use data_encoding::HEXLOWER_PERMISSIVE;
+use color_eyre::eyre::Context as _;
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use tokio::{
@@ -48,7 +48,7 @@ use super::{
   AgentPool,
   log_sink::LogSinkImpl,
   output_sink::OutputSinkImpl,
-  pool::{AgentMeta, DispatchCommand, DispatchResult},
+  pool::{AgentMeta, DispatchCommand, DispatchResult, ReserveError},
   result_sink::{BuildOutcomeKind, ResultSinkImpl},
   session::SessionImpl,
 };
@@ -57,8 +57,8 @@ use crate::rpc::pool::MAX_AGENT_MAX_JOBS;
 #[derive(Clone)]
 pub struct ServerConfig {
   pub bind:               SocketAddr,
-  /// SHA-256 hex digests of accepted bearer tokens. Empty = reject all.
-  pub token_hashes:       Vec<String>,
+  /// Bearer credentials bound to a machine ID and agent name.
+  pub auth_tokens:        Vec<RpcAgentToken>,
   pub max_connections:    usize,
   /// Optional TLS. `None` means plain TCP.
   pub tls:                Option<TlsState>,
@@ -125,12 +125,11 @@ impl ServerConfig {
   /// # Errors
   ///
   /// Returns the underlying error if TLS files are missing or invalid.
-  pub fn from_user(cfg: &circus_config::RpcConfig) -> color_eyre::Result<Self> {
+  pub fn from_user(cfg: &RpcConfig) -> color_eyre::Result<Self> {
     let bind: SocketAddr = cfg
       .bind
       .parse()
       .with_context(|| format!("parse bind {}", cfg.bind))?;
-    validate_token_hashes(&cfg.auth_tokens)?;
     let tls = match &cfg.tls {
       None => None,
       Some(tcfg) => {
@@ -154,7 +153,7 @@ impl ServerConfig {
 
     Ok(Self {
       bind,
-      token_hashes: cfg.auth_tokens.clone(),
+      auth_tokens: cfg.auth_tokens.clone(),
       max_connections: cfg.max_connections,
       tls,
       presigner: None,
@@ -440,6 +439,32 @@ struct RunnerImpl {
   closed:             CancellationToken,
 }
 
+impl RunnerImpl {
+  /// A slot left by a replaced connection does not count, so only the
+  /// connection that owns the live session can act for its machine.
+  fn live_session(
+    &self,
+    machine_id: Uuid,
+  ) -> Result<Arc<AgentMeta>, capnp::Error> {
+    let registered = *self.registered_machine.lock();
+    let Some(registered) =
+      registered.filter(|registered| registered.machine_id == machine_id)
+    else {
+      return Err(capnp::Error::failed(
+        "machine_id does not match registered session".into(),
+      ));
+    };
+
+    self
+      .pool
+      .get(&machine_id)
+      .filter(|meta| meta.connection_id == registered.connection_id)
+      .ok_or_else(|| {
+        capnp::Error::failed("registered agent is not in the live pool".into())
+      })
+  }
+}
+
 #[allow(refining_impl_trait_internal, refining_impl_trait_reachable)]
 impl runner::Server for RunnerImpl {
   fn register(
@@ -463,6 +488,14 @@ impl runner::Server for RunnerImpl {
         .map_err(|e| capnp::Error::failed(format!("bad machine_id: {e}")))?;
       let name = info.get_name()?.to_str()?.to_owned();
       let hostname = info.get_hostname()?.to_str()?.to_owned();
+      validate_text_len("agent.name", &name, 1, limits::MAX_AGENT_NAME_LEN)?;
+      validate_text_len(
+        "agent.hostname",
+        &hostname,
+        1,
+        limits::MAX_HOSTNAME_LEN,
+      )?;
+
       let proto = info.get_proto_version()?.to_str()?;
       if proto != PROTO_VERSION {
         return Err(capnp::Error::failed(format!(
@@ -478,14 +511,30 @@ impl runner::Server for RunnerImpl {
       )?;
       // Bearer token first (cheap, constant-time); fall through to OIDC so a
       // JWT presented in the same field is verified against the issuer's JWKS.
-      let (auth_kind, oidc_identity) = if verify_token(&cfg.token_hashes, token)
+      let credential = token_credential(&cfg.auth_tokens, token);
+      let (auth_kind, oidc_identity) = if credential.is_some_and(|credential| {
+        credential.machine_id == machine_id && credential.name == name
+      }) {
+        (AuthKind::Token, None)
+      } else if credential.is_some() && info.get_ephemeral() {
+        tracing::warn!(%name, "ephemeral agent presented a bearer token");
+        return Err(capnp::Error::failed(
+          "ephemeral agents must authenticate with OIDC, since a bearer token \
+           is bound to one machine ID"
+            .into(),
+        ));
+      } else if credential.is_some()
+        || cfg.auth_tokens.iter().any(|credential| {
+          credential.machine_id == machine_id || credential.name == name
+        })
       {
-        (circus_common::models::AuthKind::Token, None)
+        tracing::warn!(%machine_id, %name, "credentials do not match the configured agent identity");
+        return Err(capnp::Error::failed("auth failed".into()));
       } else if let Some(verifier) = cfg.oidc.as_ref() {
         match verifier.verify(token).await {
           Ok(id) => {
             tracing::info!(name = %name, repository = %id.repository, subject = %id.subject, "agent authenticated via OIDC");
-            (circus_common::models::AuthKind::Oidc, Some(id))
+            (AuthKind::Oidc, Some(id))
           },
           Err(e) => {
             tracing::warn!(name = %name, "OIDC auth failed: {e}");
@@ -513,14 +562,6 @@ impl runner::Server for RunnerImpl {
         }
       }
 
-      validate_text_len("agent.name", &name, 1, limits::MAX_AGENT_NAME_LEN)?;
-      validate_text_len(
-        "agent.hostname",
-        &hostname,
-        1,
-        limits::MAX_HOSTNAME_LEN,
-      )?;
-
       let systems = read_bounded_text_list(
         info.get_systems()?,
         "systems",
@@ -544,9 +585,29 @@ impl runner::Server for RunnerImpl {
       let maxj = info.get_max_jobs();
 
       // An OIDC identity is always ephemeral.
-      let ephemeral = info.get_ephemeral()
-        || auth_kind == circus_common::models::AuthKind::Oidc;
+      let ephemeral = info.get_ephemeral() || auth_kind == AuthKind::Oidc;
       validate_agent_capacity(&systems, speed, cpu, maxj)?;
+
+      // Held until the session is live, so no other registration for this
+      // machine can commit its session row in between.
+      let reservation = pool
+        .reserve(
+          machine_id,
+          auth_kind,
+          oidc_identity.as_ref().map(|id| id.repository.as_str()),
+          oidc_identity.as_ref().map(|id| id.subject.as_str()),
+        )
+        .map_err(|error| {
+          tracing::warn!(%machine_id, %name, ?error, "agent registration rejected");
+          match error {
+            ReserveError::IdentityTaken => {
+              capnp::Error::failed("auth failed".into())
+            },
+            ReserveError::InProgress => capnp::Error::failed(
+              "another registration for this machine is in progress".into(),
+            ),
+          }
+        })?;
 
       let connection_id = Uuid::new_v4();
       {
@@ -607,7 +668,7 @@ impl runner::Server for RunnerImpl {
         tx,
         closed,
       ));
-      if let Some(previous) = pool.insert(Arc::clone(&meta)) {
+      if let Some(previous) = reservation.insert(Arc::clone(&meta)) {
         tracing::warn!(
           name = %name,
           %machine_id,
@@ -675,17 +736,7 @@ impl runner::Server for RunnerImpl {
       let compression = self.cfg.upload_compression.clone();
       validate_upload_compression(&compression)?;
 
-      let registered = *self.registered_machine.lock();
-      if registered.map(|r| r.machine_id) != Some(machine_id) {
-        return Err(capnp::Error::failed(
-          "machine_id does not match registered session".into(),
-        ));
-      }
-      let Some(meta) = self.pool.get(&machine_id) else {
-        return Err(capnp::Error::failed(
-          "registered agent is not in the live pool".into(),
-        ));
-      };
+      let meta = self.live_session(machine_id)?;
       if !meta.active_builds.read().contains(&build_id) {
         return Err(capnp::Error::failed(
           "build_id is not active for this agent".into(),
@@ -835,12 +886,7 @@ impl runner::Server for RunnerImpl {
         }
       }
 
-      let registered = *self.registered_machine.lock();
-      if registered.map(|r| r.machine_id) != Some(machine_id) {
-        return Err(capnp::Error::failed(
-          "machine_id does not match registered session".into(),
-        ));
-      }
+      self.live_session(machine_id)?;
       let key = UploadKey {
         machine_id,
         build_id,
@@ -971,17 +1017,7 @@ impl runner::Server for RunnerImpl {
         parse_uuid_param(pr.get_build_id()?.to_str()?, "build_id")?;
       let sink = pr.get_sink()?;
 
-      let registered = *self.registered_machine.lock();
-      if registered.map(|r| r.machine_id) != Some(machine_id) {
-        return Err(capnp::Error::failed(
-          "machine_id does not match registered session".into(),
-        ));
-      }
-      let Some(meta) = self.pool.get(&machine_id) else {
-        return Err(capnp::Error::failed(
-          "registered agent is not in the live pool".into(),
-        ));
-      };
+      let meta = self.live_session(machine_id)?;
       // Scoped to the assigned build, else any authenticated agent could
       // read arbitrary paths out of the runner's store.
       if !meta.active_builds.read().contains(&build_id) {
@@ -1388,59 +1424,36 @@ fn validate_upload_compression(compression: &str) -> Result<(), capnp::Error> {
   }
 }
 
-fn validate_token_hashes(hashes: &[String]) -> color_eyre::Result<()> {
-  for (idx, hash) in hashes.iter().enumerate() {
-    let decoded = HEXLOWER_PERMISSIVE
-      .decode(hash.trim().as_bytes())
-      .with_context(|| {
-        format!("queue_runner.rpc.auth_tokens[{idx}] is not hex")
-      })?;
-    if decoded.len() != 32 {
-      bail!(
-        "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got {}",
-        decoded.len()
-      );
+/// Compares against every entry so timing does not reveal which one matched.
+fn token_credential<'cfg>(
+  allowed: &'cfg [RpcAgentToken],
+  token: &str,
+) -> Option<&'cfg RpcAgentToken> {
+  let digest = Sha256::digest(token.as_bytes());
+  let mut matched = None;
+  for credential in allowed {
+    if bool::from(credential.token_hash.as_bytes().ct_eq(&digest[..])) {
+      matched = Some(credential);
     }
   }
-  Ok(())
-}
-
-fn verify_token(allowed: &[String], token: &str) -> bool {
-  if allowed.is_empty() {
-    return false;
-  }
-  let mut hasher = Sha256::new();
-  hasher.update(token.as_bytes());
-  let digest = hasher.finalize();
-  let mut matched = 0_u8;
-  for allowed_hash in allowed {
-    if let Ok(decoded) =
-      HEXLOWER_PERMISSIVE.decode(allowed_hash.trim().as_bytes())
-      && decoded.len() == digest.len()
-    {
-      matched |= decoded.as_slice().ct_eq(&digest[..]).unwrap_u8();
-    }
-  }
-  matched == 1
+  matched
 }
 
 #[cfg(test)]
 mod tests {
-  use data_encoding::HEXLOWER;
-
   use super::*;
 
   #[test]
-  fn verify_token_accepts_configured_sha256_digest() {
+  fn token_credential_finds_the_matching_entry() {
     let token = "correct horse battery staple";
-    let digest = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
-    assert!(verify_token(&[digest], token));
-  }
-
-  #[test]
-  fn verify_token_rejects_invalid_or_different_digest() {
-    let digest = HEXLOWER.encode(&Sha256::digest(b"other"));
-    assert!(!verify_token(&["not-hex".into(), digest], "token"));
+    let credential = RpcAgentToken {
+      machine_id: Uuid::new_v4(),
+      name:       "agent-01".to_owned(),
+      token_hash: <[u8; 32]>::from(Sha256::digest(token.as_bytes())).into(),
+    };
+    let allowed = [credential];
+    assert!(token_credential(&allowed, token).is_some());
+    assert!(token_credential(&allowed, "other").is_none());
   }
 
   #[test]

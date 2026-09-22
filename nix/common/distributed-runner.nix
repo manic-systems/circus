@@ -73,7 +73,11 @@ in {
           allow_plaintext = true;
           max_connections = 64;
           heartbeat_ttl_secs = 30;
-          auth_tokens = [(builtins.hashString "sha256" "demo-agent-token-please-rotate")];
+          auth_tokens = map (name: {
+            machine_id = "00000000-0000-4000-8000-${builtins.substring 0 12 (builtins.hashString "sha256" name)}";
+            inherit name;
+            token_hash = builtins.hashString "sha256" "demo-agent-token-${name}-please-rotate";
+          }) ["agent-01" "agent-kvm" "agent-plain"];
           cache_substituter = "http://runner:3000/nix-cache";
           cache_public_key = "circus-test-cache-1:umbC3dkmiWcreOM+p1+UWp0pJK4zOMcGqalT53h2PNw=";
         };

@@ -109,6 +109,17 @@ pub struct AgentMeta {
 }
 
 impl AgentMeta {
+  fn same_identity(
+    &self,
+    auth_kind: circus_common::models::AuthKind,
+    repository: Option<&str>,
+    subject: Option<&str>,
+  ) -> bool {
+    self.auth_kind == auth_kind
+      && self.oidc_repository.as_deref() == repository
+      && self.oidc_subject.as_deref() == subject
+  }
+
   /// Build agent metadata from registration data. `current_jobs` starts at
   /// zero and is thereafter mutated only via [`Self::try_acquire_slot`].
   #[must_use]
@@ -287,17 +298,22 @@ impl AgentSnapshot {
 
 #[derive(Default)]
 pub struct AgentPool {
-  inner: RwLock<HashMap<Uuid, Arc<AgentMeta>>>,
+  inner:       RwLock<HashMap<Uuid, Arc<AgentMeta>>>,
+  /// Machines whose registration is between its checks and its insert.
+  registering: parking_lot::Mutex<HashSet<Uuid>>,
 }
 
 // Hand-rolled to avoid requiring Debug on AgentMeta's mpsc sender.
 // Renders only the count and known machine_ids.
 impl std::fmt::Debug for AgentPool {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    // `reserve` takes `registering` before `inner`, so take them in that order.
+    let registering = self.registering.lock().len();
     let g = self.inner.read();
     f.debug_struct("AgentPool")
       .field("len", &g.len())
       .field("machine_ids", &g.keys().collect::<Vec<_>>())
+      .field("registering", &registering)
       .finish()
   }
 }
@@ -307,14 +323,76 @@ impl std::fmt::Debug for AgentPool {
 /// fills the same role from the scheduler's point of view.
 pub type AgentHandle = AgentMeta;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReserveError {
+  /// A live session holds this machine ID under another identity.
+  IdentityTaken,
+  /// Another registration for this machine ID has not finished.
+  InProgress,
+}
+
+/// Holds a machine ID from the identity check until its session is live, so
+/// a concurrent registration cannot commit session metadata in between.
+/// Dropping it without [`Reservation::insert`] releases the machine ID.
+pub struct Reservation<'pool> {
+  pool:       &'pool AgentPool,
+  machine_id: Uuid,
+}
+
+impl Reservation<'_> {
+  /// Publish the session, returning the live one it replaced.
+  #[must_use]
+  pub fn insert(self, meta: Arc<AgentMeta>) -> Option<Arc<AgentMeta>> {
+    self.pool.inner.write().insert(self.machine_id, meta)
+  }
+}
+
+impl Drop for Reservation<'_> {
+  fn drop(&mut self) {
+    self.pool.registering.lock().remove(&self.machine_id);
+  }
+}
+
 impl AgentPool {
   #[must_use]
   pub fn new() -> Arc<Self> {
     Arc::new(Self::default())
   }
 
-  pub fn insert(&self, meta: Arc<AgentMeta>) -> Option<Arc<AgentMeta>> {
-    self.inner.write().insert(meta.machine_id, meta)
+  /// Reserve `machine_id` for a registration authenticated as the given
+  /// identity. A live session may only be replaced by the same identity.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ReserveError`] when another identity holds the machine ID or
+  /// another registration for it is still running.
+  pub fn reserve(
+    &self,
+    machine_id: Uuid,
+    auth_kind: circus_common::models::AuthKind,
+    repository: Option<&str>,
+    subject: Option<&str>,
+  ) -> Result<Reservation<'_>, ReserveError> {
+    let mut registering = self.registering.lock();
+
+    if registering.contains(&machine_id) {
+      return Err(ReserveError::InProgress);
+    }
+    if self
+      .inner
+      .read()
+      .get(&machine_id)
+      .is_some_and(|live| !live.same_identity(auth_kind, repository, subject))
+    {
+      return Err(ReserveError::IdentityTaken);
+    }
+
+    registering.insert(machine_id);
+    drop(registering);
+    Ok(Reservation {
+      pool: self,
+      machine_id,
+    })
   }
 
   pub fn remove(&self, machine_id: &Uuid) -> Option<Arc<AgentMeta>> {
@@ -432,6 +510,20 @@ impl AgentPool {
 mod tests {
   use super::*;
 
+  /// Register `meta` the way the RPC server does, through a reservation.
+  fn publish(
+    pool: &AgentPool,
+    meta: Arc<AgentMeta>,
+  ) -> Result<Option<Arc<AgentMeta>>, ReserveError> {
+    let reservation = pool.reserve(
+      meta.machine_id,
+      meta.auth_kind,
+      meta.oidc_repository.as_deref(),
+      meta.oidc_subject.as_deref(),
+    )?;
+    Ok(reservation.insert(meta))
+  }
+
   fn meta_with(
     machine_id: Uuid,
     connection_id: Uuid,
@@ -504,13 +596,30 @@ mod tests {
     let pool = AgentPool::default();
     let a = meta_with(Uuid::new_v4(), Uuid::new_v4(), 4);
     let b = meta_with(Uuid::new_v4(), Uuid::new_v4(), 2);
-    pool.insert(Arc::clone(&a));
-    pool.insert(Arc::clone(&b));
+    assert!(publish(&pool, Arc::clone(&a)).is_ok());
+    assert!(publish(&pool, Arc::clone(&b)).is_ok());
     assert_eq!(pool.total_free_slots(), 6);
     let ga = a.try_acquire_slot();
     let gb = b.try_acquire_slot();
     assert!(ga.is_some() && gb.is_some());
     assert_eq!(pool.total_free_slots(), 4);
+  }
+
+  #[test]
+  fn a_machine_registers_once_at_a_time() {
+    let pool = AgentPool::default();
+    let machine_id = Uuid::new_v4();
+    let kind = circus_common::models::AuthKind::Token;
+
+    let first = pool.reserve(machine_id, kind, None, None);
+    assert!(first.is_ok());
+    assert!(matches!(
+      pool.reserve(machine_id, kind, None, None),
+      Err(ReserveError::InProgress)
+    ));
+
+    drop(first);
+    assert!(pool.reserve(machine_id, kind, None, None).is_ok());
   }
 
   #[test]
@@ -520,8 +629,14 @@ mod tests {
     let old_connection = Uuid::new_v4();
     let new_connection = Uuid::new_v4();
 
-    assert!(pool.insert(meta(machine_id, old_connection)).is_none());
-    assert!(pool.insert(meta(machine_id, new_connection)).is_some());
+    assert!(matches!(
+      publish(&pool, meta(machine_id, old_connection)),
+      Ok(None)
+    ));
+    assert!(matches!(
+      publish(&pool, meta(machine_id, new_connection)),
+      Ok(Some(_))
+    ));
 
     assert!(
       pool

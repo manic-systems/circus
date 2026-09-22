@@ -246,7 +246,7 @@ configuration or the Nix store.
 | `queue_runner`       | `local_systems`                                        | none                                                | Systems the runner host may build locally                                 |
 | `queue_runner`       | `local_features`                                       | none                                                | System features available on local builds                                 |
 | `queue_runner`       | `rpc.bind`                                             | none                                                | Cap'n Proto RPC listen address                                            |
-| `queue_runner`       | `rpc.auth_tokens`                                      | `[]`                                                | Valid authentication tokens for agents                                    |
+| `queue_runner`       | `rpc.auth_tokens`                                      | `[]`                                                | Bearer token digests bound to agent UUIDs and names                       |
 | `queue_runner`       | `rpc.max_connections`                                  | `256`                                               | Maximum concurrent agent connections                                      |
 | `queue_runner`       | `rpc.presign_expiry_secs`                              | `3600`                                              | Presigned URL expiry (seconds)                                            |
 | `queue_runner`       | `rpc.tls`                                              | none                                                | TLS configuration for RPC endpoint                                        |

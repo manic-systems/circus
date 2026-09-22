@@ -154,10 +154,11 @@ The flow is as follows
 1. Agent dials TCP (optionally wraps in TLS), starts a capnp-rpc system with no
    bootstrap. Calls `runner.register(info, builder)` and keeps the returned
    `session` capability for heartbeats.
-2. Runner authenticates registration. It first tries bearer-token auth against
-   `[queue_runner.rpc].auth_tokens`; if that fails and `[queue_runner.rpc.oidc]`
-   is configured, it verifies the presented JWT against the issuer JWKS,
-   accepted audiences, and repository allowlist.
+2. Runner authenticates registration. A bearer token must match the
+   `[queue_runner.rpc].auth_tokens` entry for the agent's machine ID and name.
+   Agents not listed there can authenticate with a JWT through
+   `[queue_runner.rpc.oidc]`, checked against the issuer JWKS, accepted
+   audiences, and repository allowlist.
 3. Runner records the agent in `AgentPool`, retains the `Builder` capability,
    marks the row in `builder_sessions` as live, and stores whether the session
    is ephemeral and whether it authenticated through `token` or `oidc`.
@@ -245,12 +246,16 @@ psi_threshold = 80.0 # 0..100, advisory; null disables
 
 [queue_runner.rpc]
 bind               = "0.0.0.0:8443"
-# SHA-256 hex digests of accepted bearer tokens.
-auth_tokens        = [ "abcdef0123...sha256-of-the-raw-token" ]
 max_connections    = 256
 heartbeat_ttl_secs = 60
 cache_substituter  = "https://ci.example.org/nix-cache/"
 cache_public_key   = "circus-cache:..."
+
+[[queue_runner.rpc.auth_tokens]]
+machine_id = "7e6c8022-95e8-4f99-8513-7d177f6a0241"
+name       = "build-01"
+# SHA-256 hex digest of this agent's bearer token.
+token_hash = "262874f756ad802d196aa14479fa20f252f9de5924fa51082b8556df31b7dad7"
 
 [queue_runner.rpc.oidc]
 issuer               = "https://token.actions.githubusercontent.com"
@@ -332,10 +337,16 @@ cert_file = "/etc/circus/tls/build-01.crt"  # optional: client identity (mTLS)
 key_file  = "/etc/circus/tls/build-01.key"  # omit cert_file + key_file for token-only
 ```
 
-For CI builders, set `agent.ephemeral` or pass `--ephemeral`. Ephemeral agents
-generate a fresh, unpersisted machine ID, optionally append a unique suffix to
-their name, run one connection session, drain in-flight work, and exit instead
-of reconnecting:
+Each persistent agent needs its own random token and a matching runner entry.
+The entry's UUID is the agent's `<work_dir>/machine_id`, so either copy the one
+an existing agent generated or write a fresh UUID there before first start
+(`agent.machine_id_file` points elsewhere if needed). The UUID and `agent.name`
+must match the entry exactly.
+
+CI builders authenticate with OIDC and run with `agent.ephemeral` or
+`--ephemeral`. An ephemeral agent makes up a fresh machine ID, can append a
+unique suffix to its name, and exits after one session instead of reconnecting,
+draining in-flight work first.
 
 ```toml
 [agent.ephemeral]
@@ -347,8 +358,8 @@ unique_name       = true
 
 The agent runs as a Systemd service. A NixOS module is provided at
 `nix/modules/circus-agent.nix` and exposed as `self.nixosModules.circus-agent`.
-The queue-runner picks the agent up the first time it connects; no operator
-action is required beyond provisioning the token and (optionally) TLS material.
+The queue runner accepts the agent once its token, machine ID, and name match
+its entry and any TLS checks pass.
 
 macOS builder hosts run the same `circus-agent` binary and advertise Darwin
 systems such as `aarch64-darwin`. The flake exposes
@@ -480,15 +491,19 @@ Operational notes:
 ## Security
 
 - Bearer token authentication on `register`. Tokens are issued by the operator
-  out of band. The runner stores SHA-256 hex digests in
-  `[queue_runner.rpc].auth_tokens`; the agent sends the raw token and the runner
-  hashes + compares digest bytes in constant time. Config validation rejects
-  malformed token digests.
+  out of band, one per agent. Each `[queue_runner.rpc].auth_tokens` entry ties a
+  SHA-256 digest to a machine UUID and agent name. The agent sends the raw
+  token, and the runner compares digests in constant time and checks both
+  identity fields. Config validation rejects malformed digests, repeated UUIDs
+  or names, and a token shared between agents.
 - OIDC authentication on `register` when `[queue_runner.rpc.oidc]` is set. The
   runner verifies the issuer, JWKS signature, expiry, accepted audience,
   subject, workflow/ref constraints, and repository allowlist before accepting
-  the session. The verified repository is stored with the live session for
-  scheduling decisions.
+  the session. An OIDC agent cannot take the UUID or name of a token agent, or
+  the UUID of a live agent from another repository or subject, and a machine
+  cannot switch between token and OIDC auth. Ephemeral agents must use OIDC,
+  since a bearer token is bound to one machine ID. The verified repository is
+  stored with the live session for scheduling decisions.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
   `[queue_runner.rpc].tls`, and setting `client_ca` attaches a
   `WebPkiClientVerifier` for any client cert an agent presents. Agents may still

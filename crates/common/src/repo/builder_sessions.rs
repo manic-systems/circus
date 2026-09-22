@@ -225,13 +225,14 @@ pub struct RegisterSession<'a> {
 ///
 /// # Errors
 ///
-/// Returns the underlying database error.
+/// Returns registration conflicts or the underlying database error.
 pub async fn register(
   pool: &PgPool,
   session: RegisterSession<'_>,
 ) -> Result<()> {
   let client = pool.get().await?;
-  q::register()
+
+  let updated = q::register()
     .bind(
       &client,
       &session.machine_id,
@@ -248,6 +249,13 @@ pub async fn register(
       &session.auth_kind,
     )
     .await?;
+
+  if updated == 0 {
+    return Err(CiError::Validation(
+      "Agent identity belongs to a different authentication kind".to_owned(),
+    ));
+  }
+
   Ok(())
 }
 

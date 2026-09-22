@@ -8,7 +8,10 @@
   pkgs,
   lib,
   ...
-}: {
+}: let
+  fixtureToken = "demo-agent-token-${name}-please-rotate";
+  fixtureMachineId = "00000000-0000-4000-8000-${builtins.substring 0 12 (builtins.hashString "sha256" name)}";
+in {
   imports = [self.nixosModules.circus-agent];
 
   environment.systemPackages = with pkgs; [nix curl jq];
@@ -17,7 +20,7 @@
     settings.substituters = lib.mkForce [];
   };
 
-  environment.etc."circus-agent/token".text = "demo-agent-token-please-rotate";
+  environment.etc."circus-agent/token".text = fixtureToken;
 
   services.circus-agent = {
     enable = true;
@@ -31,6 +34,7 @@
       speed_factor = speed;
       heartbeat_interval_secs = 3;
       reconnect_delay_secs = 2;
+      machine_id_file = toString (pkgs.writeText "circus-agent-machine-id-${name}" fixtureMachineId);
     };
   };
 }

@@ -27,7 +27,7 @@ pub struct Agent {
   pub runner_url: String,
 
   /// Bearer token presented on `register`. Hashed and compared against
-  /// `[builder].auth_tokens` on the runner.
+  /// the runner's matching `[queue_runner.rpc].auth_tokens` entry.
   #[serde(default)]
   pub auth_token: String,
 
