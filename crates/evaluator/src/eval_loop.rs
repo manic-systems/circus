@@ -157,45 +157,49 @@ async fn run_cycle(
     tracing::info!(count = pending_tasks.len(), "Draining pending evaluations");
   }
 
-  stream::iter(pending_tasks)
-    .for_each_concurrent(max_concurrent, |(eval, jobset)| {
+  let pending_groups =
+    group_by_project(pending_tasks, |(_, jobset)| &jobset.project_name);
+  stream::iter(pending_groups)
+    .for_each_concurrent(max_concurrent, |group| {
       async move {
-        if let Err(e) = evaluate_pending_eval(
-          pool,
-          &eval,
-          &jobset,
-          config,
-          notifications_config,
-          notification_secret_key,
-          nix_timeout,
-          git_timeout,
-        )
-        .await
-        {
-          tracing::error!(
-              jobset_id = %jobset.id,
-              jobset_name = %jobset.name,
-              eval_id = %eval.id,
-              commit = %eval.commit_hash,
-              "Failed to process pending evaluation: {e}"
-          );
-
-          let msg = e.to_string();
-          if let Err(mark_err) = repo::evaluations::finish_running(
+        for (eval, jobset) in group {
+          if let Err(e) = evaluate_pending_eval(
             pool,
-            eval.id,
-            EvaluationStatus::Failed,
-            Some(&msg),
+            &eval,
+            &jobset,
+            config,
+            notifications_config,
+            notification_secret_key,
+            nix_timeout,
+            git_timeout,
           )
           .await
           {
-            tracing::warn!(
-              eval_id = %eval.id,
-              "Failed to record evaluation failure status: {mark_err}"
+            tracing::error!(
+                jobset_id = %jobset.id,
+                jobset_name = %jobset.name,
+                eval_id = %eval.id,
+                commit = %eval.commit_hash,
+                "Failed to process pending evaluation: {e}"
             );
-          }
 
-          warn_on_disk_pressure(&msg);
+            let msg = e.to_string();
+            if let Err(mark_err) = repo::evaluations::finish_running(
+              pool,
+              eval.id,
+              EvaluationStatus::Failed,
+              Some(&msg),
+            )
+            .await
+            {
+              tracing::warn!(
+                eval_id = %eval.id,
+                "Failed to record evaluation failure status: {mark_err}"
+              );
+            }
+
+            warn_on_disk_pressure(&msg);
+          }
         }
       }
     })
@@ -219,26 +223,28 @@ async fn run_cycle(
 
   tracing::info!("Found {} jobsets due for evaluation", ready.len());
 
-  stream::iter(ready)
-    .for_each_concurrent(max_concurrent, |jobset| {
+  stream::iter(group_by_project(ready, |jobset| &jobset.project_name))
+    .for_each_concurrent(max_concurrent, |group| {
       async move {
-        if let Err(e) = evaluate_jobset(
-          pool,
-          &jobset,
-          config,
-          notifications_config,
-          notification_secret_key,
-          nix_timeout,
-          git_timeout,
-        )
-        .await
-        {
-          tracing::error!(
-              jobset_id = %jobset.id,
-              jobset_name = %jobset.name,
-              "Failed to evaluate jobset: {e}"
-          );
-          warn_on_disk_pressure(&e.to_string());
+        for jobset in group {
+          if let Err(e) = evaluate_jobset(
+            pool,
+            &jobset,
+            config,
+            notifications_config,
+            notification_secret_key,
+            nix_timeout,
+            git_timeout,
+          )
+          .await
+          {
+            tracing::error!(
+                jobset_id = %jobset.id,
+                jobset_name = %jobset.name,
+                "Failed to evaluate jobset: {e}"
+            );
+            warn_on_disk_pressure(&e.to_string());
+          }
         }
       }
     })
@@ -250,6 +256,22 @@ async fn run_cycle(
   discover_projects_without_jobsets(pool, config, git_timeout).await;
 
   Ok(())
+}
+
+/// Jobsets of one project share the checkout under `work_dir`, so they
+/// must not fetch or check out concurrently.
+fn group_by_project<T>(
+  items: Vec<T>,
+  project_name: impl Fn(&T) -> &str,
+) -> Vec<Vec<T>> {
+  let mut groups: HashMap<String, Vec<T>> = HashMap::new();
+  for item in items {
+    groups
+      .entry(project_name(&item).to_owned())
+      .or_default()
+      .push(item);
+  }
+  groups.into_values().collect()
 }
 
 fn accepts_pending_evaluation(
