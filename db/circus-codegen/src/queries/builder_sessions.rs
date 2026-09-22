@@ -558,6 +558,29 @@ impl RecordOutcomeFailedStmt {
         client.execute(self.0, &[machine_id]).await
     }
 }
+pub struct RecordBuildFailureStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn record_build_failure() -> RecordBuildFailureStmt {
+    RecordBuildFailureStmt(
+        "UPDATE builder_sessions SET builds_failed = builds_failed + 1, updated_at = NOW() WHERE machine_id =$1",
+        None,
+    )
+}
+impl RecordBuildFailureStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        machine_id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[machine_id]).await
+    }
+}
 pub struct IsSchedulableStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn is_schedulable() -> IsSchedulableStmt {
     IsSchedulableStmt(

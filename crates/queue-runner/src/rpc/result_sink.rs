@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use capnp::capability::Promise;
-use circus_common::{PgPool, repo};
+use circus_common::{PgPool, repo, repo::builder_sessions::AgentOutcome};
 use circus_proto::{BuildOutcome, result_sink};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -74,7 +74,8 @@ impl result_sink::Server for ResultSinkImpl {
         BuildOutcome::PreparingFailure
         | BuildOutcome::ImportFailure
         | BuildOutcome::UploadFailure
-        | BuildOutcome::PostProcessFailure => {
+        | BuildOutcome::PostProcessFailure
+        | BuildOutcome::InfraFailure => {
           BuildOutcomeKind::InfraFailure {
             error_message: result_error_message(r),
           }
@@ -88,14 +89,25 @@ impl result_sink::Server for ResultSinkImpl {
         },
       };
 
-      let succeeded = matches!(kind, BuildOutcomeKind::Success { .. });
+      let agent_outcome = match outcome {
+        BuildOutcome::Success => AgentOutcome::Succeeded,
+        BuildOutcome::PreparingFailure
+        | BuildOutcome::ImportFailure
+        | BuildOutcome::UploadFailure
+        | BuildOutcome::PostProcessFailure
+        | BuildOutcome::InfraFailure => AgentOutcome::AgentFailed,
+        BuildOutcome::BuildFailure
+        | BuildOutcome::Aborted
+        | BuildOutcome::TimedOut
+        | BuildOutcome::OomKilled => AgentOutcome::BuildFailed,
+      };
       let Some(tx) = done.lock().await.take() else {
         return Err(capnp::Error::failed(
           "build result already reported".into(),
         ));
       };
       if let Err(e) =
-        repo::builder_sessions::record_outcome(&pool, machine_id, succeeded)
+        repo::builder_sessions::record_outcome(&pool, machine_id, agent_outcome)
           .await
       {
         tracing::warn!(%machine_id, "failed to record outcome: {e}");

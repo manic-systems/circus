@@ -3,15 +3,25 @@
 
 use serde_json::Value;
 
+const ACT_BUILD: i64 = 105;
+const ACT_POST_BUILD_HOOK: i64 = 110;
 const BUILD_LOG_LINE: i64 = 101;
 const PROGRESS: i64 = 105;
 const SET_EXPECTED: i64 = 106;
 const POST_BUILD_LOG_LINE: i64 = 107;
 
-/// A parsed `@nix {...}` line that carries displayable text.
+/// A parsed `@nix {...}` line the agent acts on.
 pub enum LogLine {
-  Message { level: i64, text: String },
-  Output { text: String },
+  Message {
+    level: i64,
+    text:  String,
+  },
+  Output {
+    text: String,
+  },
+  BuildStarted,
+  /// Nix runs the hook only once the builder and its outputs succeeded.
+  PostBuildHookStarted,
 }
 
 #[must_use]
@@ -38,8 +48,8 @@ pub fn is_progress(line: &str) -> bool {
 
 /// # Returns
 ///
-/// Returns [`None`] if `line` is not an envelope, is malformed, or carries no
-/// text.
+/// Returns [`None`] if `line` is not an envelope, is malformed, or carries
+/// neither text nor an activity start the agent tracks.
 #[must_use]
 pub fn parse_line(line: &str) -> Option<LogLine> {
   let v =
@@ -62,6 +72,13 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
     {
       let text = v.get("fields")?.get(0)?.as_str()?.to_owned();
       Some(LogLine::Output { text })
+    },
+    "start" => {
+      match v.get("type")?.as_i64()? {
+        ACT_BUILD => Some(LogLine::BuildStarted),
+        ACT_POST_BUILD_HOOK => Some(LogLine::PostBuildHookStarted),
+        _ => None,
+      }
     },
     _ => None,
   }

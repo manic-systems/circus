@@ -4,15 +4,17 @@ use std::{
   collections::{BTreeMap, VecDeque},
   io,
   os::unix::process::ExitStatusExt,
+  path::PathBuf,
   process::{ExitStatus, Stdio},
   time::{Duration, Instant},
 };
 
 use circus_proto::{log_sink, nix_log};
+use nix::sys::statvfs::statvfs;
 use tokio::{
   io::{AsyncBufReadExt, BufReader},
   process::Command,
-  time::timeout,
+  time::{MissedTickBehavior, interval, timeout},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -243,6 +245,7 @@ enum Event {
   SilentTimeout,
   DeadlineTimeout,
   Cancelled,
+  DiskSample,
 }
 
 /// Preserve a real child exit when it races log or deadline handling.
@@ -337,6 +340,8 @@ async fn run_command(
   let mut bytes_sent: u64 = 0;
   let mut error_message = String::new();
   let mut log_size_exceeded = false;
+  let mut silent_too_long = false;
+  let mut builder_running = false;
   let mut sink_failed = false;
   let mut log_truncated = false;
   let mut aborted = false;
@@ -352,6 +357,9 @@ async fn run_command(
   };
   let mut last_output = Instant::now();
   let mut recent_msgs = VecDeque::<String>::with_capacity(32);
+  let mut disk_samples = interval(DISK_SAMPLE_INTERVAL);
+  disk_samples.set_missed_tick_behavior(MissedTickBehavior::Skip);
+  let mut lowest_free = Option::<(PathBuf, u64)>::None;
 
   loop {
     let pre_exit = child_status.is_none();
@@ -375,9 +383,14 @@ async fn run_command(
       () = sleep_opt(read_timeout), if pre_exit => Event::SilentTimeout,
       () = sleep_opt(deadline_timeout) => Event::DeadlineTimeout,
       () = cancel.cancelled() => Event::Cancelled,
+      _ = disk_samples.tick(), if pre_exit => Event::DiskSample,
     };
 
     let first = match ev {
+      Event::DiskSample => {
+        lowest_free = lower_free_space(lowest_free, lowest_free_space());
+        continue;
+      },
       Event::ChildExited(s) => {
         let status = s?;
         if child_status.is_none() {
@@ -395,6 +408,7 @@ async fn run_command(
         ) {
           continue;
         }
+        silent_too_long = true;
         error_message = "max-silent-time exceeded".into();
         let _ = child.start_kill();
         killed = true;
@@ -451,13 +465,18 @@ async fn run_command(
     let mut pending_read_err = Option::<String>::None;
     let mut next = Some(first);
     while let Some(line) = next.take() {
-      if let Some(nix_log::LogLine::Message { text, .. }) =
-        nix_log::parse_line(&line)
-      {
-        if recent_msgs.len() == 32 {
-          recent_msgs.pop_front();
-        }
-        recent_msgs.push_back(text);
+      match nix_log::parse_line(&line) {
+        Some(nix_log::LogLine::Message { text, .. }) => {
+          if recent_msgs.len() == 32 {
+            recent_msgs.pop_front();
+          }
+          recent_msgs.push_back(text);
+        },
+        Some(nix_log::LogLine::BuildStarted) => builder_running = true,
+        Some(nix_log::LogLine::PostBuildHookStarted) => {
+          builder_running = false;
+        },
+        _ => {},
       }
 
       if !log_size_exceeded
@@ -638,8 +657,10 @@ async fn run_command(
         circus_proto::BuildOutcome::TimedOut
       } else if aborted {
         circus_proto::BuildOutcome::Aborted
-      } else {
+      } else if silent_too_long || log_size_exceeded {
         circus_proto::BuildOutcome::BuildFailure
+      } else {
+        circus_proto::BuildOutcome::InfraFailure
       },
       exit_code: -1,
       build_time_ms: started.elapsed().as_millis() as u64,
@@ -675,8 +696,26 @@ async fn run_command(
     circus_proto::BuildOutcome::Aborted
   } else if oom_killed {
     circus_proto::BuildOutcome::OomKilled
-  } else {
+  } else if !sink_failed && (silent_too_long || log_size_exceeded) {
     circus_proto::BuildOutcome::BuildFailure
+  } else if !sink_failed && builder_running {
+    match lower_free_space(lowest_free, lowest_free_space()) {
+      Some((path, free)) if free < MIN_FREE_BYTES => {
+        let reason = format!(
+          "{} fell to {} MiB free during the build",
+          path.display(),
+          free >> 20
+        );
+        if !error_message.is_empty() {
+          error_message.push('\n');
+        }
+        error_message.push_str(&reason);
+        circus_proto::BuildOutcome::InfraFailure
+      },
+      _ => circus_proto::BuildOutcome::BuildFailure,
+    }
+  } else {
+    circus_proto::BuildOutcome::InfraFailure
   };
 
   let outputs = if success {
@@ -693,6 +732,42 @@ async fn run_command(
     outputs,
     error_message,
   })
+}
+
+/// Nix reports a build that filled the disk only in prose, and deletes the
+/// build directory before exiting, so free space is sampled while it runs.
+const MIN_FREE_BYTES: u64 = 1 << 30;
+const DISK_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// The store, build, or temp directory with the least free space.
+#[allow(
+  clippy::useless_conversion,
+  reason = "statvfs block counts are u32 on Darwin"
+)]
+fn lowest_free_space() -> Option<(PathBuf, u64)> {
+  [
+    PathBuf::from("/nix/store"),
+    PathBuf::from("/nix/var/nix/builds"),
+    std::env::temp_dir(),
+  ]
+  .into_iter()
+  .filter_map(|path| {
+    let stat = statvfs(&path).ok()?;
+    let free =
+      u64::from(stat.blocks_available()) * u64::from(stat.fragment_size());
+    Some((path, free))
+  })
+  .min_by_key(|(_, free)| *free)
+}
+
+fn lower_free_space(
+  seen: Option<(PathBuf, u64)>,
+  sample: Option<(PathBuf, u64)>,
+) -> Option<(PathBuf, u64)> {
+  [seen, sample]
+    .into_iter()
+    .flatten()
+    .min_by_key(|(_, free)| *free)
 }
 
 fn remaining_silent(
@@ -1019,6 +1094,37 @@ mod tests {
       assert_eq!(result.outcome, circus_proto::BuildOutcome::TimedOut);
       assert_eq!(result.exit_code, -1);
       assert!(result.error_message.contains("build-timeout"));
+    });
+  }
+
+  #[test]
+  fn failures_outside_the_builder_are_infra() {
+    run_local(async {
+      for (script, outcome) in [
+        ("exit 1", circus_proto::BuildOutcome::InfraFailure),
+        (
+          r#"echo '@nix {"action":"start","id":1,"type":105}' >&2; exit 1"#,
+          circus_proto::BuildOutcome::BuildFailure,
+        ),
+        (
+          r#"echo '@nix {"action":"start","id":1,"type":105}' >&2
+             echo '@nix {"action":"start","id":2,"type":110}' >&2; exit 1"#,
+          circus_proto::BuildOutcome::InfraFailure,
+        ),
+      ] {
+        let h = harness(None);
+        let result = run_command(
+          sh(script),
+          &opts(1024, Duration::from_mins(1)),
+          fast_tunables(),
+          h.sink,
+          CancellationToken::new(),
+        )
+        .await
+        .expect("run_command");
+
+        assert_eq!(result.outcome, outcome, "{script}");
+      }
     });
   }
 
