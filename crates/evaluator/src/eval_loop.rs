@@ -1296,31 +1296,15 @@ struct RepoConfig {
   jobsets: Vec<DeclarativeJobset>,
 }
 
-fn repo_config_path(repo_path: &std::path::Path) -> Option<std::path::PathBuf> {
-  let primary = repo_path.join(".circus.toml");
-  if primary.exists() {
-    return Some(primary);
-  }
-  let alternate = repo_path.join(".circus/config.toml");
-  alternate.exists().then_some(alternate)
-}
-
-fn read_repo_config(repo_path: &std::path::Path) -> Option<RepoConfig> {
-  let path = repo_config_path(repo_path)?;
-  let content = match std::fs::read_to_string(&path) {
-    Ok(content) => content,
-    Err(error) => {
-      tracing::warn!("Failed to read repo config {}: {error}", path.display());
-      return None;
-    },
+fn read_repo_config(
+  repo_path: &std::path::Path,
+  url: &str,
+) -> color_eyre::Result<Option<RepoConfig>> {
+  let Some(content) = crate::git::read_repo_config(url, repo_path)? else {
+    return Ok(None);
   };
-  match toml::from_str(&content) {
-    Ok(config) => Some(config),
-    Err(error) => {
-      tracing::warn!("Failed to parse repo config {}: {error}", path.display());
-      None
-    },
-  }
+
+  Ok(Some(toml::from_str(&content)?))
 }
 
 /// Synchronize jobsets declared in a repository-local Circus configuration.
@@ -1329,12 +1313,25 @@ async fn sync_repo_declarative_config(
   repo_path: &std::path::Path,
   project_id: Uuid,
 ) {
-  if !project_allows_repo_config(pool, project_id).await {
+  let project = match repo::projects::get(pool, project_id).await {
+    Ok(project) => project,
+    Err(error) => {
+      tracing::warn!(%project_id, "Failed to determine project ownership: {error}");
+      return;
+    },
+  };
+
+  if project.managed_declaratively {
     return;
   }
 
-  let Some(config) = read_repo_config(repo_path) else {
-    return;
+  let config = match read_repo_config(repo_path, &project.repository_url) {
+    Ok(Some(config)) => config,
+    Ok(None) => return,
+    Err(error) => {
+      tracing::warn!(%project_id, "Failed to read approved repository configuration: {error}");
+      return;
+    },
   };
 
   for js in &config.jobsets {
@@ -1401,16 +1398,6 @@ async fn sync_repo_declarative_config(
         );
       },
     }
-  }
-}
-
-async fn project_allows_repo_config(pool: &PgPool, project_id: Uuid) -> bool {
-  match repo::projects::get(pool, project_id).await {
-    Ok(project) => !project.managed_declaratively,
-    Err(error) => {
-      tracing::warn!(%project_id, "Failed to determine project ownership: {error}");
-      false
-    },
   }
 }
 

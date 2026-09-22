@@ -305,6 +305,9 @@ project's `flake.lock`, so locked inputs resolve while undeclared eval-time
 fetches are blocked. Deployers extend it with `evaluator.allowed_uris` or opt
 out with `restrict_eval = false`.
 
+`.circus.toml` is read from the project URL's `rev`, `ref`, or default branch,
+never from the branch being built.
+
 ## Binary Cache and Channels
 
 Circus serves a Nix-compatible binary cache at `/nix-cache/`. It supports the

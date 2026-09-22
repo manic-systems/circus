@@ -61,6 +61,51 @@ fn source_attribute(source: &str, attribute: &str) -> Option<String> {
     .find_map(|(key, value)| (key == attribute).then(|| value.into_owned()))
 }
 
+/// Reads from the project's own ref, so a pushed branch cannot rewrite jobsets.
+pub(crate) fn read_repo_config(
+  url: &str,
+  repo_path: &Path,
+) -> Result<Option<String>> {
+  let repo = open(repo_path)?;
+  let commit = if let Some(revision) = source_attribute(url, "rev") {
+    parse_commit(&repo, &revision)?
+  } else {
+    let reference = match source_attribute(url, "ref") {
+      Some(reference) if reference.starts_with("refs/tags/") => reference,
+      Some(reference) => {
+        let branch =
+          reference.strip_prefix("refs/heads/").unwrap_or(&reference);
+        format!("refs/remotes/origin/{branch}")
+      },
+      None => DEFAULT_BRANCH_REF.to_string(),
+    };
+    resolve_ref(&repo, &reference)?.1
+  };
+
+  let tree = repo.find_commit(commit)?.tree()?;
+
+  for path in [".circus.toml", ".circus/config.toml"] {
+    let Some(entry) = tree.lookup_entry_by_path(path)? else {
+      continue;
+    };
+
+    if !entry.mode().is_blob() {
+      return Err(CiError::Config(format!(
+        "Repository configuration {path} must be a regular file"
+      )));
+    }
+
+    let blob = entry.object()?;
+    let contents = std::str::from_utf8(&blob.data).map_err(|error| {
+      CiError::Config(format!("Repository configuration is not UTF-8: {error}"))
+    })?;
+
+    return Ok(Some(contents.to_owned()));
+  }
+
+  Ok(None)
+}
+
 /// Refspecs fetched on every sync. Pull-request and merge-request heads make
 /// webhook-pushed PR commits reachable, from GitHub/Gitea/Forgejo and GitLab
 /// respectively. Remotes without them simply match nothing.
