@@ -367,20 +367,28 @@
         ];
 
         text = ''
-          # Format Nix with Alejandra
-          fd "$@" -t f -e nix -x alejandra -q '{}'
+          format_file() {
+            case "''${1#./}" in
+              db/* | */db/* | queries/* | */queries/* | docs/API.md) ;;
+              *.nix) alejandra -q "$1" ;;
+              *.toml) taplo fmt "$1" ;;
+              *.css) prettier --write "$1" ;;
+              *.sql) sql-formatter --fix "$1" -l postgresql ;;
+              *.md) deno fmt -q "$1" ;;
+            esac
+          }
 
-          # Format TOML with Taplo, leaving the generated codegen crate verbatim
-          fd "$@" -t f -e toml -E db -x taplo fmt '{}'
-
-          # Format CSS with Prettier
-          fd "$@" -t f -e css -x prettier --write '{}'
-
-          # Format SQL with sql-format, skipping cornucopia queries it cannot parse
-          fd "$@" -t f -e sql -E queries -x sql-formatter --fix '{}' -l postgresql
-
-          # Format Markdown with Deno
-          fd "$@" -t f -e md -E docs/API.md -x deno fmt -q '{}'
+          if [ $# -eq 0 ]; then
+            set -- .
+          fi
+          for target in "$@"; do
+            if [ -d "$target" ]; then
+              fd . "$target" -t f -e nix -e toml -e css -e sql -e md |
+                while read -r file; do format_file "$file"; done
+            else
+              format_file "$target"
+            fi
+          done
         '';
       });
   };
