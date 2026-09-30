@@ -47,11 +47,17 @@ where
         if *this.written1 < this.buf.len() {
           let n =
             ready!(this.writer1.poll_write(cx, &this.buf[*this.written1..]))?;
+          if n == 0 {
+            return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+          }
           *this.written1 += n;
         }
         if *this.written2 < this.buf.len() {
           let n =
             ready!(this.writer2.poll_write(cx, &this.buf[*this.written2..]))?;
+          if n == 0 {
+            return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+          }
           *this.written2 += n;
         }
       }
@@ -74,20 +80,13 @@ where
     cx: &mut Context<'_>,
     buf: &[u8],
   ) -> Poll<io::Result<usize>> {
-    if buf.len() < self.buf.capacity() {
-      if buf.len() + self.buf.len() > self.buf.capacity() {
-        ready!(self.as_mut().poll_flush_buf(cx))?;
-      }
-      let this = self.project();
-      let rem = min(buf.len(), this.buf.capacity() - this.buf.len());
-      this.buf.extend_from_slice(&buf[..rem]);
-      Poll::Ready(Ok(rem))
-    } else {
-      let this = self.project();
-      let rem = min(buf.len(), this.buf.capacity() - this.buf.len());
-      this.buf.extend_from_slice(&buf[..rem]);
-      Poll::Ready(Ok(rem))
+    if buf.len() + self.buf.len() > self.buf.capacity() {
+      ready!(self.as_mut().poll_flush_buf(cx))?;
     }
+    let this = self.project();
+    let rem = min(buf.len(), this.buf.capacity() - this.buf.len());
+    this.buf.extend_from_slice(&buf[..rem]);
+    Poll::Ready(Ok(rem))
   }
 
   fn poll_flush(
