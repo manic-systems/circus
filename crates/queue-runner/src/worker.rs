@@ -729,14 +729,28 @@ async fn push_to_cache(
   output_paths: &[String],
   store_uri: &str,
   s3_config: Option<&S3CacheConfig>,
+  secret_key: Option<&Path>,
   semaphore: Arc<Semaphore>,
   max_retries: u32,
 ) -> Vec<String> {
-  let full_store_uri = if store_uri.starts_with("s3://") {
+  let mut full_store_uri = if store_uri.starts_with("s3://") {
     build_s3_store_uri(store_uri, s3_config)
   } else {
     store_uri.to_string()
   };
+  // `nix copy` uploads the whole closure but `sign_outputs` only signs the
+  // outputs, so dependencies would land in the cache unsigned.
+  if let Some(key) = secret_key {
+    let separator = if full_store_uri.contains('?') {
+      '&'
+    } else {
+      '?'
+    };
+    full_store_uri = format!(
+      "{full_store_uri}{separator}secret-key={}",
+      urlencoding::encode(&key.to_string_lossy())
+    );
+  }
 
   let mut failed = Vec::new();
   for path in output_paths {
@@ -1303,6 +1317,10 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
             &build_result.output_paths,
             store_uri,
             cache_upload_config.s3.as_ref(),
+            signing_config
+              .key_file
+              .as_deref()
+              .filter(|_| signing_config.enabled),
             Arc::clone(&upload_semaphore),
             cache_upload_config.upload_max_retries,
           )
