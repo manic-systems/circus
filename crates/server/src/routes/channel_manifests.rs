@@ -131,25 +131,12 @@ async fn store_paths(
     if let Some(p) = &build.build_output_path {
       paths.push(p.clone());
     }
-    match circus_common::repo::build_products::list_for_build(
+    let products = circus_common::repo::build_products::list_for_build(
       &state.pool,
       build.id,
     )
-    .await
-    {
-      Ok(products) => {
-        for product in products {
-          paths.push(product.path);
-        }
-      },
-      Err(e) => {
-        tracing::warn!(
-          build_id = %build.id,
-          error = %e,
-          "Failed to fetch build products for channel manifest; skipping",
-        );
-      },
-    }
+    .await?;
+    paths.extend(products.into_iter().map(|product| product.path));
   }
   paths.sort();
   paths.dedup();
