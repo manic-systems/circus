@@ -148,7 +148,13 @@ impl UriPrefixes {
     let uri = uri.into();
     let uri = uri.split(['?', '#']).next().unwrap_or(&uri);
     let mut prefixes = vec![uri.to_owned()];
-    if let Some(slash) = uri.rfind('/') {
+    // Only a slash inside the path, or a bare `https://` would allow any host.
+    let path_start = uri.find("://").map_or(0, |scheme_end| {
+      uri[scheme_end + 3..]
+        .find('/')
+        .map_or(uri.len(), |slash| scheme_end + 3 + slash)
+    });
+    if let Some(slash) = uri.rfind('/').filter(|&slash| slash >= path_start) {
       prefixes.push(uri[..=slash].to_owned());
     }
     Self(prefixes)
