@@ -195,7 +195,22 @@ FROM builds b
 JOIN evaluations e ON b.evaluation_id = e.id
 JOIN jobsets j ON e.jobset_id = j.id
 WHERE j.project_id = :project_id
-ORDER BY b.created_at DESC;
+ORDER BY b.created_at DESC
+LIMIT :limit OFFSET :offset;
+
+--! project_build_summary : (failing, queued, systems)
+SELECT
+  COUNT(*) FILTER (WHERE b.status = ANY(:failed_statuses))::bigint AS failing,
+  COUNT(*) FILTER (WHERE b.status = 'pending')::bigint AS queued,
+  COALESCE(
+    ARRAY_AGG(DISTINCT b.system ORDER BY b.system)
+      FILTER (WHERE b.system IS NOT NULL),
+    '{}'
+  )::text[] AS systems
+FROM builds b
+JOIN evaluations e ON b.evaluation_id = e.id
+JOIN jobsets j ON e.jobset_id = j.id
+WHERE j.project_id = :project_id;
 
 --! get_stats : (total_builds?, completed_builds?, failed_builds?, running_builds?, pending_builds?, avg_duration_seconds?)
 SELECT * FROM build_stats;

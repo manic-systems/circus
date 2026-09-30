@@ -167,24 +167,16 @@ impl OperatorProject {
             )
           },
         );
-      let project_builds =
-        circus_common::repo::builds::list_for_project(&state.pool, p.id)
-          .await
-          .map_err(ApiError)?;
-      let failing_jobs = project_builds
-        .iter()
-        .filter(|b| is_failed_status(b.status))
-        .count() as i64;
-      let queued_jobs = project_builds
-        .iter()
-        .filter(|b| b.status == BuildStatus::Pending)
-        .count() as i64;
-      let mut systems = project_builds
-        .iter()
-        .filter_map(|b| b.system.clone())
-        .collect::<Vec<_>>();
-      systems.sort();
-      systems.dedup();
+      let summary = circus_common::repo::builds::project_summary(
+        &state.pool,
+        p.id,
+        &FAILED_STATUSES,
+      )
+      .await
+      .map_err(ApiError)?;
+      let failing_jobs = summary.failing;
+      let queued_jobs = summary.queued;
+      let systems = summary.systems;
       project_summaries.push(Self {
         id: p.id,
         name: p.name.clone(),
@@ -530,16 +522,13 @@ fn format_duration(
   }
 }
 
-const fn is_failed_status(status: BuildStatus) -> bool {
-  matches!(
-    status,
-    BuildStatus::Failed
-      | BuildStatus::DependencyFailed
-      | BuildStatus::FailedWithOutput
-      | BuildStatus::Timeout
-      | BuildStatus::CachedFailure
-      | BuildStatus::LogLimitExceeded
-      | BuildStatus::NarSizeLimitExceeded
-      | BuildStatus::NonDeterministic
-  )
-}
+const FAILED_STATUSES: [BuildStatus; 8] = [
+  BuildStatus::Failed,
+  BuildStatus::DependencyFailed,
+  BuildStatus::FailedWithOutput,
+  BuildStatus::Timeout,
+  BuildStatus::CachedFailure,
+  BuildStatus::LogLimitExceeded,
+  BuildStatus::NarSizeLimitExceeded,
+  BuildStatus::NonDeterministic,
+];

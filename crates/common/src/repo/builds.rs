@@ -480,7 +480,7 @@ pub async fn list_recent(pool: &PgPool, limit: i64) -> Result<Vec<Build>> {
   rows.into_iter().map(Build::try_from).collect()
 }
 
-/// List all builds for a project.
+/// List a page of builds for a project, newest first.
 ///
 /// # Errors
 ///
@@ -488,13 +488,47 @@ pub async fn list_recent(pool: &PgPool, limit: i64) -> Result<Vec<Build>> {
 pub async fn list_for_project(
   pool: &PgPool,
   project_id: Uuid,
+  limit: i64,
+  offset: i64,
 ) -> Result<Vec<Build>> {
   let client = pool.get().await?;
   let rows = q::list_for_project()
-    .bind(&client, &project_id)
+    .bind(&client, &project_id, &limit, &offset)
     .all()
     .await?;
   rows.into_iter().map(Build::try_from).collect()
+}
+
+pub struct ProjectBuildSummary {
+  pub failing: i64,
+  pub queued:  i64,
+  pub systems: Vec<String>,
+}
+
+/// Count a project's failing and queued builds and collect their systems.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn project_summary(
+  pool: &PgPool,
+  project_id: Uuid,
+  failed_statuses: &[BuildStatus],
+) -> Result<ProjectBuildSummary> {
+  let failed_statuses: Vec<&str> = failed_statuses
+    .iter()
+    .map(|status| status.as_db_str())
+    .collect();
+  let client = pool.get().await?;
+  let row = q::project_build_summary()
+    .bind(&client, &failed_statuses, &project_id)
+    .one()
+    .await?;
+  Ok(ProjectBuildSummary {
+    failing: row.failing,
+    queued:  row.queued,
+    systems: row.systems,
+  })
 }
 
 /// Get aggregate build statistics.

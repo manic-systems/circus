@@ -374,7 +374,11 @@ fn document_value() -> Value {
       },
       "/projects/{id}/builds": {
         "get": { "summary": "List builds for a project",
-          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "parameters": [
+            { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+            { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "maximum": 200 } },
+            { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0 } }
+          ],
           "responses": { "200": { "description": "Array of builds" } } }
       },
       "/projects/{id}/webhooks": {

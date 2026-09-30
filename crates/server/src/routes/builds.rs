@@ -155,9 +155,15 @@ async fn recent_builds(
 async fn list_project_builds(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
+  Query(pagination): Query<PaginationParams>,
 ) -> Result<Json<Vec<Build>>, ApiError> {
-  let builds =
-    circus_common::repo::builds::list_for_project(&state.pool, id).await?;
+  let builds = circus_common::repo::builds::list_for_project(
+    &state.pool,
+    id,
+    pagination.limit(),
+    pagination.offset(),
+  )
+  .await?;
   Ok(Json(builds))
 }
 

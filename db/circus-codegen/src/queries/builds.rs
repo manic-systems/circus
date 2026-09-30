@@ -70,6 +70,17 @@ pub struct BumpPriorityParams {
     pub delta: i32,
     pub id: uuid::Uuid,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct ListForProjectParams {
+    pub project_id: uuid::Uuid,
+    pub limit: i64,
+    pub offset: i64,
+}
+#[derive(Debug)]
+pub struct ProjectBuildSummaryParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T1>> {
+    pub failed_statuses: T2,
+    pub project_id: uuid::Uuid,
+}
 #[derive(Debug)]
 pub struct ResetOrphanedParams<T1: crate::ArraySql<Item = uuid::Uuid>> {
     pub older_than_secs: i64,
@@ -253,6 +264,32 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
         }
     }
 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectBuildSummary {
+    pub failing: i64,
+    pub queued: i64,
+    pub systems: Vec<String>,
+}
+pub struct ProjectBuildSummaryBorrowed<'a> {
+    pub failing: i64,
+    pub queued: i64,
+    pub systems: crate::ArrayIterator<'a, &'a str>,
+}
+impl<'a> From<ProjectBuildSummaryBorrowed<'a>> for ProjectBuildSummary {
+    fn from(
+        ProjectBuildSummaryBorrowed {
+            failing,
+            queued,
+            systems,
+        }: ProjectBuildSummaryBorrowed<'a>,
+    ) -> Self {
+        Self {
+            failing,
+            queued,
+            systems: systems.map(|v| v.into()).collect(),
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct GetStats {
     pub total_builds: Option<i64>,
@@ -406,6 +443,74 @@ where
 {
     pub fn map<R>(self, mapper: fn(&str) -> R) -> StringQuery<'c, 'a, 's, C, R, N> {
         StringQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct ProjectBuildSummaryQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor:
+        fn(&tokio_postgres::Row) -> Result<ProjectBuildSummaryBorrowed, tokio_postgres::Error>,
+    mapper: fn(ProjectBuildSummaryBorrowed) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> ProjectBuildSummaryQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(
+        self,
+        mapper: fn(ProjectBuildSummaryBorrowed) -> R,
+    ) -> ProjectBuildSummaryQuery<'c, 'a, 's, C, R, N> {
+        ProjectBuildSummaryQuery {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -1874,7 +1979,7 @@ impl ListRecentStmt {
 pub struct ListForProjectStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_for_project() -> ListForProjectStmt {
     ListForProjectStmt(
-        "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $1 ORDER BY b.created_at DESC",
+        "SELECT b.* FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $1 ORDER BY b.created_at DESC LIMIT $2 OFFSET $3",
         None,
     )
 }
@@ -1890,10 +1995,12 @@ impl ListForProjectStmt {
         &'s self,
         client: &'c C,
         project_id: &'a uuid::Uuid,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 1> {
+        limit: &'a i64,
+        offset: &'a i64,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 3> {
         BuildRowQuery {
             client,
-            params: [project_id],
+            params: [project_id, limit, offset],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1935,6 +2042,88 @@ impl ListForProjectStmt {
                 },
             mapper: |it| BuildRow::from(it),
         }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ListForProjectParams,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 3>,
+        C,
+    > for ListForProjectStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ListForProjectParams,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 3> {
+        self.bind(client, &params.project_id, &params.limit, &params.offset)
+    }
+}
+pub struct ProjectBuildSummaryStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn project_build_summary() -> ProjectBuildSummaryStmt {
+    ProjectBuildSummaryStmt(
+        "SELECT COUNT(*) FILTER (WHERE b.status = ANY($1))::bigint AS failing, COUNT(*) FILTER (WHERE b.status = 'pending')::bigint AS queued, COALESCE( ARRAY_AGG(DISTINCT b.system ORDER BY b.system) FILTER (WHERE b.system IS NOT NULL), '{}' )::text[] AS systems FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE j.project_id = $2",
+        None,
+    )
+}
+impl ProjectBuildSummaryStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::ArraySql<Item = T1>,
+    >(
+        &'s self,
+        client: &'c C,
+        failed_statuses: &'a T2,
+        project_id: &'a uuid::Uuid,
+    ) -> ProjectBuildSummaryQuery<'c, 'a, 's, C, ProjectBuildSummary, 2> {
+        ProjectBuildSummaryQuery {
+            client,
+            params: [failed_statuses, project_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |
+                row: &tokio_postgres::Row,
+            | -> Result<ProjectBuildSummaryBorrowed, tokio_postgres::Error> {
+                Ok(ProjectBuildSummaryBorrowed {
+                    failing: row.try_get(0)?,
+                    queued: row.try_get(1)?,
+                    systems: row.try_get(2)?,
+                })
+            },
+            mapper: |it| ProjectBuildSummary::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::ArraySql<Item = T1>>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ProjectBuildSummaryParams<T1, T2>,
+        ProjectBuildSummaryQuery<'c, 'a, 's, C, ProjectBuildSummary, 2>,
+        C,
+    > for ProjectBuildSummaryStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ProjectBuildSummaryParams<T1, T2>,
+    ) -> ProjectBuildSummaryQuery<'c, 'a, 's, C, ProjectBuildSummary, 2> {
+        self.bind(client, &params.failed_statuses, &params.project_id)
     }
 }
 pub struct GetStatsStmt(&'static str, Option<tokio_postgres::Statement>);
