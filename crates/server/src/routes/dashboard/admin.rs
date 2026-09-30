@@ -767,7 +767,12 @@ pub struct EvaluationVisibilityForm {
 
 fn safe_redirect_target(target: Option<String>, fallback: String) -> String {
   target
-    .filter(|t| t.starts_with('/') && !t.starts_with("//"))
+    .filter(|t| {
+      // Browsers read `/\host` as `//host` and drop tabs and newlines.
+      t.starts_with('/')
+        && !matches!(t.as_bytes().get(1), Some(b'/' | b'\\'))
+        && !t.chars().any(char::is_control)
+    })
     .unwrap_or(fallback)
 }
 
