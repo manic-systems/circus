@@ -793,6 +793,23 @@ impl runner::Server for RunnerImpl {
       for reference in &references {
         validate_store_path(reference)?;
       }
+      if let Some(deriver) = &deriver {
+        validate_store_path(deriver)?;
+        if std::path::Path::new(deriver)
+          .extension()
+          .is_none_or(|extension| extension != "drv")
+        {
+          return Err(capnp::Error::failed(format!(
+            "deriver is not a derivation: {deriver}"
+          )));
+        }
+      }
+      if let Some(ca) = &ca {
+        validate_text_len("ca", ca, 1, limits::MAX_HASH_LEN)?;
+        if !ca.bytes().all(|byte| byte.is_ascii_graphic()) {
+          return Err(capnp::Error::failed("ca contains invalid bytes".into()));
+        }
+      }
 
       let registered = *self.registered_machine.lock();
       if registered.map(|r| r.machine_id) != Some(machine_id) {
@@ -835,6 +852,7 @@ impl runner::Server for RunnerImpl {
           nar_size,
           file_hash: (!file_hash.is_empty()).then(|| file_hash.clone()),
           file_size: (file_size > 0).then_some(file_size),
+          references: references.clone(),
         },
       ))
       .await

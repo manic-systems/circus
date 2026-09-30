@@ -567,7 +567,13 @@ async fn narinfo_for_settings(
     {
       return Ok(StatusCode::NOT_FOUND.into_response());
     }
-    let body = render_narinfo_row(&row);
+    let Some(body) = render_narinfo_row(&row) else {
+      tracing::warn!(
+        store_path = %row.store_path.escape_debug(),
+        "refusing to serve narinfo row with control characters"
+      );
+      return Ok(StatusCode::NOT_FOUND.into_response());
+    };
     if !local_nar_route {
       state.narinfo_cache.insert(cache_key, body.clone());
     }
@@ -630,37 +636,45 @@ async fn narinfo_for_settings(
 /// substituter can't tell the two sources apart.
 fn render_narinfo_row(
   row: &circus_common::repo::narinfo_cache::NarInfo,
-) -> String {
-  use std::fmt::Write as _;
+) -> Option<String> {
+  use std::fmt::{Display, Write as _};
   let mut s = String::new();
-  let _ = writeln!(s, "StorePath: {}", row.store_path);
-  let _ = writeln!(s, "URL: {}", row.url);
-  let _ = writeln!(s, "Compression: {}", row.compression);
+  let mut field = |key: &str, value: &dyn Display| -> Option<()> {
+    let value = value.to_string();
+    if value.chars().any(char::is_control) {
+      return None;
+    }
+    let _ = writeln!(s, "{key}: {value}");
+    Some(())
+  };
+  field("StorePath", &row.store_path)?;
+  field("URL", &row.url)?;
+  field("Compression", &row.compression)?;
   if let Some(fh) = &row.file_hash {
-    let _ = writeln!(s, "FileHash: {fh}");
+    field("FileHash", fh)?;
   }
   if let Some(fs) = row.file_size {
-    let _ = writeln!(s, "FileSize: {fs}");
+    field("FileSize", &fs)?;
   }
-  let _ = writeln!(s, "NarHash: {}", row.nar_hash);
-  let _ = writeln!(s, "NarSize: {}", row.nar_size);
+  field("NarHash", &row.nar_hash)?;
+  field("NarSize", &row.nar_size)?;
   let references = row
     .references
     .iter()
     .map(|path| store_path_name(path))
     .collect::<Vec<_>>()
     .join(" ");
-  let _ = writeln!(s, "References: {references}");
+  field("References", &references)?;
   if let Some(d) = &row.deriver {
-    let _ = writeln!(s, "Deriver: {}", store_path_name(d));
+    field("Deriver", &store_path_name(d))?;
   }
   if let Some(c) = &row.ca {
-    let _ = writeln!(s, "CA: {c}");
+    field("CA", c)?;
   }
   if let Some(sig) = &row.sig {
-    let _ = writeln!(s, "Sig: {sig}");
+    field("Sig", sig)?;
   }
-  s
+  Some(s)
 }
 
 fn store_path_name(path: &str) -> &str {
@@ -1018,7 +1032,8 @@ mod tests {
 
   #[test]
   fn render_narinfo_row_uses_store_path_names_for_refs_and_deriver() {
-    let body = render_narinfo_row(&test_narinfo_row());
+    let body =
+      render_narinfo_row(&test_narinfo_row()).expect("row has no controls");
     assert!(
       body.contains(
         "References: dddddddddddddddddddddddddddddddd-glibc \

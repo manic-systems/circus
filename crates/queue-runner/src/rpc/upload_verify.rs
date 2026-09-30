@@ -1,4 +1,5 @@
 use std::{
+  collections::HashSet,
   pin::Pin,
   sync::{
     Arc,
@@ -10,11 +11,12 @@ use std::{
 
 use async_compression::tokio::bufread::{GzipDecoder, XzDecoder, ZstdDecoder};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+use circus_binary_cache::{archive::NarEvent, parse_nar};
 use color_eyre::eyre::{Context as _, bail, eyre};
-use futures::TryStreamExt as _;
+use futures::{StreamExt as _, TryStreamExt as _};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
-use tokio::io::{AsyncRead, AsyncReadExt as _, BufReader, ReadBuf};
+use tokio::io::{AsyncRead, BufReader, ReadBuf};
 use tokio_util::io::StreamReader;
 
 #[derive(Debug, Clone)]
@@ -33,6 +35,7 @@ pub struct VerifyRequest {
   pub nar_size:    u64,
   pub file_hash:   Option<String>,
   pub file_size:   Option<u64>,
+  pub references:  Vec<String>,
 }
 
 fn http_client() -> &'static reqwest::Client {
@@ -67,38 +70,56 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
   };
   let buffered = BufReader::new(hashed);
 
-  let mut reader: Pin<Box<dyn AsyncRead + Send>> =
-    match req.compression.as_str() {
-      "zstd" => Box::pin(ZstdDecoder::new(buffered)),
-      "xz" => Box::pin(XzDecoder::new(buffered)),
-      "gzip" | "gz" => Box::pin(GzipDecoder::new(buffered)),
-      "none" | "" => Box::pin(buffered),
-      other => bail!("unsupported upload compression: {other}"),
-    };
+  let reader: Pin<Box<dyn AsyncRead + Send>> = match req.compression.as_str() {
+    "zstd" => Box::pin(ZstdDecoder::new(buffered)),
+    "xz" => Box::pin(XzDecoder::new(buffered)),
+    "gzip" | "gz" => Box::pin(GzipDecoder::new(buffered)),
+    "none" | "" => Box::pin(buffered),
+    other => bail!("unsupported upload compression: {other}"),
+  };
 
-  let mut nar_hasher = Sha256::new();
-  let mut nar_size = 0u64;
-  let mut buf = vec![0u8; 128 * 1024];
-  loop {
-    let n = reader.read(&mut buf).await.context("read uploaded NAR")?;
-    if n == 0 {
-      break;
-    }
-    nar_hasher.update(&buf[..n]);
-    nar_size = nar_size.saturating_add(n as u64);
-    // Abort once the decompressed stream passes the declared size, bounding
-    // a malicious or mismatched upload.
-    if nar_size > req.nar_size {
-      bail!(
-        "uploaded NAR exceeds declared size {}: decompressed at least \
-         {nar_size} bytes",
-        req.nar_size
-      );
+  let mut tap = NarTap {
+    inner:   reader,
+    hasher:  Sha256::new(),
+    size:    0,
+    limit:   req.nar_size,
+    scanner: RefScanner::new(&req.references)?,
+  };
+  {
+    let mut events = std::pin::pin!(parse_nar(&mut tap));
+    while let Some(event) = events.next().await {
+      if let NarEvent::File { mut reader, .. } =
+        event.context("parse uploaded NAR")?
+      {
+        tokio::io::copy(&mut reader, &mut tokio::io::sink())
+          .await
+          .context("read uploaded NAR")?;
+      }
     }
   }
-  drop(reader);
+  let trailing = tokio::io::copy(&mut tap, &mut tokio::io::sink())
+    .await
+    .context("read uploaded NAR")?;
+  if trailing != 0 {
+    bail!("uploaded NAR has {trailing} bytes of trailing data");
+  }
+  let NarTap {
+    inner,
+    hasher,
+    size: nar_size,
+    scanner,
+    ..
+  } = tap;
+  drop(inner);
+  let missing = scanner.missing();
+  if !missing.is_empty() {
+    bail!(
+      "uploaded NAR does not mention its declared references: {}",
+      missing.join(", ")
+    );
+  }
 
-  let computed_nar = nar_hasher.finalize();
+  let computed_nar = hasher.finalize();
   let computed_file = {
     let hasher = Arc::try_unwrap(file_hasher)
       .map_err(|_| eyre!("file hasher still has live readers"))?
@@ -150,6 +171,122 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
     file_hash,
     file_size,
   })
+}
+
+struct NarTap {
+  inner:   Pin<Box<dyn AsyncRead + Send>>,
+  hasher:  Sha256,
+  size:    u64,
+  limit:   u64,
+  scanner: RefScanner,
+}
+
+impl AsyncRead for NarTap {
+  fn poll_read(
+    self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &mut ReadBuf<'_>,
+  ) -> Poll<std::io::Result<()>> {
+    let this = self.get_mut();
+    let prev = buf.filled().len();
+    std::task::ready!(this.inner.as_mut().poll_read(cx, buf))?;
+    let new = &buf.filled()[prev..];
+    this.size = this.size.saturating_add(new.len() as u64);
+    // Abort once the decompressed stream passes the declared size, bounding
+    // a malicious or mismatched upload.
+    if this.size > this.limit {
+      return Poll::Ready(Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+          "uploaded NAR exceeds declared size {}: decompressed at least {} \
+           bytes",
+          this.limit, this.size
+        ),
+      )));
+    }
+    this.hasher.update(new);
+    this.scanner.feed(new);
+    Poll::Ready(Ok(()))
+  }
+}
+
+const HASH_PART_LEN: usize = 32;
+
+/// Mirrors Nix's reference scanner.
+struct RefScanner {
+  wanted: HashSet<[u8; HASH_PART_LEN]>,
+  found:  HashSet<[u8; HASH_PART_LEN]>,
+  tail:   Vec<u8>,
+}
+
+impl RefScanner {
+  fn new(references: &[String]) -> color_eyre::Result<Self> {
+    let wanted = references
+      .iter()
+      .map(|reference| {
+        let name = reference.rsplit('/').next().unwrap_or_default();
+        name
+          .as_bytes()
+          .get(..HASH_PART_LEN)
+          .filter(|hash| hash.iter().copied().all(is_nix32))
+          .and_then(|hash| hash.try_into().ok())
+          .ok_or_else(|| eyre!("reference {reference} has no store path hash"))
+      })
+      .collect::<color_eyre::Result<_>>()?;
+    Ok(Self {
+      wanted,
+      found: HashSet::new(),
+      tail: Vec::with_capacity(2 * HASH_PART_LEN),
+    })
+  }
+
+  fn feed(&mut self, data: &[u8]) {
+    if self.found.len() == self.wanted.len() {
+      return;
+    }
+    // Windows that straddle the previous chunk live only in the seam.
+    let mut seam = std::mem::take(&mut self.tail);
+    seam.extend_from_slice(&data[..data.len().min(HASH_PART_LEN - 1)]);
+    self.scan(&seam);
+    self.scan(data);
+
+    let keep = HASH_PART_LEN - 1;
+    if data.len() >= keep {
+      seam.clear();
+      seam.extend_from_slice(&data[data.len() - keep..]);
+    } else {
+      seam.drain(..seam.len().saturating_sub(keep));
+    }
+    self.tail = seam;
+  }
+
+  fn scan(&mut self, data: &[u8]) {
+    let mut start = 0;
+    while let Some(window) = data.get(start..start + HASH_PART_LEN) {
+      if let Some(bad) = window.iter().rposition(|byte| !is_nix32(*byte)) {
+        start += bad + 1;
+        continue;
+      }
+      if let Ok(hash) = <[u8; HASH_PART_LEN]>::try_from(window)
+        && self.wanted.contains(&hash)
+      {
+        self.found.insert(hash);
+      }
+      start += 1;
+    }
+  }
+
+  fn missing(&self) -> Vec<String> {
+    self
+      .wanted
+      .difference(&self.found)
+      .map(|hash| String::from_utf8_lossy(hash).into_owned())
+      .collect()
+  }
+}
+
+const fn is_nix32(byte: u8) -> bool {
+  matches!(byte, b'0'..=b'9' | b'a'..=b'd' | b'f'..=b'n' | b'p'..=b's' | b'v'..=b'z')
 }
 
 struct HashingReader {

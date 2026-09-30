@@ -916,6 +916,7 @@ dependencies = [
  "capnp",
  "capnp-rpc",
  "chrono",
+ "circus-binary-cache",
  "circus-common",
  "circus-config",
  "circus-migrations",
