@@ -420,7 +420,7 @@ async fn evaluate_flake(
 async fn evaluate_all_nixos_configs(
   repo_path: &Path,
   source: &SourceFlakeRef,
-  _timeout: Duration,
+  timeout: Duration,
   config: &EvaluatorConfig,
   _inputs: &[JobsetInput],
   cancel: &CancellationToken,
@@ -449,7 +449,9 @@ async fn evaluate_all_nixos_configs(
       CiError::NixEval(format!("Failed to apply evaluator memory limit: {e}"))
     })?;
   let output = tokio::select! {
-    output = cmd.output() => output,
+    output = tokio::time::timeout(timeout, cmd.output()) => output.map_err(|_| {
+      CiError::Timeout(format!("Nix evaluation timed out after {timeout:?}"))
+    })?,
     () = cancel.cancelled() => return Err(CiError::NixEval("Nix evaluation was cancelled".to_string())),
   }.map_err(|e| {
     CiError::NixEval(format!("Failed to evaluate nixosConfigurations: {e}"))
