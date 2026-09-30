@@ -74,6 +74,7 @@ pub async fn probe_flake(
         "--no-write-lock-file",
         &full_ref,
       ])
+      .kill_on_drop(true)
       .output()
       .await
   })
@@ -107,19 +108,17 @@ pub async fn probe_flake(
     ));
   }
 
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  if stdout.len() > MAX_OUTPUT_SIZE {
+  if output.stdout.len() > MAX_OUTPUT_SIZE {
     tracing::warn!(
       "Flake show output exceeds {}MB, parsing top-level only",
       MAX_OUTPUT_SIZE / (1024 * 1024)
     );
   }
 
-  let raw: serde_json::Value =
-    serde_json::from_str(&stdout[..stdout.len().min(MAX_OUTPUT_SIZE)])
-      .map_err(|e| {
-        Error::Eval(format!("Failed to parse flake show output: {e}"))
-      })?;
+  let stdout = &output.stdout[..output.stdout.len().min(MAX_OUTPUT_SIZE)];
+  let raw: serde_json::Value = serde_json::from_slice(stdout).map_err(|e| {
+    Error::Eval(format!("Failed to parse flake show output: {e}"))
+  })?;
 
   let Some(top) = raw.as_object() else {
     return Err(Error::Eval(
