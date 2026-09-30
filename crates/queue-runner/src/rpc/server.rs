@@ -1250,10 +1250,11 @@ fn validate_agent_capacity(
       "agent speed_factor must be finite and positive, got {speed}"
     )));
   }
-  if cpu == 0 {
-    return Err(capnp::Error::failed(
-      "agent cpu_count must be greater than 0".into(),
-    ));
+  if cpu == 0 || i32::try_from(cpu).is_err() {
+    return Err(capnp::Error::failed(format!(
+      "agent cpu_count must be between 1 and {}, got {cpu}",
+      i32::MAX
+    )));
   }
   if max_jobs == 0 {
     return Err(capnp::Error::failed(
