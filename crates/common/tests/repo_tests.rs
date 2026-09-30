@@ -2131,9 +2131,10 @@ async fn test_cache_gc_combines_age_and_size_rules_without_over_deleting() {
     let client = pool.get().await.expect("get database client");
     client
       .execute(
-        "UPDATE narinfo_cache SET created_at = NOW() - ($1 * INTERVAL '1 \
-         day'), last_fetched_at = CASE WHEN $2::bigint IS NULL THEN NULL ELSE \
-         NOW() - ($2 * INTERVAL '1 day') END WHERE store_path = $3",
+        "UPDATE narinfo_cache SET created_at = NOW() - ($1::bigint * INTERVAL \
+         '1 day'), last_fetched_at = CASE WHEN $2::bigint IS NULL THEN NULL \
+         ELSE NOW() - ($2::bigint * INTERVAL '1 day') END WHERE store_path = \
+         $3",
         &[created_days_ago, fetched_days_ago, store_path],
       )
       .await
