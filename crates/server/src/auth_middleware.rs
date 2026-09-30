@@ -227,9 +227,7 @@ pub async fn extract_session(
     request
       .extensions_mut()
       .insert(CsrfToken(state.csrf_token_for(&session.session_id)));
-  }
-
-  if let Some(session) = auth.legacy_session {
+  } else if let Some(session) = auth.legacy_session {
     if let Some(api_key) = session.api_key {
       request.extensions_mut().insert(api_key);
     }
