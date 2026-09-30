@@ -33,6 +33,7 @@ pin_project! {
         #[pin]
         reader: Lending<R, PaddedReader<R>>,
         name: Option<ByteString>,
+        dir_last_names: Vec<Option<ByteString>>,
         parsed: usize,
         state: Inner<false>,
     }
@@ -44,10 +45,11 @@ where
 {
   pub fn new(reader: R) -> Self {
     Self {
-      reader: Lending::new(reader),
-      parsed: 0,
-      name:   None,
-      state:  Inner {
+      reader:         Lending::new(reader),
+      parsed:         0,
+      name:           None,
+      dir_last_names: Vec::new(),
+      state:          Inner {
         level: 0,
         state: InnerState::Root(0),
       },
@@ -145,16 +147,28 @@ where
           }
           let name_buf = buf.split_to(len);
           trace!(len = buf.len(), ?name_buf, "Read name");
+          let Some(last_name) = this.dir_last_names.last_mut() else {
+            return Poll::Ready(Some(Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "directory entry outside a directory",
+            ))));
+          };
+          if let Err(error) = check_entry_name(last_name.as_ref(), &name_buf) {
+            return Poll::Ready(Some(Err(error)));
+          }
+          *last_name = Some(name_buf.clone());
           *this.name = Some(name_buf);
           buf.advance(aligned - len);
           reader.as_mut().consume(aligned);
           this.state.bump_next();
         },
         InnerState::ReadDir => {
+          this.dir_last_names.push(None);
           let name = this.name.take().unwrap_or_default();
           return Poll::Ready(Some(Ok(NarEvent::StartDirectory { name })));
         },
         InnerState::FinishReadEntry => {
+          this.dir_last_names.pop();
           return Poll::Ready(Some(Ok(NarEvent::EndDirectory)));
         },
         InnerState::Eof => return Poll::Ready(None),
@@ -162,6 +176,31 @@ where
       }
     }
   }
+}
+
+/// Same rules as Nix's own NAR parser.
+fn check_entry_name(
+  previous: Option<&ByteString>,
+  name: &[u8],
+) -> io::Result<()> {
+  if name.is_empty()
+    || name == b"."
+    || name == b".."
+    || name.contains(&b'/')
+    || name.contains(&0)
+  {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid NAR entry name",
+    ));
+  }
+  if previous.is_some_and(|previous| previous.as_ref() >= name) {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "NAR directory entries are not strictly sorted",
+    ));
+  }
+  Ok(())
 }
 
 pub fn parse_nar<R>(

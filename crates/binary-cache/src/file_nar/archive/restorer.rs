@@ -37,6 +37,8 @@ pub enum NarWriteOperation {
   CreateFile,
   #[display("path contains invalid UTF-8")]
   PathUTF8,
+  #[display("restoring malformed archive")]
+  InvalidArchive,
   #[display("Could not join state")]
   JoinError,
 }
@@ -78,6 +80,13 @@ impl NarWriteError {
   pub fn create_file_error(path: PathBuf, err: io::Error) -> Self {
     Self::new(NarWriteOperation::CreateFile, path, err)
   }
+  fn invalid_archive(path: PathBuf, reason: &'static str) -> Self {
+    Self::new(
+      NarWriteOperation::InvalidArchive,
+      path,
+      io::Error::new(io::ErrorKind::InvalidData, reason),
+    )
+  }
 }
 
 pin_project! {
@@ -89,6 +98,8 @@ pin_project! {
         use_case_hack: bool,
         entries: Entries,
         dir_stack: Vec<Entries>,
+        started: bool,
+        depth: usize,
     }
 }
 
@@ -113,7 +124,26 @@ impl NarRestorer {
       use_case_hack,
       entries: Default::default(),
       dir_stack: Default::default(),
+      started: false,
+      depth: 0,
     }
+  }
+
+  /// Keeps every write inside the restore root.
+  fn entry_path(&mut self, name: &[u8]) -> Result<PathBuf, NarWriteError> {
+    let is_root = !std::mem::replace(&mut self.started, true);
+    if is_root != name.is_empty()
+      || name == b"."
+      || name == b".."
+      || name.contains(&b'/')
+      || name.contains(&0)
+    {
+      return Err(NarWriteError::invalid_archive(
+        self.path.clone(),
+        "invalid entry name",
+      ));
+    }
+    join_name(&self.path, name)
   }
 }
 
@@ -174,7 +204,7 @@ where
           name
         };
 
-        let path = join_name(&self.path, &name)?;
+        let path = self.entry_path(&name)?;
         let mut options = OpenOptions::new();
         options.write(true);
         options.create_new(true);
@@ -220,7 +250,7 @@ where
           name
         };
 
-        let path = join_name(&self.path, &name)?;
+        let path = self.entry_path(&name)?;
         let target_os = target
           .to_os_str()
           .map_err(|err| {
@@ -249,7 +279,8 @@ where
           name
         };
 
-        let path = join_name(&self.path, &name)?;
+        let path = self.entry_path(&name)?;
+        self.depth += 1;
         self.path = path;
         let path = self.path.clone();
         self.state = Some(spawn_blocking(|| {
@@ -259,6 +290,13 @@ where
         }));
       },
       NarEvent::EndDirectory => {
+        let Some(depth) = self.depth.checked_sub(1) else {
+          return Err(NarWriteError::invalid_archive(
+            self.root.clone(),
+            "directory end without a start",
+          ));
+        };
+        self.depth = depth;
         if self.use_case_hack {
           self.entries = self.dir_stack.pop().unwrap_or_default();
         }
