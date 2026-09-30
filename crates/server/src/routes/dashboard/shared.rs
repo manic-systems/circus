@@ -116,11 +116,11 @@ impl Pagination {
     let limit = limit.max(1);
     Self {
       page:        offset / limit + 1,
-      total_pages: (total + limit - 1) / limit,
+      total_pages: total.saturating_add(limit - 1) / limit,
       has_prev:    offset > 0,
-      has_next:    offset + limit < total,
-      prev_offset: (offset - limit).max(0),
-      next_offset: offset + limit,
+      has_next:    offset.saturating_add(limit) < total,
+      prev_offset: offset.saturating_sub(limit).max(0),
+      next_offset: offset.saturating_add(limit),
     }
   }
 }
