@@ -418,11 +418,14 @@ async fn gc_loop(
       },
     };
 
+    // Collecting with an unknown pin set would delete pinned roots.
     let pinned_build_ids = match repo::builds::list_pinned_ids(&pool).await {
       Ok(ids) => ids,
       Err(e) => {
-        tracing::warn!("Failed to fetch pinned build IDs for GC: {e}");
-        HashSet::new()
+        tracing::warn!(
+          "Skipping GC cycle, failed to fetch pinned build IDs: {e}"
+        );
+        continue;
       },
     };
 
@@ -433,16 +436,18 @@ async fn gc_loop(
             .iter()
             .filter_map(|product| product.gc_root_path.as_deref())
             .map(PathBuf::from)
-            .collect();
+            .collect::<HashSet<PathBuf>>();
           let output_paths = products
             .iter()
             .map(|product| PathBuf::from(&product.path))
-            .collect();
+            .collect::<HashSet<PathBuf>>();
           (root_paths, output_paths)
         },
         Err(e) => {
-          tracing::warn!("Failed to fetch pinned build products for GC: {e}");
-          (HashSet::new(), HashSet::new())
+          tracing::warn!(
+            "Skipping GC cycle, failed to fetch pinned build products: {e}"
+          );
+          continue;
         },
       };
 
