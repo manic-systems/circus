@@ -215,11 +215,15 @@ async fn sync_project_members(
   pool: &PgPool,
   config: &DeclarativeConfig,
 ) -> Result<()> {
-  let users = repo::users::list(pool, 10000, 0).await?;
-  let user_map = users
-    .into_iter()
-    .map(|user| (user.username, user.id))
-    .collect::<HashMap<_, _>>();
+  let mut user_map = HashMap::new();
+  for member in config.projects.iter().flat_map(|project| &project.members) {
+    if !user_map.contains_key(member.username.as_str())
+      && let Some(user) =
+        repo::users::get_by_username(pool, &member.username).await?
+    {
+      user_map.insert(member.username.as_str(), user.id);
+    }
+  }
   for declaration in &config.projects {
     let authoritative = !declaration
       .allow_runtime_mutation
