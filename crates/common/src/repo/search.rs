@@ -207,7 +207,12 @@ fn like_pattern(query: &str) -> String {
   if query.is_empty() {
     "%".to_string()
   } else {
-    format!("%{query}%")
+    // PostgreSQL's default LIKE escape character is a backslash.
+    let escaped = query
+      .replace('\\', "\\\\")
+      .replace('%', "\\%")
+      .replace('_', "\\_");
+    format!("%{escaped}%")
   }
 }
 
@@ -543,7 +548,7 @@ pub async fn quick_search(
   query: &str,
   limit: i64,
 ) -> Result<(Vec<Project>, Vec<Build>)> {
-  let pattern = format!("%{query}%");
+  let pattern = like_pattern(query);
   let client = pool.get().await?;
 
   let project_rows = q::quick_projects()
