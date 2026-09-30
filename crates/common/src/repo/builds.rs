@@ -653,12 +653,12 @@ pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Build> {
 ///
 /// Returns error if database query fails.
 pub async fn cancel_cascade(pool: &PgPool, id: Uuid) -> Result<Vec<Build>> {
-  let mut cancelled = Vec::new();
-
   // Cancel the target build
-  if let Ok(build) = cancel(pool, id).await {
-    cancelled.push(build);
-  }
+  let mut cancelled = match cancel(pool, id).await {
+    Ok(build) => vec![build],
+    Err(CiError::NotFound(_)) => return Ok(Vec::new()),
+    Err(e) => return Err(e),
+  };
 
   // Find and cancel all dependents recursively
   let mut to_cancel: Vec<Uuid> = vec![id];
@@ -672,9 +672,13 @@ pub async fn cancel_cascade(pool: &PgPool, id: Uuid) -> Result<Vec<Build>> {
     };
 
     for dep_id in dependents {
-      if let Ok(build) = cancel(pool, dep_id).await {
-        to_cancel.push(dep_id);
-        cancelled.push(build);
+      match cancel(pool, dep_id).await {
+        Ok(build) => {
+          to_cancel.push(dep_id);
+          cancelled.push(build);
+        },
+        Err(CiError::NotFound(_)) => {},
+        Err(e) => return Err(e),
       }
     }
   }
