@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::{
   extract::{Query, State},
-  response::{Html, Response},
+  response::Html,
 };
 use circus_common::models::Build;
 use uuid::Uuid;
@@ -12,6 +12,7 @@ use super::{
     shared::{
       DashboardContext,
       DashboardPage,
+      PageError,
       QueueBuildView,
       RenderExt,
       enforce_page_access,
@@ -46,7 +47,7 @@ pub(in crate::routes::dashboard) async fn queue_page(
   State(state): State<AppState>,
   Query(params): Query<QueueFilterParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Queue)?;
   let show_running = params.status.as_deref() != Some("pending");
   let show_pending = params.status.as_deref() != Some("running");

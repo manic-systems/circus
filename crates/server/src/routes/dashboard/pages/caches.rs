@@ -9,6 +9,7 @@ use super::{
       CacheNarsParams,
       DashboardContext,
       DashboardPage,
+      PageError,
       Pagination,
       RenderExt,
       enforce_page_access,
@@ -41,7 +42,7 @@ fn fmt_opt_ts(ts: Option<chrono::DateTime<chrono::Utc>>) -> String {
 pub(in crate::routes::dashboard) async fn caches_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Caches)?;
   let refs = crate::cache_overview::list_cache_refs(&state)
     .await
@@ -136,7 +137,7 @@ pub(in crate::routes::dashboard) async fn cache_detail_page(
   ctx: DashboardContext,
   Path(name): Path<String>,
   Query(gc_params): Query<CacheGcNoticeParams>,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::CacheDetail)?;
   let Some(cache) = crate::cache_overview::resolve_cache_ref(&state, &name)
     .await
@@ -208,7 +209,7 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
   ctx: DashboardContext,
   Path(name): Path<String>,
   Query(params): Query<CacheNarsParams>,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::CacheNars)?;
   let Some(cache) = crate::cache_overview::resolve_cache_ref(&state, &name)
     .await

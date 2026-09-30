@@ -28,6 +28,7 @@ use super::{
     ApiKeyView,
     DashboardContext,
     DashboardPage,
+    PageError,
     Pagination,
     RenderExt,
     UserView,
@@ -259,14 +260,14 @@ pub(super) async fn admin_page(
   State(state): State<AppState>,
   Query(params): Query<AdminParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   if !ctx.is_admin {
     let target = if ctx.auth_name.is_empty() {
       "/login"
     } else {
       "/"
     };
-    return Err(Redirect::to(target).into_response());
+    return Err(PageError::new(Redirect::to(target)));
   }
 
   let pool = &state.pool;
@@ -458,7 +459,7 @@ pub(super) async fn store_gc(
     return StatusCode::FORBIDDEN.into_response();
   }
   if let Err(e) = ctx.check_csrf(&form.csrf_token) {
-    return e;
+    return e.into_response();
   }
   if !state.config.gc.enabled {
     return (StatusCode::CONFLICT, "Garbage collection is disabled")
@@ -499,7 +500,7 @@ pub(super) async fn cache_gc(
     return StatusCode::FORBIDDEN.into_response();
   }
   if let Err(e) = ctx.check_csrf(&form.csrf_token) {
-    return e;
+    return e.into_response();
   }
   let cache =
     match crate::cache_overview::resolve_cache_ref(&state, &name).await {
@@ -609,10 +610,10 @@ pub(super) async fn users_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   // Only admins can view user list (contains PII like emails)
   if !ctx.is_admin {
-    return Err(Redirect::to("/").into_response());
+    return Err(PageError::new(Redirect::to("/")));
   }
 
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
@@ -673,7 +674,7 @@ pub(super) async fn users_page(
 pub(super) async fn news_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::News)?;
   let items = circus_common::repo::news::list(&state.pool, 50, 0)
     .await
@@ -704,7 +705,7 @@ pub(super) async fn news_create(
     return StatusCode::FORBIDDEN.into_response();
   }
   if let Err(e) = ctx.check_csrf(&form.csrf_token) {
-    return e;
+    return e.into_response();
   }
   if form.title.trim().is_empty() {
     return (StatusCode::BAD_REQUEST, "Title is required").into_response();
@@ -735,7 +736,7 @@ pub(super) async fn news_delete(
     return StatusCode::FORBIDDEN.into_response();
   }
   if let Err(e) = ctx.check_csrf(&form.csrf_token) {
-    return e;
+    return e.into_response();
   }
   if let Err(e) = circus_common::repo::news::delete(&state.pool, id).await {
     tracing::warn!(id = %id, "Failed to delete news item: {e}");
@@ -781,9 +782,9 @@ pub(super) async fn jobset_delete(
   Path(jobset_id): Path<Uuid>,
   ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   if !ctx.is_admin {
-    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+    return Err(PageError::new((StatusCode::FORBIDDEN, "Admin required")));
   }
   ctx.check_csrf(&form.csrf_token)?;
   let jobset = circus_common::repo::jobsets::get(&state.pool, jobset_id)
@@ -811,9 +812,9 @@ pub(super) async fn evaluation_visibility(
   Path(evaluation_id): Path<Uuid>,
   ctx: DashboardContext,
   Form(form): Form<EvaluationVisibilityForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   if !ctx.is_admin {
-    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+    return Err(PageError::new((StatusCode::FORBIDDEN, "Admin required")));
   }
   ctx.check_csrf(&form.csrf_token)?;
   circus_common::repo::evaluations::set_hidden(
@@ -841,7 +842,7 @@ pub(super) async fn evaluation_cancel(
   Path(evaluation_id): Path<Uuid>,
   ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   ctx
     .require_permission(Permission::CancelBuild)
     .map_err(|status| {
@@ -865,7 +866,7 @@ pub(super) async fn evaluation_restart(
   Path(evaluation_id): Path<Uuid>,
   ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   ctx
     .require_permission(Permission::RestartJobs)
     .map_err(|status| {
@@ -892,14 +893,14 @@ pub(super) async fn notifications_page(
   State(state): State<AppState>,
   Path(project_id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   if !ctx.is_admin {
     let target = if ctx.auth_name.is_empty() {
       "/login"
     } else {
       "/projects"
     };
-    return Err(Redirect::to(target).into_response());
+    return Err(PageError::new(Redirect::to(target)));
   }
 
   let project = circus_common::repo::projects::get(&state.pool, project_id)
@@ -930,9 +931,9 @@ pub(super) async fn notifications_create(
   Path(project_id): Path<Uuid>,
   ctx: DashboardContext,
   Form(form): Form<NotificationCreateForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   if !ctx.is_admin {
-    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+    return Err(PageError::new((StatusCode::FORBIDDEN, "Admin required")));
   }
   ctx.check_csrf(&form.csrf_token)?;
   crate::routes::declarative::require_project_mutable(&state, project_id)
@@ -943,9 +944,10 @@ pub(super) async fn notifications_create(
       (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response()
     })?;
   if !parsed.is_object() {
-    return Err(
-      (StatusCode::BAD_REQUEST, "Config must be a JSON object").into_response(),
-    );
+    return Err(PageError::new((
+      StatusCode::BAD_REQUEST,
+      "Config must be a JSON object",
+    )));
   }
   let notification_type = form
     .notification_type
@@ -954,9 +956,10 @@ pub(super) async fn notifications_create(
       (StatusCode::BAD_REQUEST, "Unknown notification type").into_response()
     })?;
   if !NotificationType::all().contains(&notification_type) {
-    return Err(
-      (StatusCode::BAD_REQUEST, "Unknown notification type").into_response(),
-    );
+    return Err(PageError::new((
+      StatusCode::BAD_REQUEST,
+      "Unknown notification type",
+    )));
   }
 
   // Validate (SSRF/HTTPS guard for webhook/slack URLs and type-specific shape)
@@ -994,9 +997,9 @@ pub(super) async fn notifications_delete(
   Path((project_id, config_id)): Path<(Uuid, Uuid)>,
   ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   if !ctx.is_admin {
-    return Err((StatusCode::FORBIDDEN, "Admin required").into_response());
+    return Err(PageError::new((StatusCode::FORBIDDEN, "Admin required")));
   }
   ctx.check_csrf(&form.csrf_token)?;
   crate::routes::declarative::require_project_mutable(&state, project_id)
@@ -1024,7 +1027,7 @@ pub(super) async fn queue_bump(
   Path(build_id): Path<Uuid>,
   ctx: DashboardContext,
   Form(form): Form<CsrfOnlyForm>,
-) -> Result<Redirect, Response> {
+) -> Result<Redirect, PageError> {
   ctx
     .require_permission(Permission::BumpToFront)
     .map_err(|s| (s, "Insufficient permissions").into_response())?;
@@ -1037,13 +1040,10 @@ pub(super) async fn queue_bump(
         (StatusCode::INTERNAL_SERVER_ERROR, "Bump failed").into_response()
       })?;
   if updated.is_none() {
-    return Err(
-      (
-        StatusCode::NOT_FOUND,
-        "Build not found or no longer pending",
-      )
-        .into_response(),
-    );
+    return Err(PageError::new((
+      StatusCode::NOT_FOUND,
+      "Build not found or no longer pending",
+    )));
   }
   Ok(Redirect::to("/queue"))
 }

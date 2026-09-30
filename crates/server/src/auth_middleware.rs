@@ -169,13 +169,8 @@ fn valid_csrf_header(
 /// Use as a handler parameter: `_auth: RequireAdmin`
 pub struct RequireAdmin(pub ApiKey);
 
-impl FromRequestParts<AppState> for RequireAdmin {
-  type Rejection = StatusCode;
-
-  async fn from_request_parts(
-    parts: &mut Parts,
-    _state: &AppState,
-  ) -> Result<Self, Self::Rejection> {
+impl RequireAdmin {
+  fn from_parts(parts: &Parts) -> Result<Self, StatusCode> {
     // Check for user first (new auth)
     if let Some(user) = parts.extensions.get::<User>()
       && user.role == GlobalRole::Admin
@@ -204,6 +199,17 @@ impl FromRequestParts<AppState> for RequireAdmin {
     } else {
       Err(StatusCode::FORBIDDEN)
     }
+  }
+}
+
+impl FromRequestParts<AppState> for RequireAdmin {
+  type Rejection = StatusCode;
+
+  fn from_request_parts(
+    parts: &mut Parts,
+    _state: &AppState,
+  ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    std::future::ready(Self::from_parts(parts))
   }
 }
 

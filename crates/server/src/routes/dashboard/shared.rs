@@ -67,18 +67,36 @@ pub(super) struct PrivateTemplate {
   pub(super) auth_name: String,
 }
 
+/// Boxed so every dashboard handler result stays small.
+pub(super) struct PageError(Box<Response>);
+
+impl PageError {
+  pub(super) fn new(response: impl IntoResponse) -> Self {
+    Self(Box::new(response.into_response()))
+  }
+}
+
+impl From<Response> for PageError {
+  fn from(response: Response) -> Self {
+    Self(Box::new(response))
+  }
+}
+
+impl IntoResponse for PageError {
+  fn into_response(self) -> Response {
+    *self.0
+  }
+}
+
 pub(super) trait RenderExt: Template {
-  #[expect(
-    clippy::result_large_err,
-    reason = "dashboard handlers return axum Response directly"
-  )]
-  fn render_html_or_500(&self) -> Result<Html<String>, Response> {
+  fn render_html_or_500(&self) -> Result<Html<String>, PageError> {
     self.render().map(Html).map_err(|error| {
       (
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("Template error: {error}"),
       )
         .into_response()
+        .into()
     })
   }
 }
@@ -276,11 +294,7 @@ impl DashboardContext {
     }
   }
 
-  #[expect(
-    clippy::result_large_err,
-    reason = "dashboard handlers return axum Response directly"
-  )]
-  pub(super) fn check_csrf(&self, submitted: &str) -> Result<(), Response> {
+  pub(super) fn check_csrf(&self, submitted: &str) -> Result<(), PageError> {
     if self.csrf_token.is_empty()
       || self
         .csrf_token
@@ -289,10 +303,10 @@ impl DashboardContext {
         .unwrap_u8()
         != 1
     {
-      return Err(
-        (StatusCode::FORBIDDEN, "Invalid or missing CSRF token")
-          .into_response(),
-      );
+      return Err(PageError::new((
+        StatusCode::FORBIDDEN,
+        "Invalid or missing CSRF token",
+      )));
     }
     Ok(())
   }
@@ -322,11 +336,11 @@ impl DashboardContext {
 impl FromRequestParts<AppState> for DashboardContext {
   type Rejection = Infallible;
 
-  async fn from_request_parts(
+  fn from_request_parts(
     parts: &mut Parts,
     _state: &AppState,
-  ) -> Result<Self, Self::Rejection> {
-    Ok(Self::from_extensions(&parts.extensions))
+  ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    std::future::ready(Ok(Self::from_extensions(&parts.extensions)))
   }
 }
 
@@ -388,13 +402,7 @@ pub(super) fn enforce_page_access(
   config: &Config,
   ctx: &DashboardContext,
   page: DashboardPage,
-) -> Result<(), Response> {
-  #![expect(
-    clippy::result_large_err,
-    reason = "Dashboard handlers return axum Response directly; boxing would \
-              add noise at every call site"
-  )]
-
+) -> Result<(), PageError> {
   let allowed = match page.access(&config.server) {
     PageAccessLevel::Public => true,
     PageAccessLevel::Authenticated => ctx.is_authenticated,
@@ -405,21 +413,21 @@ pub(super) fn enforce_page_access(
   }
 
   if ctx.is_authenticated {
-    return Err(Redirect::to("/").into_response());
+    return Err(PageError::new(Redirect::to("/")));
   }
   let tmpl = PrivateTemplate {
     ui:        UiTemplateConfig::from_config(&config.ui),
     is_admin:  ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
   };
-  Err(tmpl.render().map_or_else(
+  Err(PageError::new(tmpl.render().map_or_else(
     |_| (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response(),
     |html| (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
-  ))
+  )))
 }
 
-pub(super) fn not_found(entity: &str) -> Response {
-  (StatusCode::NOT_FOUND, format!("{entity} not found")).into_response()
+pub(super) fn not_found(entity: &str) -> PageError {
+  PageError::new((StatusCode::NOT_FOUND, format!("{entity} not found")))
 }
 
 pub(super) struct ProjectSummaryView {

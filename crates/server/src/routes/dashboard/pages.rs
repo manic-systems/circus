@@ -30,6 +30,7 @@ use super::{
     JobStatusCell,
     JobStatusColumn,
     JobStatusRow,
+    PageError,
     Pagination,
     ProjectSummaryView,
     QueueSystemView,
@@ -213,7 +214,7 @@ pub(super) fn format_elapsed(secs: i64) -> String {
 pub(super) async fn home(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Home)?;
   let include_hidden = ctx.is_admin;
   let overview = operator::overview(&state, include_hidden)
@@ -278,7 +279,7 @@ pub(super) async fn projects_page(
   State(state): State<AppState>,
   Query(params): Query<PageParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Projects)?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
@@ -311,7 +312,7 @@ pub(super) async fn project_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Project)?;
   let include_hidden = ctx.is_admin;
   let Ok(project) = circus_common::repo::projects::get(&state.pool, id).await
@@ -361,7 +362,7 @@ pub(super) async fn jobset_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Jobset)?;
   let include_hidden = ctx.is_admin;
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
@@ -468,7 +469,7 @@ pub(super) async fn jobset_jobs_page(
   Path(id): Path<Uuid>,
   Query(params): Query<JobsetJobsParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::JobsetJobs)?;
   let include_hidden = ctx.is_admin;
   let Ok(jobset) = circus_common::repo::jobsets::get(&state.pool, id).await
@@ -587,7 +588,7 @@ pub(super) async fn evaluations_page(
   State(state): State<AppState>,
   Query(params): Query<EvalFilterParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Evaluations)?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
@@ -654,7 +655,7 @@ pub(super) async fn evaluation_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Evaluation)?;
   let include_hidden = ctx.is_admin;
   let Ok(eval) = circus_common::repo::evaluations::get_visible(
@@ -737,7 +738,7 @@ pub(super) async fn builds_page(
   State(state): State<AppState>,
   Query(params): Query<BuildFilterParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Builds)?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
@@ -841,7 +842,7 @@ pub(super) async fn build_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Build)?;
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await
   else {
@@ -929,7 +930,7 @@ pub(super) async fn build_log(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Response, Response> {
+) -> Result<Response, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Build)?;
 
   let Ok(build) = circus_common::repo::builds::get(&state.pool, id).await

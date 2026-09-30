@@ -1,6 +1,6 @@
 use axum::{
   extract::{Path, State},
-  response::{Html, IntoResponse, Redirect, Response},
+  response::{Html, Redirect},
 };
 use circus_common::models::BuildStatus;
 use uuid::Uuid;
@@ -10,6 +10,7 @@ use super::{
     shared::{
       DashboardContext,
       DashboardPage,
+      PageError,
       RenderExt,
       StarredJobView,
       build_view,
@@ -33,7 +34,7 @@ use crate::state::AppState;
 pub(in crate::routes::dashboard) async fn channels_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Channels)?;
   let channels = circus_common::repo::channels::list_all(&state.pool)
     .await
@@ -79,7 +80,7 @@ pub(in crate::routes::dashboard) async fn channel_page(
   State(state): State<AppState>,
   Path(id): Path<Uuid>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Channel)?;
   let Ok(channel) = circus_common::repo::channels::get(&state.pool, id).await
   else {
@@ -132,7 +133,7 @@ pub(in crate::routes::dashboard) async fn channel_page(
 pub(in crate::routes::dashboard) async fn starred_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Starred)?;
   let viewer_user_id = ctx.viewer_user_id;
   let is_logged_in = viewer_user_id.is_some();
@@ -234,7 +235,7 @@ pub(in crate::routes::dashboard) async fn starred_page(
 pub(in crate::routes::dashboard) async fn metrics_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   enforce_page_access(&state.config, &ctx, DashboardPage::Metrics)?;
   MetricsTemplate {
     ui:        ui_config(&state),
@@ -247,14 +248,14 @@ pub(in crate::routes::dashboard) async fn metrics_page(
 pub(in crate::routes::dashboard) async fn project_setup_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
-) -> Result<Html<String>, Response> {
+) -> Result<Html<String>, PageError> {
   if !ctx.is_admin {
     let target = if ctx.auth_name.is_empty() {
       "/login"
     } else {
       "/projects"
     };
-    return Err(Redirect::to(target).into_response());
+    return Err(PageError::new(Redirect::to(target)));
   }
 
   ProjectSetupTemplate {
