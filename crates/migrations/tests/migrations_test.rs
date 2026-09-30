@@ -41,7 +41,7 @@ fn maintenance_url_and_dbname(url: &str) -> (String, String) {
   (parsed.to_string(), dbname)
 }
 
-async fn database_exists(url: &str) -> Result<bool, tokio_postgres::Error> {
+async fn database_exists(url: &str) -> color_eyre::Result<bool> {
   let (admin_url, dbname) = maintenance_url_and_dbname(url);
   let client = connect_once(&admin_url).await?;
   let exists = client

@@ -1,7 +1,12 @@
 //! TLS configuration shared by migrations and the application pool.
 
-use std::sync::{Arc, Once};
+use std::{
+  net::IpAddr,
+  path::PathBuf,
+  sync::{Arc, Once},
+};
 
+use color_eyre::eyre::{Context as _, bail};
 use rustls::{
   DigitallySignedStruct,
   SignatureScheme,
@@ -11,7 +16,7 @@ use rustls::{
     ServerCertVerifier,
   },
   crypto::WebPkiSupportedAlgorithms,
-  pki_types::{CertificateDer, ServerName, UnixTime},
+  pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject as _},
   server::ParsedCertificate,
 };
 use tokio_postgres::NoTls;
@@ -19,72 +24,95 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use url::Url;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TlsMode {
+enum TlsMode {
   Disable,
   Unverified,
   VerifyCa,
   VerifyFull,
 }
 
-#[must_use]
-pub fn tls_mode(database_url: &str) -> TlsMode {
-  let Some(sslmode) = Url::parse(database_url)
+/// `tls` is `None` for plaintext.
+pub struct DatabaseTarget {
+  pub url: String,
+  pub tls: Option<MakeRustlsConnect>,
+}
+
+/// Without `sslmode`, remote hosts default to `verify-full`.
+///
+/// # Errors
+///
+/// Returns an error for a non-URL connection string, an unknown `sslmode`,
+/// or an unreadable `sslrootcert`.
+pub fn resolve(database_url: &str) -> color_eyre::Result<DatabaseTarget> {
+  let mut url = Url::parse(database_url)
     .ok()
-    .and_then(|url| sslmode_from_query(url.query()))
-  else {
-    return TlsMode::Unverified;
-  };
+    .filter(|url| matches!(url.scheme(), "postgres" | "postgresql"))
+    .ok_or_else(|| {
+      color_eyre::eyre::eyre!("database URL must be a postgresql:// URL")
+    })?;
 
-  match sslmode.to_ascii_lowercase().as_str() {
-    "disable" => TlsMode::Disable,
-    "verify-ca" => TlsMode::VerifyCa,
-    "verify-full" => TlsMode::VerifyFull,
-    _ => TlsMode::Unverified,
-  }
-}
-
-fn sslmode_from_query(query: Option<&str>) -> Option<String> {
-  url::form_urlencoded::parse(query?.as_bytes())
-    .find(|(key, _)| key == "sslmode")
-    .map(|(_, value)| value.into_owned())
-}
-
-/// Normalize libpq modes that tokio-postgres doesn't parse itself.
-#[must_use]
-pub fn tokio_postgres_url(database_url: &str) -> String {
-  let Ok(mut url) = Url::parse(database_url) else {
-    return database_url.to_owned();
-  };
-
-  let mut changed = false;
-  let pairs: Vec<(String, String)> = url
-    .query_pairs()
-    .map(|(key, value)| {
-      let normalized = if key == "sslmode" {
-        match value.to_ascii_lowercase().as_str() {
-          "allow" | "prefer" => "prefer",
-          "verify-ca" | "verify-full" | "require" => "require",
-          "disable" => "disable",
-          _ => value.as_ref(),
-        }
-      } else {
-        value.as_ref()
-      };
-      changed |= normalized != value;
-      (key.into_owned(), normalized.to_owned())
-    })
+  let mut sslmode = None;
+  let mut root_cert = None;
+  let mut hosts: Vec<String> = url
+    .host_str()
+    .filter(|host| !host.is_empty())
+    .map(str::to_owned)
+    .into_iter()
     .collect();
-
-  if changed {
-    url.query_pairs_mut().clear().extend_pairs(&pairs);
-    url.into()
-  } else {
-    database_url.to_owned()
+  let mut pairs = Vec::new();
+  for (key, value) in url.query_pairs() {
+    match key.as_ref() {
+      "sslmode" => sslmode = Some(value.to_ascii_lowercase()),
+      "sslrootcert" => root_cert = Some(PathBuf::from(value.as_ref())),
+      _ => {
+        if key == "host" {
+          hosts.extend(value.split(',').map(str::to_owned));
+        }
+        pairs.push((key.into_owned(), value.into_owned()));
+      },
+    }
   }
+
+  let mode = match sslmode.as_deref() {
+    None if hosts.iter().all(|host| is_local_host(host)) => TlsMode::Disable,
+    None | Some("verify-full") => TlsMode::VerifyFull,
+    Some("disable") => TlsMode::Disable,
+    Some("allow" | "prefer" | "require") => TlsMode::Unverified,
+    Some("verify-ca") => TlsMode::VerifyCa,
+    Some(other) => bail!("unsupported database sslmode '{other}'"),
+  };
+  let tokio_sslmode = match (mode, sslmode.as_deref()) {
+    (TlsMode::Disable, _) => "disable",
+    (TlsMode::Unverified, Some("allow" | "prefer")) => "prefer",
+    _ => "require",
+  };
+  pairs.push(("sslmode".to_owned(), tokio_sslmode.to_owned()));
+  url.query_pairs_mut().clear().extend_pairs(&pairs);
+
+  let tls = match mode {
+    TlsMode::Disable => None,
+    mode => Some(tls_connector(mode, root_store(root_cert.as_ref())?)),
+  };
+  Ok(DatabaseTarget {
+    url: url.into(),
+    tls,
+  })
 }
 
-#[must_use]
-pub fn tls_connector(mode: TlsMode) -> MakeRustlsConnect {
+fn is_local_host(host: &str) -> bool {
+  host.starts_with('/')
+    || host.starts_with('@')
+    || host.eq_ignore_ascii_case("localhost")
+    || host
+      .trim_matches(['[', ']'])
+      .parse::<IpAddr>()
+      .is_ok_and(|ip| ip.is_loopback())
+}
+
+fn tls_connector(
+  mode: TlsMode,
+  roots: rustls::RootCertStore,
+) -> MakeRustlsConnect {
   static TLS_PROVIDER: Once = Once::new();
 
   let provider = rustls::crypto::ring::default_provider();
@@ -96,15 +124,13 @@ pub fn tls_connector(mode: TlsMode) -> MakeRustlsConnect {
   let builder = rustls::ClientConfig::builder();
   let config = match mode {
     TlsMode::VerifyFull => {
-      builder
-        .with_root_certificates(root_store())
-        .with_no_client_auth()
+      builder.with_root_certificates(roots).with_no_client_auth()
     },
     TlsMode::VerifyCa => {
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(CaOnlyVerifier {
-          roots: root_store(),
+          roots,
           signature_algorithms,
         }))
         .with_no_client_auth()
@@ -121,32 +147,48 @@ pub fn tls_connector(mode: TlsMode) -> MakeRustlsConnect {
   MakeRustlsConnect::new(config)
 }
 
-fn root_store() -> rustls::RootCertStore {
-  webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect()
+fn root_store(
+  root_cert: Option<&PathBuf>,
+) -> color_eyre::Result<rustls::RootCertStore> {
+  let Some(path) = root_cert else {
+    return Ok(webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect());
+  };
+  let mut roots = rustls::RootCertStore::empty();
+  for cert in CertificateDer::pem_file_iter(path)
+    .with_context(|| format!("reading sslrootcert {}", path.display()))?
+  {
+    let cert = cert
+      .with_context(|| format!("parsing sslrootcert {}", path.display()))?;
+    roots
+      .add(cert)
+      .with_context(|| format!("loading sslrootcert {}", path.display()))?;
+  }
+  Ok(roots)
 }
 
 /// Connect a client and drive its connection on a background task.
 ///
 /// # Errors
 ///
-/// Returns an error when URL parsing, negotiation, or startup fails.
+/// Returns an error when URL resolution, negotiation, or startup fails.
 pub async fn connect_once(
   database_url: &str,
-) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
-  let config =
-    tokio_postgres_url(database_url).parse::<tokio_postgres::Config>()?;
-  match tls_mode(database_url) {
-    TlsMode::Disable => {
+) -> color_eyre::Result<tokio_postgres::Client> {
+  let target = resolve(database_url)?;
+  let config = target.url.parse::<tokio_postgres::Config>()?;
+  let client = match target.tls {
+    None => {
       let (client, connection) = config.connect(NoTls).await?;
       spawn_connection(connection);
-      Ok(client)
+      client
     },
-    mode => {
-      let (client, connection) = config.connect(tls_connector(mode)).await?;
+    Some(connector) => {
+      let (client, connection) = config.connect(connector).await?;
       spawn_connection(connection);
-      Ok(client)
+      client
     },
-  }
+  };
+  Ok(client)
 }
 
 fn spawn_connection(
@@ -278,35 +320,41 @@ impl ServerCertVerifier for CaOnlyVerifier {
 mod tests {
   use super::*;
 
-  #[test]
-  fn tls_mode_honors_postgres_sslmode() {
-    assert_eq!(
-      tls_mode("postgresql://localhost/circus"),
-      TlsMode::Unverified
-    );
-    assert_eq!(
-      tls_mode("postgresql://localhost/circus?sslmode=disable"),
-      TlsMode::Disable
-    );
-    assert_eq!(
-      tls_mode("postgresql://localhost/circus?sslmode=verify-ca"),
-      TlsMode::VerifyCa
-    );
-    assert_eq!(
-      tls_mode("postgresql://localhost/circus?sslmode=verify-full"),
-      TlsMode::VerifyFull
-    );
+  fn mode_of(url: &str) -> Option<&'static str> {
+    let target = resolve(url).ok()?;
+    let tls = target.tls.is_some();
+    let config = target.url.parse::<tokio_postgres::Config>().ok()?;
+    Some(match (tls, config.get_ssl_mode()) {
+      (false, tokio_postgres::config::SslMode::Disable) => "plain",
+      (true, tokio_postgres::config::SslMode::Require) => "required-tls",
+      (true, tokio_postgres::config::SslMode::Prefer) => "optional-tls",
+      _ => "inconsistent",
+    })
   }
 
   #[test]
-  fn extended_ssl_modes_parse_as_tokio_postgres_urls() {
-    for sslmode in ["allow", "verify-ca", "verify-full", "VERIFY-FULL"] {
-      let url = tokio_postgres_url(&format!(
-        "postgresql://localhost/circus?sslmode={sslmode}&\
-         application_name=circus"
-      ));
-      assert!(url.parse::<tokio_postgres::Config>().is_ok(), "{url}");
-      assert!(url.contains("application_name=circus"));
-    }
+  fn remote_hosts_require_tls_unless_told_otherwise() {
+    assert_eq!(
+      mode_of("postgresql:///circus?host=/run/postgresql"),
+      Some("plain")
+    );
+    assert_eq!(mode_of("postgresql://localhost/circus"), Some("plain"));
+    assert_eq!(
+      mode_of("postgresql://db.example/circus"),
+      Some("required-tls")
+    );
+    assert_eq!(
+      mode_of("postgresql://db.example/circus?sslmode=disable"),
+      Some("plain")
+    );
+    assert_eq!(
+      mode_of("postgresql://db.example/circus?sslmode=prefer"),
+      Some("optional-tls")
+    );
+    assert_eq!(
+      mode_of("postgresql://db.example/circus?sslmode=bogus"),
+      None
+    );
+    assert_eq!(mode_of("host=db.example dbname=circus"), None);
   }
 }

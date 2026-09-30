@@ -834,6 +834,12 @@ database URL:
 Ensure the PostgreSQL server on the head node allows connections from builder
 machines via `pg_hba.conf` or equivalent NixOS PostgreSQL module settings.
 
+A remote database URL defaults to `sslmode=verify-full`, so the server must
+present a certificate for its hostname. Point `sslrootcert=/path/to/ca.pem` at a
+private CA when the certificate is not publicly trusted. Unix sockets and
+loopback addresses stay plaintext unless `sslmode` says otherwise, and
+`sslmode=require` opts back into encryption without verification.
+
 ## Building Installable Packages
 
 The flake exposes one package per binary:

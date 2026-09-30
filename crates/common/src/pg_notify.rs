@@ -5,7 +5,7 @@ use futures::{StreamExt as _, stream};
 use tokio::{sync::Notify, task::JoinHandle};
 use tokio_postgres::{AsyncMessage, NoTls};
 
-use crate::db::{PgPool, TlsMode};
+use crate::db::PgPool;
 
 /// Channel emitted on `builds` INSERT or status UPDATE.
 pub const CHANNEL_BUILDS_CHANGED: &str = "circus_builds_changed";
@@ -59,20 +59,19 @@ async fn listen_loop(
   database_url: &str,
   channels: &[String],
   wakeup: &Notify,
-) -> Result<(), tokio_postgres::Error> {
+) -> color_eyre::Result<()> {
   let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-  let config = circus_migrations::tls::tokio_postgres_url(database_url)
-    .parse::<tokio_postgres::Config>()?;
+  let target = circus_migrations::tls::resolve(database_url)?;
+  let config = target.url.parse::<tokio_postgres::Config>()?;
 
-  let (client, driver) = match crate::db::tls_mode(database_url) {
-    TlsMode::Disable => {
+  let (client, driver) = match target.tls {
+    None => {
       let (client, conn) = config.connect(NoTls).await?;
       let driver = spawn_driver(conn, tx);
       subscribe(&client, channels).await?;
       (client, driver)
     },
-    mode => {
-      let connector = circus_migrations::tls::tls_connector(mode);
+    Some(connector) => {
       let (client, conn) = config.connect(connector).await?;
       let driver = spawn_driver(conn, tx);
       subscribe(&client, channels).await?;

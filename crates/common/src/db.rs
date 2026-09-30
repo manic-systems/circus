@@ -1,5 +1,5 @@
 pub use circus_codegen::client::GenericClient;
-pub use circus_migrations::tls::{TlsMode, connect_once, tls_mode};
+pub use circus_migrations::tls::connect_once;
 use color_eyre::eyre::Context as _;
 use deadpool_postgres::Timeouts;
 use tokio_postgres::NoTls;
@@ -43,7 +43,8 @@ pub fn build_pool_with_timeouts(
   };
 
   let mut cfg = Config::new();
-  cfg.url = Some(circus_migrations::tls::tokio_postgres_url(database_url));
+  let target = circus_migrations::tls::resolve(database_url)?;
+  cfg.url = Some(target.url);
   cfg.manager = Some(ManagerConfig {
     recycling_method: RecyclingMethod::Fast,
   });
@@ -53,16 +54,13 @@ pub fn build_pool_with_timeouts(
     ..Default::default()
   });
 
-  let pool = match tls_mode(database_url) {
-    TlsMode::Disable => cfg.create_pool(Some(Runtime::Tokio1), NoTls),
-    mode => {
-      cfg.create_pool(
-        Some(Runtime::Tokio1),
-        circus_migrations::tls::tls_connector(mode),
-      )
-    },
-  }
-  .context("building postgres connection pool")?;
+  let pool = target
+    .tls
+    .map_or_else(
+      || cfg.create_pool(Some(Runtime::Tokio1), NoTls),
+      |connector| cfg.create_pool(Some(Runtime::Tokio1), connector),
+    )
+    .context("building postgres connection pool")?;
 
   Ok(pool)
 }
