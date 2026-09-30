@@ -601,7 +601,7 @@ pub struct DeclarativeNotification {
 }
 
 /// Declarative webhook configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeclarativeWebhook {
   /// Forge type: github, gitea, gitlab
   pub forge_type:  ForgeType,
@@ -684,7 +684,7 @@ pub struct DeclarativeJobsetInput {
   pub revision:   Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeclarativeApiKey {
   pub name:     String,
   /// API key provided inline (for dev/testing only).
@@ -696,7 +696,7 @@ pub struct DeclarativeApiKey {
 }
 
 /// Declarative user definition for configuration-driven user management.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeclarativeUser {
   pub username:      String,
   pub email:         String,

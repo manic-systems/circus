@@ -1,4 +1,7 @@
 use crate::{
+  DeclarativeApiKey,
+  DeclarativeUser,
+  DeclarativeWebhook,
   EmailConfig,
   GitHubOAuthConfig,
   GithubActionsPoolConfig,
@@ -104,6 +107,30 @@ redact_debug!(S3CacheConfig {
   use_path_style:         visible,
 });
 
+redact_debug!(DeclarativeWebhook {
+  forge_type:  visible,
+  secret:      optional_secret,
+  secret_file: visible,
+  enabled:     visible,
+});
+
+redact_debug!(DeclarativeApiKey {
+  name:     visible,
+  key:      optional_secret,
+  key_file: visible,
+  role:     visible,
+});
+
+redact_debug!(DeclarativeUser {
+  username:      visible,
+  email:         visible,
+  full_name:     visible,
+  password:      optional_secret,
+  password_file: visible,
+  role:          visible,
+  enabled:       visible,
+});
+
 /// Declarative project/jobset/api-key/user definitions.
 /// Keep this list in sync with the `redact_debug!` secret fields above.
 const SECRET_KEYS: &[&str] = &[
@@ -112,6 +139,10 @@ const SECRET_KEYS: &[&str] = &[
   "gitea_token",
   "github_token",
   "gitlab_token",
+  "key",
+  "notification_secret_key",
+  "password",
+  "secret",
   "secret_access_key",
   "session_token",
   "smtp_password",
@@ -127,10 +158,6 @@ pub fn redact_secrets(value: &mut toml::Value) {
       for (key, val) in table.iter_mut() {
         if SECRET_KEYS.contains(&key.as_str()) {
           *val = toml::Value::String("***".into());
-        } else if let toml::Value::String(s) = val {
-          if s.starts_with("postgresql://") || s.starts_with("postgres://") {
-            *s = "***".into();
-          }
         } else {
           redact_secrets(val);
         }
@@ -140,6 +167,11 @@ pub fn redact_secrets(value: &mut toml::Value) {
       for item in arr {
         redact_secrets(item);
       }
+    },
+    toml::Value::String(s)
+      if s.starts_with("postgresql://") || s.starts_with("postgres://") =>
+    {
+      *s = "***".into();
     },
     _ => {},
   }
