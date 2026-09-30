@@ -821,6 +821,11 @@ async fn create_or_claim_evaluation(
             commit = commit_hash,
             "Evaluation was cancelled, skipping duplicate poll"
           );
+          if let Err(e) =
+            repo::jobsets::update_last_checked(pool, jobset.id).await
+          {
+            tracing::warn!(jobset = %jobset.name, "Failed to update last_checked_at: {e}");
+          }
           Ok(None)
         },
       }
