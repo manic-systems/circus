@@ -47,12 +47,15 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
       STALE_THRESHOLD_MULTIPLIER,
     )
     .await
-    .unwrap_or_default()
+    .ok()
   } else {
-    Vec::new()
+    None
   };
 
-  let all_services_ok = services.iter().all(|s| s.healthy);
+  let all_services_ok = services
+    .as_ref()
+    .is_some_and(|services| services.iter().all(|s| s.healthy));
+  let services = services.unwrap_or_default();
   let healthy = db_ok && all_services_ok;
   let status = if healthy { "ok" } else { "degraded" };
 
