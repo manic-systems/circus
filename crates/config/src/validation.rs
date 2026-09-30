@@ -282,6 +282,13 @@ impl Config {
           }
         }
       }
+      if rpc
+        .tls
+        .as_ref()
+        .is_some_and(|tls| tls.require_client_cert && tls.client_ca.is_none())
+      {
+        bail!("queue_runner.rpc.tls.require_client_cert needs client_ca");
+      }
       if rpc.tls.is_none()
         && (rpc.oidc.is_some() || !rpc.auth_tokens.is_empty())
       {
