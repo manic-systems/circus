@@ -331,15 +331,8 @@ pub fn fetch_and_checkout_commit(
   project_name: &str,
   commit_sha: &str,
 ) -> Result<PathBuf> {
-  let repo_path = work_dir.join(project_name);
-
-  let repo = if repo_path.exists() {
-    Repository::open(&repo_path)?
-  } else {
-    Repository::clone(url, &repo_path)?
-  };
-
-  fetch_all_refs(&repo)?;
+  let (repo_path, repo, _is_fetch) =
+    clone_or_open_and_fetch(url, work_dir, project_name)?;
 
   let oid = git2::Oid::from_str(commit_sha).map_err(|e| {
     CiError::Validation(format!("Invalid commit SHA '{commit_sha}': {e}"))
