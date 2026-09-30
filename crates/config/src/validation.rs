@@ -453,10 +453,10 @@ impl Config {
           "queue_runner.ephemeral_pools[{idx}].max_jobs must be greater than 0"
         );
       }
-      if pool.speed_factor <= 0.0 {
+      if !pool.speed_factor.is_finite() || pool.speed_factor <= 0.0 {
         bail!(
-          "queue_runner.ephemeral_pools[{idx}].speed_factor must be greater \
-           than 0"
+          "queue_runner.ephemeral_pools[{idx}].speed_factor must be finite \
+           and greater than 0"
         );
       }
       if pool.max_inflight == 0 {
