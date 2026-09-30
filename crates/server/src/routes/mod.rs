@@ -84,49 +84,46 @@ struct RateLimitState {
 const RATE_LIMIT_BUCKET_TTL: Duration = Duration::from_mins(5);
 
 async fn rate_limit_middleware(
+  State(rl): State<Arc<RateLimitState>>,
   ConnectInfo(addr): ConnectInfo<SocketAddr>,
   request: Request<Body>,
   next: Next,
 ) -> Response {
-  let state = request.extensions().get::<Arc<RateLimitState>>().cloned();
+  let ip = addr.ip();
+  let now = Instant::now();
 
-  if let Some(rl) = state {
-    let ip = addr.ip();
-    let now = Instant::now();
-
-    // Periodic cleanup of idle buckets (every 60s, Instant-based so a
-    // wall-clock step doesn't strand us).
-    {
-      let mut last = rl
-        .last_cleanup
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-      if now.duration_since(*last) > Duration::from_mins(1) {
-        *last = now;
-        rl.buckets.retain(|_, b| {
-          now.duration_since(b.last_refilled) < RATE_LIMIT_BUCKET_TTL
-        });
-      }
-      drop(last);
+  // Periodic cleanup of idle buckets (every 60s, Instant-based so a
+  // wall-clock step doesn't strand us).
+  {
+    let mut last = rl
+      .last_cleanup
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner);
+    if now.duration_since(*last) > Duration::from_mins(1) {
+      *last = now;
+      rl.buckets.retain(|_, b| {
+        now.duration_since(b.last_refilled) < RATE_LIMIT_BUCKET_TTL
+      });
     }
-
-    let mut entry = rl.buckets.entry(ip).or_insert_with(|| {
-      Bucket {
-        tokens:        rl.burst,
-        last_refilled: now,
-      }
-    });
-
-    let elapsed = now.duration_since(entry.last_refilled).as_secs_f64();
-    entry.tokens = elapsed.mul_add(rl.rps, entry.tokens).min(rl.burst);
-    entry.last_refilled = now;
-
-    if entry.tokens < 1.0 {
-      return StatusCode::TOO_MANY_REQUESTS.into_response();
-    }
-    entry.tokens -= 1.0;
-    drop(entry);
+    drop(last);
   }
+
+  let mut entry = rl.buckets.entry(ip).or_insert_with(|| {
+    Bucket {
+      tokens:        rl.burst,
+      last_refilled: now,
+    }
+  });
+
+  let elapsed = now.duration_since(entry.last_refilled).as_secs_f64();
+  entry.tokens = elapsed.mul_add(rl.rps, entry.tokens).min(rl.burst);
+  entry.last_refilled = now;
+
+  if entry.tokens < 1.0 {
+    return StatusCode::TOO_MANY_REQUESTS.into_response();
+  }
+  entry.tokens -= 1.0;
+  drop(entry);
 
   next.run(request).await
 }
@@ -415,9 +412,10 @@ pub fn router(state: AppState, config: &Config) -> Router {
       burst:        f64::from(burst),
       last_cleanup: Mutex::new(Instant::now()),
     });
-    app = app
-      .layer(axum::Extension(rl_state))
-      .layer(middleware::from_fn(rate_limit_middleware));
+    app = app.layer(middleware::from_fn_with_state(
+      rl_state,
+      rate_limit_middleware,
+    ));
   }
 
   app.with_state(state)
