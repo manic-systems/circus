@@ -250,8 +250,8 @@ async fn expand_derivation_graph(
   (expanded, derivations)
 }
 
-/// Detect whether a derivation is a fixed-output derivation by reading the
-/// `.drv` file and checking for `outputHash` in its env vars.
+/// Detect whether a derivation is a fixed-output derivation from the output
+/// list of its `.drv`.
 ///
 /// # Returns
 ///
@@ -260,20 +260,18 @@ fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
   let Ok(content) = std::fs::read_to_string(drv_path) else {
     return (false, None);
   };
-  // ATerm format: ("outputHash","<hash>")
-  let marker = "\"outputHash\",\"";
-  let Some(start) = content.find(marker) else {
+  // ATerm: Derive([("out","<path>","<algo>","<hash>")],...), one output only.
+  let Some((outputs, _)) = content
+    .strip_prefix("Derive([(")
+    .and_then(|rest| rest.split_once(")],"))
+  else {
     return (false, None);
   };
-  let rest = &content[start + marker.len()..];
-  let Some(end) = rest.find('"') else {
-    return (false, None);
-  };
-  let hash = &rest[..end];
-  if hash.is_empty() {
-    (false, None)
-  } else {
-    (true, Some(hash.to_string()))
+  match outputs.split(',').collect::<Vec<_>>().as_slice() {
+    ["\"out\"", _path, algo, hash] if *algo != "\"\"" && *hash != "\"\"" => {
+      (true, Some(hash.trim_matches('"').to_string()))
+    },
+    _ => (false, None),
   }
 }
 
