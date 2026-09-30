@@ -92,10 +92,7 @@ impl IntoResponse for ApiError {
           (
             StatusCode::INSUFFICIENT_STORAGE,
             "DISK_FULL",
-            format!(
-              "Database error: {e}\n\nDISK SPACE ISSUE:\nThe server is \
-               running low on disk space."
-            ),
+            "The server is running low on disk space.".to_string(),
           )
         } else {
           (
@@ -110,7 +107,7 @@ impl IntoResponse for ApiError {
         (
           StatusCode::INTERNAL_SERVER_ERROR,
           "GIT_ERROR",
-          format!("Git operation failed: {e}"),
+          "Git operation failed".to_string(),
         )
       },
       CiError::Serialization(e) => {
@@ -118,7 +115,7 @@ impl IntoResponse for ApiError {
         (
           StatusCode::INTERNAL_SERVER_ERROR,
           "SERIALIZATION_ERROR",
-          format!("Data serialization error: {e}"),
+          "Data serialization error".to_string(),
         )
       },
       CiError::Io(e) => {
@@ -132,19 +129,13 @@ impl IntoResponse for ApiError {
           (
             StatusCode::INSUFFICIENT_STORAGE,
             "DISK_FULL",
-            format!(
-              "IO error: {msg}\n\nDISK SPACE ISSUE DETECTED:\nThe server has \
-               run out of disk space. Please free up space:\n- Run \
-               `nix-collect-garbage -d` to clean the Nix store\n- Clear the \
-               evaluator work directory: `rm -rf /tmp/circus-evaluator/*`\n- \
-               Clear build logs if configured"
-            ),
+            "The server has run out of disk space.".to_string(),
           )
         } else {
           (
             StatusCode::INTERNAL_SERVER_ERROR,
             "IO_ERROR",
-            format!("IO error: {e}"),
+            "IO error".to_string(),
           )
         }
       },
@@ -158,16 +149,13 @@ impl IntoResponse for ApiError {
           (
             StatusCode::INSUFFICIENT_STORAGE,
             "DISK_FULL",
-            format!(
-              "{msg}\n\nDISK SPACE ISSUE:\nThe server is running low on disk \
-               space. Please free up space."
-            ),
+            "The server is running low on disk space.".to_string(),
           )
         } else {
           (
             StatusCode::INTERNAL_SERVER_ERROR,
             "INTERNAL_ERROR",
-            msg.clone(),
+            "Internal server error".to_string(),
           )
         }
       },
