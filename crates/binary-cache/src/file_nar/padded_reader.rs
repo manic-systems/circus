@@ -145,7 +145,8 @@ where
             (*this.trailer_size - *pos) as usize,
             buf.remaining(),
           );
-          buf.put_slice(&this.padding[*pos as usize..bound]);
+          let start = *pos as usize;
+          buf.put_slice(&this.padding[start..start + bound]);
           *pos += bound as u8;
           if *pos == *this.trailer_size {
             *this.state = State::Eof;
