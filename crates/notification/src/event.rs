@@ -64,8 +64,9 @@ impl BuildEvent {
   #[must_use]
   pub const fn generic_status(&self) -> &'static str {
     match self.status {
-      BuildStatus::Succeeded | BuildStatus::CachedFailure => "success",
+      BuildStatus::Succeeded => "success",
       BuildStatus::Failed
+      | BuildStatus::CachedFailure
       | BuildStatus::DependencyFailed
       | BuildStatus::FailedWithOutput
       | BuildStatus::Timeout
@@ -84,13 +85,12 @@ impl BuildEvent {
   #[must_use]
   pub const fn github_state(&self) -> (&'static str, &'static str) {
     match self.status {
-      BuildStatus::Succeeded | BuildStatus::CachedFailure => {
-        ("success", "Build succeeded")
-      },
+      BuildStatus::Succeeded => ("success", "Build succeeded"),
       BuildStatus::Failed
       | BuildStatus::DependencyFailed
       | BuildStatus::FailedWithOutput
       | BuildStatus::NonDeterministic => ("failure", "Build failed"),
+      BuildStatus::CachedFailure => ("failure", "Build failed previously"),
       BuildStatus::Running => ("pending", "Build in progress"),
       BuildStatus::Pending => ("pending", "Build queued"),
       BuildStatus::Cancelled => ("error", "Build cancelled"),
@@ -108,13 +108,12 @@ impl BuildEvent {
   #[must_use]
   pub const fn gitlab_state(&self) -> (&'static str, &'static str) {
     match self.status {
-      BuildStatus::Succeeded | BuildStatus::CachedFailure => {
-        ("success", "Build succeeded")
-      },
+      BuildStatus::Succeeded => ("success", "Build succeeded"),
       BuildStatus::Failed
       | BuildStatus::DependencyFailed
       | BuildStatus::FailedWithOutput
       | BuildStatus::NonDeterministic => ("failed", "Build failed"),
+      BuildStatus::CachedFailure => ("failed", "Build failed previously"),
       BuildStatus::Running => ("running", "Build in progress"),
       BuildStatus::Pending => ("pending", "Build queued"),
       BuildStatus::Cancelled => ("canceled", "Build cancelled"),
@@ -133,8 +132,9 @@ impl BuildEvent {
   #[must_use]
   pub const fn email_status(&self) -> &'static str {
     match self.status {
-      BuildStatus::Succeeded | BuildStatus::CachedFailure => "SUCCESS",
+      BuildStatus::Succeeded => "SUCCESS",
       BuildStatus::Failed
+      | BuildStatus::CachedFailure
       | BuildStatus::DependencyFailed
       | BuildStatus::FailedWithOutput
       | BuildStatus::Timeout
