@@ -62,13 +62,16 @@ const FETCH_REFSPECS_REQUIRED: &[&str] = &[
   "refs/tags/*:refs/tags/*",
 ];
 const FETCH_REFSPECS_OPTIONAL: &[&str] = &[
-  "refs/pull/*/head:refs/remotes/origin/pr/*",
-  "refs/merge-requests/*/head:refs/remotes/origin/mr/*",
+  "refs/pull/*/head:refs/circus/pr/*",
+  "refs/merge-requests/*/head:refs/circus/mr/*",
 ];
 
 fn fetch_all_refs(repo: &Repository) -> Result<()> {
   let mut remote = repo.find_remote("origin")?;
-  remote.fetch(FETCH_REFSPECS_REQUIRED, None, None)?;
+  // Prune so stale PR heads never resolve as branches.
+  let mut options = git2::FetchOptions::new();
+  options.prune(git2::FetchPrune::On);
+  remote.fetch(FETCH_REFSPECS_REQUIRED, Some(&mut options), None)?;
   // PR/MR refspecs are forge-specific; ignore failures so a plain Git
   // remote without pull refs still evaluates.
   for spec in FETCH_REFSPECS_OPTIONAL {
@@ -246,16 +249,16 @@ pub fn clone_or_fetch(
     })?;
     (commit.id().to_string(), commit.id())
   } else {
-    let branch_name = if let Some(branch) = branch {
-      branch.to_string()
+    let (branch_name, allow_full_ref) = if let Some(branch) = branch {
+      (branch.to_string(), false)
     } else if let Some(source_ref) = source_attribute(url, "ref") {
-      source_ref
+      (source_ref, true)
     } else {
       let head = repo.head()?;
-      head.shorthand().unwrap_or("master").to_string()
+      (head.shorthand().unwrap_or("master").to_string(), false)
     };
 
-    let git_ref = if branch_name.starts_with("refs/") {
+    let git_ref = if allow_full_ref && branch_name.starts_with("refs/") {
       branch_name.clone()
     } else {
       format!("refs/remotes/origin/{branch_name}")
