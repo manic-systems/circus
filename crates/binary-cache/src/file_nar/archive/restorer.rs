@@ -171,16 +171,18 @@ where
     cx: &mut std::task::Context<'_>,
   ) -> Poll<Result<(), Self::Error>> {
     let mut this = self.project();
-    if let Some(state) = this.state.as_mut().as_pin_mut() {
-      ready!(state.poll(cx)).map_err(|_| {
-        NarWriteError::new(
-          NarWriteOperation::JoinError,
-          this.root.clone(),
-          io::Error::other("background task failed"),
-        )
-      })??;
-    }
+    let Some(state) = this.state.as_mut().as_pin_mut() else {
+      return Poll::Ready(Ok(()));
+    };
+    let joined = ready!(state.poll(cx));
     this.state.set(None);
+    joined.map_err(|_| {
+      NarWriteError::new(
+        NarWriteOperation::JoinError,
+        this.root.clone(),
+        io::Error::other("background task failed"),
+      )
+    })??;
     Poll::Ready(Ok(()))
   }
 
