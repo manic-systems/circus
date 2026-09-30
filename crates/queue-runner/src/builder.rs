@@ -6,7 +6,7 @@ use std::{
 
 use circus_common::{CiError, error::Result};
 use tokio::{
-  io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+  io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
   process::Command,
   task::JoinHandle,
 };
@@ -185,38 +185,41 @@ fn read_stderr(
     };
     let mut logged_write_error = false;
 
-    if let Some(stderr) = stderr {
-      let mut reader = BufReader::new(stderr);
-      let mut line = String::new();
-      while reader.read_line(&mut line).await.map_err(|e| {
-        CiError::Build(format!("Failed to read nix stderr: {e}"))
-      })?
-        > 0
-      {
+    // Chunked, since a newline-free line would grow without bound.
+    if let Some(mut stderr) = stderr {
+      let mut chunk = vec![0u8; 64 * 1024];
+      let mut captured = Vec::new();
+      loop {
+        let n = stderr.read(&mut chunk).await.map_err(|e| {
+          CiError::Build(format!("Failed to read nix stderr: {e}"))
+        })?;
+        if n == 0 {
+          break;
+        }
+        let data = &chunk[..n];
         if let Some(ref mut file) = log_file
-          && let Err(e) = write_live_log_line(file, &line).await
+          && let Err(e) = write_live_log(file, data).await
           && !logged_write_error
         {
           tracing::warn!("Failed to write live build log: {e}");
           logged_write_error = true;
         }
 
-        if buf.len() < MAX_LOG_SIZE {
-          buf.push_str(&line);
-        }
-        line.clear();
+        let room = MAX_LOG_SIZE.saturating_sub(captured.len());
+        captured.extend_from_slice(&data[..n.min(room)]);
       }
+      buf = String::from_utf8_lossy(&captured).into_owned();
     }
 
     Ok(buf)
   })
 }
 
-async fn write_live_log_line(
+async fn write_live_log(
   file: &mut tokio::fs::File,
-  line: &str,
+  data: &[u8],
 ) -> std::io::Result<()> {
-  file.write_all(line.as_bytes()).await?;
+  file.write_all(data).await?;
   file.flush().await
 }
 
