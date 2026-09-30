@@ -72,7 +72,7 @@ impl Scheme {
     match s.to_ascii_lowercase().as_str() {
       "https" | "git+https" => Self::Https,
       "http" | "git+http" => Self::Http,
-      "ssh" | "git+ssh" | "git" => Self::Ssh,
+      "ssh" | "git+ssh" => Self::Ssh,
       other => Self::Other(other.to_string()),
     }
   }
