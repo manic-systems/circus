@@ -459,6 +459,9 @@ pub async fn upsert_oauth_user(
   }
 
   // Create new user
+  if let Some(e) = email {
+    validate_email(e, email_regex)?;
+  }
   let fallback_email = format!("{unique_username}@oauth.local");
   let email = email.unwrap_or(&fallback_email);
 
