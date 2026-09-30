@@ -184,6 +184,10 @@ impl OidcVerifier {
     }
     self.refresh().await?;
     let cache = self.cache.lock().await;
+    // A throttled refresh returns without fetching.
+    if is_stale(cache.fetched_at) {
+      bail!("JWKS is stale and could not be refreshed yet");
+    }
     cache
       .keys
       .get(kid)
