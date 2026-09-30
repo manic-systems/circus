@@ -462,7 +462,25 @@ pub async fn run_on_agent(
 
   match rx.await {
     Ok(DispatchResult::Succeeded { error_message }) => {
-      let outputs = read_drv_outputs(drv_path).await;
+      let outputs = match try_read_drv_outputs(drv_path).await {
+        Ok(outputs) if !outputs.is_empty() => outputs,
+        Ok(_) => {
+          return Some(result(
+            false,
+            1,
+            format!("{drv_path} has no queryable outputs on the runner"),
+            Vec::new(),
+          ));
+        },
+        Err(e) => {
+          return Some(result(
+            false,
+            1,
+            format!("could not read the outputs of {drv_path}: {e}"),
+            Vec::new(),
+          ));
+        },
+      };
       if !opts.cache_upload_enabled_s3 {
         match invalid_store_paths(&outputs).await {
           Ok(missing) if missing.is_empty() => {},
@@ -550,10 +568,6 @@ pub(crate) async fn invalid_store_paths(
     );
   }
   Ok(invalid)
-}
-
-pub(crate) async fn read_drv_outputs(drv_path: &str) -> Vec<String> {
-  try_read_drv_outputs(drv_path).await.unwrap_or_default()
 }
 
 /// Every store path the derivation needs, including its input drvs.
