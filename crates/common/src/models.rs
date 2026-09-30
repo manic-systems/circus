@@ -73,6 +73,15 @@ pub struct Evaluation {
   pub source_base_commit: Option<String>,
 }
 
+impl Evaluation {
+  #[must_use]
+  pub const fn is_pull_request(&self) -> bool {
+    self.pr_number.is_some()
+      || self.pr_head_branch.is_some()
+      || self.pr_base_branch.is_some()
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvaluationStatus {

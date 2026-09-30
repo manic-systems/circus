@@ -95,10 +95,7 @@ pub(crate) fn is_trusted_ref_evaluation(
   if jobset.branch.as_deref().is_none_or(str::is_empty) {
     return false;
   }
-  if evaluation.pr_number.is_some()
-    || evaluation.pr_head_branch.is_some()
-    || evaluation.pr_base_branch.is_some()
-  {
+  if evaluation.is_pull_request() {
     return false;
   }
   matches!(

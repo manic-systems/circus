@@ -379,7 +379,10 @@ async fn evaluate_pending_eval(
     tracing::warn!(eval_id = %claimed.id, "Failed to set inputs hash: {e}");
   }
 
-  sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
+  // PR authors must not rewrite jobsets.
+  if !claimed.is_pull_request() {
+    sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
+  }
 
   let evaluated = run_path_filtered_evaluation(
     pool,
