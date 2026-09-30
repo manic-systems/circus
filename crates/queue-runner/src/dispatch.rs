@@ -179,7 +179,7 @@ fn candidate_allowed_for_trusted_build(
   agent
     .oidc_repository
     .as_deref()
-    .is_none_or(|repo| trusted.repository.as_deref() == Some(repo))
+    .is_some_and(|repo| trusted.repository.as_deref() == Some(repo))
 }
 
 #[must_use]
