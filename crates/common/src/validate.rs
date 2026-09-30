@@ -25,10 +25,16 @@ fn extract_host_from_url(url: &str) -> Option<String> {
     .and_then(|u| u.host_str().map(str::to_lowercase))
 }
 
-fn is_internal_host(host: &str) -> bool {
-  let host = host.trim_matches(['[', ']']);
+fn is_internal_host(raw_host: &str) -> bool {
+  // DNS ignores case and a trailing root dot.
+  let lowered = raw_host
+    .trim_matches(['[', ']'])
+    .trim_end_matches('.')
+    .to_ascii_lowercase();
+  let host = lowered.as_str();
   if INTERNAL_HOSTS.contains(&host)
     || host == "localhost"
+    || host.ends_with(".localhost")
     || host.ends_with(".internal")
   {
     return true;
@@ -42,6 +48,8 @@ fn is_internal_host(host: &str) -> bool {
     IpAddr::V4(v4) => is_internal_ipv4(v4),
     IpAddr::V6(v6) => {
       v6.is_loopback()
+        || v6.is_unspecified()
+        || v6.is_multicast()
         || is_unique_local_ipv6(v6)
         || is_link_local_ipv6(v6)
         || v6.to_ipv4_mapped().is_some_and(is_internal_ipv4)
@@ -50,7 +58,12 @@ fn is_internal_host(host: &str) -> bool {
 }
 
 const fn is_internal_ipv4(ip: Ipv4Addr) -> bool {
-  ip.is_private() || ip.is_loopback() || ip.is_link_local()
+  ip.is_private()
+    || ip.is_loopback()
+    || ip.is_link_local()
+    || ip.is_unspecified()
+    || ip.is_broadcast()
+    || ip.is_multicast()
 }
 
 const fn is_unique_local_ipv6(ip: Ipv6Addr) -> bool {
