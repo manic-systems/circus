@@ -23,6 +23,21 @@ impl TryFrom<q::WebhookConfigRow> for WebhookConfig {
   }
 }
 
+/// An empty secret would let unsigned or empty-HMAC deliveries through.
+fn encrypt_secret(
+  secret: Option<&str>,
+  encryption_key: Option<&str>,
+) -> Result<Option<String>> {
+  if secret.is_some_and(|secret| secret.trim().is_empty()) {
+    return Err(CiError::Validation(
+      "webhook secret cannot be empty".to_string(),
+    ));
+  }
+  secret
+    .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
+    .transpose()
+}
+
 /// Create a new webhook config.
 ///
 /// `secret` is the raw webhook secret. Despite the underlying column being
@@ -38,9 +53,7 @@ pub async fn create(
   secret: Option<&str>,
   encryption_key: Option<&str>,
 ) -> Result<WebhookConfig> {
-  let secret = secret
-    .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
-    .transpose()?;
+  let secret = encrypt_secret(secret, encryption_key)?;
   let client = pool.get().await?;
   q::create()
     .bind(
@@ -119,10 +132,8 @@ pub async fn get_by_project_and_forge(
   if let Some(config) = config.as_mut()
     && let Some(secret) = config.secret_hash.as_deref()
   {
-    config.secret_hash = Some(crate::crypto::decrypt_webhook_secret(
-      secret,
-      encryption_key,
-    )?);
+    let secret = crate::crypto::decrypt_webhook_secret(secret, encryption_key)?;
+    config.secret_hash = (!secret.trim().is_empty()).then_some(secret);
   }
 
   Ok(config)
@@ -158,9 +169,7 @@ pub async fn upsert(
   enabled: bool,
   encryption_key: Option<&str>,
 ) -> Result<WebhookConfig> {
-  let secret = secret
-    .map(|s| crate::crypto::encrypt_webhook_secret(s, encryption_key))
-    .transpose()?;
+  let secret = encrypt_secret(secret, encryption_key)?;
   let client = pool.get().await?;
   q::upsert()
     .bind(

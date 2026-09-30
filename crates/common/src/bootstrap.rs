@@ -27,20 +27,22 @@ fn resolve_secret(
   file: Option<&str>,
   on_file_error: impl Fn(&str, &std::io::Error),
 ) -> Option<String> {
-  if let Some(inline) = inline {
-    return Some(inline.to_string());
-  }
-
-  let file = file?;
-  let expanded = shellexpand::full(file)
-    .map_or_else(|_| file.to_string(), std::borrow::Cow::into_owned);
-  match std::fs::read_to_string(&expanded) {
-    Ok(value) => Some(value.trim().to_string()),
-    Err(error) => {
-      on_file_error(&expanded, &error);
-      None
-    },
-  }
+  let value = if let Some(inline) = inline {
+    inline.to_string()
+  } else {
+    let file = file?;
+    let expanded = shellexpand::full(file)
+      .map_or_else(|_| file.to_string(), std::borrow::Cow::into_owned);
+    match std::fs::read_to_string(&expanded) {
+      Ok(value) => value.trim().to_string(),
+      Err(error) => {
+        on_file_error(&expanded, &error);
+        return None;
+      },
+    }
+  };
+  // An empty secret would authenticate empty credentials.
+  (!value.trim().is_empty()).then_some(value)
 }
 
 fn resolve_webhook_secret(webhook: &DeclarativeWebhook) -> Option<String> {
