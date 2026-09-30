@@ -158,29 +158,43 @@ pub async fn sync_for_jobset(
   jobset_id: Uuid,
   inputs: &[DeclarativeJobsetInput],
 ) -> Result<()> {
-  // Get names from declarative config
-  let names: Vec<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
-
-  // Delete inputs not in declarative config
-  {
-    let client = pool.get().await?;
-    q::sync_for_jobset_delete()
-      .bind(&client, &jobset_id, &names)
-      .await?;
-  }
-
-  // Upsert each input
+  // One bad input must not leave the jobset with its old inputs deleted.
   for input in inputs {
-    upsert(
-      pool,
-      jobset_id,
+    circus_nix::validate::validate_jobset_input(
       &input.name,
       input.input_type,
       &input.value,
       input.revision.as_deref(),
     )
-    .await?;
+    .map_err(CiError::Validation)?;
   }
 
+  // Get names from declarative config
+  let names: Vec<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
+
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+
+  // Delete inputs not in declarative config
+  q::sync_for_jobset_delete()
+    .bind(&tx, &jobset_id, &names)
+    .await?;
+
+  // Upsert each input
+  for input in inputs {
+    q::upsert()
+      .bind(
+        &tx,
+        &jobset_id,
+        &input.name,
+        &input.input_type.as_str(),
+        &input.value,
+        &input.revision,
+      )
+      .one()
+      .await?;
+  }
+
+  tx.commit().await?;
   Ok(())
 }
