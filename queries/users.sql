@@ -1,4 +1,4 @@
---: UserRow(full_name?, password_hash?, last_login_at?)
+--: UserRow(full_name?, password_hash?, last_login_at?, external_id?)
 
 --! create (full_name?) : UserRow
 INSERT INTO users (username, email, full_name, password_hash, role)
@@ -48,7 +48,7 @@ UPDATE users SET public_dashboard = :public_dashboard WHERE id = :id;
 DELETE FROM users WHERE id = :id;
 
 --! upsert_oauth_user_fetch : UserRow
-SELECT * FROM users WHERE username = :username;
+SELECT * FROM users WHERE user_type = :user_type AND external_id = :external_id;
 
 --! upsert_oauth_user_update_email
 UPDATE users SET email = :email, last_login_at = NOW(), updated_at = NOW()
@@ -58,8 +58,8 @@ WHERE id = :id;
 UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = :id;
 
 --! upsert_oauth_user_insert : UserRow
-INSERT INTO users (username, email, user_type, password_hash, role)
-VALUES (:username, :email, :user_type, NULL, 'read-only')
+INSERT INTO users (username, email, user_type, external_id, password_hash, role)
+VALUES (:username, :email, :user_type, :external_id, NULL, 'read-only')
 RETURNING *;
 
 --! create_session

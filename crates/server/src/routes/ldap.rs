@@ -105,7 +105,7 @@ async fn ldap_login(
     &body.username,
     None,
     UserType::Ldap,
-    "ldap",
+    &body.username,
     state.email_regex.as_deref(),
   )
   .await?;

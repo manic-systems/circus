@@ -421,17 +421,20 @@ pub async fn upsert_oauth_user(
   username: &str,
   email: Option<&str>,
   user_type: UserType,
-  oauth_provider_id: &str,
+  external_id: &str,
   email_regex: Option<&Regex>,
 ) -> Result<User> {
   // Use provider ID in username to avoid collisions
-  let unique_username = format!("{username}_{oauth_provider_id}");
+  let unique_username = match user_type {
+    UserType::Ldap => format!("{username}_ldap"),
+    _ => format!("{username}_{external_id}"),
+  };
 
-  // Check if user exists by OAuth provider ID pattern
+  // Usernames are attacker-chosen, only the provider id is trusted.
   let existing = {
     let client = pool.get().await?;
     q::upsert_oauth_user_fetch()
-      .bind(&client, &unique_username)
+      .bind(&client, &user_type.as_db_str(), &external_id)
       .opt()
       .await?
       .map(User::try_from)
@@ -461,7 +464,13 @@ pub async fn upsert_oauth_user(
 
   let client = pool.get().await?;
   let row = q::upsert_oauth_user_insert()
-    .bind(&client, &unique_username, &email, &user_type.as_db_str())
+    .bind(
+      &client,
+      &unique_username,
+      &email,
+      &user_type.as_db_str(),
+      &external_id,
+    )
     .one()
     .await
     .map_err(|e| {

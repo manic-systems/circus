@@ -50,6 +50,11 @@ pub struct SetPublicDashboardParams {
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
+pub struct UpsertOauthUserFetchParams<T1: crate::StringSql, T2: crate::StringSql> {
+    pub user_type: T1,
+    pub external_id: T2,
+}
+#[derive(Debug)]
 pub struct UpsertOauthUserUpdateEmailParams<T1: crate::StringSql> {
     pub email: T1,
     pub id: uuid::Uuid,
@@ -59,10 +64,12 @@ pub struct UpsertOauthUserInsertParams<
     T1: crate::StringSql,
     T2: crate::StringSql,
     T3: crate::StringSql,
+    T4: crate::StringSql,
 > {
     pub username: T1,
     pub email: T2,
     pub user_type: T3,
+    pub external_id: T4,
 }
 #[derive(Debug)]
 pub struct CreateSessionParams<T1: crate::StringSql> {
@@ -85,6 +92,7 @@ pub struct UserRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub external_id: Option<String>,
 }
 pub struct UserRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -100,6 +108,7 @@ pub struct UserRowBorrowed<'a> {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub external_id: Option<&'a str>,
 }
 impl<'a> From<UserRowBorrowed<'a>> for UserRow {
     fn from(
@@ -117,6 +126,7 @@ impl<'a> From<UserRowBorrowed<'a>> for UserRow {
             created_at,
             updated_at,
             last_login_at,
+            external_id,
         }: UserRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -133,6 +143,7 @@ impl<'a> From<UserRowBorrowed<'a>> for UserRow {
             created_at,
             updated_at,
             last_login_at,
+            external_id: external_id.map(|v| v.into()),
         }
     }
 }
@@ -385,6 +396,7 @@ impl CreateStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -467,6 +479,7 @@ impl AuthenticateFetchStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -531,6 +544,7 @@ impl GetStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -575,6 +589,7 @@ impl GetByUsernameStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -619,6 +634,7 @@ impl GetByEmailStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -667,6 +683,7 @@ impl ListStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -759,6 +776,7 @@ impl UpdateEmailStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
@@ -1020,7 +1038,10 @@ impl DeleteStmt {
 }
 pub struct UpsertOauthUserFetchStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn upsert_oauth_user_fetch() -> UpsertOauthUserFetchStmt {
-    UpsertOauthUserFetchStmt("SELECT * FROM users WHERE username = $1", None)
+    UpsertOauthUserFetchStmt(
+        "SELECT * FROM users WHERE user_type = $1 AND external_id = $2",
+        None,
+    )
 }
 impl UpsertOauthUserFetchStmt {
     pub async fn prepare<'a, C: GenericClient>(
@@ -1030,14 +1051,15 @@ impl UpsertOauthUserFetchStmt {
         self.1 = Some(client.prepare(self.0).await?);
         Ok(self)
     }
-    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
         &'s self,
         client: &'c C,
-        username: &'a T1,
-    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 1> {
+        user_type: &'a T1,
+        external_id: &'a T2,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 2> {
         UserRowQuery {
             client,
-            params: [username],
+            params: [user_type, external_id],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1056,10 +1078,29 @@ impl UpsertOauthUserFetchStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
         }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        UpsertOauthUserFetchParams<T1, T2>,
+        UserRowQuery<'c, 'a, 's, C, UserRow, 2>,
+        C,
+    > for UpsertOauthUserFetchStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a UpsertOauthUserFetchParams<T1, T2>,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 2> {
+        self.bind(client, &params.user_type, &params.external_id)
     }
 }
 pub struct UpsertOauthUserUpdateEmailStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -1134,7 +1175,7 @@ impl UpsertOauthUserTouchStmt {
 pub struct UpsertOauthUserInsertStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn upsert_oauth_user_insert() -> UpsertOauthUserInsertStmt {
     UpsertOauthUserInsertStmt(
-        "INSERT INTO users (username, email, user_type, password_hash, role) VALUES ($1, $2, $3, NULL, 'read-only') RETURNING *",
+        "INSERT INTO users (username, email, user_type, external_id, password_hash, role) VALUES ($1, $2, $3, $4, NULL, 'read-only') RETURNING *",
         None,
     )
 }
@@ -1154,16 +1195,18 @@ impl UpsertOauthUserInsertStmt {
         T1: crate::StringSql,
         T2: crate::StringSql,
         T3: crate::StringSql,
+        T4: crate::StringSql,
     >(
         &'s self,
         client: &'c C,
         username: &'a T1,
         email: &'a T2,
         user_type: &'a T3,
-    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 3> {
+        external_id: &'a T4,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 4> {
         UserRowQuery {
             client,
-            params: [username, email, user_type],
+            params: [username, email, user_type, external_id],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1182,28 +1225,44 @@ impl UpsertOauthUserInsertStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
         }
     }
 }
-impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql>
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+>
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        UpsertOauthUserInsertParams<T1, T2, T3>,
-        UserRowQuery<'c, 'a, 's, C, UserRow, 3>,
+        UpsertOauthUserInsertParams<T1, T2, T3, T4>,
+        UserRowQuery<'c, 'a, 's, C, UserRow, 4>,
         C,
     > for UpsertOauthUserInsertStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a UpsertOauthUserInsertParams<T1, T2, T3>,
-    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 3> {
-        self.bind(client, &params.username, &params.email, &params.user_type)
+        params: &'a UpsertOauthUserInsertParams<T1, T2, T3, T4>,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 4> {
+        self.bind(
+            client,
+            &params.username,
+            &params.email,
+            &params.user_type,
+            &params.external_id,
+        )
     }
 }
 pub struct CreateSessionStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -1302,6 +1361,7 @@ impl ValidateSessionFetchStmt {
                         created_at: row.try_get(10)?,
                         updated_at: row.try_get(11)?,
                         last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
                     })
                 },
             mapper: |it| UserRow::from(it),
