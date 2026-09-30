@@ -724,13 +724,9 @@ impl runner::Server for RunnerImpl {
           slot.set_error_message("runner has no S3 presigner configured");
           continue;
         };
-        // S3 key shape: nar/<sha256-base32 from nar_hash>.<ext>, where the
-        // extension is derived from the configured compression so the key
-        // suffix matches the actual encoding. Nix clients use the narinfo
-        // `Compression:` field to decompress, but operators and S3-level
-        // tooling rely on the extension being accurate.
+        // An agent-chosen key could overwrite another path's NAR.
         let ext = compression_ext(&compression);
-        let key = format!("nar/{}.{}", hash_key_segment(&nar_hash), ext);
+        let key = format!("nar/{}.{ext}", Uuid::new_v4().simple());
         let url = p.presign_put(&key, expiry);
         slot.set_nar_url(url.as_str());
         slot.set_nar_path(key.as_str());
@@ -1059,41 +1055,6 @@ fn compression_ext(compression: &str) -> &'static str {
   }
 }
 
-/// Extract a URL/S3-key safe segment from a NAR hash.
-///
-/// Normal Nix hashes use base32 (`sha256:...`) or SRI base64
-/// (`sha256-...`). A compromised agent can send arbitrary text here, so
-/// never copy the string into an object key without sanitising it first.
-fn hash_key_segment(h: &str) -> String {
-  for prefix in ["sha256:", "sha256-"] {
-    if let Some(rest) = h.strip_prefix(prefix) {
-      let cleaned = sanitise_key_segment(rest.trim_end_matches('='));
-      if !cleaned.is_empty() {
-        return cleaned;
-      }
-    }
-  }
-  let cleaned = sanitise_key_segment(h);
-  if cleaned.is_empty() {
-    hex::encode(Sha256::digest(h.as_bytes()))
-  } else {
-    cleaned
-  }
-}
-
-fn sanitise_key_segment(value: &str) -> String {
-  value
-    .chars()
-    .filter_map(|c| {
-      match c {
-        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' => Some(c),
-        '/' | '+' => Some('_'),
-        _ => None,
-      }
-    })
-    .collect()
-}
-
 /// The meta is [`Weak`] so that removing the agent drops the sender for `rx`.
 #[expect(clippy::future_not_send, reason = "capnp future")]
 async fn run_dispatch_pump(
@@ -1378,12 +1339,6 @@ mod tests {
   fn verify_token_rejects_invalid_or_different_digest() {
     let digest = hex::encode(Sha256::digest(b"other"));
     assert!(!verify_token(&["not-hex".into(), digest], "token"));
-  }
-
-  #[test]
-  fn hash_key_segment_never_preserves_path_separators() {
-    assert_eq!(hash_key_segment("sha256:abc/def+ghi="), "abc_def_ghi");
-    assert_eq!(hash_key_segment("../../evil"), ".._.._evil");
   }
 
   #[test]
