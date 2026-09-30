@@ -225,18 +225,6 @@ impl JobsetState {
   pub const fn as_db_str(&self) -> &'static str {
     self.as_str()
   }
-
-  /// Parses a state string from declarative config.
-  /// Unrecognised values default to `Enabled`.
-  #[must_use]
-  pub fn from_config_str(s: &str) -> Self {
-    match s {
-      "disabled" => Self::Disabled,
-      "one_shot" => Self::OneShot,
-      "one_at_a_time" => Self::OneAtATime,
-      _ => Self::Enabled,
-    }
-  }
 }
 
 impl std::str::FromStr for JobsetState {
@@ -289,16 +277,6 @@ impl JobsetTriggerMode {
   #[must_use]
   pub const fn as_db_str(&self) -> &'static str {
     self.as_str()
-  }
-
-  /// Parses a trigger mode from declarative config.
-  /// Unrecognised values default to `SourceChange`.
-  #[must_use]
-  pub fn from_config_str(s: &str) -> Self {
-    match s {
-      "interval" => Self::Interval,
-      _ => Self::SourceChange,
-    }
   }
 }
 

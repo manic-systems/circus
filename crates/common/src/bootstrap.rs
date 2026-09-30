@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
   db::PgPool,
-  error::Result,
+  error::{CiError, Result},
   models::{CreateJobset, CreateProject, JobsetState, JobsetTriggerMode},
   repo,
 };
@@ -96,11 +96,15 @@ async fn sync_declarative_project(
     let state = decl_jobset
       .state
       .as_deref()
-      .map(JobsetState::from_config_str);
+      .map(str::parse::<JobsetState>)
+      .transpose()
+      .map_err(CiError::Validation)?;
     let trigger_mode = decl_jobset
       .trigger_mode
       .as_deref()
-      .map(JobsetTriggerMode::from_config_str);
+      .map(str::parse::<JobsetTriggerMode>)
+      .transpose()
+      .map_err(CiError::Validation)?;
     let jobset = repo::jobsets::upsert(pool, CreateJobset {
       project_id: project.id,
       name: decl_jobset.name.clone(),

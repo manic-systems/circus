@@ -1045,11 +1045,25 @@ async fn sync_repo_declarative_config(
   };
 
   for js in &config.jobsets {
-    let state = js.state.as_deref().map(JobsetState::from_config_str);
-    let trigger_mode = js
-      .trigger_mode
+    let parsed = js
+      .state
       .as_deref()
-      .map(JobsetTriggerMode::from_config_str);
+      .map(str::parse::<JobsetState>)
+      .transpose()
+      .and_then(|state| {
+        js.trigger_mode
+          .as_deref()
+          .map(str::parse::<JobsetTriggerMode>)
+          .transpose()
+          .map(|trigger_mode| (state, trigger_mode))
+      });
+    let (state, trigger_mode) = match parsed {
+      Ok(parsed) => parsed,
+      Err(error) => {
+        tracing::warn!(jobset = %js.name, "Skipping repo config jobset: {error}");
+        continue;
+      },
+    };
 
     let input = CreateJobset {
       project_id,
