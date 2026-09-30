@@ -251,11 +251,11 @@ pub(super) async fn logout_action(
     clear_cookie(USER_SESSION_COOKIE, &state.config.server),
     clear_cookie(API_KEY_SESSION_COOKIE, &state.config.server),
   ];
+  // Header arrays insert, so only AppendHeaders keeps both cookies.
   (
-    [
-      (axum::http::header::SET_COOKIE, cookies[0].clone()),
-      (axum::http::header::SET_COOKIE, cookies[1].clone()),
-    ],
+    axum::response::AppendHeaders(
+      cookies.map(|cookie| (axum::http::header::SET_COOKIE, cookie)),
+    ),
     Redirect::to("/"),
   )
     .into_response()
