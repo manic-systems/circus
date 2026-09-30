@@ -232,7 +232,12 @@ async fn advanced_search_handler(
           _ => None,
         }
       })
-      .collect()
+      .fold(Vec::new(), |mut entities, entity| {
+        if !entities.contains(&entity) {
+          entities.push(entity);
+        }
+        entities
+      })
   };
 
   // Parse sort order (default: desc for builds, asc for projects)

@@ -29,6 +29,27 @@ const fn default_bucket() -> i32 {
   60
 }
 
+const MAX_HOURS: i32 = 90 * 24;
+const MAX_POINTS: i32 = MAX_HOURS;
+
+impl TimeseriesQuery {
+  fn reject_unbounded(&self) -> Option<Response> {
+    let bounded = (1..=MAX_HOURS).contains(&self.hours)
+      && self.bucket >= 1
+      && self.hours * 60 / self.bucket <= MAX_POINTS;
+    (!bounded).then(|| {
+      (
+        StatusCode::BAD_REQUEST,
+        format!(
+          "hours must be 1..={MAX_HOURS} and bucket must yield at most \
+           {MAX_POINTS} points"
+        ),
+      )
+        .into_response()
+    })
+  }
+}
+
 /// Response type for build stats timeseries
 #[derive(serde::Serialize)]
 struct BuildStatsResponse {
@@ -267,6 +288,9 @@ async fn build_stats_timeseries(
   State(state): State<AppState>,
   Query(params): Query<TimeseriesQuery>,
 ) -> Response {
+  if let Some(rejection) = params.reject_unbounded() {
+    return rejection;
+  }
   match circus_common::repo::build_metrics::get_build_stats_timeseries(
     &state.pool,
     params.project_id,
@@ -300,6 +324,9 @@ async fn duration_percentiles_timeseries(
   State(state): State<AppState>,
   Query(params): Query<TimeseriesQuery>,
 ) -> Response {
+  if let Some(rejection) = params.reject_unbounded() {
+    return rejection;
+  }
   match circus_common::repo::build_metrics::get_duration_percentiles_timeseries(
     &state.pool,
     params.project_id,
@@ -333,6 +360,9 @@ async fn system_distribution(
   State(state): State<AppState>,
   Query(params): Query<TimeseriesQuery>,
 ) -> Response {
+  if let Some(rejection) = params.reject_unbounded() {
+    return rejection;
+  }
   match circus_common::repo::build_metrics::get_system_distribution(
     &state.pool,
     params.project_id,
