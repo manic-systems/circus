@@ -268,6 +268,19 @@ impl Config {
              one repository"
           );
         }
+        // An empty prefix matches every subject.
+        for (field, values) in [
+          ("audiences", &oidc.audiences),
+          ("allowed_repositories", &oidc.allowed_repositories),
+          ("allowed_subjects", &oidc.allowed_subjects),
+          ("allowed_subject_prefixes", &oidc.allowed_subject_prefixes),
+          ("allowed_workflow_refs", &oidc.allowed_workflow_refs),
+          ("allowed_refs", &oidc.allowed_refs),
+        ] {
+          if values.iter().any(|value| value.trim().is_empty()) {
+            bail!("queue_runner.rpc.oidc.{field} entries cannot be empty");
+          }
+        }
       }
       if rpc.tls.is_none()
         && (rpc.oidc.is_some() || !rpc.auth_tokens.is_empty())
