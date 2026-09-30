@@ -222,6 +222,17 @@ macro_rules! read_token {
     };
 }
 
+/// `calc_aligned` wraps to zero past `u64::MAX - 7`.
+fn checked_aligned(len: u64) -> io::Result<u64> {
+  if len > u64::MAX - 7 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "NAR length field overflows",
+    ));
+  }
+  Ok(calc_aligned(len))
+}
+
 impl<const P: bool> Inner<P> {
   pub(crate) fn is_eof(&self) -> bool {
     matches!(&self.state, InnerState::Eof)
@@ -335,7 +346,7 @@ impl<const P: bool> Inner<P> {
             buf = &buf[rem..];
             let len = u64::from_le_bytes(value);
             self.state =
-              InnerState::ReadContents(node_type, len, calc_aligned(len));
+              InnerState::ReadContents(node_type, len, checked_aligned(len)?);
           }
         },
 
@@ -453,7 +464,7 @@ impl<const P: bool> Inner<P> {
           } else {
             buf = &buf[rem..];
             let len = u64::from_le_bytes(value);
-            self.state = InnerState::ReadEntryName(len, calc_aligned(len));
+            self.state = InnerState::ReadEntryName(len, checked_aligned(len)?);
           }
         },
 
