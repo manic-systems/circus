@@ -259,7 +259,7 @@ async fn open_session(
 
 fn is_resource_exhaustion(error: &str) -> bool {
   error.contains("Resource temporarily unavailable")
-    || error.contains("os error 11")
+    || error.contains("(os error 11)")
 }
 
 const fn retry_workers(workers: usize) -> Option<usize> {
