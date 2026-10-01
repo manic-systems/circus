@@ -162,6 +162,28 @@ WHERE b.evaluation_id = e.id
   AND e.source_scope = :source_scope
   AND b.status IN ('pending', 'running');
 
+--! list_unfinished_source : EvaluationRow
+-- Pending rows are skipped since a webhook may have queued a commit pushed
+-- after the caller's fetch.
+SELECT e.* FROM evaluations e
+WHERE e.jobset_id = :jobset_id
+  AND e.trigger_kind = 'source_change'
+  AND e.source_scope = :source_scope
+  AND (e.status = 'running' OR EXISTS (
+    SELECT 1 FROM builds b
+    WHERE b.evaluation_id = e.id
+      AND b.status IN ('pending', 'running')
+  ));
+
+--! cancel_with_reason
+UPDATE evaluations SET status = 'cancelled', error_message = :reason
+WHERE id = :id AND status IN ('pending', 'running');
+
+--! cancel_unfinished_builds
+UPDATE builds SET status = 'cancelled', completed_at = NOW(),
+    error_message = :reason
+WHERE evaluation_id = :id AND status IN ('pending', 'running');
+
 --! restart_requeue : EvaluationRow
 UPDATE evaluations e
 SET status = 'pending', evaluation_time = NOW(),

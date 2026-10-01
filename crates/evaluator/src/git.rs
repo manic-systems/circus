@@ -98,13 +98,13 @@ fn open(repo_path: &Path) -> Result<Repository> {
   )?)
 }
 
-fn fetch(repo: &Repository, url: &str) -> Result<()> {
+fn fetch(repo: &Repository, url: &str, interrupt: &AtomicBool) -> Result<()> {
   let outcome = repo
     .remote_at(url)?
     .with_refspecs(FETCH_REFSPECS, Direction::Fetch)?
     .connect(Direction::Fetch)?
     .prepare_fetch(Discard, gix::remote::ref_map::Options::default())?
-    .receive(Discard, &AtomicBool::new(false))?;
+    .receive(Discard, interrupt)?;
   prune(repo, &outcome.ref_map)
 }
 
@@ -258,13 +258,14 @@ fn clone_or_open_and_fetch(
   url: &str,
   work_dir: &Path,
   project_name: &str,
+  interrupt: &AtomicBool,
 ) -> Result<(PathBuf, Repository)> {
   let repo_path = work_dir.join(project_name);
   if !repo_path.exists() {
     gix::init(&repo_path)?;
   }
   let repo = open(&repo_path)?;
-  fetch(&repo, &clone_url(url))?;
+  fetch(&repo, &clone_url(url), interrupt)?;
   Ok((repo_path, repo))
 }
 
@@ -282,8 +283,12 @@ pub fn list_matching_refs(
   branch_pattern: Option<&str>,
   tag_pattern: Option<&str>,
 ) -> Result<Vec<DiscoveredRef>> {
-  let (_repo_path, repo) =
-    clone_or_open_and_fetch(url, work_dir, project_name)?;
+  let (_repo_path, repo) = clone_or_open_and_fetch(
+    url,
+    work_dir,
+    project_name,
+    &AtomicBool::new(false),
+  )?;
   let mut refs = Vec::new();
 
   if let Some(pattern) = branch_pattern {
@@ -345,6 +350,104 @@ pub fn list_matching_refs(
   Ok(refs)
 }
 
+/// Resolve the commit a source evaluation tracks, honoring the URL's `rev` and
+/// `ref` attributes before falling back to the default branch.
+fn resolve_source_commit(
+  repo: &Repository,
+  url: &str,
+  branch: Option<&str>,
+) -> Result<(String, ObjectId)> {
+  // Resolve commit from remote refs (which are always up-to-date after fetch).
+  // When no branch is specified, use the remote's default branch.
+  if let Some(rev) = source_attribute(url, "rev") {
+    let oid = parse_commit(repo, &rev)?;
+    Ok((oid.to_string(), oid))
+  } else {
+    let git_ref = match (branch, source_attribute(url, "ref")) {
+      (Some(branch), _) => format!("refs/remotes/origin/{branch}"),
+      (None, Some(source_ref)) if source_ref.starts_with("refs/") => source_ref,
+      (None, Some(source_ref)) => format!("refs/remotes/origin/{source_ref}"),
+      (None, None) => DEFAULT_BRANCH_REF.to_owned(),
+    };
+    resolve_ref(repo, &git_ref).map_err(|error| {
+      CiError::NotFound(format!("Git ref '{git_ref}' not found: {error}"))
+    })
+  }
+}
+
+fn contains_commit(
+  repo: &Repository,
+  tip: ObjectId,
+  commit: &str,
+) -> Result<bool> {
+  let commit =
+    ObjectId::from_hex(commit.as_bytes()).map_err(gix::Error::from)?;
+  if commit == tip {
+    return Ok(true);
+  }
+  // Fetching never deletes objects, so a missing commit was never fetched and
+  // cannot be in the history of any fetched ref.
+  if !repo.has_object(commit) {
+    return Ok(false);
+  }
+  let mut graph = repo.revision_graph(None);
+  let bases = gix::revision::plumbing::merge_base(tip, &[commit], &mut graph)
+    .map_err(gix::Error::from)?;
+  Ok(bases.is_some_and(|bases| bases.contains(&commit)))
+}
+
+/// Whether `commit` is `tip` or one of its ancestors in the checkout at
+/// `repo_path`.
+///
+/// # Errors
+///
+/// Returns an error if the repository cannot be opened or either hash is
+/// invalid.
+pub fn history_contains(
+  repo_path: &Path,
+  tip: &str,
+  commit: &str,
+) -> Result<bool> {
+  let repo = open(repo_path)?;
+  let tip = ObjectId::from_hex(tip.as_bytes()).map_err(gix::Error::from)?;
+  contains_commit(&repo, tip, commit)
+}
+
+/// Whether the repository URL pins a revision, which no branch can rewrite.
+#[must_use]
+pub fn pins_revision(url: &str) -> bool {
+  source_attribute(url, "rev").is_some()
+}
+
+/// Fetch origin and report whether `commit` is still in the history of
+/// `branch`, or of the source `clone_or_fetch` resolves when `branch` is
+/// `None`. Setting `interrupt` aborts the fetch.
+///
+/// # Errors
+///
+/// Returns an error if the fetch fails or the ref does not resolve.
+pub fn source_contains_commit(
+  url: &str,
+  work_dir: &Path,
+  project_name: &str,
+  branch: Option<&str>,
+  commit: &str,
+  interrupt: &AtomicBool,
+) -> Result<bool> {
+  let (_repo_path, repo) =
+    clone_or_open_and_fetch(url, work_dir, project_name, interrupt)?;
+  let tip = match branch {
+    Some(branch) => {
+      let git_ref = format!("refs/remotes/origin/{branch}");
+      resolve_ref(&repo, &git_ref).map_err(|error| {
+        CiError::NotFound(format!("Git ref '{git_ref}' not found: {error}"))
+      })?
+    },
+    None => resolve_source_commit(&repo, url, None)?,
+  };
+  contains_commit(&repo, tip.1, commit)
+}
+
 /// Clone or fetch a repository. Returns (`repo_path`, `commit_hash`).
 ///
 /// If `branch` is `Some`, resolve `refs/remotes/origin/<branch>` instead of
@@ -360,24 +463,13 @@ pub fn clone_or_fetch(
   project_name: &str,
   branch: Option<&str>,
 ) -> Result<(PathBuf, String)> {
-  let (repo_path, repo) = clone_or_open_and_fetch(url, work_dir, project_name)?;
-
-  // Resolve commit from remote refs (which are always up-to-date after fetch).
-  // When no branch is specified, use the remote's default branch.
-  let (hash, oid) = if let Some(rev) = source_attribute(url, "rev") {
-    let oid = parse_commit(&repo, &rev)?;
-    (oid.to_string(), oid)
-  } else {
-    let git_ref = match (branch, source_attribute(url, "ref")) {
-      (Some(branch), _) => format!("refs/remotes/origin/{branch}"),
-      (None, Some(source_ref)) if source_ref.starts_with("refs/") => source_ref,
-      (None, Some(source_ref)) => format!("refs/remotes/origin/{source_ref}"),
-      (None, None) => DEFAULT_BRANCH_REF.to_owned(),
-    };
-    resolve_ref(&repo, &git_ref).map_err(|error| {
-      CiError::NotFound(format!("Git ref '{git_ref}' not found: {error}"))
-    })?
-  };
+  let (repo_path, repo) = clone_or_open_and_fetch(
+    url,
+    work_dir,
+    project_name,
+    &AtomicBool::new(false),
+  )?;
+  let (hash, oid) = resolve_source_commit(&repo, url, branch)?;
 
   // The requested ref may differ from the remote's default branch, including
   // on a fresh clone, so always align the checkout with the resolved commit.
@@ -403,7 +495,12 @@ pub fn checkout_named_ref(
     RefKind::Branch => format!("refs/remotes/origin/{name}"),
     RefKind::Tag => format!("refs/tags/{name}"),
   };
-  let (repo_path, repo) = clone_or_open_and_fetch(url, work_dir, project_name)?;
+  let (repo_path, repo) = clone_or_open_and_fetch(
+    url,
+    work_dir,
+    project_name,
+    &AtomicBool::new(false),
+  )?;
   let (hash, oid) = resolve_ref(&repo, &git_ref).map_err(|e| {
     CiError::NotFound(format!("Git ref '{git_ref}' not found: {e}"))
   })?;
@@ -428,7 +525,12 @@ pub fn fetch_and_checkout_commit(
   project_name: &str,
   commit_sha: &str,
 ) -> Result<PathBuf> {
-  let (repo_path, repo) = clone_or_open_and_fetch(url, work_dir, project_name)?;
+  let (repo_path, repo) = clone_or_open_and_fetch(
+    url,
+    work_dir,
+    project_name,
+    &AtomicBool::new(false),
+  )?;
   checkout(&repo, parse_commit(&repo, commit_sha)?)?;
   Ok(repo_path)
 }
