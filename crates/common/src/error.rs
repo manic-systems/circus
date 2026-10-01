@@ -13,7 +13,7 @@ pub enum CiError {
   Pool(#[from] deadpool_postgres::PoolError),
 
   #[error("Git error: {0}")]
-  Git(#[from] git2::Error),
+  Git(#[from] gix::Error),
 
   #[error("Serialization error: {0}")]
   Serialization(#[from] serde_json::Error),

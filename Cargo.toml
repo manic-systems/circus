@@ -64,7 +64,13 @@ futures-core = "0.3.34"
 futures-sink = "0.3.34"
 futures-util = { version = "0.3", features = [ "sink" ] }
 getrandom = "0.4.3"
-git2 = { version = "0.21.0", features = [ "https" ] }
+gix = { version = "0.88.0", default-features = false, features = [
+  "blob-diff",
+  "blocking-http-transport-reqwest",
+  "revision",
+  "sha1",
+  "worktree-mutation",
+] }
 hex = "0.4.3"
 hex-literal = "1.1.0"
 hmac = "0.13.0"

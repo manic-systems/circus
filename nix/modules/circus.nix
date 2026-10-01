@@ -520,6 +520,7 @@ in {
           path = with pkgs; [
             nix
             git
+            openssh
           ];
 
           serviceConfig = {

@@ -712,6 +712,42 @@ $ circusctl migrate validate <database_url>
 $ circusctl migrate create <name>
 ```
 
+## Private Repositories
+
+The evaluator fetches repositories with gitoxide and then hands the resolved
+commit to Nix, which fetches the source again with its own fetcher. Both read
+the same Git configuration and run as the evaluator's service user (`circus`,
+home `/var/lib/circus` under the NixOS module), so credentials go in that user's
+home rather than in the repository URL.
+
+For HTTPS remotes, configure a Git credential helper. Nix's `git+https` fetcher
+uses the same helper. Helpers such as `store` run as `git credential-store`, so
+`git` must be on the evaluator's `PATH`, which the NixOS module provides.
+
+```ini
+# /var/lib/circus/.gitconfig
+[credential]
+	helper = store
+```
+
+```
+# /var/lib/circus/.git-credentials (mode 0600)
+https://x-access-token:<token>@github.com
+```
+
+For SSH remotes, put a deploy key and a `known_hosts` entry in
+`/var/lib/circus/.ssh/`. Fetches never prompt, so an unknown host key or a
+passphrase-protected key fails the evaluation.
+
+Repositories on github.com, gitlab.com and git.sr.ht are evaluated through Nix's
+`github:`, `gitlab:` and `sourcehut:` fetchers, which download through the forge
+API and ignore Git credentials. Give Nix an access token for those.
+
+```
+# /var/lib/circus/.config/nix/nix.conf
+access-tokens = github.com=<token>
+```
+
 ## Deploying on NixOS
 
 Circus, for the time being, only supports being deployed on NixOS systems. While

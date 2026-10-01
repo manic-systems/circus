@@ -1,26 +1,57 @@
 //! Tests for the git clone/fetch module.
-//! Uses git2 to create a temporary repository, then exercises `clone_or_fetch`.
+//! Uses gix to create a temporary repository, then exercises `clone_or_fetch`.
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "Fine in tests")]
 
-use git2::{Repository, Signature, Time};
+use gix::{
+  ObjectId,
+  actor::Signature,
+  date::Time,
+  refs::transaction::PreviousValue,
+};
 use tempfile::TempDir;
+
+fn signature(seconds: i64) -> Signature {
+  Signature {
+    name:  "Test".into(),
+    email: "test@example.com".into(),
+    time:  Time::new(seconds, 0),
+  }
+}
+
+fn commit(
+  repo: &gix::Repository,
+  reference: &str,
+  message: &str,
+  seconds: i64,
+  parents: &[ObjectId],
+) -> ObjectId {
+  let tree = repo
+    .write_object(gix::objs::Tree::empty())
+    .unwrap()
+    .detach();
+  let signature = signature(seconds);
+  let mut time = gix::date::parse::TimeBuf::default();
+  let signature = signature.to_ref(&mut time);
+  repo
+    .commit_as(
+      signature,
+      signature,
+      reference,
+      message,
+      tree,
+      parents.iter().copied(),
+    )
+    .unwrap()
+    .detach()
+}
 
 #[test]
 fn test_clone_or_fetch_clones_new_repo() {
   let upstream_dir = TempDir::new().unwrap();
   let work_dir = TempDir::new().unwrap();
 
-  // Create a non-bare repo to clone from (bare repos have no HEAD by default)
-  let upstream = Repository::init(upstream_dir.path()).unwrap();
-  // Create initial commit
-  {
-    let sig = Signature::now("Test", "test@example.com").unwrap();
-    let tree_id = upstream.index().unwrap().write_tree().unwrap();
-    let tree = upstream.find_tree(tree_id).unwrap();
-    upstream
-      .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-      .unwrap();
-  }
+  let upstream = gix::init(upstream_dir.path()).unwrap();
+  commit(&upstream, "HEAD", "initial", 0, &[]);
 
   let url = format!("file://{}", upstream_dir.path().display());
   let result = circus_evaluator::git::clone_or_fetch(
@@ -45,19 +76,9 @@ fn test_clone_or_fetch_clones_new_repo() {
 fn nix_ref_and_rev_queries_select_non_default_commits() {
   let upstream_dir = TempDir::new().unwrap();
   let work_dir = TempDir::new().unwrap();
-  let upstream = Repository::init(upstream_dir.path()).unwrap();
-  let sig = Signature::now("Test", "test@example.com").unwrap();
-  let tree_id = upstream.index().unwrap().write_tree().unwrap();
-  let tree = upstream.find_tree(tree_id).unwrap();
-  let main = upstream
-    .commit(Some("HEAD"), &sig, &sig, "main", &tree, &[])
-    .unwrap();
-  let main = upstream.find_commit(main).unwrap();
-  let next = upstream
-    .commit(Some("refs/heads/next"), &sig, &sig, "next", &tree, &[&main])
-    .unwrap();
-  drop(tree);
-  drop(main);
+  let upstream = gix::init(upstream_dir.path()).unwrap();
+  let main = commit(&upstream, "HEAD", "main", 0, &[]);
+  let next = commit(&upstream, "refs/heads/next", "next", 0, &[main]);
 
   let url = format!("file://{}?ref=next", upstream_dir.path().display());
   let (repo_path, resolved) = circus_evaluator::git::clone_or_fetch(
@@ -67,10 +88,10 @@ fn nix_ref_and_rev_queries_select_non_default_commits() {
     None,
   )
   .expect("clone with Nix ref failed");
-  let checkout = Repository::open(repo_path).unwrap();
+  let checkout = gix::open(repo_path).unwrap();
 
   assert_eq!(resolved, next.to_string());
-  assert_eq!(checkout.head().unwrap().target(), Some(next));
+  assert_eq!(checkout.head_id().unwrap().detach(), next);
 
   let url = format!("file://{}?rev={next}", upstream_dir.path().display());
   let (repo_path, resolved) = circus_evaluator::git::clone_or_fetch(
@@ -80,10 +101,10 @@ fn nix_ref_and_rev_queries_select_non_default_commits() {
     None,
   )
   .expect("clone with Nix revision failed");
-  let checkout = Repository::open(repo_path).unwrap();
+  let checkout = gix::open(repo_path).unwrap();
 
   assert_eq!(resolved, next.to_string());
-  assert_eq!(checkout.head().unwrap().target(), Some(next));
+  assert_eq!(checkout.head_id().unwrap().detach(), next);
 }
 
 #[test]
@@ -91,15 +112,8 @@ fn test_clone_or_fetch_fetches_existing() {
   let upstream_dir = TempDir::new().unwrap();
   let work_dir = TempDir::new().unwrap();
 
-  let upstream = Repository::init(upstream_dir.path()).unwrap();
-  {
-    let sig = Signature::now("Test", "test@example.com").unwrap();
-    let tree_id = upstream.index().unwrap().write_tree().unwrap();
-    let tree = upstream.find_tree(tree_id).unwrap();
-    upstream
-      .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-      .unwrap();
-  }
+  let upstream = gix::init(upstream_dir.path()).unwrap();
+  let initial = commit(&upstream, "HEAD", "initial", 0, &[]);
 
   let url = format!("file://{}", upstream_dir.path().display());
 
@@ -114,15 +128,7 @@ fn test_clone_or_fetch_fetches_existing() {
     .expect("first clone failed");
 
   // Make another commit upstream
-  {
-    let sig = Signature::now("Test", "test@example.com").unwrap();
-    let tree_id = upstream.index().unwrap().write_tree().unwrap();
-    let tree = upstream.find_tree(tree_id).unwrap();
-    let head = upstream.head().unwrap().peel_to_commit().unwrap();
-    upstream
-      .commit(Some("HEAD"), &sig, &sig, "second", &tree, &[&head])
-      .unwrap();
-  }
+  let second = commit(&upstream, "HEAD", "second", 0, &[initial]);
 
   // Second fetch
   let (_, hash2): (std::path::PathBuf, String) =
@@ -134,8 +140,8 @@ fn test_clone_or_fetch_fetches_existing() {
     )
     .expect("second fetch failed");
 
-  assert!(!hash1.is_empty());
-  assert!(!hash2.is_empty());
+  assert_eq!(hash1, initial.to_string());
+  assert_eq!(hash2, second.to_string());
 }
 
 #[test]
@@ -154,43 +160,25 @@ fn test_clone_invalid_url_returns_error() {
 fn newest_annotated_tag_uses_tagger_time() {
   let upstream_dir = TempDir::new().unwrap();
   let work_dir = TempDir::new().unwrap();
-  let upstream = Repository::init(upstream_dir.path()).unwrap();
-  let old_sig =
-    Signature::new("Test", "test@example.com", &Time::new(1_000, 0)).unwrap();
-  let new_sig =
-    Signature::new("Test", "test@example.com", &Time::new(2_000, 0)).unwrap();
-  let tree_id = upstream.index().unwrap().write_tree().unwrap();
-  let tree = upstream.find_tree(tree_id).unwrap();
-  let old_id = upstream
-    .commit(Some("HEAD"), &old_sig, &old_sig, "old", &tree, &[])
-    .unwrap();
-  let old = upstream.find_commit(old_id).unwrap();
-  let new_id = upstream
-    .commit(Some("HEAD"), &new_sig, &new_sig, "new", &tree, &[&old])
-    .unwrap();
-  let new = upstream.find_commit(new_id).unwrap();
-  let recent_tagger =
-    Signature::new("Test", "test@example.com", &Time::new(3_000, 0)).unwrap();
-  let old_tagger =
-    Signature::new("Test", "test@example.com", &Time::new(1_500, 0)).unwrap();
-  upstream
-    .tag(
-      "recent-tag",
-      old.as_object(),
-      &recent_tagger,
-      "recent tag on old commit",
-      false,
-    )
-    .unwrap();
-  upstream
-    .tag(
-      "old-tag",
-      new.as_object(),
-      &old_tagger,
-      "old tag on new commit",
-      false,
-    )
-    .unwrap();
+  let upstream = gix::init(upstream_dir.path()).unwrap();
+  let old = commit(&upstream, "HEAD", "old", 1_000, &[]);
+  let new = commit(&upstream, "HEAD", "new", 2_000, &[old]);
+  for (name, target, seconds) in
+    [("recent-tag", old, 3_000), ("old-tag", new, 1_500)]
+  {
+    let tagger = signature(seconds);
+    let mut time = gix::date::parse::TimeBuf::default();
+    upstream
+      .tag(
+        name,
+        target,
+        gix::objs::Kind::Commit,
+        Some(tagger.to_ref(&mut time)),
+        name,
+        PreviousValue::MustNotExist,
+      )
+      .unwrap();
+  }
 
   let url = format!("file://{}", upstream_dir.path().display());
   let mut refs = circus_evaluator::git::list_matching_refs(
