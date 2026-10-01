@@ -73,7 +73,7 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs.buildPackages; [pkg-config capnproto];
-        buildInputs = with pkgs; [openssl sqlite nixVersions.nix_2_34.dev] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
+        buildInputs = with pkgs; [sqlite nixVersions.nix_2_34.dev] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
         env = {
           LIBCLANG_PATH = "${pkgs.buildPackages.llvmPackages.libclang.lib}/lib";
           BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
@@ -328,7 +328,6 @@
         packages = with pkgs;
           [
             pkg-config
-            openssl
             postgresql_18
             # DB query codegen: `scripts/codegen.sh` runs `cornucopia live`.
             cornucopia

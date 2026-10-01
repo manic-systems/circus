@@ -1,32 +1,58 @@
 use std::path::{Path, PathBuf};
 
 use circus_common::models::{ActiveJobset, Evaluation};
-use git2::{DiffOptions, Oid, Repository};
+use gix::{
+  ObjectId,
+  pathspec::{Defaults, Search},
+};
 
 fn matching_path_changed(
   repo_path: &Path,
   base_commit: &str,
   commit: &str,
   path_filters: &[String],
-) -> Result<bool, git2::Error> {
-  let repo = Repository::open(repo_path)?;
-  let base = repo.find_commit(Oid::from_str(base_commit)?)?;
-  let head = repo.find_commit(Oid::from_str(commit)?)?;
-  let base_tree = base.tree()?;
-  let head_tree = head.tree()?;
-  let mut options = DiffOptions::new();
+) -> gix::Result<bool> {
+  let repo = gix::open(repo_path)?;
+  let tree = |hash: &str| -> gix::Result<_> {
+    let id = ObjectId::from_hex(hash.as_bytes()).map_err(gix::Error::from)?;
+    repo.find_commit(id)?.tree()
+  };
+  let base_tree = tree(base_commit)?;
+  let head_tree = tree(commit)?;
+
+  let mut patterns = Vec::new();
   for path_filter in path_filters {
-    options.pathspec(path_filter);
+    patterns.push(path_filter.as_str());
     if let Some(root_pattern) = path_filter.strip_prefix("**/") {
-      options.pathspec(root_pattern);
+      patterns.push(root_pattern);
     }
   }
-  let diff = repo.diff_tree_to_tree(
-    Some(&base_tree),
-    Some(&head_tree),
-    Some(&mut options),
+  let patterns = patterns
+    .into_iter()
+    .map(|pattern| {
+      gix::pathspec::parse(pattern.as_bytes(), Defaults::default())
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(gix::Error::from)?;
+  let mut search = Search::from_specs(patterns, None, Path::new(""))
+    .map_err(gix::Error::from)?;
+
+  // Without rename tracking a move reports both paths, matching libgit2's
+  // default and gating on a filter that only names the source.
+  let changes = repo.diff_tree_to_tree(
+    &base_tree,
+    &head_tree,
+    gix::diff::Options::default(),
   )?;
-  Ok(diff.deltas().next().is_some())
+  Ok(changes.iter().any(|change| {
+    search
+      .pattern_matching_relative_path(
+        change.location(),
+        Some(false),
+        &mut |_, _, _, _| false,
+      )
+      .is_some_and(|matched| !matched.is_excluded())
+  }))
 }
 
 pub async fn should_evaluate(
@@ -69,47 +95,58 @@ pub async fn should_evaluate(
 
 #[cfg(test)]
 mod tests {
-  use std::{fs, path::Path};
-
-  use git2::{IndexAddOption, Oid, Repository, Signature};
+  use gix::{ObjectId, actor::Signature, date::Time, objs::tree::EntryKind};
   use tempfile::TempDir;
 
   use super::matching_path_changed;
 
-  fn commit(repo: &Repository, root: &Path, path: &str, content: &str) -> Oid {
-    let file = root.join(path);
-    fs::create_dir_all(file.parent().expect("test path has a parent"))
-      .expect("create test directory");
-    fs::write(file, content).expect("write test file");
-    let mut index = repo.index().expect("open index");
-    index
-      .add_all(["*"], IndexAddOption::DEFAULT, None)
-      .expect("stage files");
-    index.write().expect("write index");
-    let tree_id = index.write_tree().expect("write tree");
-    let tree = repo.find_tree(tree_id).expect("find tree");
-    let signature =
-      Signature::now("Test", "test@example.com").expect("signature");
-    let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
-    let parents = parent.iter().collect::<Vec<_>>();
+  fn commit(repo: &gix::Repository, path: &str, content: &str) -> ObjectId {
+    let parent = repo.head_id().ok().map(gix::Id::detach);
+    let base_tree = parent.map_or_else(
+      || {
+        repo
+          .write_object(gix::objs::Tree::empty())
+          .expect("empty tree")
+          .detach()
+      },
+      |parent| {
+        repo
+          .find_commit(parent)
+          .expect("parent")
+          .tree_id()
+          .expect("tree")
+          .detach()
+      },
+    );
+    let blob = repo.write_blob(content).expect("write blob").detach();
+    let mut editor = repo.edit_tree(base_tree).expect("edit tree");
+    editor
+      .upsert(path, EntryKind::Blob, blob)
+      .expect("stage file");
+    let tree = editor.write().expect("write tree").detach();
+    let signature = Signature {
+      name:  "Test".into(),
+      email: "test@example.com".into(),
+      time:  Time::new(0, 0),
+    };
+    let mut time = gix::date::parse::TimeBuf::default();
+    let signature = signature.to_ref(&mut time);
     repo
-      .commit(Some("HEAD"), &signature, &signature, path, &tree, &parents)
+      .commit_as(signature, signature, "HEAD", path, tree, parent)
       .expect("commit")
+      .detach()
   }
 
   #[test]
   fn git_pathspecs_gate_directory_and_glob_changes() {
     let dir = TempDir::new().expect("tempdir");
-    let repo = Repository::init(dir.path()).expect("init repo");
-    let base = commit(&repo, dir.path(), "README.md", "initial");
-    let unrelated = commit(&repo, dir.path(), "README.md", "unrelated");
-    let nested = commit(
-      &repo,
-      dir.path(),
-      "packages/hardened-kernel/default.nix",
-      "kernel",
-    );
-    let root = commit(&repo, dir.path(), "flake.nix", "flake");
+    let repo = gix::init(dir.path()).expect("init repo");
+    let base = commit(&repo, "README.md", "initial");
+    let unrelated = commit(&repo, "README.md", "unrelated");
+    let nested =
+      commit(&repo, "packages/hardened-kernel/default.nix", "kernel");
+    let root = commit(&repo, "flake.nix", "flake");
+    let source = commit(&repo, "src/a/b.nix", "source");
 
     assert!(
       !matching_path_changed(
@@ -146,6 +183,15 @@ mod tests {
         &["**/*.nix".to_string()],
       )
       .expect("compare root glob change")
+    );
+    assert!(
+      matching_path_changed(
+        dir.path(),
+        &root.to_string(),
+        &source.to_string(),
+        &["src/*.nix".to_string()],
+      )
+      .expect("compare glob crossing a directory separator")
     );
   }
 }

@@ -1,10 +1,24 @@
-use std::path::{Path, PathBuf};
+use std::{
+  collections::HashSet,
+  path::{Path, PathBuf},
+  sync::atomic::AtomicBool,
+};
 
 use circus_common::{
   error::{CiError, Result},
   glob::glob_matches,
 };
-use git2::Repository;
+use gix::{
+  ObjectId,
+  Repository,
+  bstr::{BStr, ByteSlice},
+  progress::Discard,
+  refs::{
+    FullName,
+    transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
+  },
+  remote::{Direction, fetch::RefMap},
+};
 use url::Url;
 
 /// Query parameters understood by Nix's Git flake fetcher rather than by the
@@ -47,38 +61,168 @@ fn source_attribute(source: &str, attribute: &str) -> Option<String> {
     .find_map(|(key, value)| (key == attribute).then(|| value.into_owned()))
 }
 
-/// Refspecs fetched on every sync. The first is the standard branch fetch.
-/// The two remaining refspecs make pull-request / merge-request commits
-/// reachable so the evaluator can check them out when a webhook pushes
-/// an evaluation for a PR head commit:
-///
-///   - `refs/pull/*/head` is GitHub, Gitea, and Forgejo's PR ref.
-///   - `refs/merge-requests/*/head` is GitLab's MR ref.
-///
-/// Forges that don't publish these refs (Cgit, plain Git remotes) will
-/// fail the fetch on these refspecs; we treat that as non-fatal.
-const FETCH_REFSPECS_REQUIRED: &[&str] = &[
-  "refs/heads/*:refs/remotes/origin/*",
-  "refs/tags/*:refs/tags/*",
-];
-const FETCH_REFSPECS_OPTIONAL: &[&str] = &[
-  "refs/pull/*/head:refs/circus/pr/*",
-  "refs/merge-requests/*/head:refs/circus/mr/*",
+/// Refspecs fetched on every sync. Pull-request and merge-request heads make
+/// webhook-pushed PR commits reachable, from GitHub/Gitea/Forgejo and GitLab
+/// respectively. Remotes without them simply match nothing.
+const FETCH_REFSPECS: &[&str] = &[
+  "+HEAD:refs/circus/remote-head",
+  "+refs/heads/*:refs/remotes/origin/*",
+  "+refs/tags/*:refs/tags/*",
+  "+refs/pull/*/head:refs/circus/pr/*",
+  "+refs/merge-requests/*/head:refs/circus/mr/*",
 ];
 
-fn fetch_all_refs(repo: &Repository) -> Result<()> {
-  let mut remote = repo.find_remote("origin")?;
-  // Prune so stale PR heads never resolve as branches.
-  let mut options = git2::FetchOptions::new();
-  options.prune(git2::FetchPrune::On);
-  remote.fetch(FETCH_REFSPECS_REQUIRED, Some(&mut options), None)?;
-  // PR/MR refspecs are forge-specific; ignore failures so a plain Git
-  // remote without pull refs still evaluates.
-  for spec in FETCH_REFSPECS_OPTIONAL {
-    if let Err(e) = remote.fetch(&[*spec], None, None) {
-      tracing::debug!(refspec = spec, "Optional fetch failed: {e}");
+/// Local namespaces mirrored from the remote, so a ref there that the remote
+/// no longer advertises is stale and a deleted branch or PR stops resolving.
+const MIRRORED_NAMESPACES: &[&str] = &[
+  "refs/remotes/origin/",
+  "refs/tags/",
+  "refs/circus/pr/",
+  "refs/circus/mr/",
+];
+
+const DEFAULT_BRANCH_REF: &str = "refs/circus/remote-head";
+
+/// Reflog entries need a committer, which the evaluator's service user rarely
+/// configures.
+const CONFIG_OVERRIDES: &[&str] = &[
+  "gitoxide.committer.nameFallback=circus",
+  "gitoxide.committer.emailFallback=circus@localhost",
+];
+
+fn open(repo_path: &Path) -> Result<Repository> {
+  Ok(gix::open_opts(
+    repo_path,
+    gix::open::Options::default()
+      .config_overrides(CONFIG_OVERRIDES.iter().copied()),
+  )?)
+}
+
+fn fetch(repo: &Repository, url: &str) -> Result<()> {
+  let outcome = repo
+    .remote_at(url)?
+    .with_refspecs(FETCH_REFSPECS, Direction::Fetch)?
+    .connect(Direction::Fetch)?
+    .prepare_fetch(Discard, gix::remote::ref_map::Options::default())?
+    .receive(Discard, &AtomicBool::new(false))?;
+  prune(repo, &outcome.ref_map)
+}
+
+fn prune(repo: &Repository, ref_map: &RefMap) -> Result<()> {
+  if ref_map.mappings.is_empty() {
+    tracing::warn!("Remote mapped no refs, skipping prune");
+    return Ok(());
+  }
+
+  let fetched = ref_map
+    .mappings
+    .iter()
+    .filter_map(|mapping| mapping.local.as_ref().map(|name| name.as_bstr()))
+    .collect::<HashSet<&BStr>>();
+  let mut stale = Vec::new();
+  for reference in repo.references()?.all()? {
+    let name = reference?.name().to_owned();
+    let mirrored = MIRRORED_NAMESPACES
+      .iter()
+      .any(|namespace| name.as_bstr().starts_with_str(namespace));
+    if mirrored && !fetched.contains(name.as_bstr()) {
+      stale.push(name);
     }
   }
+  repo.edit_references(stale.into_iter().map(|name| {
+    RefEdit {
+      change: Change::Delete {
+        expected: PreviousValue::Any,
+        log:      RefLog::AndReference,
+      },
+      name,
+      deref: false,
+    }
+  }))?;
+  Ok(())
+}
+
+fn resolve_ref(repo: &Repository, git_ref: &str) -> Result<(String, ObjectId)> {
+  let id = repo.find_reference(git_ref)?.peel_to_commit()?.id;
+  Ok((id.to_string(), id))
+}
+
+fn parse_commit(repo: &Repository, hash: &str) -> Result<ObjectId> {
+  let id = ObjectId::from_hex(hash.as_bytes()).map_err(|error| {
+    CiError::Validation(format!("Invalid commit SHA '{hash}': {error}"))
+  })?;
+  repo.find_commit(id).map_err(|error| {
+    CiError::NotFound(format!(
+      "Commit {hash} not reachable on origin (fetched branches and \
+       pull/merge-request refs): {error}"
+    ))
+  })?;
+  Ok(id)
+}
+
+/// Force the worktree, index, and a detached `HEAD` to `commit`, removing
+/// tracked files the previous checkout had and `commit` lacks.
+fn checkout(repo: &Repository, commit: ObjectId) -> Result<()> {
+  // gix rewrites every file on checkout and every poll lands here. `HEAD`
+  // moves last, so an interrupted checkout is still redone.
+  if repo.head_id().is_ok_and(|head| head == commit) {
+    return Ok(());
+  }
+
+  let workdir = repo.workdir().ok_or_else(|| {
+    CiError::Internal(format!(
+      "Repository {} has no worktree",
+      repo.git_dir().display()
+    ))
+  })?;
+  let tree = repo
+    .find_commit(commit)?
+    .tree_id()
+    .map_err(gix::Error::from)?;
+  let mut index = repo.index_from_tree(&tree)?;
+
+  if let Some(previous) = repo.try_index()? {
+    for entry in previous.entries() {
+      let path = entry.path(&previous);
+      if index.entry_by_path(path).is_some() {
+        continue;
+      }
+      match std::fs::remove_file(workdir.join(gix::path::from_bstr(path))) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+          return Err(error.into());
+        },
+        _ => {},
+      }
+    }
+  }
+
+  let mut options = repo.checkout_options(
+    gix::worktree::stack::state::attributes::Source::IdMapping,
+  )?;
+  options.overwrite_existing = true;
+  gix::worktree::state::checkout(
+    &mut index,
+    workdir,
+    repo.objects.clone().into_arc()?,
+    &Discard,
+    &Discard,
+    &AtomicBool::new(false),
+    options,
+  )
+  .map_err(gix::Error::from)?;
+  index
+    .write(gix::index::write::Options::default())
+    .map_err(gix::Error::from)?;
+
+  repo.edit_reference(RefEdit {
+    change: Change::Update {
+      log:      LogChange::default(),
+      expected: PreviousValue::Any,
+      new:      gix::refs::Target::Object(commit),
+    },
+    name:   FullName::try_from("HEAD").map_err(gix::Error::from_error)?,
+    deref:  false,
+  })?;
   Ok(())
 }
 
@@ -110,34 +254,18 @@ pub fn retain_newest_tag(refs: &mut Vec<DiscoveredRef>) {
   refs.extend(newest_tag);
 }
 
-fn resolve_ref(
-  repo: &Repository,
-  git_ref: &str,
-) -> Result<(String, git2::Oid)> {
-  let reference = repo.find_reference(git_ref)?;
-  let commit = reference.peel_to_commit()?;
-  Ok((commit.id().to_string(), commit.id()))
-}
-
 fn clone_or_open_and_fetch(
   url: &str,
   work_dir: &Path,
   project_name: &str,
-) -> Result<(PathBuf, Repository, bool)> {
+) -> Result<(PathBuf, Repository)> {
   let repo_path = work_dir.join(project_name);
-  let is_fetch = repo_path.exists();
-  let clone_url = clone_url(url);
-  let repo = if is_fetch {
-    let repo = Repository::open(&repo_path)?;
-    repo.remote_set_url("origin", &clone_url)?;
-    fetch_all_refs(&repo)?;
-    repo
-  } else {
-    let repo = Repository::clone(&clone_url, &repo_path)?;
-    fetch_all_refs(&repo)?;
-    repo
-  };
-  Ok((repo_path, repo, is_fetch))
+  if !repo_path.exists() {
+    gix::init(&repo_path)?;
+  }
+  let repo = open(&repo_path)?;
+  fetch(&repo, &clone_url(url))?;
+  Ok((repo_path, repo))
 }
 
 /// Clone or update the repository and list refs matching the given branch
@@ -154,56 +282,59 @@ pub fn list_matching_refs(
   branch_pattern: Option<&str>,
   tag_pattern: Option<&str>,
 ) -> Result<Vec<DiscoveredRef>> {
-  let (_repo_path, repo, _is_fetch) =
+  let (_repo_path, repo) =
     clone_or_open_and_fetch(url, work_dir, project_name)?;
   let mut refs = Vec::new();
 
   if let Some(pattern) = branch_pattern {
-    for reference in repo.references_glob("refs/remotes/origin/*")? {
-      let reference = reference?;
-      let Some(name) = reference
+    for reference in repo.references()?.prefixed("refs/remotes/origin/")? {
+      let mut reference = reference?;
+      let name = reference
         .name()
-        .ok()
-        .and_then(|name| name.strip_prefix("refs/remotes/origin/"))
-      else {
-        continue;
-      };
-      if name == "HEAD" || !glob_matches(pattern, name) {
+        .as_bstr()
+        .strip_prefix(b"refs/remotes/origin/")
+        .unwrap_or_default()
+        .to_str_lossy()
+        .into_owned();
+      if name == "HEAD" || !glob_matches(pattern, &name) {
         continue;
       }
       let commit = reference.peel_to_commit()?;
       refs.push(DiscoveredRef {
-        kind:        RefKind::Branch,
-        name:        name.to_string(),
-        commit_hash: commit.id().to_string(),
-        ref_time:    commit.time().seconds(),
+        kind: RefKind::Branch,
+        name,
+        commit_hash: commit.id.to_string(),
+        ref_time: commit.time()?.seconds,
       });
     }
   }
 
   if let Some(pattern) = tag_pattern {
-    for reference in repo.references_glob("refs/tags/*")? {
-      let reference = reference?;
-      let Some(name) = reference
+    for reference in repo.references()?.prefixed("refs/tags/")? {
+      let mut reference = reference?;
+      let name = reference
         .name()
-        .ok()
-        .and_then(|name| name.strip_prefix("refs/tags/"))
-      else {
-        continue;
-      };
-      if !glob_matches(pattern, name) {
+        .as_bstr()
+        .strip_prefix(b"refs/tags/")
+        .unwrap_or_default()
+        .to_str_lossy()
+        .into_owned();
+      if !glob_matches(pattern, &name) {
         continue;
       }
+      let tagger_time = reference
+        .try_id()
+        .and_then(|id| id.object().ok()?.try_into_tag().ok())
+        .and_then(|tag| Some(tag.tagger().ok()??.time().ok()?.seconds));
       let commit = reference.peel_to_commit()?;
-      let ref_time = reference
-        .peel_to_tag()
-        .ok()
-        .and_then(|tag| tag.tagger().map(|tagger| tagger.when().seconds()))
-        .unwrap_or_else(|| commit.time().seconds());
+      let ref_time = match tagger_time {
+        Some(time) => time,
+        None => commit.time()?.seconds,
+      };
       refs.push(DiscoveredRef {
         kind: RefKind::Tag,
-        name: name.to_string(),
-        commit_hash: commit.id().to_string(),
+        name,
+        commit_hash: commit.id.to_string(),
         ref_time,
       });
     }
@@ -217,7 +348,7 @@ pub fn list_matching_refs(
 /// Clone or fetch a repository. Returns (`repo_path`, `commit_hash`).
 ///
 /// If `branch` is `Some`, resolve `refs/remotes/origin/<branch>` instead of
-/// HEAD.
+/// the remote's default branch.
 ///
 /// # Errors
 ///
@@ -229,56 +360,28 @@ pub fn clone_or_fetch(
   project_name: &str,
   branch: Option<&str>,
 ) -> Result<(PathBuf, String)> {
-  let (repo_path, repo, _is_fetch) =
-    clone_or_open_and_fetch(url, work_dir, project_name)?;
+  let (repo_path, repo) = clone_or_open_and_fetch(url, work_dir, project_name)?;
 
   // Resolve commit from remote refs (which are always up-to-date after fetch).
-  // When no branch is specified, detect the default branch from local HEAD's
-  // tracking target.
+  // When no branch is specified, use the remote's default branch.
   let (hash, oid) = if let Some(rev) = source_attribute(url, "rev") {
-    let oid = git2::Oid::from_str(&rev).map_err(|error| {
-      CiError::Validation(format!(
-        "Invalid repository URL revision '{rev}': {error}"
-      ))
-    })?;
-    let commit = repo.find_commit(oid).map_err(|error| {
-      CiError::NotFound(format!(
-        "Repository URL revision '{rev}' not found after fetching origin: \
-         {error}"
-      ))
-    })?;
-    (commit.id().to_string(), commit.id())
+    let oid = parse_commit(&repo, &rev)?;
+    (oid.to_string(), oid)
   } else {
-    let (branch_name, allow_full_ref) = if let Some(branch) = branch {
-      (branch.to_string(), false)
-    } else if let Some(source_ref) = source_attribute(url, "ref") {
-      (source_ref, true)
-    } else {
-      let head = repo.head()?;
-      (head.shorthand().unwrap_or("master").to_string(), false)
-    };
-
-    let git_ref = if allow_full_ref && branch_name.starts_with("refs/") {
-      branch_name.clone()
-    } else {
-      format!("refs/remotes/origin/{branch_name}")
+    let git_ref = match (branch, source_attribute(url, "ref")) {
+      (Some(branch), _) => format!("refs/remotes/origin/{branch}"),
+      (None, Some(source_ref)) if source_ref.starts_with("refs/") => source_ref,
+      (None, Some(source_ref)) => format!("refs/remotes/origin/{source_ref}"),
+      (None, None) => DEFAULT_BRANCH_REF.to_owned(),
     };
     resolve_ref(&repo, &git_ref).map_err(|error| {
-      CiError::NotFound(format!(
-        "Git ref '{branch_name}' not found ({git_ref}): {error}"
-      ))
+      CiError::NotFound(format!("Git ref '{git_ref}' not found: {error}"))
     })?
   };
-  let commit = repo.find_commit(oid)?;
 
   // The requested ref may differ from the remote's default branch, including
   // on a fresh clone, so always align the checkout with the resolved commit.
-  repo.checkout_tree(
-    commit.as_object(),
-    Some(git2::build::CheckoutBuilder::new().force()),
-  )?;
-  repo.set_head_detached(commit.id())?;
-
+  checkout(&repo, oid)?;
   Ok((repo_path, hash))
 }
 
@@ -300,17 +403,11 @@ pub fn checkout_named_ref(
     RefKind::Branch => format!("refs/remotes/origin/{name}"),
     RefKind::Tag => format!("refs/tags/{name}"),
   };
-  let (repo_path, repo, _is_fetch) =
-    clone_or_open_and_fetch(url, work_dir, project_name)?;
+  let (repo_path, repo) = clone_or_open_and_fetch(url, work_dir, project_name)?;
   let (hash, oid) = resolve_ref(&repo, &git_ref).map_err(|e| {
     CiError::NotFound(format!("Git ref '{git_ref}' not found: {e}"))
   })?;
-  let commit = repo.find_commit(oid)?;
-  repo.checkout_tree(
-    commit.as_object(),
-    Some(git2::build::CheckoutBuilder::new().force()),
-  )?;
-  repo.set_head_detached(commit.id())?;
+  checkout(&repo, oid)?;
   Ok((repo_path, hash))
 }
 
@@ -331,25 +428,7 @@ pub fn fetch_and_checkout_commit(
   project_name: &str,
   commit_sha: &str,
 ) -> Result<PathBuf> {
-  let (repo_path, repo, _is_fetch) =
-    clone_or_open_and_fetch(url, work_dir, project_name)?;
-
-  let oid = git2::Oid::from_str(commit_sha).map_err(|e| {
-    CiError::Validation(format!("Invalid commit SHA '{commit_sha}': {e}"))
-  })?;
-
-  let commit = repo.find_commit(oid).map_err(|e| {
-    CiError::NotFound(format!(
-      "Commit {commit_sha} not reachable on origin (fetched branches and \
-       pull/merge-request refs): {e}"
-    ))
-  })?;
-
-  repo.checkout_tree(
-    commit.as_object(),
-    Some(git2::build::CheckoutBuilder::new().force()),
-  )?;
-  repo.set_head_detached(commit.id())?;
-
+  let (repo_path, repo) = clone_or_open_and_fetch(url, work_dir, project_name)?;
+  checkout(&repo, parse_commit(&repo, commit_sha)?)?;
   Ok(repo_path)
 }
