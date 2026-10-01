@@ -2,12 +2,13 @@ use std::{collections::HashMap, path::Path, time::Duration};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
-use tokio::process::Command;
+use tokio::{process::Command, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 mod eval_command;
 mod flake_lock;
 mod flake_ref;
+mod tack;
 
 use eval_command::NixEvalPolicy;
 pub use eval_command::error_chain;
@@ -264,9 +265,11 @@ fn rewrite_nixos_config_expr(expr: &str) -> Option<String> {
 }
 
 /// Derive `allowed-uris` from lock files used during evaluation.
-fn lock_derived_allowed_uris(
+async fn lock_derived_allowed_uris(
   repo_path: &Path,
   config: &EvaluatorConfig,
+  deadline: Instant,
+  cancel: &CancellationToken,
 ) -> Result<Vec<String>> {
   if !config.restrict_eval || !config.auto_allowed_uris {
     return Ok(Vec::new());
@@ -298,10 +301,7 @@ fn lock_derived_allowed_uris(
     },
   };
 
-  let tack_lock_path = repo_path.join(".tack/pins.lock.json");
-  if let Ok(contents) = std::fs::read_to_string(&tack_lock_path) {
-    uris.extend(parse_lockfile(&tack_lock_path, &contents));
-  }
+  uris.extend(tack::allowed_uris(repo_path, config, deadline, cancel).await);
   uris.sort();
   uris.dedup();
   tracing::info!(
@@ -326,12 +326,15 @@ fn parse_lockfile(path: &Path, contents: &str) -> Vec<String> {
 /// The root URIs are only meaningful under `restrict-eval`, where the source
 /// fetch itself is subject to `checkURI`; without them the canonical
 /// `github:`/`git+*` source would be blocked.
-fn eval_allowed_uris(
+async fn eval_allowed_uris(
   repo_path: &Path,
   source: &SourceFlakeRef,
   config: &EvaluatorConfig,
+  deadline: Instant,
+  cancel: &CancellationToken,
 ) -> Result<Vec<String>> {
-  let mut uris = lock_derived_allowed_uris(repo_path, config)?;
+  let mut uris =
+    lock_derived_allowed_uris(repo_path, config, deadline, cancel).await?;
   if config.restrict_eval {
     uris.extend(source.allowed_uris.iter().cloned());
   }
@@ -389,7 +392,10 @@ async fn evaluate_flake(
     }
   }
 
-  let derived_uris = eval_allowed_uris(repo_path, source, config)?;
+  let deadline = Instant::now() + timeout;
+  let derived_uris =
+    eval_allowed_uris(repo_path, source, config, deadline, cancel).await?;
+  let remaining = deadline.saturating_duration_since(Instant::now());
   let policy =
     NixEvalPolicy::from(config).with_extra_allowed_uris(derived_uris);
 
@@ -399,7 +405,7 @@ async fn evaluate_flake(
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
-    item_timeout_seconds: evix_item_timeout_seconds(timeout),
+    item_timeout_seconds: evix_item_timeout_seconds(remaining),
     // evix uses this as a post-attribute recycle threshold; RLIMIT_AS is the
     // corresponding hard ceiling while an attribute is still evaluating.
     max_memory_size: crate::memory::MemoryLimit::from(config)
@@ -413,7 +419,7 @@ async fn evaluate_flake(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, timeout, "flake", cancel).await
+  eval_command::run_eval(evix_config, remaining, "flake", cancel).await
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -439,7 +445,9 @@ async fn evaluate_all_nixos_configs(
       "--no-write-lock-file",
     ])
     .kill_on_drop(true);
-  let derived_uris = eval_allowed_uris(repo_path, source, config)?;
+  let deadline = Instant::now() + timeout;
+  let derived_uris =
+    eval_allowed_uris(repo_path, source, config, deadline, cancel).await?;
   NixEvalPolicy::from(config)
     .with_extra_allowed_uris(derived_uris)
     .apply_to(&mut cmd);
@@ -449,7 +457,7 @@ async fn evaluate_all_nixos_configs(
       CiError::NixEval(format!("Failed to apply evaluator memory limit: {e}"))
     })?;
   let output = tokio::select! {
-    output = tokio::time::timeout(timeout, cmd.output()) => output.map_err(|_| {
+    output = tokio::time::timeout_at(deadline, cmd.output()) => output.map_err(|_| {
       CiError::Timeout(format!("Nix evaluation timed out after {timeout:?}"))
     })?,
     () = cancel.cancelled() => return Err(CiError::NixEval("Nix evaluation was cancelled".to_string())),

@@ -226,7 +226,7 @@ configuration or the Nix store.
 | `evaluator`          | `work_dir`                                             | `/tmp/circus-evaluator`                             | Working directory for clones                                              |
 | `evaluator`          | `restrict_eval`                                        | `true`                                              | Pass `--option restrict-eval true` to Nix                                 |
 | `evaluator`          | `allow_ifd`                                            | `false`                                             | Allow import-from-derivation                                              |
-| `evaluator`          | `auto_allowed_uris`                                    | `true`                                              | Derive `allowed-uris` from committed flake and Tack lock files            |
+| `evaluator`          | `auto_allowed_uris`                                    | `true`                                              | Derive `allowed-uris` from flake and Tack locks, including Tack pins' own |
 | `evaluator`          | `allowed_uris`                                         | `[]`                                                | Extra fetch URIs honored under `restrict_eval`                            |
 | `evaluator`          | `require_locked_flake`                                 | `false`                                             | Refuse flake jobsets with no committed flake.lock                         |
 | `evaluator`          | `strict_errors`                                        | `false`                                             | Abort on first evaluation cycle error                                     |

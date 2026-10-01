@@ -51,7 +51,7 @@ impl Lockfile {
   }
 }
 
-fn allowed_uris_from_nodes(
+pub(super) fn allowed_uris_from_nodes(
   nodes: &serde_json::Map<String, Value>,
   root_name: Option<&str>,
 ) -> Vec<String> {
