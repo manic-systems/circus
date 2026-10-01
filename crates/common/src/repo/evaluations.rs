@@ -585,6 +585,47 @@ pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
     .transpose()
 }
 
+/// List source evaluations in `source_scope` that are running or still have
+/// unfinished builds.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn list_unfinished_source(
+  pool: &PgPool,
+  jobset_id: Uuid,
+  source_scope: &str,
+) -> Result<Vec<Evaluation>> {
+  let client = pool.get().await?;
+  q::list_unfinished_source()
+    .bind(&client, &jobset_id, &source_scope)
+    .all()
+    .await?
+    .into_iter()
+    .map(Evaluation::try_from)
+    .collect()
+}
+
+/// Cancel an evaluation and its unfinished builds, recording `reason` on both.
+///
+/// # Errors
+///
+/// Returns an error if the database transaction fails.
+pub async fn cancel_with_builds(
+  pool: &PgPool,
+  id: Uuid,
+  reason: &str,
+) -> Result<()> {
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  q::cancel_with_reason().bind(&tx, &reason, &id).await?;
+  q::cancel_unfinished_builds()
+    .bind(&tx, &reason, &id)
+    .await?;
+  tx.commit().await?;
+  Ok(())
+}
+
 /// Requeue a cancelled, failed, or timed-out evaluation after discarding its
 /// stale builds. A disabled jobset rejects the restart; a retained one-shot
 /// jobset is re-enabled for its new attempt.

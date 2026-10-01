@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+  collections::HashMap,
+  sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+  },
+  time::Duration,
+};
 
 use chrono::Utc;
 use circus_common::{
@@ -527,20 +534,26 @@ async fn run_nix_and_record_builds(
     eval.id,
     cancel.clone(),
   ));
-  let result = crate::nix::evaluate(
-    repo_path,
-    &jobset.repository_url,
-    &eval.commit_hash,
-    &jobset.nix_expression,
-    jobset.flake_mode,
-    nix_timeout,
-    config,
-    inputs,
-    &cancel,
-    None,
-  )
-  .await;
-  cancel.cancel();
+  let (result, ()) = tokio::join!(
+    async {
+      let result = crate::nix::evaluate(
+        repo_path,
+        &jobset.repository_url,
+        &eval.commit_hash,
+        &jobset.nix_expression,
+        jobset.flake_mode,
+        nix_timeout,
+        config,
+        inputs,
+        &cancel,
+        None,
+      )
+      .await;
+      cancel.cancel();
+      result
+    },
+    watch_branch_history(pool, jobset, eval, config, &cancel),
+  );
   if let Err(error) = watcher.await {
     tracing::warn!(eval_id = %eval.id, "Evaluation cancellation watcher stopped: {error}");
   }
@@ -646,6 +659,177 @@ async fn watch_evaluation_cancellation(
   }
 }
 
+const REWRITTEN_REASON: &str =
+  "commit is no longer in the history of the tracked branch";
+
+/// Cancel a branch evaluation once a force-push drops its commit from the
+/// branch, polling at the jobset's own check cadence.
+async fn watch_branch_history(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  eval: &Evaluation,
+  config: &EvaluatorConfig,
+  cancel: &CancellationToken,
+) {
+  let Some(branch) = eval
+    .source_scope
+    .as_deref()
+    .and_then(|scope| scope.strip_prefix("branch:"))
+  else {
+    return;
+  };
+  let branch = (branch != "HEAD").then(|| branch.to_owned());
+  let interval = Duration::from_secs(
+    u64::try_from(jobset.check_interval)
+      .unwrap_or_default()
+      .max(config.poll_interval),
+  );
+  let git_timeout = Duration::from_secs(config.git_timeout);
+
+  loop {
+    tokio::select! {
+      () = cancel.cancelled() => return,
+      () = tokio::time::sleep(interval) => {},
+    }
+
+    let url = jobset.repository_url.clone();
+    let work_dir = config.work_dir.clone();
+    let project_name = jobset.project_name.clone();
+    let branch = branch.clone();
+    let commit = eval.commit_hash.clone();
+    let interrupt = Arc::new(AtomicBool::new(false));
+    let mut task = tokio::task::spawn_blocking({
+      let interrupt = Arc::clone(&interrupt);
+      move || {
+        crate::git::source_contains_commit(
+          &url,
+          &work_dir,
+          &project_name,
+          branch.as_deref(),
+          &commit,
+          &interrupt,
+        )
+      }
+    });
+    let finished = tokio::select! {
+      result = &mut task => Some(result),
+      () = cancel.cancelled() => None,
+      () = tokio::time::sleep(git_timeout) => None,
+    };
+    let Some(check) = finished else {
+      // The next git operation on this project must not overlap the fetch.
+      interrupt.store(true, Ordering::Relaxed);
+      if let Err(error) = task.await {
+        tracing::warn!(eval_id = %eval.id, "Branch history check panicked: {error}");
+      }
+      if cancel.is_cancelled() {
+        return;
+      }
+      tracing::warn!(eval_id = %eval.id, "Branch history check timed out after {git_timeout:?}");
+      continue;
+    };
+
+    match check {
+      Ok(Ok(true)) => {},
+      Ok(Ok(false)) => {
+        tracing::info!(
+          eval_id = %eval.id,
+          commit = %eval.commit_hash,
+          "Cancelling evaluation of a commit removed from its branch"
+        );
+        match repo::evaluations::cancel_with_builds(
+          pool,
+          eval.id,
+          REWRITTEN_REASON,
+        )
+        .await
+        {
+          Ok(()) => {
+            cancel.cancel();
+            return;
+          },
+          Err(error) => {
+            tracing::warn!(eval_id = %eval.id, "Failed to cancel rewritten evaluation: {error}");
+          },
+        }
+      },
+      Ok(Err(error)) => {
+        tracing::warn!(eval_id = %eval.id, "Failed to check branch history: {error}");
+      },
+      Err(error) => {
+        tracing::warn!(eval_id = %eval.id, "Branch history check panicked: {error}");
+      },
+    }
+  }
+}
+
+/// Cancel unfinished work in `source_scope` whose commit a force-push removed
+/// from the history of `tip`.
+async fn cancel_rewritten_evaluations(
+  pool: &PgPool,
+  jobset_id: Uuid,
+  source_scope: &str,
+  repo_path: &std::path::Path,
+  tip: &str,
+) {
+  let candidates = match repo::evaluations::list_unfinished_source(
+    pool,
+    jobset_id,
+    source_scope,
+  )
+  .await
+  {
+    Ok(candidates) => candidates,
+    Err(error) => {
+      tracing::warn!(%jobset_id, "Failed to list unfinished evaluations: {error}");
+      return;
+    },
+  };
+  if candidates.is_empty() {
+    return;
+  }
+
+  let repo_path = repo_path.to_path_buf();
+  let tip = tip.to_owned();
+  let rewritten = tokio::task::spawn_blocking(move || {
+    candidates
+      .into_iter()
+      .filter(|eval| {
+        match crate::git::history_contains(&repo_path, &tip, &eval.commit_hash)
+        {
+          Ok(contained) => !contained,
+          Err(error) => {
+            tracing::warn!(eval_id = %eval.id, "Failed to check branch history: {error}");
+            false
+          },
+        }
+      })
+      .collect::<Vec<_>>()
+  })
+  .await;
+  let rewritten = match rewritten {
+    Ok(rewritten) => rewritten,
+    Err(error) => {
+      tracing::warn!(%jobset_id, "Branch history check panicked: {error}");
+      return;
+    },
+  };
+
+  for eval in rewritten {
+    tracing::info!(
+      eval_id = %eval.id,
+      commit = %eval.commit_hash,
+      "Cancelling work for a commit removed from its branch"
+    );
+    if let Err(error) =
+      repo::evaluations::cancel_with_builds(pool, eval.id, REWRITTEN_REASON)
+        .await
+    {
+      tracing::warn!(eval_id = %eval.id, "Failed to cancel rewritten evaluation: {error}");
+    }
+  }
+}
+
 async fn evaluate_matching_refs(
   pool: &PgPool,
   jobset: &ActiveJobset,
@@ -706,6 +890,16 @@ async fn evaluate_matching_refs(
       crate::git::RefKind::Branch => format!("branch:{}", git_ref.name),
       crate::git::RefKind::Tag => "tags".to_string(),
     };
+    if git_ref.kind == crate::git::RefKind::Branch {
+      cancel_rewritten_evaluations(
+        pool,
+        jobset.id,
+        &source_scope,
+        &config.work_dir.join(&jobset.project_name),
+        &git_ref.commit_hash,
+      )
+      .await;
+    }
 
     match repo::evaluations::enqueue_source(
       pool,
@@ -743,6 +937,10 @@ async fn evaluate_matching_refs(
   Ok(())
 }
 
+fn single_ref_scope(jobset: &ActiveJobset) -> String {
+  format!("branch:{}", jobset.branch.as_deref().unwrap_or("HEAD"))
+}
+
 async fn create_or_claim_evaluation(
   pool: &PgPool,
   jobset: &ActiveJobset,
@@ -752,12 +950,10 @@ async fn create_or_claim_evaluation(
   let result = if jobset.trigger_mode == JobsetTriggerMode::Interval {
     repo::evaluations::create_interval(pool, create_eval).await
   } else {
-    let source_scope =
-      format!("branch:{}", jobset.branch.as_deref().unwrap_or("HEAD"));
     repo::evaluations::create_running_source_change(
       pool,
       create_eval,
-      &source_scope,
+      &single_ref_scope(jobset),
     )
     .await
   };
@@ -866,6 +1062,19 @@ async fn evaluate_single_ref(
   .map_err(|_| {
     color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
   })???;
+
+  if jobset.trigger_mode != JobsetTriggerMode::Interval
+    && !crate::git::pins_revision(&jobset.repository_url)
+  {
+    cancel_rewritten_evaluations(
+      pool,
+      jobset.id,
+      &single_ref_scope(jobset),
+      &repo_path,
+      &commit_hash,
+    )
+    .await;
+  }
 
   let inputs = repo::jobset_inputs::list_for_jobset(pool, jobset.id)
     .await

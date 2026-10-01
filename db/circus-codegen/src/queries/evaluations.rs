@@ -97,6 +97,21 @@ pub struct CancelSupersededBuildsParams<T1: crate::StringSql> {
     pub source_scope: Option<T1>,
 }
 #[derive(Debug)]
+pub struct ListUnfinishedSourceParams<T1: crate::StringSql> {
+    pub jobset_id: uuid::Uuid,
+    pub source_scope: T1,
+}
+#[derive(Debug)]
+pub struct CancelWithReasonParams<T1: crate::StringSql> {
+    pub reason: T1,
+    pub id: uuid::Uuid,
+}
+#[derive(Debug)]
+pub struct CancelUnfinishedBuildsParams<T1: crate::StringSql> {
+    pub reason: T1,
+    pub id: uuid::Uuid,
+}
+#[derive(Debug)]
 pub struct ListPageFilteredParams<
     T1: crate::StringSql,
     T2: crate::StringSql,
@@ -1997,6 +2012,169 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
             &params.jobset_id,
             &params.source_scope,
         ))
+    }
+}
+pub struct ListUnfinishedSourceStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn list_unfinished_source() -> ListUnfinishedSourceStmt {
+    ListUnfinishedSourceStmt(
+        "SELECT e.* FROM evaluations e WHERE e.jobset_id = $1 AND e.trigger_kind = 'source_change' AND e.source_scope = $2 AND (e.status = 'running' OR EXISTS ( SELECT 1 FROM builds b WHERE b.evaluation_id = e.id AND b.status IN ('pending', 'running') ))",
+        None,
+    )
+}
+impl ListUnfinishedSourceStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        jobset_id: &'a uuid::Uuid,
+        source_scope: &'a T1,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2> {
+        EvaluationRowQuery {
+            client,
+            params: [jobset_id, source_scope],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<EvaluationRowBorrowed, tokio_postgres::Error> {
+                    Ok(EvaluationRowBorrowed {
+                        id: row.try_get(0)?,
+                        jobset_id: row.try_get(1)?,
+                        commit_hash: row.try_get(2)?,
+                        evaluation_time: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        error_message: row.try_get(5)?,
+                        inputs_hash: row.try_get(6)?,
+                        pr_number: row.try_get(7)?,
+                        pr_head_branch: row.try_get(8)?,
+                        pr_base_branch: row.try_get(9)?,
+                        pr_action: row.try_get(10)?,
+                        trigger_kind: row.try_get(11)?,
+                        hidden: row.try_get(12)?,
+                        started_at: row.try_get(13)?,
+                        orphaned_count: row.try_get(14)?,
+                        source_scope: row.try_get(15)?,
+                        superseded_by: row.try_get(16)?,
+                        source_base_commit: row.try_get(17)?,
+                    })
+                },
+            mapper: |it| EvaluationRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ListUnfinishedSourceParams<T1>,
+        EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2>,
+        C,
+    > for ListUnfinishedSourceStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ListUnfinishedSourceParams<T1>,
+    ) -> EvaluationRowQuery<'c, 'a, 's, C, EvaluationRow, 2> {
+        self.bind(client, &params.jobset_id, &params.source_scope)
+    }
+}
+pub struct CancelWithReasonStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn cancel_with_reason() -> CancelWithReasonStmt {
+    CancelWithReasonStmt(
+        "UPDATE evaluations SET status = 'cancelled', error_message = $1 WHERE id = $2 AND status IN ('pending', 'running')",
+        None,
+    )
+}
+impl CancelWithReasonStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        reason: &'a T1,
+        id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[reason, id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        CancelWithReasonParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for CancelWithReasonStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a CancelWithReasonParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.reason, &params.id))
+    }
+}
+pub struct CancelUnfinishedBuildsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn cancel_unfinished_builds() -> CancelUnfinishedBuildsStmt {
+    CancelUnfinishedBuildsStmt(
+        "UPDATE builds SET status = 'cancelled', completed_at = NOW(), error_message = $1 WHERE evaluation_id = $2 AND status IN ('pending', 'running')",
+        None,
+    )
+}
+impl CancelUnfinishedBuildsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        reason: &'a T1,
+        id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[reason, id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        CancelUnfinishedBuildsParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for CancelUnfinishedBuildsStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a CancelUnfinishedBuildsParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.reason, &params.id))
     }
 }
 pub struct RestartRequeueStmt(&'static str, Option<tokio_postgres::Statement>);
