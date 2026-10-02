@@ -1,14 +1,42 @@
-//! Process-wide rustls crypto provider setup and small crypto helpers.
+//! Process-wide rustls and jsonwebtoken crypto provider setup and small
+//! crypto helpers.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ring::{aead, hkdf, rand};
+use jsonwebtoken::{
+  Algorithm,
+  DecodingKey,
+  DecodingKeyKind,
+  crypto::{CryptoProvider, JwtVerifier, KeyUtils},
+  errors::ErrorKind,
+  signature::{self, Verifier},
+};
+use ring::{
+  aead,
+  hkdf,
+  rand,
+  signature::{
+    ECDSA_P256_SHA256_FIXED,
+    ECDSA_P384_SHA384_FIXED,
+    ED25519,
+    RSA_PKCS1_2048_8192_SHA256,
+    RSA_PKCS1_2048_8192_SHA384,
+    RSA_PKCS1_2048_8192_SHA512,
+    RSA_PSS_2048_8192_SHA256,
+    RSA_PSS_2048_8192_SHA384,
+    RSA_PSS_2048_8192_SHA512,
+    RsaParameters,
+    RsaPublicKeyComponents,
+    UnparsedPublicKey,
+    VerificationAlgorithm,
+  },
+};
 
 use crate::error::{CiError, Result};
 
 const WEBHOOK_SECRET_PREFIX: &str = "v1";
 const NONCE_LEN: usize = 12;
 
-/// Pin ring as the process-level rustls [`CryptoProvider`].
+/// Pin ring as the process-level rustls and jsonwebtoken crypto provider.
 ///
 /// # Errors
 ///
@@ -19,7 +47,93 @@ pub fn install_crypto_provider() -> color_eyre::Result<()> {
     .install_default()
     .map_err(|_| {
       color_eyre::eyre::eyre!("a rustls CryptoProvider is already installed")
-    })
+    })?;
+  JWT_PROVIDER.install_default().map_err(|_| {
+    color_eyre::eyre::eyre!(
+      "a jsonwebtoken CryptoProvider is already installed"
+    )
+  })
+}
+
+/// Verify-only, so signing and HMAC algorithms are rejected.
+static JWT_PROVIDER: CryptoProvider = CryptoProvider {
+  signer_factory:   |_, _| Err(ErrorKind::InvalidAlgorithm.into()),
+  verifier_factory: jwt_verifier,
+  key_utils:        KeyUtils::new_unimplemented(),
+};
+
+struct RingVerifier {
+  algorithm:    Algorithm,
+  verification: &'static dyn VerificationAlgorithm,
+  key:          DecodingKey,
+}
+
+const fn rsa_parameters(
+  algorithm: Algorithm,
+) -> Option<&'static RsaParameters> {
+  match algorithm {
+    Algorithm::RS256 => Some(&RSA_PKCS1_2048_8192_SHA256),
+    Algorithm::RS384 => Some(&RSA_PKCS1_2048_8192_SHA384),
+    Algorithm::RS512 => Some(&RSA_PKCS1_2048_8192_SHA512),
+    Algorithm::PS256 => Some(&RSA_PSS_2048_8192_SHA256),
+    Algorithm::PS384 => Some(&RSA_PSS_2048_8192_SHA384),
+    Algorithm::PS512 => Some(&RSA_PSS_2048_8192_SHA512),
+    _ => None,
+  }
+}
+
+#[expect(
+  clippy::trivially_copy_pass_by_ref,
+  reason = "signature is fixed by CryptoProvider::verifier_factory"
+)]
+fn jwt_verifier(
+  algorithm: &Algorithm,
+  key: &DecodingKey,
+) -> jsonwebtoken::errors::Result<Box<dyn JwtVerifier>> {
+  let verification: &'static dyn VerificationAlgorithm = match algorithm {
+    Algorithm::ES256 => &ECDSA_P256_SHA256_FIXED,
+    Algorithm::ES384 => &ECDSA_P384_SHA384_FIXED,
+    Algorithm::EdDSA => &ED25519,
+    _ => rsa_parameters(*algorithm).ok_or(ErrorKind::InvalidAlgorithm)?,
+  };
+
+  if key.family() != algorithm.family() {
+    return Err(ErrorKind::InvalidKeyFormat.into());
+  }
+
+  Ok(Box::new(RingVerifier {
+    algorithm: *algorithm,
+    verification,
+    key: key.clone(),
+  }))
+}
+
+impl Verifier<Vec<u8>> for RingVerifier {
+  fn verify(
+    &self,
+    message: &[u8],
+    signature: &Vec<u8>,
+  ) -> std::result::Result<(), signature::Error> {
+    let verified = match self.key.kind() {
+      DecodingKeyKind::RsaModulusExponent { n, e } => {
+        let parameters =
+          rsa_parameters(self.algorithm).ok_or_else(signature::Error::new)?;
+        RsaPublicKeyComponents { n, e }.verify(parameters, message, signature)
+      },
+      DecodingKeyKind::SecretOrDer(bytes) => {
+        UnparsedPublicKey::new(self.verification, bytes)
+          .verify(message, signature)
+      },
+    };
+
+    verified.map_err(|_| signature::Error::new())
+  }
+}
+
+impl JwtVerifier for RingVerifier {
+  fn algorithm(&self) -> Algorithm {
+    self.algorithm
+  }
 }
 
 /// Encrypt a secret for database storage.
@@ -148,7 +262,71 @@ fn secret_aead_key(key: Option<&str>) -> Result<aead::LessSafeKey> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "fine in tests")]
 mod tests {
-  use super::{decrypt_webhook_secret, encrypt_webhook_secret};
+  use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+  use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+  use ring::{
+    rand::SystemRandom,
+    signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair},
+  };
+
+  use super::{JWT_PROVIDER, decrypt_webhook_secret, encrypt_webhook_secret};
+
+  fn verify(token: &str, key: &DecodingKey, algorithm: Algorithm) -> bool {
+    let _ = JWT_PROVIDER.install_default();
+    let mut validation = Validation::new(algorithm);
+    validation.required_spec_claims.clear();
+    validation.validate_exp = false;
+    decode::<serde_json::Value>(token, key, &validation).is_ok()
+  }
+
+  #[test]
+  fn jwt_provider_verifies_signatures_and_rejects_hmac() {
+    let rng = SystemRandom::new();
+    let pkcs8 =
+      EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+        .unwrap();
+    let pair = EcdsaKeyPair::from_pkcs8(
+      &ECDSA_P256_SHA256_FIXED_SIGNING,
+      pkcs8.as_ref(),
+      &rng,
+    )
+    .unwrap();
+    let (x, y) = pair.public_key().as_ref()[1..].split_at(32);
+    let key = DecodingKey::from_ec_components(
+      &URL_SAFE_NO_PAD.encode(x),
+      &URL_SAFE_NO_PAD.encode(y),
+    )
+    .unwrap();
+    let sign = |header: &str| {
+      let message = format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(header),
+        URL_SAFE_NO_PAD.encode(r#"{"sub":"agent"}"#)
+      );
+      let signature = pair.sign(&rng, message.as_bytes()).unwrap();
+      (message, signature.as_ref().to_vec())
+    };
+    let token = |message: &str, signature: &[u8]| {
+      format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature))
+    };
+
+    let (message, mut signature) = sign(r#"{"alg":"ES256"}"#);
+    assert!(verify(&token(&message, &signature), &key, Algorithm::ES256));
+    signature[0] ^= 1;
+    assert!(!verify(
+      &token(&message, &signature),
+      &key,
+      Algorithm::ES256
+    ));
+
+    let (message, signature) = sign(r#"{"alg":"HS256"}"#);
+    let hmac = DecodingKey::from_secret(b"shared");
+    assert!(!verify(
+      &token(&message, &signature),
+      &hmac,
+      Algorithm::HS256
+    ));
+  }
 
   #[test]
   fn encrypt_webhook_secret_requires_key() {
