@@ -47,6 +47,8 @@
     putStateFile deploy-state state.txt
     getStateFile deploy-state roundtrip.txt
     test "$(cat roundtrip.txt)" = deployed
+    test "$(cat /srv/probe/value)" = mounted
+    ! touch /srv/probe/value 2>/dev/null
     curl --fail --silent --show-error \
       --data-binary "$secret:$HERCULES_CI_PROJECT_PATH" \
       http://runner:8001/effect
@@ -72,6 +74,7 @@
             effectScript = ${builtins.toJSON effectScript};
             inputs = [effectInput];
             secretsMap.deploy = "deploy-token";
+            __hci_effect_mounts = builtins.toJSON {"/srv/probe" = "probe";};
             requiredSystemFeatures = ["circus-effects-agent-only"];
           };
         };
@@ -150,11 +153,17 @@ in
           "circus-effects-agent-only"
         ];
         services.circus-agent.effectsSecretsFile = "/run/circus-effects/secrets.json";
+        services.circus-agent.settings.agent.effects.mountables.probe = {
+          source = "/var/lib/circus-mount-probe";
+          condition = "isDefaultBranch";
+        };
         systemd.services.circus-effects-test-secret = {
           before = ["circus-agent.service"];
           requiredBy = ["circus-agent.service"];
           serviceConfig.Type = "oneshot";
           script = ''
+            install -d -m 0755 /var/lib/circus-mount-probe
+            printf mounted > /var/lib/circus-mount-probe/value
             umask 077
             token="$(cat /proc/sys/kernel/random/uuid)"
             install -d -m 0700 -o circus-agent -g circus-agent /run/circus-effects

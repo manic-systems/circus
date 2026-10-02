@@ -97,6 +97,26 @@ both `queue_runner.rpc.cache_substituter` and
 `queue_runner.rpc.cache_public_key`. Agents need a TLS connection to the runner
 (`circus+tls://` or `[agent.tls]`). Ephemeral agents never run effects.
 
+## Mounts
+
+An effect's `mounts` (`mounts."/dev/kvm" = "dev-kvm";`) names agent mountables.
+
+```toml
+[agent.effects.mountables.dev-kvm]
+source = "/dev/kvm"
+read_only = false
+condition = "isDefaultBranch"
+```
+
+`read_only` defaults to `true`. Mount points must be absolute and outside
+`/nix`, `/build`, `/secrets` and `/proc`, and may replace files such as
+`/etc/hosts`. Darwin agents refuse mounts.
+
+Effects get no writable store by default. To give trusted effects one, make the
+daemon socket a mountable (`source = "/nix/var/nix/daemon-socket/socket"`),
+mount it at e.g. `/run/nix-daemon/socket` and set
+`NIX_REMOTE=unix:///run/nix-daemon/socket` in the effect.
+
 ## GitToken Secrets
 
 A `secretsMap` entry of `{ type = "GitToken"; }` gets `{ "token": "..." }`, an

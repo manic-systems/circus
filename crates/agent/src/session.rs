@@ -1214,6 +1214,8 @@ async fn query_requisites(
 
 #[cfg(test)]
 mod tests {
+  use std::collections::BTreeMap;
+
   use super::*;
 
   #[test]
@@ -1223,6 +1225,7 @@ mod tests {
         "/run/secrets/circus-effects.json",
       ),
       allow_insecure_transport: false,
+      mountables:               BTreeMap::new(),
     };
     assert!(persistent_effects_config(Some(effects.clone()), true).is_none());
     assert!(persistent_effects_config(Some(effects), false).is_some());
@@ -1233,6 +1236,7 @@ mod tests {
     let mut effects = EffectsConfig {
       secrets_file:             PathBuf::from("/run/secrets/effects.json"),
       allow_insecure_transport: false,
+      mountables:               BTreeMap::new(),
     };
     let error = validate_effect_transport_parts(
       "circus://runner.invalid:5000",

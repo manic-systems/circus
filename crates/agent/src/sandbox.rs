@@ -70,6 +70,15 @@ pub(crate) struct EffectSandboxOptions<'a> {
   pub fs_root:       Option<&'a Path>,
   pub default_shell: &'a Path,
   pub default_env:   Option<&'a Path>,
+  pub mounts:        &'a [EffectMount],
+}
+
+/// An agent mountable bound into the effect root at `target`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EffectMount {
+  pub source:    PathBuf,
+  pub target:    PathBuf,
+  pub read_only: bool,
 }
 
 /// The task directories and identity as the effect process sees them.
@@ -306,6 +315,13 @@ pub(crate) fn effect_command(
   if let Some(default_env) = opts.default_env {
     cmd.arg(default_env);
   }
+  cmd.arg(opts.mounts.len().to_string());
+  for mount in opts.mounts {
+    cmd
+      .arg(if mount.read_only { "ro" } else { "rw" })
+      .arg(&mount.source)
+      .arg(&mount.target);
+  }
   cmd
     .arg("--")
     .arg(program)
@@ -387,6 +403,23 @@ fn run_effect_helper(
     Some(v) if v == OsStr::new("0") => None,
     _ => return Err(color_eyre::Report::new(Error::MissingCommand)),
   };
+  let mount_count = args
+    .next()
+    .and_then(|count| count.to_str()?.parse::<usize>().ok())
+    .ok_or_else(|| color_eyre::Report::new(Error::MissingCommand))?;
+  let mut mounts = Vec::with_capacity(mount_count);
+  for _ in 0..mount_count {
+    let read_only = match args.next().as_deref() {
+      Some(v) if v == OsStr::new("ro") => true,
+      Some(v) if v == OsStr::new("rw") => false,
+      _ => return Err(color_eyre::Report::new(Error::MissingCommand)),
+    };
+    mounts.push(EffectMount {
+      read_only,
+      source: next_path(&mut args)?,
+      target: next_path(&mut args)?,
+    });
+  }
   if args.next().as_deref() != Some(OsStr::new("--")) {
     return Err(color_eyre::Report::new(Error::MissingCommand));
   }
@@ -402,6 +435,7 @@ fn run_effect_helper(
     fs_root: fs_root.as_deref(),
     default_shell: &default_shell,
     default_env: default_env.as_deref(),
+    mounts: &mounts,
   })
 }
 
@@ -460,6 +494,7 @@ struct EffectSandboxPaths {
   local_nixdir: Option<PathBuf>,
   build_dir:    PathBuf,
   secrets_file: PathBuf,
+  mounts:       Vec<EffectMount>,
   newroot:      tempfile::TempDir,
 }
 
@@ -620,6 +655,16 @@ fn prepare_effect_paths(
   if fs::symlink_metadata(&shell).is_err() {
     symlink(opts.default_shell, shell)?;
   }
+  for mount in opts.mounts {
+    let target = newroot
+      .path()
+      .join(mount.target.strip_prefix("/").unwrap_or(&mount.target));
+    if mount.source.is_dir() {
+      fs::create_dir_all(target)?;
+    } else {
+      touch(target)?;
+    }
+  }
   if let Some(default_env) = opts.default_env {
     let env = newroot.path().join("usr/bin/env");
     if fs::symlink_metadata(&env).is_err() {
@@ -632,6 +677,7 @@ fn prepare_effect_paths(
     local_nixdir: opts.rootless.then(data_dir).transpose()?,
     build_dir: opts.build_dir.to_path_buf(),
     secrets_file: opts.secrets_file.to_path_buf(),
+    mounts: opts.mounts.to_vec(),
     newroot,
   })
 }
@@ -1141,6 +1187,20 @@ fn setup_effect_pivot_root(
   bind_if_exists("/etc/hosts", newroot.join("etc/hosts"))?;
   bind_if_exists("/etc/nsswitch.conf", newroot.join("etc/nsswitch.conf"))?;
   bind_if_exists("/etc/ssl/certs", newroot.join("etc/ssl/certs"))?;
+  // After the fixed binds, so a mountable may shadow e.g. `/etc/hosts`.
+  for effect_mount in &paths.mounts {
+    let target = newroot.join(
+      effect_mount
+        .target
+        .strip_prefix("/")
+        .unwrap_or(&effect_mount.target),
+    );
+    if effect_mount.read_only {
+      bind_readonly(&effect_mount.source, target)?;
+    } else {
+      bind(&effect_mount.source, target)?;
+    }
+  }
   mount(
     Some("proc"),
     newroot.join("proc").as_path(),
@@ -1244,6 +1304,7 @@ mod tests {
       fs_root:       None,
       default_shell: Path::new("/bin/sh"),
       default_env:   None,
+      mounts:        &[],
     })
     .expect("prepare effect sandbox");
 

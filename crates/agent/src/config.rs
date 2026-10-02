@@ -4,7 +4,10 @@
 //! `/etc/circus-agent.toml`. Environment overrides with prefix
 //! `CIRCUS_AGENT__` and `__` as a path separator.
 
-use std::path::{Path, PathBuf};
+use std::{
+  collections::BTreeMap,
+  path::{Path, PathBuf},
+};
 
 pub use circus_logs::TracingConfig;
 use serde::{Deserialize, Serialize};
@@ -118,6 +121,24 @@ pub struct EffectsConfig {
   /// Permit effect assignments over unauthenticated plaintext RPC.
   #[serde(default)]
   pub allow_insecure_transport: bool,
+
+  /// Host paths effects may request through `mounts`, keyed by name.
+  #[serde(default)]
+  pub mountables: BTreeMap<String, EffectMountable>,
+}
+
+/// Host path that matching effects may mount.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EffectMountable {
+  pub source:    PathBuf,
+  #[serde(default = "read_only_by_default")]
+  pub read_only: bool,
+  /// Same condition language as `secrets.json`.
+  pub condition: serde_json::Value,
+}
+
+const fn read_only_by_default() -> bool {
+  true
 }
 
 /// Lifecycle bounds for an ephemeral (single-session) agent. In-flight builds

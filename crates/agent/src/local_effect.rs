@@ -1,6 +1,7 @@
 //! `circus-agent effect run`, the local counterpart of `hci effect run`.
 
 use std::{
+  collections::BTreeMap,
   fs::OpenOptions,
   io::Write as _,
   os::unix::fs::OpenOptionsExt as _,
@@ -168,6 +169,7 @@ pub async fn run(args: EffectRunArgs) -> Result<i32> {
   let config = EffectsConfig {
     secrets_file,
     allow_insecure_transport: false,
+    mountables: BTreeMap::new(),
   };
   let branch = args.pretend_branch.unwrap_or_default();
   let context = EffectContext {

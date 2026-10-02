@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
   build::{self, BuildOptions, LocalResult, Tunables},
   config::EffectsConfig,
-  sandbox::{self, EffectSandboxOptions, EffectView, NixTool},
+  sandbox::{self, EffectMount, EffectSandboxOptions, EffectView, NixTool},
 };
 
 const STORE_PREFIX: &str = "/nix/store/";
@@ -205,6 +205,13 @@ pub fn validate_config(config: &EffectsConfig) -> color_eyre::Result<()> {
   if metadata.permissions().mode() & 0o077 != 0 {
     bail!("effects secrets file must not be accessible by group or others");
   }
+  for (name, mountable) in &config.mountables {
+    if !mountable.source.is_absolute() || !mountable.source.exists() {
+      bail!("mountable '{name}' needs an existing absolute source");
+    }
+    parse_condition(&mountable.condition, 0)
+      .map_err(|e| eyre!("mountable '{name}' has an invalid condition: {e}"))?;
+  }
   let secrets = load_secret_definitions(&config.secrets_file)?;
   for (name, secret) in secrets {
     if secret.kind != "Secret" {
@@ -367,6 +374,12 @@ async fn prepare_effect(
   if let Some(path) = &fs_root {
     validate_effect_fs_root(path, &closure_paths)?;
   }
+  let mounts = resolve_mounts(
+    &derivation.env,
+    structured_attrs.as_ref(),
+    opts.config,
+    &opts.context,
+  )?;
   let builder = Path::new(&derivation.builder);
   validate_effect_builder(builder, &closure_paths)?;
   let default_env = closure_paths
@@ -390,6 +403,7 @@ async fn prepare_effect(
       fs_root:       fs_root.as_deref(),
       default_shell: builder,
       default_env:   default_env.as_deref(),
+      mounts:        &mounts,
     },
     builder,
     &derivation.args,
@@ -1178,6 +1192,68 @@ fn load_secret_definitions(
   serde_json::from_slice(&bytes).context("parse effects secrets file")
 }
 
+/// Top-level paths a mount must not shadow.
+const RESERVED_MOUNT_ROOTS: [&str; 5] =
+  ["nix", "build", "secrets", "proc", ".oldroot"];
+
+/// Resolve `mounts` (`__hci_effect_mounts`) against the agent's mountables.
+fn resolve_mounts(
+  drv_env: &BTreeMap<String, String>,
+  structured_attrs: Option<&Map<String, Value>>,
+  config: &EffectsConfig,
+  context: &EffectContext,
+) -> color_eyre::Result<Vec<EffectMount>> {
+  let value = if let Some(raw) = drv_env.get("__hci_effect_mounts") {
+    serde_json::from_str(raw).context("parse effect mounts")?
+  } else if let Some(value) =
+    structured_attrs.and_then(|attrs| attrs.get("__hci_effect_mounts"))
+  {
+    match value {
+      Value::String(raw) => {
+        serde_json::from_str(raw).context("parse effect mounts")?
+      },
+      value => value.clone(),
+    }
+  } else {
+    return Ok(Vec::new());
+  };
+  let requested: BTreeMap<String, String> =
+    serde_json::from_value(value).context("parse effect mounts")?;
+  if !requested.is_empty() && !cfg!(target_os = "linux") {
+    bail!("effect mounts need the Linux effect sandbox");
+  }
+  requested
+    .into_iter()
+    .map(|(target, name)| {
+      let target = PathBuf::from(&target);
+      let mut parts = target.components();
+      let valid = parts.next() == Some(Component::RootDir)
+        && matches!(
+          parts.next(),
+          Some(Component::Normal(first))
+            if !RESERVED_MOUNT_ROOTS.iter().any(|root| first == *root)
+        )
+        && parts.all(|part| matches!(part, Component::Normal(_)));
+      if !valid {
+        bail!("effect mount point {} is not allowed", target.display());
+      }
+      let mountable = config
+        .mountables
+        .get(&name)
+        .filter(|mountable| {
+          parse_condition(&mountable.condition, 0)
+            .is_ok_and(|condition| condition.evaluate(context))
+        })
+        .ok_or_else(|| eyre!("mountable '{name}' is unavailable or denied"))?;
+      Ok(EffectMount {
+        source: mountable.source.clone(),
+        target,
+        read_only: mountable.read_only,
+      })
+    })
+    .collect()
+}
+
 fn parse_secrets_map(
   drv_env: &BTreeMap<String, String>,
   structured_attrs: Option<&Map<String, Value>>,
@@ -1524,6 +1600,7 @@ mod tests {
     let config = EffectsConfig {
       secrets_file,
       allow_insecure_transport: false,
+      mountables: BTreeMap::new(),
     };
     let options = RunOptions {
       drv_path:        "/nix/store/00000000000000000000000000000000-effect.drv",
@@ -1733,6 +1810,7 @@ mod tests {
     let config = EffectsConfig {
       secrets_file:             source,
       allow_insecure_transport: false,
+      mountables:               BTreeMap::new(),
     };
     let options = RunOptions {
       drv_path:        "/nix/store/00000000000000000000000000000000-effect.drv",
@@ -1821,6 +1899,7 @@ mod tests {
     let config = EffectsConfig {
       secrets_file:             source.clone(),
       allow_insecure_transport: false,
+      mountables:               BTreeMap::new(),
     };
     validate_config(&config).expect("private valid secrets file");
     fs::set_permissions(&source, fs::Permissions::from_mode(0o644))
