@@ -5,10 +5,10 @@
 pkgs.testers.nixosTest {
   name = "circus-caches";
 
-  nodes.machine = {lib, ...}: {
+  containers.machine = {lib, ...}: {
     imports = [
       self.nixosModules.circus
-      ../common/vm.nix
+      ../common/container.nix
     ];
     _module.args.self = self;
 
