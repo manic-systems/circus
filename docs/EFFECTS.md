@@ -105,6 +105,20 @@ Each attempt gets a token under the `hercules-ci` secrets key for
 while it runs. Files are stored per project, last write wins, up to
 `server.max_body_size`.
 
+## Running an Effect Locally
+
+`circus-agent effect run` builds an effect's inputs and runs it in the agent's
+sandbox, like `hci effect run`.
+
+```sh
+circus-agent effect run .#effects.deploy \
+  --secrets-file ./secrets.json \
+  --owner acme --repo infra \
+  --pretend-branch main --default-branch
+```
+
+`--api-url` and `--token` give it a server for state files.
+
 ## Status
 
 Effects appear in an Effects panel on the evaluation page, on their own detail

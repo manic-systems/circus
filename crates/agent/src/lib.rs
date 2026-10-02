@@ -17,6 +17,7 @@ pub mod cli;
 pub mod config;
 pub mod drv_sink;
 pub mod effect;
+pub mod local_effect;
 pub mod psi;
 pub mod sandbox;
 pub mod session;

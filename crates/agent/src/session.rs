@@ -849,8 +849,10 @@ impl builder::Server for BuilderImpl {
                   max_silent_time: Duration::from_secs(max_silent_time.into()),
                   build_timeout: Duration::from_secs(build_timeout.into()),
                   cores: inner_for_task.cores,
-                  cache_substituter,
-                  cache_public_key,
+                  closure_source: effect::ClosureSource::Cache {
+                    substituter: cache_substituter,
+                    public_key:  cache_public_key,
+                  },
                   rootless: inner_for_task.rootless,
                   work_dir: &inner_for_task.work_dir,
                   config,

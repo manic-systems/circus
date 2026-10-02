@@ -6,12 +6,13 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use circus_logs::init_tracing;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Result, bail, eyre};
 use uuid::Uuid;
 
 use crate::{
   config::{Agent, AgentConfig, EphemeralConfig, TracingConfig},
+  local_effect::{self, EffectRunArgs},
   sandbox,
   session,
 };
@@ -19,6 +20,9 @@ use crate::{
 #[derive(Parser)]
 #[command(name = "circus-agent", about = "Circus distributed build agent")]
 struct Cli {
+  #[command(subcommand)]
+  command: Option<Command>,
+
   #[arg(short, long, value_name = "FILE")]
   config: Option<PathBuf>,
 
@@ -66,6 +70,19 @@ struct Cli {
   work_dir: Option<PathBuf>,
 }
 
+#[derive(Subcommand)]
+enum Command {
+  /// Work with post-build Effects locally.
+  #[command(subcommand)]
+  Effect(EffectCommand),
+}
+
+#[derive(Subcommand)]
+enum EffectCommand {
+  /// Realise an effect's inputs and run it on this machine.
+  Run(EffectRunArgs),
+}
+
 /// Run the Circus agent CLI.
 ///
 /// # Errors
@@ -105,6 +122,15 @@ where
     .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
 
   let cli = Cli::parse_from(args);
+  if let Some(Command::Effect(EffectCommand::Run(args))) = cli.command {
+    init_tracing(&TracingConfig::default());
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()?;
+    let local = tokio::task::LocalSet::new();
+    let code = rt.block_on(local.run_until(local_effect::run(args)))?;
+    std::process::exit(code);
+  }
   let mut cfg = load_config(&cli)?;
   init_tracing(&cfg.tracing);
 

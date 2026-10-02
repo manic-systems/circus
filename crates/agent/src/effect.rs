@@ -47,18 +47,28 @@ pub struct EffectContext {
   pub task_token:        String,
 }
 
+/// Where the effect's derivation and input closure come from.
+pub enum ClosureSource {
+  /// The runner's signed cache, so every executable path is verified first.
+  Cache {
+    substituter: String,
+    public_key:  String,
+  },
+  /// Paths already realised in the local store, for local effect runs.
+  LocalStore,
+}
+
 pub struct RunOptions<'a> {
-  pub drv_path:          &'a str,
-  pub max_log_size:      u64,
-  pub max_silent_time:   Duration,
-  pub build_timeout:     Duration,
-  pub cores:             u32,
-  pub cache_substituter: String,
-  pub cache_public_key:  String,
-  pub rootless:          bool,
-  pub work_dir:          &'a Path,
-  pub config:            &'a EffectsConfig,
-  pub context:           EffectContext,
+  pub drv_path:        &'a str,
+  pub max_log_size:    u64,
+  pub max_silent_time: Duration,
+  pub build_timeout:   Duration,
+  pub cores:           u32,
+  pub closure_source:  ClosureSource,
+  pub rootless:        bool,
+  pub work_dir:        &'a Path,
+  pub config:          &'a EffectsConfig,
+  pub context:         EffectContext,
 }
 
 #[derive(Deserialize)]
@@ -233,7 +243,13 @@ fn validate_mode(rootless: bool) -> color_eyre::Result<()> {
 }
 
 fn validate_cache_trust(opts: &RunOptions<'_>) -> color_eyre::Result<()> {
-  validate_cache_settings(&opts.cache_substituter, &opts.cache_public_key)
+  match &opts.closure_source {
+    ClosureSource::Cache {
+      substituter,
+      public_key,
+    } => validate_cache_settings(substituter, public_key),
+    ClosureSource::LocalStore => Ok(()),
+  }
 }
 
 fn validate_cache_settings(
@@ -415,8 +431,8 @@ async fn execute_prepared<R>(
       build_timeout,
       cores: opts.cores,
       extra_args: Vec::new(),
-      cache_substituter: opts.cache_substituter.clone(),
-      cache_public_key: opts.cache_public_key.clone(),
+      cache_substituter: String::new(),
+      cache_public_key: String::new(),
       rootless: opts.rootless,
       collect_outputs: false,
       nix_internal_json: false,
@@ -486,16 +502,16 @@ fn interrupted_effect(
 }
 
 async fn fetch_derivation(opts: &RunOptions<'_>) -> color_eyre::Result<()> {
-  if opts.cache_substituter.is_empty() {
+  let ClosureSource::Cache {
+    substituter,
+    public_key,
+  } = &opts.closure_source
+  else {
     return Ok(());
-  }
-  nix_copy(
-    opts.rootless,
-    &opts.cache_substituter,
-    &opts.cache_public_key,
-    true,
-    &[opts.drv_path.to_owned()],
-  )
+  };
+  nix_copy(opts.rootless, substituter, public_key, true, &[opts
+    .drv_path
+    .to_owned()])
   .await
   .context("fetch effect derivation")
 }
@@ -667,34 +683,27 @@ async fn fetch_input_closure(
   opts: &RunOptions<'_>,
   derivation: &Derivation,
 ) -> color_eyre::Result<BTreeSet<String>> {
+  let cache = match &opts.closure_source {
+    ClosureSource::Cache {
+      substituter,
+      public_key,
+    } => Some((substituter.as_str(), public_key.as_str())),
+    ClosureSource::LocalStore => None,
+  };
   let input_drvs = derivation.input_drvs.keys().cloned().collect::<Vec<_>>();
-  if !opts.cache_substituter.is_empty() {
+  if let Some((substituter, public_key)) = cache {
     for chunk in input_drvs.chunks(128) {
-      nix_copy(
-        opts.rootless,
-        &opts.cache_substituter,
-        &opts.cache_public_key,
-        true,
-        chunk,
-      )
-      .await?;
+      nix_copy(opts.rootless, substituter, public_key, true, chunk).await?;
     }
   }
 
   let mut paths = referenced_store_paths(derivation);
   paths
     .extend(query_input_outputs(opts.rootless, &derivation.input_drvs).await?);
-  if !opts.cache_substituter.is_empty() {
+  if let Some((substituter, public_key)) = cache {
     let copy_paths = paths.iter().cloned().collect::<Vec<_>>();
     for chunk in copy_paths.chunks(128) {
-      nix_copy(
-        opts.rootless,
-        &opts.cache_substituter,
-        &opts.cache_public_key,
-        false,
-        chunk,
-      )
-      .await?;
+      nix_copy(opts.rootless, substituter, public_key, false, chunk).await?;
     }
   }
   Ok(paths)
@@ -1497,18 +1506,16 @@ mod tests {
       allow_insecure_transport: false,
     };
     let options = RunOptions {
-      drv_path:          "/nix/store/00000000000000000000000000000000-effect.\
-                          drv",
-      max_log_size:      u64::MAX,
-      max_silent_time:   Duration::ZERO,
-      build_timeout:     Duration::from_secs(10),
-      cores:             1,
-      cache_substituter: String::new(),
-      cache_public_key:  String::new(),
-      rootless:          false,
-      work_dir:          dir.path(),
-      config:            &config,
-      context:           context(),
+      drv_path:        "/nix/store/00000000000000000000000000000000-effect.drv",
+      max_log_size:    u64::MAX,
+      max_silent_time: Duration::ZERO,
+      build_timeout:   Duration::from_secs(10),
+      cores:           1,
+      closure_source:  ClosureSource::LocalStore,
+      rootless:        false,
+      work_dir:        dir.path(),
+      config:          &config,
+      context:         context(),
     };
     let pid_file = dir.path().join("effect-helper.pid");
     let mut command = Command::new("sh");
@@ -1708,18 +1715,16 @@ mod tests {
       allow_insecure_transport: false,
     };
     let options = RunOptions {
-      drv_path:          "/nix/store/00000000000000000000000000000000-effect.\
-                          drv",
-      max_log_size:      1,
-      max_silent_time:   Duration::ZERO,
-      build_timeout:     Duration::ZERO,
-      cores:             1,
-      cache_substituter: String::new(),
-      cache_public_key:  String::new(),
-      rootless:          false,
-      work_dir:          dir.path(),
-      config:            &config,
-      context:           context(),
+      drv_path:        "/nix/store/00000000000000000000000000000000-effect.drv",
+      max_log_size:    1,
+      max_silent_time: Duration::ZERO,
+      build_timeout:   Duration::ZERO,
+      cores:           1,
+      closure_source:  ClosureSource::LocalStore,
+      rootless:        false,
+      work_dir:        dir.path(),
+      config:          &config,
+      context:         context(),
     };
     let view = EffectView {
       build:   "/build".into(),
