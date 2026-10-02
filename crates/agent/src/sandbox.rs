@@ -578,6 +578,8 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
   for dev in BUILD_DEV_NODES {
     bind(Path::new("/dev").join(dev), newroot.join("dev").join(dev))?;
   }
+  // Nix only offers the `kvm` system feature when it can open /dev/kvm.
+  bind_if_exists("/dev/kvm", newroot.join("dev/kvm"))?;
   mount_devpts(newroot.join("dev/pts"))?;
   bind_if_exists("/etc/resolv.conf", newroot.join("etc/resolv.conf"))?;
   bind_if_exists("/etc/hosts", newroot.join("etc/hosts"))?;
