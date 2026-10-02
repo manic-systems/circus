@@ -2200,16 +2200,55 @@ button:disabled {
 
 .login-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 360px;
+  padding: 24px;
 }
 
-.login-card h1,
-.login-subtitle {
+.login-card h1 {
+  margin-bottom: 20px;
+  font-size: 16px;
+  line-height: 22px;
   text-align: center;
 }
 
-.login-subtitle {
-  margin: 4px 0 16px;
+.login-alternatives {
+  display: grid;
+  gap: 8px;
+}
+
+.login-alternatives .btn {
+  gap: 8px;
+}
+
+.login-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.login-api-key summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.login-api-key summary::-webkit-details-marker {
+  display: none;
+}
+
+.login-api-key[open] summary {
+  display: none;
+}
+
+.login-api-key form {
+  display: flex;
+  gap: 8px;
+}
+
+.login-api-key input {
+  flex: 1;
+  min-width: 0;
+  height: auto;
 }
 
 .login-divider {

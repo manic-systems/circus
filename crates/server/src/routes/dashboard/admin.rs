@@ -634,6 +634,7 @@ pub(super) async fn users_page(
         UserType::Github => "GitHub",
         UserType::Google => "Google",
         UserType::Ldap => "LDAP",
+        UserType::Oidc => "OIDC",
       };
       UserView {
         id:            u.id,

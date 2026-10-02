@@ -486,6 +486,50 @@ pub async fn upsert_oauth_user(
   User::try_from(row)
 }
 
+/// Create or update an OIDC user. `managed_role` overwrites the stored role on
+/// every login, otherwise `default_role` only applies to new users.
+///
+/// # Errors
+///
+/// Returns error if validation fails or database operation fails.
+pub async fn upsert_oidc_user(
+  pool: &PgPool,
+  username: &str,
+  email: Option<&str>,
+  external_id: &str,
+  default_role: GlobalRole,
+  managed_role: Option<GlobalRole>,
+  email_regex: Option<&Regex>,
+) -> Result<User> {
+  if let Some(address) = email {
+    validate_email(address, email_regex)?;
+  }
+
+  let client = pool.get().await?;
+  let fallback_email = format!("{username}@oauth.local");
+  let row = q::upsert_oidc_user()
+    .bind(
+      &client,
+      &username,
+      &email,
+      &fallback_email,
+      &external_id,
+      &default_role.as_str(),
+      &managed_role.map(GlobalRole::as_str),
+    )
+    .one()
+    .await
+    .map_err(|error| {
+      if is_unique_violation(&error) {
+        CiError::Conflict("Username or email already in use".to_string())
+      } else {
+        CiError::Database(error)
+      }
+    })?;
+
+  User::try_from(row)
+}
+
 /// Create a new session for a user. Returns (`session_token`, `session_id`).
 ///
 /// # Errors

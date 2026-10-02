@@ -3,6 +3,7 @@ use circus_types::validation::{
   validate_cache_url,
 };
 use color_eyre::eyre::{self, WrapErr, bail};
+use url::{Host, Url};
 
 use crate::{
   CacheGcConfig,
@@ -11,6 +12,10 @@ use crate::{
   DatabaseConfig,
   EvaluatorSystems,
 };
+
+/// Leaves at least 15 characters of the 32-character username limit for the
+/// part derived from OIDC claims.
+const MAX_OIDC_PROVIDER_NAME_LEN: usize = 16;
 
 impl CacheGcConfig {
   fn validate(&self, upload: &CacheUploadConfig) -> eyre::Result<()> {
@@ -518,6 +523,56 @@ impl Config {
       && github.client_secret_file.is_none()
     {
       bail!("oauth.github requires client_secret or client_secret_file");
+    }
+
+    let https_or_loopback = |url: &Url| {
+      let loopback = match url.host() {
+        Some(Host::Domain(host)) => host == "localhost",
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+      };
+      url.scheme() == "https" || (url.scheme() == "http" && loopback)
+    };
+
+    for (name, provider) in &self.oauth.oidc {
+      if !(1..=MAX_OIDC_PROVIDER_NAME_LEN).contains(&name.len())
+        || !name.bytes().all(|byte| {
+          byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+        })
+      {
+        bail!(
+          "OIDC provider names must be 1-{MAX_OIDC_PROVIDER_NAME_LEN} \
+           lowercase letters, digits, or hyphens"
+        );
+      }
+
+      let issuer = Url::parse(&provider.issuer_url)
+        .wrap_err_with(|| format!("oauth.oidc.{name}.issuer_url is invalid"))?;
+
+      if !https_or_loopback(&issuer) {
+        bail!("oauth.oidc.{name}.issuer_url requires HTTPS or loopback HTTP");
+      }
+
+      let redirect =
+        Url::parse(&provider.redirect_uri).wrap_err_with(|| {
+          format!("oauth.oidc.{name}.redirect_uri is invalid")
+        })?;
+
+      if !https_or_loopback(&redirect) {
+        bail!("oauth.oidc.{name}.redirect_uri requires HTTPS or loopback HTTP");
+      }
+
+      if redirect.path() != format!("/api/v1/auth/oidc/{name}/callback") {
+        bail!(
+          "oauth.oidc.{name}.redirect_uri must point to \
+           /api/v1/auth/oidc/{name}/callback"
+        );
+      }
+
+      if provider.client_id.is_empty() {
+        bail!("oauth.oidc.{name}.client_id cannot be empty");
+      }
     }
 
     if let Some(ref slack) = self.notifications.slack

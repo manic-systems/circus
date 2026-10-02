@@ -6,6 +6,7 @@ use crate::{
   GitHubOAuthConfig,
   GithubActionsPoolConfig,
   NotificationsConfig,
+  OidcProviderConfig,
   S3CacheConfig,
   SlackNotificationConfig,
 };
@@ -55,6 +56,20 @@ redact_debug!(GitHubOAuthConfig {
   client_secret:      secret,
   client_secret_file: visible,
   redirect_uri:       visible,
+});
+
+redact_debug!(OidcProviderConfig {
+  display_name:       visible,
+  issuer_url:         visible,
+  client_id:          visible,
+  client_secret:      optional_secret,
+  client_secret_file: visible,
+  redirect_uri:       visible,
+  scopes:             visible,
+  groups_claim:       visible,
+  default_role:       visible,
+  allowed_groups:     visible,
+  role_mappings:      visible,
 });
 
 redact_debug!(NotificationsConfig {

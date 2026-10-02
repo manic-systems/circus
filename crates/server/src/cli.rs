@@ -8,6 +8,7 @@ use tokio::net::TcpListener;
 
 use crate::{
   routes,
+  routes::oidc::OidcProviders,
   signing,
   state::{AppState, NixStore},
 };
@@ -189,6 +190,7 @@ where
     email_regex,
     cache_traffic: Arc::new(dashmap::DashMap::new()),
     cache_public_key,
+    oidc_providers: OidcProviders::default(),
   };
 
   // Start background session cleanup to prevent memory leaks

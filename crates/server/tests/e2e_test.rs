@@ -298,6 +298,7 @@ async fn test_e2e_project_eval_build_flow() {
     email_regex:      None,
     cache_traffic:    std::sync::Arc::new(dashmap::DashMap::new()),
     cache_public_key: None,
+    oidc_providers:   circus_server::routes::oidc::OidcProviders::default(),
   };
   let app = circus_server::routes::router(state, &config);
 

@@ -194,7 +194,7 @@ fn document_value() -> Value {
             "email":         { "type": ["string", "null"], "format": "email" },
             "user_type":     {
               "type": "string",
-              "enum": ["local", "github", "google", "ldap"]
+              "enum": ["local", "github", "google", "ldap", "oidc"]
             },
             "role":          { "type": "string" },
             "created_at":    { "$ref": "#/components/schemas/Timestamp" },
@@ -255,6 +255,34 @@ fn document_value() -> Value {
       "/auth/github/callback": {
         "get": { "summary": "Complete GitHub OAuth login",
           "responses": { "302": { "description": "Redirect to dashboard" } } }
+      },
+      "/auth/oidc/{provider}": {
+        "get": {
+          "summary": "Start OIDC dashboard login", "security": [],
+          "parameters": [{ "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }],
+          "responses": {
+            "302": { "description": "Redirect to identity provider" },
+            "401": { "description": "Login rejected" },
+            "502": { "description": "Identity provider unavailable" }
+          }
+        }
+      },
+      "/auth/oidc/{provider}/callback": {
+        "get": {
+          "summary": "Complete OIDC dashboard login", "security": [],
+          "parameters": [
+            { "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } },
+            { "name": "code", "in": "query", "required": false, "schema": { "type": "string" } },
+            { "name": "state", "in": "query", "required": false, "schema": { "type": "string" } },
+            { "name": "error", "in": "query", "required": false, "schema": { "type": "string" } },
+            { "name": "error_description", "in": "query", "required": false, "schema": { "type": "string" } }
+          ],
+          "responses": {
+            "302": { "description": "Session cookie and redirect to dashboard" },
+            "401": { "description": "Login rejected" },
+            "502": { "description": "Identity provider unavailable" }
+          }
+        }
       },
       "/metrics/timeseries/builds": {
         "get": { "summary": "Build count time series",

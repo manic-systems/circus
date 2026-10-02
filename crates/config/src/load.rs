@@ -102,6 +102,18 @@ impl Config {
       github.client_secret = read_secret(path)?;
     }
 
+    for (name, provider) in &mut self.oauth.oidc {
+      if provider.client_secret.is_some()
+        && provider.client_secret_file.is_some()
+      {
+        bail!("oauth.oidc.{name} requires only one client secret source");
+      }
+
+      if let Some(path) = provider.client_secret_file.take() {
+        provider.client_secret = Some(read_secret(&path)?);
+      }
+    }
+
     if let Some(ref mut slack) = self.notifications.slack
       && slack.webhook_url.is_empty()
       && let Some(ref path) = slack.webhook_url_file

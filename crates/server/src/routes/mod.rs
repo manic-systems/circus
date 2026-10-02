@@ -15,6 +15,7 @@ pub mod logs;
 pub mod metrics;
 pub mod news;
 pub mod oauth;
+pub mod oidc;
 pub mod openapi;
 pub mod operator;
 pub mod projects;
@@ -318,6 +319,7 @@ pub fn public_router(config: &Config) -> Router<AppState> {
     .merge(webhooks::router())
     // OAuth and LDAP routes use their own auth mechanisms.
     .merge(oauth::router())
+    .merge(oidc::router())
     .merge(ldap::router());
 
   if config.server.openapi_enabled {

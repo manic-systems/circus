@@ -15,8 +15,8 @@ use axum::{
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::templates::{LoginTemplate, UiTemplateConfig};
 use crate::{
+  routes::dashboard::templates::LoginTemplate,
   session_cookie::{
     API_KEY_SESSION_COOKIE,
     USER_SESSION_COOKIE,
@@ -28,17 +28,8 @@ use crate::{
   state::AppState,
 };
 
-fn ui_config(state: &AppState) -> UiTemplateConfig {
-  UiTemplateConfig::from_config(&state.config.ui)
-}
-
 pub(super) async fn login_page(State(state): State<AppState>) -> Html<String> {
-  let tmpl = LoginTemplate {
-    ui:        ui_config(&state),
-    error:     None,
-    is_admin:  false,
-    auth_name: String::new(),
-  };
+  let tmpl = LoginTemplate::new(&state.config, None);
   Html(
     tmpl
       .render()
@@ -111,12 +102,10 @@ pub(super) async fn login_action(
     )
     .await;
 
-    let tmpl = LoginTemplate {
-      ui:        ui_config(&state),
-      error:     Some("Invalid username or password".to_string()),
-      is_admin:  false,
-      auth_name: String::new(),
-    };
+    let tmpl = LoginTemplate::new(
+      &state.config,
+      Some("Invalid username or password".into()),
+    );
     return (
       StatusCode::UNAUTHORIZED,
       Html(
@@ -132,12 +121,8 @@ pub(super) async fn login_action(
   if let Some(token) = form.api_key.as_ref() {
     let token = token.trim();
     if token.is_empty() {
-      let tmpl = LoginTemplate {
-        ui:        ui_config(&state),
-        error:     Some("API key is required".to_string()),
-        is_admin:  false,
-        auth_name: String::new(),
-      };
+      let tmpl =
+        LoginTemplate::new(&state.config, Some("API key is required".into()));
       return Html(
         tmpl
           .render()
@@ -191,12 +176,8 @@ pub(super) async fn login_action(
       )
       .await;
 
-      let tmpl = LoginTemplate {
-        ui:        ui_config(&state),
-        error:     Some("Invalid API key".to_string()),
-        is_admin:  false,
-        auth_name: String::new(),
-      };
+      let tmpl =
+        LoginTemplate::new(&state.config, Some("Invalid API key".into()));
       Html(
         tmpl
           .render()
@@ -205,14 +186,10 @@ pub(super) async fn login_action(
       .into_response()
     }
   } else {
-    let tmpl = LoginTemplate {
-      ui:        ui_config(&state),
-      error:     Some(
-        "Please provide either username/password or API key".to_string(),
-      ),
-      is_admin:  false,
-      auth_name: String::new(),
-    };
+    let tmpl = LoginTemplate::new(
+      &state.config,
+      Some("Please provide either username/password or API key".into()),
+    );
     Html(
       tmpl
         .render()

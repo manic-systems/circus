@@ -57,6 +57,7 @@ fn build_app(pool: circus_common::PgPool) -> axum::Router {
     email_regex: None,
     cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
     cache_public_key: None,
+    oidc_providers: circus_server::routes::oidc::OidcProviders::default(),
   };
   circus_server::routes::router(state, &config)
 }
@@ -82,6 +83,7 @@ async fn test_router_no_duplicate_routes() {
     email_regex: None,
     cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
     cache_public_key: None,
+    oidc_providers: circus_server::routes::oidc::OidcProviders::default(),
   };
 
   let _app = circus_server::routes::router(state, &config);
@@ -105,6 +107,7 @@ fn build_app_with_config(
     email_regex: None,
     cache_traffic: std::sync::Arc::new(dashmap::DashMap::new()),
     cache_public_key: None,
+    oidc_providers: circus_server::routes::oidc::OidcProviders::default(),
   };
   circus_server::routes::router(state, config)
 }
