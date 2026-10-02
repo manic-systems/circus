@@ -21,6 +21,8 @@ use regex::Regex;
 use tokio::sync::OnceCell;
 use tokio_rusqlite::{Connection as SqliteConnection, OpenFlags};
 
+use crate::routes::oidc::OidcProviders;
+
 /// How often the background cleanup task runs (every 5 minutes).
 const SESSION_CLEANUP_INTERVAL: std::time::Duration =
   std::time::Duration::from_mins(5);
@@ -200,6 +202,7 @@ pub struct AppState {
   pub cache_traffic:    CacheTrafficCounters,
   /// Our binary-cache public key.
   pub cache_public_key: Option<Arc<circus_binary_cache::PublicKey>>,
+  pub oidc_providers:   OidcProviders,
 }
 
 impl AppState {

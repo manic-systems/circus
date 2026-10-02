@@ -29,6 +29,8 @@ use super::{
       HomeTemplate,
       JobsetJobsTemplate,
       JobsetTemplate,
+      LoginIcon,
+      LoginProvider,
       LoginTemplate,
       MetricsTemplate,
       NarRowView,
@@ -556,6 +558,18 @@ pub(super) async fn login() -> Response {
     error:     Some("Preview mode accepts no credentials.".into()),
     is_admin:  false,
     auth_name: String::new(),
+    providers: vec![
+      LoginProvider {
+        href:  "/api/v1/auth/github".into(),
+        label: "GitHub".into(),
+        icon:  LoginIcon::Github,
+      },
+      LoginProvider {
+        href:  "/api/v1/auth/oidc/pocketid".into(),
+        label: "PocketID".into(),
+        icon:  LoginIcon::Oidc,
+      },
+    ],
   })
 }
 

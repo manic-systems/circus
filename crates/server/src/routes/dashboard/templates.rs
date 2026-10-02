@@ -16,6 +16,7 @@ use circus_common::models::{
   Project,
   SystemStatus,
 };
+use circus_config::Config;
 use uuid::Uuid;
 
 pub(super) use super::shared::UiTemplateConfig;
@@ -486,11 +487,52 @@ pub(super) struct ProjectSetupTemplate {
 
 #[derive(Template)]
 #[template(path = "login.html")]
-pub(super) struct LoginTemplate {
+pub struct LoginTemplate {
   pub(super) ui:        UiTemplateConfig,
   pub(super) error:     Option<String>,
   pub(super) is_admin:  bool,
   pub(super) auth_name: String,
+  pub(super) providers: Vec<LoginProvider>,
+}
+
+pub(super) struct LoginProvider {
+  pub(super) href:  String,
+  pub(super) label: String,
+  pub(super) icon:  LoginIcon,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LoginIcon {
+  Github,
+  Oidc,
+}
+
+impl LoginTemplate {
+  pub fn new(config: &Config, error: Option<String>) -> Self {
+    let github = config.oauth.github.as_ref().map(|_| {
+      LoginProvider {
+        href:  "/api/v1/auth/github".into(),
+        label: "GitHub".into(),
+        icon:  LoginIcon::Github,
+      }
+    });
+    let oidc = config.oauth.oidc.iter().map(|(name, provider)| {
+      LoginProvider {
+        href:  format!("/api/v1/auth/oidc/{name}"),
+        label: provider.display_name.clone(),
+        icon:  LoginIcon::Oidc,
+      }
+    });
+    let providers = github.into_iter().chain(oidc).collect();
+
+    Self {
+      ui: UiTemplateConfig::from_config(&config.ui),
+      error,
+      is_admin: false,
+      auth_name: String::new(),
+      providers,
+    }
+  }
 }
 
 #[derive(Template)]

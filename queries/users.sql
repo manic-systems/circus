@@ -62,6 +62,16 @@ INSERT INTO users (username, email, user_type, external_id, password_hash, role)
 VALUES (:username, :email, :user_type, :external_id, NULL, 'read-only')
 RETURNING *;
 
+--! upsert_oidc_user (email?, managed_role?) : UserRow
+INSERT INTO users (username, email, email_verified, user_type, external_id, password_hash, role)
+VALUES (:username, COALESCE(:email::text, :fallback_email), :email::text IS NOT NULL, 'oidc', :external_id, NULL, :default_role)
+ON CONFLICT (user_type, external_id) WHERE external_id IS NOT NULL
+DO UPDATE SET email = COALESCE(:email::text, users.email),
+              email_verified = users.email_verified OR :email::text IS NOT NULL,
+              role = COALESCE(:managed_role::text, users.role),
+              last_login_at = NOW(), updated_at = NOW()
+RETURNING *;
+
 --! create_session
 INSERT INTO user_sessions (user_id, session_token_hash, expires_at)
 VALUES (:user_id, :session_token_hash, :expires_at)

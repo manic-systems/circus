@@ -42,6 +42,7 @@ const PUBLIC_DOCUMENTED_MODULES: &[&str] = &[
   "ldap",
   "metrics",
   "oauth",
+  "oidc",
   "openapi",
   "webhooks",
 ];

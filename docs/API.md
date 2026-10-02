@@ -45,6 +45,8 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | DELETE | `/api/v1/api-keys/{id}` | Revoke an API key | 204 |
 | GET | `/api/v1/auth/github` | Start GitHub OAuth login | 302 |
 | GET | `/api/v1/auth/github/callback` | Complete GitHub OAuth login | 302 |
+| GET | `/api/v1/auth/oidc/{provider}` | Start OIDC dashboard login | 302, 401, 502 |
+| GET | `/api/v1/auth/oidc/{provider}/callback` | Complete OIDC dashboard login | 302, 401, 502 |
 | GET | `/api/v1/builds` | List builds | 200 |
 | GET | `/api/v1/builds/recent` | Most recent builds | 200 |
 | GET | `/api/v1/builds/stats` | Build statistics | 200 |

@@ -348,6 +348,17 @@ configuration or the Nix store.
 | `oauth`              | `github.client_secret`                                 | none                                                | GitHub OAuth App client secret                                            |
 | `oauth`              | `github.client_secret_file`                            | none                                                | File containing GitHub OAuth secret                                       |
 | `oauth`              | `github.redirect_uri`                                  | none                                                | OAuth redirect URI                                                        |
+| `oauth`              | `oidc.<name>.display_name`                             | required                                            | Label on the dashboard sign-in button                                     |
+| `oauth`              | `oidc.<name>.issuer_url`                               | required                                            | OIDC issuer URL for discovery                                             |
+| `oauth`              | `oidc.<name>.client_id`                                | required                                            | Registered OIDC client ID                                                 |
+| `oauth`              | `oidc.<name>.client_secret`                            | none                                                | Secret for a confidential client                                          |
+| `oauth`              | `oidc.<name>.client_secret_file`                       | none                                                | File containing the OIDC client secret                                    |
+| `oauth`              | `oidc.<name>.redirect_uri`                             | required                                            | Exact callback URL registered with the provider                           |
+| `oauth`              | `oidc.<name>.scopes`                                   | `["profile", "email", "groups"]`                    | Requested scopes, with `openid` always added                              |
+| `oauth`              | `oidc.<name>.groups_claim`                             | `"groups"`                                          | Claim containing the group array                                          |
+| `oauth`              | `oidc.<name>.default_role`                             | `"read-only"`                                       | Role for new users or unmatched mappings                                  |
+| `oauth`              | `oidc.<name>.allowed_groups`                           | `[]`                                                | Any matching group permits login, empty permits everyone                  |
+| `oauth`              | `oidc.<name>.role_mappings`                            | `[]`                                                | Ordered group and global role pairs, first match wins                     |
 | `declarative`        | `projects`                                             | `[]`                                                | Declarative project definitions                                           |
 | `declarative`        | `allow_runtime_mutation`                               | `false`                                             | Permit API and dashboard changes to declarative projects                  |
 | `declarative`        | `api_keys`                                             | `[]`                                                | Declarative API key definitions                                           |
@@ -662,9 +673,8 @@ separate from dashboard page visibility.
 
 ## Authentication Providers
 
-The dashboard login page always supports local username/password users and API
-key login. Additional identity providers are exposed as API-backed login flows
-when configured.
+The dashboard login page supports local username/password users and API key
+login. Configured GitHub and OIDC providers appear as sign-in buttons.
 
 GitHub OAuth requires an OAuth App with a callback pointing at the configured
 redirect URI, usually `https://ci.example.org/api/v1/auth/github/callback`:
@@ -678,6 +688,41 @@ redirect_uri = "https://ci.example.org/api/v1/auth/github/callback"
 
 Users start that flow at `/api/v1/auth/github`. On first login, Circus creates
 or updates a read-only user record for the GitHub identity.
+
+Any OIDC provider (PocketID, Keycloak, Authentik, Kanidm) can be added under
+`oauth.oidc.<name>`, where the name is up to 16 lowercase letters, digits, and
+hyphens. Register the exact `redirect_uri` with the provider.
+
+```toml
+[oauth.oidc.pocketid]
+display_name = "PocketID"
+issuer_url = "https://id.example.org"
+client_id = "circus"
+client_secret_file = "/run/secrets/circus-oidc"
+redirect_uri = "https://ci.example.org/api/v1/auth/oidc/pocketid/callback"
+scopes = ["profile", "email", "groups"]
+groups_claim = "groups"
+default_role = "read-only"
+allowed_groups = ["circus-users", "circus-admins"]
+
+[[oauth.oidc.pocketid.role_mappings]]
+group = "circus-admins"
+role = "admin"
+
+[[oauth.oidc.pocketid.role_mappings]]
+group = "circus-users"
+role = "restart-jobs"
+```
+
+Omit both secret options for a public client. Login starts at
+`/api/v1/auth/oidc/<name>`. Accounts are keyed on the issuer and subject, and
+are never merged with an existing account by email. The username is the
+`preferred_username` claim, or the email's local part, followed by `_<name>`.
+
+Groups come from `groups_claim` in the ID token, or from userinfo when the ID
+token lacks it. Role mappings are checked in order and the first match wins.
+With any mappings configured, the provider owns the role and Circus rewrites it
+on every login, so dashboard role edits for these users do not stick.
 
 LDAP bind login is enabled through `[server.ldap]` and exposed at `/auth/ldap`:
 

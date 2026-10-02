@@ -294,6 +294,7 @@ pub struct LogConfig {
 #[serde(default)]
 pub struct OAuthConfig {
   pub github: Option<GitHubOAuthConfig>,
+  pub oidc:   BTreeMap<String, OidcProviderConfig>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -304,6 +305,40 @@ pub struct GitHubOAuthConfig {
   /// Path to a file containing the OAuth client secret.
   pub client_secret_file: Option<PathBuf>,
   pub redirect_uri:       String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OidcProviderConfig {
+  pub display_name:       String,
+  pub issuer_url:         String,
+  pub client_id:          String,
+  pub client_secret:      Option<String>,
+  pub client_secret_file: Option<PathBuf>,
+  pub redirect_uri:       String,
+  #[serde(default = "default_oidc_scopes")]
+  pub scopes:             Vec<String>,
+  #[serde(default = "default_groups_claim")]
+  pub groups_claim:       String,
+  #[serde(default = "default_role")]
+  pub default_role:       GlobalRole,
+  #[serde(default)]
+  pub allowed_groups:     Vec<String>,
+  #[serde(default)]
+  pub role_mappings:      Vec<OidcRoleMapping>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcRoleMapping {
+  pub group: String,
+  pub role:  GlobalRole,
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+  vec!["profile".into(), "email".into(), "groups".into()]
+}
+
+fn default_groups_claim() -> String {
+  "groups".into()
 }
 
 #[derive(Clone, Serialize, Deserialize)]

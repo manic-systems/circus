@@ -6,6 +6,7 @@ use time::Duration as CookieDuration;
 pub const USER_SESSION_COOKIE: &str = "circus_user_session";
 pub const API_KEY_SESSION_COOKIE: &str = "circus_session";
 pub const OAUTH_STATE_COOKIE: &str = "circus_oauth_state";
+pub const OIDC_FLOW_COOKIE: &str = "circus_oidc_flow";
 
 pub const USER_SESSION_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 pub const API_KEY_SESSION_MAX_AGE_SECS: i64 = 24 * 60 * 60;
@@ -90,6 +91,37 @@ pub fn clear_oauth_state_cookie(
     SameSite::Lax,
     oauth_cookie_secure(config, redirect_uri),
   )
+}
+
+#[must_use]
+pub fn oidc_flow_cookie(
+  value: &str,
+  config: &ServerConfig,
+  redirect_uri: &str,
+) -> String {
+  Cookie::build((OIDC_FLOW_COOKIE, value.to_owned()))
+    .http_only(true)
+    .same_site(SameSite::Lax)
+    .secure(oauth_cookie_secure(config, redirect_uri))
+    .path("/api/v1/auth/oidc/")
+    .max_age(CookieDuration::seconds(OAUTH_STATE_MAX_AGE_SECS))
+    .build()
+    .to_string()
+}
+
+#[must_use]
+pub fn clear_oidc_flow_cookie(
+  config: &ServerConfig,
+  redirect_uri: &str,
+) -> String {
+  Cookie::build((OIDC_FLOW_COOKIE, String::new()))
+    .http_only(true)
+    .same_site(SameSite::Lax)
+    .secure(oauth_cookie_secure(config, redirect_uri))
+    .path("/api/v1/auth/oidc/")
+    .max_age(CookieDuration::ZERO)
+    .build()
+    .to_string()
 }
 
 fn persistent_cookie(

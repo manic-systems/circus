@@ -780,6 +780,7 @@ pub enum UserType {
   Github,
   Google,
   Ldap,
+  Oidc,
 }
 
 impl UserType {
@@ -790,6 +791,7 @@ impl UserType {
       Self::Github => "github",
       Self::Google => "google",
       Self::Ldap => "ldap",
+      Self::Oidc => "oidc",
     }
   }
 }
@@ -803,6 +805,7 @@ impl std::str::FromStr for UserType {
       "github" => Ok(Self::Github),
       "google" => Ok(Self::Google),
       "ldap" => Ok(Self::Ldap),
+      "oidc" => Ok(Self::Oidc),
       _ => Err(format!("invalid user type '{s}'")),
     }
   }

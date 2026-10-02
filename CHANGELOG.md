@@ -9,6 +9,13 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 "Removed" for removed features or interfaces.
 -->
 
+## Unreleased
+
+### Added
+
+- Dashboard OIDC login with named providers, group access rules, and global role
+  mappings.
+
 ## 0.14.0
 
 ### Added

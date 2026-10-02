@@ -72,6 +72,22 @@ pub struct UpsertOauthUserInsertParams<
     pub external_id: T4,
 }
 #[derive(Debug)]
+pub struct UpsertOidcUserParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+    T5: crate::StringSql,
+    T6: crate::StringSql,
+> {
+    pub username: T1,
+    pub email: Option<T2>,
+    pub fallback_email: T3,
+    pub external_id: T4,
+    pub default_role: T5,
+    pub managed_role: Option<T6>,
+}
+#[derive(Debug)]
 pub struct CreateSessionParams<T1: crate::StringSql> {
     pub user_id: uuid::Uuid,
     pub session_token_hash: T1,
@@ -1262,6 +1278,114 @@ impl<
             &params.email,
             &params.user_type,
             &params.external_id,
+        )
+    }
+}
+pub struct UpsertOidcUserStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn upsert_oidc_user() -> UpsertOidcUserStmt {
+    UpsertOidcUserStmt(
+        "INSERT INTO users (username, email, email_verified, user_type, external_id, password_hash, role) VALUES ($1, COALESCE($2::text, $3), $2::text IS NOT NULL, 'oidc', $4, NULL, $5) ON CONFLICT (user_type, external_id) WHERE external_id IS NOT NULL DO UPDATE SET email = COALESCE($2::text, users.email), email_verified = users.email_verified OR $2::text IS NOT NULL, role = COALESCE($6::text, users.role), last_login_at = NOW(), updated_at = NOW() RETURNING *",
+        None,
+    )
+}
+impl UpsertOidcUserStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+        T4: crate::StringSql,
+        T5: crate::StringSql,
+        T6: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        username: &'a T1,
+        email: &'a Option<T2>,
+        fallback_email: &'a T3,
+        external_id: &'a T4,
+        default_role: &'a T5,
+        managed_role: &'a Option<T6>,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 6> {
+        UserRowQuery {
+            client,
+            params: [
+                username,
+                email,
+                fallback_email,
+                external_id,
+                default_role,
+                managed_role,
+            ],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<UserRowBorrowed, tokio_postgres::Error> {
+                    Ok(UserRowBorrowed {
+                        id: row.try_get(0)?,
+                        username: row.try_get(1)?,
+                        email: row.try_get(2)?,
+                        full_name: row.try_get(3)?,
+                        password_hash: row.try_get(4)?,
+                        user_type: row.try_get(5)?,
+                        role: row.try_get(6)?,
+                        enabled: row.try_get(7)?,
+                        email_verified: row.try_get(8)?,
+                        public_dashboard: row.try_get(9)?,
+                        created_at: row.try_get(10)?,
+                        updated_at: row.try_get(11)?,
+                        last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
+                    })
+                },
+            mapper: |it| UserRow::from(it),
+        }
+    }
+}
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+    T5: crate::StringSql,
+    T6: crate::StringSql,
+>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        UpsertOidcUserParams<T1, T2, T3, T4, T5, T6>,
+        UserRowQuery<'c, 'a, 's, C, UserRow, 6>,
+        C,
+    > for UpsertOidcUserStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a UpsertOidcUserParams<T1, T2, T3, T4, T5, T6>,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 6> {
+        self.bind(
+            client,
+            &params.username,
+            &params.email,
+            &params.fallback_email,
+            &params.external_id,
+            &params.default_role,
+            &params.managed_role,
         )
     }
 }

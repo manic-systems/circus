@@ -23,7 +23,7 @@ mod build_log;
 mod pages;
 mod preview;
 mod shared;
-mod templates;
+pub(crate) mod templates;
 
 pub fn router() -> Router<AppState> {
   Router::new()
