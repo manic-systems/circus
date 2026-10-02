@@ -69,6 +69,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (40, "0040_effect_execution_state"),
   (41, "0041_effect_completion_events"),
   (42, "0042_effect_task_tokens"),
+  (43, "0043_project_state_files"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.
@@ -343,6 +344,7 @@ pub const REQUIRED_TABLES: &[&str] = &[
   "notification_configs",
   "notification_tasks",
   "project_members",
+  "project_state_files",
   "projects",
   "remote_builders",
   "service_heartbeats",

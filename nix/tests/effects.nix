@@ -41,6 +41,12 @@
     test "$IN_HERCULES_CI_EFFECT" = true
     test "$HERCULES_CI_API_BASE_URL" = http://runner:3000
     secret="$(readSecretString deploy .token)"
+    getStateFile deploy-state state.txt
+    test ! -e state.txt
+    printf deployed > state.txt
+    putStateFile deploy-state state.txt
+    getStateFile deploy-state roundtrip.txt
+    test "$(cat roundtrip.txt)" = deployed
     curl --fail --silent --show-error \
       --data-binary "$secret:$HERCULES_CI_PROJECT_PATH" \
       http://runner:8001/effect
@@ -251,6 +257,12 @@ in
             runner.wait_until_succeeds(
                 "grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:runner/test-owner/test-flake$' /tmp/effect-result",
                 timeout=180,
+            )
+
+        with subtest("Effect state files persist"):
+            wait_one_row(
+                "project_state_files WHERE name='deploy-state' "
+                "AND convert_from(data, 'UTF8')='deployed'"
             )
 
         with subtest("Build and Effect use their intended venues"):

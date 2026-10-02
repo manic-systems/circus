@@ -91,6 +91,14 @@ both `queue_runner.rpc.cache_substituter` and
 `queue_runner.rpc.cache_public_key`. Agents need a TLS connection to the runner
 (`circus+tls://` or `[agent.tls]`). Ephemeral agents never run effects.
 
+## State Files
+
+`getStateFile` and `putStateFile` from hercules-ci-effects work as on Hercules.
+Each attempt gets a token under the `hercules-ci` secrets key for
+`$HERCULES_CI_API_BASE_URL/api/v1/current-task/state/<name>/data`, valid only
+while it runs. Files are stored per project, last write wins, up to
+`server.max_body_size`.
+
 ## Status
 
 Effects appear in an Effects panel on the evaluation page, on their own detail

@@ -22,5 +22,6 @@ pub mod project_members;
 pub mod projects;
 pub mod search;
 pub mod starred_jobs;
+pub mod state_files;
 pub mod users;
 pub mod webhook_configs;

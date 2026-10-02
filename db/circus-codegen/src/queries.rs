@@ -29,5 +29,6 @@ pub mod projects;
 pub mod search;
 pub mod service_heartbeats;
 pub mod starred_jobs;
+pub mod state_files;
 pub mod users;
 pub mod webhook_configs;

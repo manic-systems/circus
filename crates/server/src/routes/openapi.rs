@@ -55,7 +55,8 @@ fn document_value() -> Value {
     ],
     "components": {
       "securitySchemes": {
-        "ApiKeyAuth": { "type": "http", "scheme": "bearer" }
+        "ApiKeyAuth": { "type": "http", "scheme": "bearer" },
+        "TaskTokenAuth": { "type": "http", "scheme": "bearer" }
       },
       "schemas": {
         "Uuid":      { "type": "string", "format": "uuid" },
@@ -248,6 +249,21 @@ fn document_value() -> Value {
       "/prometheus": {
         "get": { "summary": "Prometheus metrics exposition",
           "responses": { "200": { "description": "Prometheus text format" } } }
+      },
+      "/current-task/state/{name}/data": {
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "get": { "summary": "Read a state file of the running Effect's project",
+          "security": [{ "TaskTokenAuth": [] }],
+          "responses": { "200": { "description": "State file contents" },
+            "401": { "description": "Missing, unknown or expired task token" },
+            "404": { "description": "No state file with this name" } } },
+        "put": { "summary": "Replace a state file of the running Effect's project",
+          "security": [{ "TaskTokenAuth": [] }],
+          "requestBody": { "content": { "application/octet-stream": {} } },
+          "responses": { "204": { "description": "Stored" },
+            "401": { "description": "Missing, unknown or expired task token" } } }
       },
       "/openapi.json": {
         "get": { "summary": "OpenAPI specification",

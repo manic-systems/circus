@@ -67,6 +67,8 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/channels/{id}` | Get a channel | 200 |
 | DELETE | `/api/v1/channels/{id}` | Delete a channel | 204 |
 | GET | `/api/v1/channels/{id}/nixexprs.tar.xz` | Download channel nixexprs tarball | 200 |
+| GET | `/api/v1/current-task/state/{name}/data` | Read a state file of the running Effect's project | 200, 401, 404 |
+| PUT | `/api/v1/current-task/state/{name}/data` | Replace a state file of the running Effect's project | 204, 401 |
 | GET | `/api/v1/evaluations` | List evaluations | 200 |
 | POST | `/api/v1/evaluations/trigger` | Trigger an evaluation | 202 |
 | GET | `/api/v1/evaluations/{id}` | Get an evaluation | 200 |
