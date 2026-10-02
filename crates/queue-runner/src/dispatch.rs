@@ -27,6 +27,7 @@ use circus_common::{
     EvaluationTriggerKind,
   },
   repo,
+  repository::RepositoryCoordinates,
 };
 use circus_config::BuilderSchedulingStrategy;
 use tokio::{
@@ -125,7 +126,7 @@ pub(crate) fn effect_repository_rejection(
   kind: BuildKind,
   repository_url: &str,
 ) -> Option<(BuildStatus, &'static str)> {
-  (kind.is_effect() && repository_coordinates(repository_url).is_none())
+  (kind.is_effect() && repository_url.parse::<RepositoryCoordinates>().is_err())
     .then_some((
       BuildStatus::Cancelled,
       UNIDENTIFIABLE_EFFECT_REPOSITORY_ERROR,
@@ -225,7 +226,7 @@ async fn trusted_build_context(
       return None;
     },
   };
-  let repository = repository_coordinates(&project.repository_url);
+  let repository = project.repository_url.parse::<RepositoryCoordinates>().ok();
   Some(TrustedBuildContext {
     repository: github_repository_slug(&project.repository_url),
     effect:     repository.map(|repository| {
@@ -294,51 +295,6 @@ fn owner_repo_from_path(path: &str) -> Option<String> {
     return None;
   }
   Some(format!("{owner}/{repo}"))
-}
-
-struct RepositoryCoordinates {
-  project_path: String,
-  owner:        String,
-  repo:         String,
-}
-
-fn repository_coordinates(raw: &str) -> Option<RepositoryCoordinates> {
-  let raw = raw.trim();
-  let (host, path) = if let Ok(url) = url::Url::parse(raw) {
-    (url.host_str()?.to_ascii_lowercase(), url.path().to_owned())
-  } else {
-    let (prefix, path) = raw.split_once(':')?;
-    (
-      prefix
-        .rsplit_once('@')
-        .map_or(prefix, |(_, host)| host)
-        .to_ascii_lowercase(),
-      path.to_owned(),
-    )
-  };
-  let path = path
-    .trim_start_matches('/')
-    .trim_end_matches('/')
-    .trim_end_matches(".git");
-  let parts = path
-    .split('/')
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>();
-  let owner = (*parts.first()?).to_owned();
-  let repo = (*parts.last()?).to_owned();
-  if parts.len() < 2 {
-    return None;
-  }
-  let site = match host.as_str() {
-    "github.com" => "github",
-    "gitlab.com" => "gitlab",
-    _ => host.as_str(),
-  };
-  Some(RepositoryCoordinates {
-    project_path: format!("{site}/{}", parts.join("/")),
-    owner,
-    repo,
-  })
 }
 
 /// Load-based ordering for the configured strategy, used as the tie-break once
@@ -927,7 +883,6 @@ mod tests {
     is_trusted_ref_evaluation,
     non_agent_execution_allowed,
     quarantine_on_agent_disconnect,
-    repository_coordinates,
     supports_required_features,
     trusted_ref_context,
   };
@@ -1230,20 +1185,7 @@ mod tests {
   }
 
   #[test]
-  fn repository_coordinates_build_hercules_project_paths() {
-    let github = repository_coordinates("https://github.com/owner/repo.git")
-      .expect("valid GitHub repository URL");
-    assert_eq!(github.project_path, "github/owner/repo");
-    assert_eq!(github.owner, "owner");
-    assert_eq!(github.repo, "repo");
-
-    let gitlab =
-      repository_coordinates("git@gitlab.com:group/subgroup/repo.git")
-        .expect("valid GitLab repository URL");
-    assert_eq!(gitlab.project_path, "gitlab/group/subgroup/repo");
-    assert_eq!(gitlab.owner, "group");
-    assert_eq!(gitlab.repo, "repo");
-
+  fn effects_need_an_identifiable_repository() {
     assert_eq!(
       effect_repository_rejection(BuildKind::Effect, "/srv/repos/infra"),
       Some((

@@ -119,6 +119,14 @@ circus-agent effect run .#effects.deploy \
 
 `--api-url` and `--token` give it a server for state files.
 
+## herculesCI
+
+A flake jobset with `nix_expression = "herculesCI"` evaluates the flake's
+`herculesCI` attribute like Hercules. A function form gets `ref`, `branch`,
+`tag`, `rev`, `shortRev` and `primaryRepo`. Each `onPush.<job>.outputs` becomes
+jobs prefixed with `<job>.`, and without `onPush` the default job covers
+`packages`, `checks`, `devShells` and `effects`, limited to `ciSystems`.
+
 ## Status
 
 Effects appear in an Effects panel on the evaluation page, on their own detail

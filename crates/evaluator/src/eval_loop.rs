@@ -563,10 +563,23 @@ async fn run_nix_and_record_builds(
     eval.id,
     cancel.clone(),
   ));
+  let tag = eval
+    .pr_action
+    .as_deref()
+    .and_then(|action| action.strip_prefix("tag:"));
+  let git_ref = crate::nix::GitRef {
+    branch: eval
+      .pr_head_branch
+      .as_deref()
+      .filter(|_| tag.is_none())
+      .map(normalize_attested_branch),
+    tag,
+  };
   let result = crate::nix::evaluate(
     repo_path,
     &jobset.repository_url,
     &eval.commit_hash,
+    git_ref,
     &jobset.nix_expression,
     jobset.flake_mode,
     nix_timeout,
