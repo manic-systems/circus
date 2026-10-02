@@ -144,6 +144,8 @@ pub enum EvaluationTriggerKind {
   SourceChange,
   Manual,
   Interval,
+  /// A `herculesCI.onSchedule` job firing.
+  Schedule,
 }
 
 impl EvaluationTriggerKind {
@@ -153,6 +155,7 @@ impl EvaluationTriggerKind {
       Self::SourceChange => "source_change",
       Self::Manual => "manual",
       Self::Interval => "interval",
+      Self::Schedule => "schedule",
     }
   }
 }
@@ -165,6 +168,7 @@ impl std::str::FromStr for EvaluationTriggerKind {
       "source_change" => Ok(Self::SourceChange),
       "manual" => Ok(Self::Manual),
       "interval" => Ok(Self::Interval),
+      "schedule" => Ok(Self::Schedule),
       _ => Err(format!("invalid evaluation trigger kind '{s}'")),
     }
   }

@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+  collections::{BTreeMap, HashMap},
+  sync::Arc,
+  time::Duration,
+};
 
 use chrono::Utc;
 use circus_common::{
@@ -28,6 +32,7 @@ use uuid::Uuid;
 use crate::{
   builds::{compute_inputs_hash, create_builds_from_eval},
   evaluation_state::{ExistingEvaluationClaim, claim_existing},
+  schedule::When,
 };
 
 /// Main evaluator loop. Polls jobsets and runs nix evaluations.
@@ -112,6 +117,8 @@ async fn run_cycle(
     active.iter().cloned().map(|j| (j.id, j)).collect();
 
   let max_concurrent = config.max_concurrent_evals;
+
+  fire_due_schedules(pool, &active_by_id).await;
 
   // First drain push-driven work. Webhooks and /evaluations/trigger
   // insert pending eval rows with a specific commit_hash (push commit,
@@ -274,12 +281,129 @@ fn group_by_project<T>(
   groups.into_values().collect()
 }
 
-fn accepts_pending_evaluation(
+const fn accepts_pending_evaluation(
   trigger_mode: JobsetTriggerMode,
   trigger_kind: EvaluationTriggerKind,
 ) -> bool {
   trigger_mode.accepts_source_triggers()
-    || trigger_kind == EvaluationTriggerKind::Interval
+    || matches!(
+      trigger_kind,
+      EvaluationTriggerKind::Interval | EvaluationTriggerKind::Schedule
+    )
+}
+
+/// Queue a pending `Schedule` evaluation for every due schedule of an active
+/// jobset. The pending drain right after picks them up.
+async fn fire_due_schedules(
+  pool: &PgPool,
+  active_by_id: &HashMap<Uuid, ActiveJobset>,
+) {
+  let due = match repo::jobset_schedules::list_due(pool).await {
+    Ok(due) => due,
+    Err(e) => {
+      tracing::warn!("Failed to list due schedules: {e}");
+      return;
+    },
+  };
+  for schedule in due {
+    let Some(jobset) = active_by_id.get(&schedule.jobset_id) else {
+      continue;
+    };
+    let next = When::parse(
+      &schedule.when_spec,
+      &schedule_seed(schedule.jobset_id, &schedule.name),
+    )
+    .and_then(|when| when.next_after(Utc::now()));
+    let next = match next {
+      Ok(next) => next,
+      Err(e) => {
+        tracing::warn!(
+          jobset = %jobset.name,
+          schedule = %schedule.name,
+          "Skipping schedule: {e}"
+        );
+        continue;
+      },
+    };
+    match repo::jobset_schedules::mark_fired(pool, &schedule, next).await {
+      Ok(true) => {},
+      Ok(false) => continue,
+      Err(e) => {
+        tracing::warn!(schedule = %schedule.name, "Failed to fire schedule: {e}");
+        continue;
+      },
+    }
+    let created = repo::evaluations::create_scheduled(pool, CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    schedule.commit_hash.clone(),
+      pr_number:      None,
+      pr_head_branch: jobset.branch.clone(),
+      pr_base_branch: jobset.branch.clone(),
+      pr_action:      Some(format!("schedule:{}", schedule.name)),
+    })
+    .await;
+    if let Err(e) = created {
+      tracing::warn!(
+        jobset = %jobset.name,
+        schedule = %schedule.name,
+        "Failed to queue scheduled evaluation: {e}"
+      );
+    }
+  }
+}
+
+fn schedule_seed(jobset_id: Uuid, name: &str) -> String {
+  format!("{jobset_id}/{name}")
+}
+
+/// Replace a jobset's schedules with the ones its default branch declares,
+/// keeping the due time of every schedule whose `when` did not change.
+async fn sync_schedules(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  commit_hash: &str,
+  schedules: &BTreeMap<String, serde_json::Value>,
+) -> circus_common::error::Result<()> {
+  let existing = repo::jobset_schedules::list_for_jobset(pool, jobset.id)
+    .await?
+    .into_iter()
+    .map(|schedule| (schedule.name.clone(), schedule))
+    .collect::<HashMap<_, _>>();
+  let now = Utc::now();
+  let mut kept = Vec::new();
+  for (name, when_spec) in schedules {
+    let next_due_at = match existing.get(name) {
+      Some(schedule) if schedule.when_spec == *when_spec => {
+        schedule.next_due_at
+      },
+      _ => {
+        match When::parse(when_spec, &schedule_seed(jobset.id, name))
+          .and_then(|when| when.next_after(now))
+        {
+          Ok(next) => next,
+          Err(e) => {
+            tracing::warn!(
+              jobset = %jobset.name,
+              schedule = %name,
+              "Ignoring herculesCI.onSchedule job: {e}"
+            );
+            continue;
+          },
+        }
+      },
+    };
+    repo::jobset_schedules::upsert(
+      pool,
+      jobset.id,
+      name,
+      when_spec,
+      commit_hash,
+      next_due_at,
+    )
+    .await?;
+    kept.push(name.as_str());
+  }
+  repo::jobset_schedules::delete_except(pool, jobset.id, &kept).await
 }
 
 fn normalize_attested_branch(branch: &str) -> &str {
@@ -574,6 +698,10 @@ async fn run_nix_and_record_builds(
       .filter(|_| tag.is_none())
       .map(normalize_attested_branch),
     tag,
+    schedule: eval
+      .pr_action
+      .as_deref()
+      .and_then(|action| action.strip_prefix("schedule:")),
   };
   let result = crate::nix::evaluate(
     repo_path,
@@ -639,6 +767,14 @@ async fn run_nix_and_record_builds(
       if !builds_created {
         tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
         return Ok(());
+      }
+
+      if let Some(schedules) = &eval_result.schedules
+        && evaluation_allows_declarative_sync(eval)
+        && let Err(e) =
+          sync_schedules(pool, jobset, &eval.commit_hash, schedules).await
+      {
+        tracing::warn!(jobset = %jobset.name, "Failed to sync schedules: {e}");
       }
 
       if notifications_config.enable_retry_queue {

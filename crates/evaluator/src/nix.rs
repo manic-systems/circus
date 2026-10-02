@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{
+  collections::{BTreeMap, HashMap},
+  path::Path,
+  time::Duration,
+};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
@@ -173,6 +177,8 @@ pub struct EvalResult {
   /// A bounded sample of attribute failures, retained so an evaluation that
   /// produced no jobs can report the cause to its operator.
   pub errors:      Vec<String>,
+  /// `herculesCI.onSchedule.<name>.when` from a `herculesCI` push evaluation.
+  pub schedules:   Option<BTreeMap<String, serde_json::Value>>,
 }
 
 /// Evaluate nix expressions and return discovered jobs.
@@ -243,13 +249,22 @@ pub async fn evaluate(
       evix_config
         .nix_options
         .push(("extra-experimental-features".into(), "flakes".into()));
-      return eval_command::run_eval(
-        evix_config,
-        timeout,
-        "herculesCI",
-        cancel,
-      )
-      .await;
+      let mut result =
+        eval_command::run_eval(evix_config, timeout, "herculesCI", cancel)
+          .await?;
+      if let Some(index) = result
+        .jobs
+        .iter()
+        .position(|job| job.name == hercules::SCHEDULE_MARKER)
+      {
+        let marker = result.jobs.swap_remove(index);
+        let schedules = marker.meta.description.as_deref().unwrap_or("{}");
+        result.schedules =
+          Some(serde_json::from_str(schedules).map_err(|e| {
+            CiError::NixEval(format!("herculesCI.onSchedule: {e}"))
+          })?);
+      }
+      return Ok(result);
     }
     evaluate_flake(
       repo_path,
@@ -578,6 +593,7 @@ async fn evaluate_all_nixos_configs(
     jobs,
     error_count: 0,
     errors: Vec::new(),
+    schedules: None,
   })
 }
 

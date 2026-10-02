@@ -18,6 +18,7 @@ pub mod evaluations;
 pub mod failed_paths_cache;
 pub mod health;
 pub mod jobset_inputs;
+pub mod jobset_schedules;
 pub mod jobsets;
 pub mod migrations;
 pub mod narinfo_cache;

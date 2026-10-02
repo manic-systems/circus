@@ -70,6 +70,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (41, "0041_effect_completion_events"),
   (42, "0042_effect_task_tokens"),
   (43, "0043_project_state_files"),
+  (44, "0044_jobset_schedules"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.
@@ -338,6 +339,7 @@ pub const REQUIRED_TABLES: &[&str] = &[
   "evaluations",
   "failed_paths_cache",
   "jobset_inputs",
+  "jobset_schedules",
   "jobsets",
   "narinfo_cache",
   "news",

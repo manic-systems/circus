@@ -31,5 +31,22 @@
     devShells = perSystem "devShells";
     effects = outputs.effects or {};
   };
+  onSchedule = value.onSchedule or {};
+  # evix only reports derivations, so the schedules ride on one whose meta the
+  # evaluator reads and drops before creating builds.
+  scheduleMarker =
+    derivation {
+      name = "circus-schedules";
+      system = "builtin";
+      builder = "builtin:circus-schedules";
+    }
+    // {
+      meta.description =
+        builtins.toJSON (builtins.mapAttrs (_: job: job.when or {}) onSchedule);
+    };
 in
-  builtins.mapAttrs (_: job: job.outputs) (value.onPush or {default = defaultJob;})
+  if ctx.schedule == null
+  then
+    builtins.mapAttrs (_: job: job.outputs) (value.onPush or {default = defaultJob;})
+    // {${ctx.scheduleMarker} = scheduleMarker;}
+  else {${ctx.schedule} = onSchedule.${ctx.schedule}.outputs;}

@@ -143,7 +143,9 @@ fn trusted_ref_context(evaluation: &Evaluation) -> Option<TrustedRefContext> {
   if evaluation.pr_number.is_some()
     || !matches!(
       evaluation.trigger_kind,
-      EvaluationTriggerKind::SourceChange | EvaluationTriggerKind::Interval
+      EvaluationTriggerKind::SourceChange
+        | EvaluationTriggerKind::Interval
+        | EvaluationTriggerKind::Schedule
     )
   {
     return None;
@@ -161,8 +163,11 @@ fn trusted_ref_context(evaluation: &Evaluation) -> Option<TrustedRefContext> {
       is_default_branch: false,
     });
   }
-  if evaluation.pr_action.is_some() {
-    return None;
+  match (evaluation.trigger_kind, evaluation.pr_action.as_deref()) {
+    (EvaluationTriggerKind::Schedule, Some(action))
+      if action.starts_with("schedule:") => {},
+    (EvaluationTriggerKind::Schedule, _) | (_, Some(_)) => return None,
+    _ => {},
   }
 
   let branch = evaluation

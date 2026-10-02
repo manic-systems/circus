@@ -12,20 +12,28 @@ pub const NIX: &str = include_str!("hercules.nix");
 /// to deeper functions.
 pub const ARGUMENT: &str = "circusHerculesJson";
 
+/// Job name of the marker derivation carrying schedule specs in
+/// meta.description.
+pub const SCHEDULE_MARKER: &str = "__circusSchedules";
+
 /// The checked-out ref, as Hercules exposes it to `herculesCI` functions.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GitRef<'a> {
-  pub branch: Option<&'a str>,
-  pub tag:    Option<&'a str>,
+  pub branch:   Option<&'a str>,
+  pub tag:      Option<&'a str>,
+  /// Evaluate this `onSchedule` job instead of `onPush`.
+  pub schedule: Option<&'a str>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Context<'a> {
-  flake_ref:    &'a str,
-  primary_repo: PrimaryRepo<'a>,
+  flake_ref:       &'a str,
+  schedule:        Option<&'a str>,
+  schedule_marker: &'static str,
+  primary_repo:    PrimaryRepo<'a>,
   #[serde(rename = "herculesCI")]
-  hercules_ci:  HerculesCi,
+  hercules_ci:     HerculesCi,
 }
 
 #[derive(Serialize)]
@@ -72,6 +80,8 @@ pub fn context_json(
   };
   serde_json::to_string(&Context {
     flake_ref,
+    schedule: git_ref.schedule,
+    schedule_marker: SCHEDULE_MARKER,
     primary_repo: PrimaryRepo {
       git_ref: full_ref,
       branch: git_ref.branch,

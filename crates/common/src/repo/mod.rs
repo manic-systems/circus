@@ -13,6 +13,7 @@ pub mod effect_task_tokens;
 pub mod evaluations;
 pub mod failed_paths_cache;
 pub mod jobset_inputs;
+pub mod jobset_schedules;
 pub mod jobsets;
 pub mod narinfo_cache;
 pub mod news;

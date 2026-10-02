@@ -127,6 +127,11 @@ A flake jobset with `nix_expression = "herculesCI"` evaluates the flake's
 jobs prefixed with `<job>.`, and without `onPush` the default job covers
 `packages`, `checks`, `devShells` and `effects`, limited to `ciSystems`.
 
+`onSchedule.<name>` jobs are read from the default branch and fire in UTC per
+`when` (`minute`, `hour`, `dayOfWeek`, `dayOfMonth`). Unset fields get a fixed
+per-schedule value, so `when = {}` runs daily. Each run evaluates
+`onSchedule.<name>.outputs` at that default-branch commit.
+
 ## Status
 
 Effects appear in an Effects panel on the evaluation page, on their own detail
