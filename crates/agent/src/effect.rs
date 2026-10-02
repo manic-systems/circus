@@ -30,6 +30,8 @@ use crate::{
 const STORE_PREFIX: &str = "/nix/store/";
 const MAX_CONDITION_DEPTH: usize = 64;
 const MIN_REDACTION_LEN: usize = 8;
+/// hercules-ci-effects reads the API token from this `secrets.json` key.
+const TASK_TOKEN_SECRET: &str = "hercules-ci";
 
 #[derive(Clone)]
 pub struct EffectContext {
@@ -41,6 +43,8 @@ pub struct EffectContext {
   pub branch:            String,
   pub tag:               String,
   pub is_default_branch: bool,
+  /// Empty when the runner issued no token, e.g. for local runs.
+  pub task_token:        String,
 }
 
 pub struct RunOptions<'a> {
@@ -937,6 +941,11 @@ fn prepare_secrets(
   let mut resolved = BTreeMap::<String, ResolvedSecret>::new();
   let mut redactions = BTreeSet::<String>::new();
   for (alias, reference) in requested {
+    if alias == TASK_TOKEN_SECRET {
+      bail!(
+        "secret alias '{TASK_TOKEN_SECRET}' is reserved for the task token"
+      );
+    }
     let SecretReference::Local(source_name) = reference else {
       bail!("secret requested as '{alias}' uses an unsupported provider");
     };
@@ -961,6 +970,16 @@ fn prepare_secrets(
     resolved.insert(alias, ResolvedSecret {
       kind: "Secret",
       data: secret.data.clone(),
+    });
+  }
+  if !context.task_token.is_empty() {
+    redactions.insert(context.task_token.clone());
+    resolved.insert(TASK_TOKEN_SECRET.to_owned(), ResolvedSecret {
+      kind: "Secret",
+      data: Map::from_iter([(
+        "token".to_owned(),
+        Value::String(context.task_token.clone()),
+      )]),
     });
   }
 
@@ -1396,6 +1415,7 @@ mod tests {
       branch:            "main".into(),
       tag:               String::new(),
       is_default_branch: true,
+      task_token:        String::new(),
     }
   }
 

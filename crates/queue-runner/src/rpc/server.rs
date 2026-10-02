@@ -1146,6 +1146,24 @@ async fn dispatch_one(
   meta: &AgentMeta,
 ) -> DispatchResult {
   meta.active_builds.write().insert(cmd.build_id);
+  let task_token = if cmd.effect.is_some() {
+    match repo::effect_task_tokens::issue(pool, cmd.build_id, cmd.attempt).await
+    {
+      Ok(token) => token,
+      Err(e) => {
+        let out = DispatchResult::Failed(format!(
+          "could not issue the effect task token: {e}"
+        ));
+        if reconcile_effect_result(pool, cmd, machine_id, &out, false).await {
+          meta.active_builds.write().remove(&cmd.build_id);
+        }
+        cfg.forget_uploads_for(machine_id, cmd.build_id);
+        return out;
+      },
+    }
+  } else {
+    String::new()
+  };
   let (done_tx, mut done_rx) = oneshot::channel::<BuildOutcomeKind>();
   let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone(), cmd.max_log_size);
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
@@ -1195,7 +1213,7 @@ async fn dispatch_one(
         opts.set_fail_build_on_upload_error(upload.fail_build_on_upload_error);
       }
       if let Some(effect) = cmd.effect.as_ref() {
-        set_effect_options(&mut job, effect, &cfg.api_base_url);
+        set_effect_options(&mut job, effect, &cfg.api_base_url, &task_token);
       }
     }
     p.set_log(log_cap);
@@ -1531,6 +1549,7 @@ fn set_effect_options(
   job: &mut build_assignment::Builder<'_>,
   effect: &EffectContext,
   api_base_url: &str,
+  task_token: &str,
 ) {
   let mut opts = job.reborrow().init_effect();
   opts.set_project_id(effect.project_id.as_str());
@@ -1541,6 +1560,7 @@ fn set_effect_options(
   opts.set_branch(effect.branch.as_str());
   opts.set_tag(effect.tag.as_str());
   opts.set_is_default_branch(effect.is_default_branch);
+  opts.set_task_token(task_token);
 }
 
 fn parse_uuid_param(value: &str, name: &str) -> Result<Uuid, capnp::Error> {
@@ -1836,7 +1856,7 @@ mod tests {
     let mut message = capnp::message::Builder::new_default();
     {
       let mut job = message.init_root::<build_assignment::Builder<'_>>();
-      set_effect_options(&mut job, &effect, "https://ci.example.org");
+      set_effect_options(&mut job, &effect, "https://ci.example.org", "token");
     }
 
     let job = message
