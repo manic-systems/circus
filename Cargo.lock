@@ -935,6 +935,7 @@ dependencies = [
  "jsonwebtoken",
  "parking_lot",
  "reqwest 0.13.5",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

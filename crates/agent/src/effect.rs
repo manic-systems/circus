@@ -45,6 +45,8 @@ pub struct EffectContext {
   pub is_default_branch: bool,
   /// Empty when the runner issued no token, e.g. for local runs.
   pub task_token:        String,
+  /// Forge token for `GitToken` secrets, empty unless one was requested.
+  pub git_token:         String,
 }
 
 /// Where the effect's derivation and input closure come from.
@@ -153,7 +155,7 @@ struct ResolvedSecret {
 
 enum SecretReference {
   Local(String),
-  Unsupported,
+  GitToken,
 }
 
 enum Condition {
@@ -963,8 +965,25 @@ fn prepare_secrets(
         "secret alias '{TASK_TOKEN_SECRET}' is reserved for the task token"
       );
     }
-    let SecretReference::Local(source_name) = reference else {
-      bail!("secret requested as '{alias}' uses an unsupported provider");
+    let source_name = match reference {
+      SecretReference::Local(source_name) => source_name,
+      SecretReference::GitToken => {
+        if context.git_token.is_empty() {
+          bail!(
+            "secret requested as '{alias}' needs a GitToken the runner did \
+             not mint"
+          );
+        }
+        redactions.insert(context.git_token.clone());
+        resolved.insert(alias, ResolvedSecret {
+          kind: "Secret",
+          data: Map::from_iter([(
+            "token".to_owned(),
+            Value::String(context.git_token.clone()),
+          )]),
+        });
+        continue;
+      },
     };
     let Some(secret) = definitions.get(&source_name) else {
       bail!("secret requested as '{alias}' is unavailable or denied");
@@ -1188,7 +1207,7 @@ fn parse_secrets_map(
         Value::Object(object)
           if object.get("type").and_then(Value::as_str) == Some("GitToken") =>
         {
-          SecretReference::Unsupported
+          SecretReference::GitToken
         },
         _ => bail!("effect secretsMap entry '{alias}' is invalid"),
       };
@@ -1438,6 +1457,7 @@ mod tests {
       tag:               String::new(),
       is_default_branch: true,
       task_token:        String::new(),
+      git_token:         String::new(),
     }
   }
 

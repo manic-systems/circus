@@ -13,6 +13,7 @@ pub mod cache_traffic;
 pub mod channels;
 pub mod database;
 pub mod effect_completion_events;
+pub mod effect_git_token_requests;
 pub mod effect_task_tokens;
 pub mod evaluations;
 pub mod failed_paths_cache;

@@ -759,6 +759,7 @@ impl builder::Server for BuilderImpl {
           tag:               effect.get_tag()?.to_str()?.to_owned(),
           is_default_branch: effect.get_is_default_branch(),
           task_token:        effect.get_task_token()?.to_str()?.to_owned(),
+          git_token:         effect.get_git_token()?.to_str()?.to_owned(),
         })
       } else {
         None

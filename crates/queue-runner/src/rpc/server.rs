@@ -83,6 +83,8 @@ pub struct ServerConfig {
   pub api_base_url:       String,
   /// OIDC verifier. `None` disables the OIDC auth path.
   pub oidc:               Option<Arc<super::oidc::OidcVerifier>>,
+  /// Mints `GitToken` secrets for effects that request one.
+  pub github_app:         Option<Arc<crate::github_app::GithubApp>>,
   active_uploads: Arc<parking_lot::Mutex<HashMap<UploadKey, ExpectedUpload>>>,
 }
 
@@ -163,8 +165,18 @@ impl ServerConfig {
       cache_public_key: cfg.cache_public_key.clone(),
       api_base_url: cfg.api_base_url.clone().unwrap_or_default(),
       oidc,
+      github_app: None,
       active_uploads: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     })
+  }
+
+  #[must_use]
+  pub fn with_github_app(
+    mut self,
+    app: Option<Arc<crate::github_app::GithubApp>>,
+  ) -> Self {
+    self.github_app = app;
+    self
   }
 
   /// Attach the runner's narinfo signing key. When set, the runner
@@ -1164,6 +1176,19 @@ async fn dispatch_one(
   } else {
     String::new()
   };
+  let git_token = match effect_git_token(pool, cfg, cmd).await {
+    Ok(token) => token,
+    Err(e) => {
+      let out = DispatchResult::Failed(format!(
+        "could not mint the effect's GitToken: {e}"
+      ));
+      if reconcile_effect_result(pool, cmd, machine_id, &out, false).await {
+        meta.active_builds.write().remove(&cmd.build_id);
+      }
+      cfg.forget_uploads_for(machine_id, cmd.build_id);
+      return out;
+    },
+  };
   let (done_tx, mut done_rx) = oneshot::channel::<BuildOutcomeKind>();
   let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone(), cmd.max_log_size);
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
@@ -1213,7 +1238,13 @@ async fn dispatch_one(
         opts.set_fail_build_on_upload_error(upload.fail_build_on_upload_error);
       }
       if let Some(effect) = cmd.effect.as_ref() {
-        set_effect_options(&mut job, effect, &cfg.api_base_url, &task_token);
+        set_effect_options(
+          &mut job,
+          effect,
+          &cfg.api_base_url,
+          &task_token,
+          &git_token,
+        );
       }
     }
     p.set_log(log_cap);
@@ -1545,11 +1576,33 @@ async fn request_agent_abort(
   Ok(())
 }
 
+/// An empty token when the effect did not ask for one.
+async fn effect_git_token(
+  pool: &PgPool,
+  cfg: &ServerConfig,
+  cmd: &DispatchCommand,
+) -> color_eyre::Result<String> {
+  let Some(effect) = cmd.effect.as_ref() else {
+    return Ok(String::new());
+  };
+  if !repo::effect_git_token_requests::requested(pool, cmd.build_id).await? {
+    return Ok(String::new());
+  }
+  if !effect.project_path.starts_with("github/") {
+    color_eyre::eyre::bail!("GitToken is only minted for GitHub repositories");
+  }
+  let app = cfg.github_app.as_ref().ok_or_else(|| {
+    color_eyre::eyre::eyre!("queue_runner.github_app is not configured")
+  })?;
+  app.repository_token(&effect.owner, &effect.repo).await
+}
+
 fn set_effect_options(
   job: &mut build_assignment::Builder<'_>,
   effect: &EffectContext,
   api_base_url: &str,
   task_token: &str,
+  git_token: &str,
 ) {
   let mut opts = job.reborrow().init_effect();
   opts.set_project_id(effect.project_id.as_str());
@@ -1561,6 +1614,7 @@ fn set_effect_options(
   opts.set_tag(effect.tag.as_str());
   opts.set_is_default_branch(effect.is_default_branch);
   opts.set_task_token(task_token);
+  opts.set_git_token(git_token);
 }
 
 fn parse_uuid_param(value: &str, name: &str) -> Result<Uuid, capnp::Error> {
@@ -1856,7 +1910,13 @@ mod tests {
     let mut message = capnp::message::Builder::new_default();
     {
       let mut job = message.init_root::<build_assignment::Builder<'_>>();
-      set_effect_options(&mut job, &effect, "https://ci.example.org", "token");
+      set_effect_options(
+        &mut job,
+        &effect,
+        "https://ci.example.org",
+        "token",
+        "",
+      );
     }
 
     let job = message

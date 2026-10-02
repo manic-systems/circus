@@ -5,6 +5,7 @@ use crate::{
   EmailConfig,
   GitHubOAuthConfig,
   GithubActionsPoolConfig,
+  GithubAppConfig,
   NotificationsConfig,
   S3CacheConfig,
   SlackNotificationConfig,
@@ -48,6 +49,13 @@ redact_debug!(GithubActionsPoolConfig {
   runner_url:          visible,
   oidc_audience:       visible,
   agent_binary_url:    visible,
+});
+
+redact_debug!(GithubAppConfig {
+  app_id:           visible,
+  private_key:      optional_secret,
+  private_key_file: visible,
+  api_url:          visible,
 });
 
 redact_debug!(GitHubOAuthConfig {
@@ -142,6 +150,7 @@ const SECRET_KEYS: &[&str] = &[
   "key",
   "notification_secret_key",
   "password",
+  "private_key",
   "secret",
   "secret_access_key",
   "session_token",

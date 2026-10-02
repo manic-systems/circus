@@ -57,6 +57,10 @@ pub struct EffectRunArgs {
   #[arg(long, requires = "api_url")]
   token: Option<String>,
 
+  /// Token handed to `GitToken` secrets.
+  #[arg(long)]
+  git_token: Option<String>,
+
   /// Effect timeout in seconds.
   #[arg(long, default_value_t = 3600)]
   timeout: u64,
@@ -176,6 +180,7 @@ pub async fn run(args: EffectRunArgs) -> Result<i32> {
     branch,
     tag: args.pretend_tag.unwrap_or_default(),
     task_token: args.token.unwrap_or_default(),
+    git_token: args.git_token.unwrap_or_default(),
   };
   let log: log_sink::Client = capnp_rpc::new_client(StdoutLogSink);
   let result = effect::run(

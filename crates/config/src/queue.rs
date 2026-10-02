@@ -60,6 +60,10 @@ pub struct QueueRunnerConfig {
   /// GitHub Actions-backed ephemeral `circus-agent` pools.
   #[serde(default)]
   pub ephemeral_pools: Vec<EphemeralPoolConfig>,
+
+  /// GitHub App that mints `GitToken` secrets for effects.
+  #[serde(default)]
+  pub github_app: Option<GithubAppConfig>,
 }
 
 impl Default for QueueRunnerConfig {
@@ -81,8 +85,27 @@ impl Default for QueueRunnerConfig {
       local_features:       None,
       rpc:                  None,
       ephemeral_pools:      Vec::new(),
+      github_app:           None,
     }
   }
+}
+
+/// A GitHub App installed on the repositories whose effects may push.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GithubAppConfig {
+  pub app_id:           u64,
+  /// PEM private key of the app.
+  #[serde(default)]
+  pub private_key:      Option<String>,
+  /// File containing the PEM private key. Used when `private_key` is unset.
+  #[serde(default)]
+  pub private_key_file: Option<PathBuf>,
+  #[serde(default = "default_github_api_url")]
+  pub api_url:          String,
+}
+
+fn default_github_api_url() -> String {
+  "https://api.github.com".to_owned()
 }
 
 /// Runner-driven ephemeral builder pool. Each pool represents one class of

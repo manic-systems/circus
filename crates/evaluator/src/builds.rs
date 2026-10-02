@@ -42,6 +42,7 @@ struct DerivationInfo {
   input_drvs:        Option<HashMap<String, serde_json::Value>>,
   required_features: Vec<String>,
   is_effect:         bool,
+  wants_git_token:   bool,
 }
 
 fn effect_marker(value: &serde_json::Value) -> bool {
@@ -76,6 +77,40 @@ fn derivation_is_effect(value: &serde_json::Value) -> bool {
     .and_then(serde_json::Value::as_str)
     .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
     .is_some_and(|attrs| attrs.get("isEffect").is_some_and(effect_marker))
+}
+
+/// Whether `secretsToUse` or `secretsMap` asks for a `GitToken`.
+fn derivation_wants_git_token(value: &serde_json::Value) -> bool {
+  let json_attrs = value
+    .get("env")
+    .and_then(|env| env.get("__json"))
+    .and_then(serde_json::Value::as_str)
+    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
+  let sources = [
+    value.get("env"),
+    value.get("structuredAttrs"),
+    json_attrs.as_ref(),
+  ];
+  sources.into_iter().flatten().any(|attrs| {
+    ["secretsToUse", "secretsMap"].into_iter().any(|key| {
+      let map = match attrs.get(key) {
+        Some(serde_json::Value::String(json)) => {
+          serde_json::from_str(json).ok()
+        },
+        Some(map) => Some(map.clone()),
+        None => None,
+      };
+      map
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|map| {
+          map.values().any(|secret| {
+            secret.get("type").and_then(serde_json::Value::as_str)
+              == Some("GitToken")
+          })
+        })
+    })
+  })
 }
 
 fn store_path(path: &str) -> String {
@@ -154,6 +189,7 @@ fn parse_derivation_infos(
     let required_features =
       circus_nix::derivation::drv_required_features(drv_val);
     let is_effect = derivation_is_effect(drv_val);
+    let wants_git_token = is_effect && derivation_wants_git_token(drv_val);
 
     parsed.insert(drv_path, DerivationInfo {
       system,
@@ -161,6 +197,7 @@ fn parse_derivation_infos(
       input_drvs,
       required_features,
       is_effect,
+      wants_git_token,
     });
   }
   Ok(parsed)
@@ -582,6 +619,11 @@ pub(crate) async fn create_builds_from_eval(
     return Ok(false);
   }
 
+  let git_token_drvs = derivations
+    .iter()
+    .filter(|(_, info)| info.wants_git_token)
+    .map(|(path, _)| path.as_str())
+    .collect::<HashSet<_>>();
   let mut build_ids = Vec::with_capacity(jobs.len());
   let mut effect_build_ids = Vec::new();
   let mut regular_build_ids = Vec::new();
@@ -594,6 +636,9 @@ pub(crate) async fn create_builds_from_eval(
     name_to_build.insert(job_name, id);
     build_ids.push(id);
     if kind.is_effect() {
+      if git_token_drvs.contains(store_path(&drv_path).as_str()) {
+        repo::effect_git_token_requests::insert_in_transaction(&tx, id).await?;
+      }
       effect_build_ids.push(id);
       drv_to_build.entry(drv_path).or_insert(id);
     } else {
@@ -846,6 +891,7 @@ mod tests {
         )])),
         required_features: Vec::new(),
         is_effect:         true,
+        wants_git_token:   false,
       })]);
 
     let hydrated = hydrate_top_level_derivations(&jobs, &derivations);
@@ -879,6 +925,7 @@ mod tests {
       input_drvs:        None,
       required_features: Vec::new(),
       is_effect:         false,
+      wants_git_token:   false,
     };
 
     let current =

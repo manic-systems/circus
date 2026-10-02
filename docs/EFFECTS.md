@@ -97,6 +97,21 @@ both `queue_runner.rpc.cache_substituter` and
 `queue_runner.rpc.cache_public_key`. Agents need a TLS connection to the runner
 (`circus+tls://` or `[agent.tls]`). Ephemeral agents never run effects.
 
+## GitToken Secrets
+
+A `secretsMap` entry of `{ type = "GitToken"; }` gets `{ "token": "..." }`, an
+hour-long GitHub App token that can push to the effect's own repository only.
+
+```toml
+[queue_runner.github_app]
+app_id = 123456
+private_key_file = "/run/secrets/circus-github-app.pem"
+```
+
+Install the app with `contents` write access on each repository whose effects
+push. `api_url` selects GitHub Enterprise. Without the app, or on other forges,
+an effect that asks for a token fails before it starts.
+
 ## State Files
 
 `getStateFile` and `putStateFile` from hercules-ci-effects work as on Hercules.
