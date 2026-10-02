@@ -59,6 +59,10 @@ pub(crate) enum NixTool {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(
+  not(target_os = "linux"),
+  allow(dead_code, reason = "only the Linux sandbox builds an effect root")
+)]
 pub(crate) struct EffectSandboxOptions<'a> {
   pub rootless:      bool,
   pub build_dir:     &'a Path,
@@ -66,6 +70,52 @@ pub(crate) struct EffectSandboxOptions<'a> {
   pub fs_root:       Option<&'a Path>,
   pub default_shell: &'a Path,
   pub default_env:   Option<&'a Path>,
+}
+
+/// The task directories and identity as the effect process sees them.
+pub(crate) struct EffectView {
+  pub build:   String,
+  pub secrets: String,
+  pub user:    String,
+  pub ca_file: Option<&'static str>,
+}
+
+#[cfg(target_os = "linux")]
+#[allow(
+  clippy::unnecessary_wraps,
+  reason = "the non-Linux variant resolves real paths and can fail"
+)]
+pub(crate) fn effect_view(
+  _build_dir: &Path,
+  _secrets_file: &Path,
+) -> color_eyre::Result<EffectView> {
+  Ok(EffectView {
+    build:   "/build".into(),
+    secrets: "/secrets/secrets.json".into(),
+    user:    "root".into(),
+    ca_file: None,
+  })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn effect_view(
+  build_dir: &Path,
+  secrets_file: &Path,
+) -> color_eyre::Result<EffectView> {
+  let utf8 = |path: &Path| {
+    path.to_str().map(str::to_owned).ok_or_else(|| {
+      color_eyre::eyre::eyre!("non-UTF-8 effect path {}", path.display())
+    })
+  };
+  let uid = nix::unistd::getuid();
+  let user = nix::unistd::User::from_uid(uid)?
+    .map_or_else(|| uid.to_string(), |user| user.name);
+  Ok(EffectView {
+    build: utf8(build_dir)?,
+    secrets: utf8(secrets_file)?,
+    user,
+    ca_file: Some("/etc/ssl/cert.pem"),
+  })
 }
 
 impl NixTool {
@@ -201,6 +251,39 @@ fn helper_command(target: &Command) -> io::Result<Command> {
   Ok(cmd)
 }
 
+/// Run the effect in its own process group.
+#[cfg(not(target_os = "linux"))]
+#[allow(
+  clippy::unnecessary_wraps,
+  reason = "the Linux variant resolves the helper executable and can fail"
+)]
+pub(crate) fn effect_command(
+  opts: EffectSandboxOptions<'_>,
+  program: &Path,
+  args: &[String],
+  env: &BTreeMap<String, String>,
+) -> io::Result<Command> {
+  let mut cmd = Command::new(program);
+  cmd
+    .args(args)
+    .current_dir(opts.build_dir)
+    .env_clear()
+    .envs(env)
+    .process_group(0)
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+  // SAFETY: umask is async-signal-safe and touches no shared state.
+  unsafe {
+    cmd.pre_exec(|| {
+      nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o077));
+      Ok(())
+    });
+  }
+  Ok(cmd)
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn effect_command(
   opts: EffectSandboxOptions<'_>,
   program: &Path,

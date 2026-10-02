@@ -84,6 +84,7 @@ nix = { version = "0.31.3", default-features = false, features = [
   "fs",
   "user",
   "process",
+  "signal",
 ] }
 num_enum = "0.7.6"
 oauth2 = "5.0.0"

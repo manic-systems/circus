@@ -60,6 +60,12 @@ and `/bin/sh` defaults to the builder.
 Effects need a non-root agent that is not rootless. Their duration is bounded by
 the build timeout options.
 
+On darwin the effect runs as a plain process under the agent user, in a process
+group that is killed when it ends. `$HOME`, `$TMPDIR` and the secrets file are
+real paths, and the effect can read anything the agent user can. `mkEffect` and
+`modularEffect` assume the Linux layout, so darwin agents only run plain
+derivations with `isEffect = true`.
+
 ## Configuration
 
 On the agent, point `[agent.effects]` at a Hercules-format secrets file that

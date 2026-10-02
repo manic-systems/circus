@@ -29,9 +29,10 @@ in {
       default = null;
       description = ''
         Canonical absolute runtime path to a Hercules-format secrets.json used
-        by post-build Effects. This must not be a Nix store path. The file is
-        passed through systemd credentials and its presence opts this persistent
-        agent into the Effects capability.
+        by post-build Effects. This must not be a Nix store path. Its presence
+        opts this persistent agent into the Effects capability. NixOS passes the
+        file through systemd credentials, nix-darwin has the agent read it in
+        place, so there it must be owned by the agent user with mode 0600.
       '';
     };
 

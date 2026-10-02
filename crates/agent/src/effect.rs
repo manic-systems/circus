@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
   build::{self, BuildOptions, LocalResult, Tunables},
   config::EffectsConfig,
-  sandbox::{self, EffectSandboxOptions, NixTool},
+  sandbox::{self, EffectSandboxOptions, EffectView, NixTool},
 };
 
 const STORE_PREFIX: &str = "/nix/store/";
@@ -340,6 +340,12 @@ async fn prepare_effect(
   )?;
   let fs_root = effect_fs_root(&derivation.env, structured_attrs.as_ref())
     .map(PathBuf::from);
+  if fs_root.is_some() && !cfg!(target_os = "linux") {
+    bail!(
+      "mkEffect and modularEffect assume the Linux effect sandbox (/build, \
+       /etc/passwd); this agent only runs plain `isEffect` derivations"
+    );
+  }
   if let Some(path) = &fs_root {
     validate_effect_fs_root(path, &closure_paths)?;
   }
@@ -349,10 +355,12 @@ async fn prepare_effect(
     .iter()
     .map(|path| Path::new(path).join("bin/env"))
     .find(|path| path.is_file());
+  let view = sandbox::effect_view(&prepared.build_dir, &prepared.secrets_file)?;
   let env = effect_environment(
     opts,
     &derivation,
     &opts.context,
+    &view,
     structured_attrs.is_some(),
     fs_root.is_some(),
   );
@@ -1299,16 +1307,18 @@ fn effect_environment(
   opts: &RunOptions<'_>,
   derivation: &Derivation,
   context: &EffectContext,
+  view: &EffectView,
   structured_attrs: bool,
   fs_root: bool,
 ) -> BTreeMap<String, String> {
+  let build = view.build.as_str();
   let mut env = derivation.env.clone();
   env.remove("__json");
   env.remove("__structuredAttrs");
   env.insert("PATH".into(), "/path-not-set".into());
-  env.insert("HOME".into(), "/build/home".into());
-  env.insert("USER".into(), "root".into());
-  env.insert("LOGNAME".into(), "root".into());
+  env.insert("HOME".into(), format!("{build}/home"));
+  env.insert("USER".into(), view.user.clone());
+  env.insert("LOGNAME".into(), view.user.clone());
   env.insert("NIX_STORE".into(), "/nix/store".into());
   env.insert("NIX_BUILD_CORES".into(), opts.cores.max(1).to_string());
   env.insert(
@@ -1329,23 +1339,26 @@ fn effect_environment(
         .into(),
     );
   }
-  env.insert("NIX_BUILD_TOP".into(), "/build".into());
-  env.insert("TMPDIR".into(), "/build".into());
-  env.insert("TEMPDIR".into(), "/build".into());
-  env.insert("TMP".into(), "/build".into());
-  env.insert("TEMP".into(), "/build".into());
+  for name in ["NIX_BUILD_TOP", "TMPDIR", "TEMPDIR", "TMP", "TEMP"] {
+    env.insert(name.into(), build.to_owned());
+  }
   env.insert("NIX_LOG_FD".into(), "2".into());
   env.insert("TERM".into(), "xterm-256color".into());
   env.insert("IN_HERCULES_CI_EFFECT".into(), "true".into());
   env.insert("IN_CIRCUS_EFFECT".into(), "true".into());
   if structured_attrs {
-    env.insert("NIX_ATTRS_JSON_FILE".into(), "/build/.attrs.json".into());
-    env.insert("NIX_ATTRS_SH_FILE".into(), "/build/.attrs.sh".into());
+    env.insert("NIX_ATTRS_JSON_FILE".into(), format!("{build}/.attrs.json"));
+    env.insert("NIX_ATTRS_SH_FILE".into(), format!("{build}/.attrs.sh"));
   }
   if fs_root {
     env.insert("__hci_effect_fsroot_copied".into(), "1".into());
   }
-  set_context_env(&mut env, "API_BASE_URL", "/secrets/secrets.json", context);
+  if let Some(ca_file) = view.ca_file {
+    for name in ["SSL_CERT_FILE", "NIX_SSL_CERT_FILE"] {
+      env.entry(name.into()).or_insert_with(|| ca_file.into());
+    }
+  }
+  set_context_env(&mut env, "API_BASE_URL", &view.secrets, context);
   env
 }
 
@@ -1708,7 +1721,14 @@ mod tests {
       config:            &config,
       context:           context(),
     };
-    let env = effect_environment(&options, &derivation, &context(), true, true);
+    let view = EffectView {
+      build:   "/build".into(),
+      secrets: "/secrets/secrets.json".into(),
+      user:    "root".into(),
+      ca_file: None,
+    };
+    let env =
+      effect_environment(&options, &derivation, &context(), &view, true, true);
     assert_eq!(env["NIX_ATTRS_JSON_FILE"], "/build/.attrs.json");
     assert_eq!(env["NIX_ATTRS_SH_FILE"], "/build/.attrs.sh");
     assert_eq!(env["__hci_effect_fsroot_copied"], "1");

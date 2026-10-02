@@ -9,9 +9,13 @@ use std::{
 };
 
 use circus_proto::{log_sink, nix_log};
+use nix::{
+  sys::signal::{Signal, killpg},
+  unistd::{Pid, getpgid},
+};
 use tokio::{
   io::{AsyncBufReadExt, BufReader},
-  process::Command,
+  process::{Child, Command},
   time::timeout,
 };
 use tokio_util::sync::CancellationToken;
@@ -276,6 +280,11 @@ pub(crate) async fn run_command(
 ) -> color_eyre::Result<LocalResult> {
   let started = Instant::now();
   let mut child = cmd.spawn()?;
+  let group = child
+    .id()
+    .and_then(|pid| i32::try_from(pid).ok())
+    .map(Pid::from_raw)
+    .filter(|pid| getpgid(Some(*pid)) == Ok(*pid));
   let stdout = child
     .stdout
     .take()
@@ -395,7 +404,7 @@ pub(crate) async fn run_command(
           continue;
         }
         error_message = "max-silent-time exceeded".into();
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
         break;
       },
@@ -413,7 +422,7 @@ pub(crate) async fn run_command(
         if child_status.is_none() {
           timed_out = true;
           error_message = "build-timeout exceeded".into();
-          let _ = child.start_kill();
+          kill_child(&mut child, group);
           killed = true;
         } else {
           log_truncated = true;
@@ -432,7 +441,7 @@ pub(crate) async fn run_command(
         }
         aborted = true;
         error_message = "aborted by runner".into();
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
         break;
       },
@@ -472,7 +481,7 @@ pub(crate) async fn run_command(
           if child_status.is_none() {
             log_size_exceeded = true;
             error_message = "max-log-size exceeded".into();
-            let _ = child.start_kill();
+            kill_child(&mut child, group);
             killed = true;
           } else {
             log_truncated = true;
@@ -529,7 +538,7 @@ pub(crate) async fn run_command(
           }
           aborted = true;
           error_message = "aborted by runner".into();
-          let _ = child.start_kill();
+          kill_child(&mut child, group);
           killed = true;
           break;
         }
@@ -546,7 +555,7 @@ pub(crate) async fn run_command(
         }
         tracing::warn!(error = %e, "log sink write failed; killing child");
         sink_failed = true;
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
       }
     }
@@ -578,7 +587,7 @@ pub(crate) async fn run_command(
       if child_status.is_none() {
         timed_out = true;
         error_message = "build-timeout exceeded".into();
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
       } else {
         log_truncated = true;
@@ -593,6 +602,7 @@ pub(crate) async fn run_command(
       if let Ok(s) = timeout(tun.reap_timeout, child.wait()).await {
         Some(s?)
       } else {
+        kill_group(group);
         let _ = child.kill().await;
         None
       }
@@ -611,6 +621,7 @@ pub(crate) async fn run_command(
           } else {
             timed_out = true;
             error_message = "build-timeout exceeded".into();
+            kill_group(group);
             let _ = child.kill().await;
             None
           }
@@ -633,6 +644,7 @@ pub(crate) async fn run_command(
       .push_str("log drain timed out after child exit; log truncated");
   }
   let _ = timeout(tun.write_timeout, close_log(&log_sink)).await;
+  kill_group(group);
 
   let Some(status) = status else {
     return Ok(LocalResult {
@@ -839,6 +851,18 @@ async fn close_log(sink: &log_sink::Client) -> Result<(), capnp::Error> {
   )]
   sink.close_request().send().promise.await?;
   Ok(())
+}
+
+/// Send SIGKILL to the process group when present.
+fn kill_group(group: Option<Pid>) {
+  if let Some(group) = group {
+    let _ = killpg(group, Signal::SIGKILL);
+  }
+}
+
+fn kill_child(child: &mut Child, group: Option<Pid>) {
+  kill_group(group);
+  let _ = child.start_kill();
 }
 
 #[cfg(test)]
