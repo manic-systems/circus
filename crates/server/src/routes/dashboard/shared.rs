@@ -404,6 +404,20 @@ pub(super) fn format_bytes(bytes: i64) -> String {
   }
 }
 
+/// Format an exact byte count with digit grouping (e.g. `1,572,864 bytes`).
+#[must_use]
+pub(super) fn format_exact_bytes(bytes: i64) -> String {
+  let digits = bytes.max(0).to_string();
+  let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+  for (index, digit) in digits.chars().enumerate() {
+    if index > 0 && (digits.len() - index).is_multiple_of(3) {
+      grouped.push(',');
+    }
+    grouped.push(digit);
+  }
+  format!("{grouped} bytes")
+}
+
 /// The 32-character store-path hash from a `/nix/store/<hash>-<name>` path, or
 /// the whole path when it does not match that shape.
 #[must_use]

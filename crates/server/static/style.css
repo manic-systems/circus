@@ -2947,15 +2947,96 @@ td.commit-cell {
   line-height: 20px;
 }
 
-.nar-detail summary {
-  cursor: pointer;
+tr:has(.nar-detail[open]) td {
+  padding-top: 12px;
+  padding-bottom: 10px;
+  vertical-align: top;
 }
 
-.nar-store-path {
-  display: block;
-  margin-top: 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
+.nar-detail summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.nar-detail summary::marker {
+  color: var(--text-subtle);
+}
+
+.store-path {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 2px 2px 2px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.store-path code {
+  min-width: 0;
+  padding: 0;
+  overflow-x: clip;
+  overflow-y: visible;
+  background: none;
+  border: 0;
+  font-size: 12px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-box: trim-both cap alphabetic;
+}
+
+.store-path-prefix {
+  color: var(--text-subtle);
+}
+
+.store-path-hash {
   color: var(--text-muted);
-  word-break: break-all;
+}
+
+.store-path-name {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.store-path-copy {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-subtle);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition:
+    color 120ms,
+    background-color 120ms;
+}
+
+.store-path-copy:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.store-path-copy::before {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  content: "";
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5.5' y='5.5' width='8' height='8' rx='1.5'/%3E%3Cpath d='M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.store-path-copy.is-copied {
+  color: var(--status-success);
+}
+
+.store-path-copy.is-copied::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3 3 7-7'/%3E%3C/svg%3E");
 }
