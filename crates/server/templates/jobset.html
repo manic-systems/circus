@@ -138,6 +138,16 @@
     {% else %}
         <div class="table-wrap">
             <table>
+                <colgroup>
+                    <col style="width:28%">
+                    <col style="width:12%">
+                    <col style="width:9%">
+                    <col style="width:9%">
+                    <col style="width:9%">
+                    <col style="width:9%">
+                    <col style="width:14%">
+                    {% if is_admin %}<col style="width:10%">{% endif %}
+                </colgroup>
                 <thead>
                     <tr>
                         <th>Commit</th>
@@ -145,6 +155,7 @@
                         <th>Succeeded</th>
                         <th>Failed</th>
                         <th>Pending</th>
+                        <th>Duration</th>
                         <th>Time</th>
                         {% if is_admin %}<th>Actions</th>{% endif %}
                     </tr>
@@ -152,8 +163,13 @@
                 <tbody>
                     {% for e in eval_summaries %}
                         <tr>
-                            <td>
+                            <td class="commit-cell">
                                 <a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a>
+                                {% if !e.commit_subject.is_empty() %}
+                                    <span class="commit-subject" title="{{ e.commit_subject }}">
+                                        {{ e.commit_subject }}
+                                    </span>
+                                {% endif %}
                             </td>
                             <td>
                                 <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
@@ -162,7 +178,16 @@
                             <td>{{ e.succeeded }}</td>
                             <td>{{ e.failed }}</td>
                             <td>{{ e.pending }}</td>
-                            <td>{{ e.time }}</td>
+                            {% if let Some(ts) = e.running_since %}
+                                <td data-live-elapsed="{{ ts }}">-</td>
+                            {% elif !e.duration.is_empty() %}
+                                <td>{{ e.duration }}</td>
+                            {% else %}
+                                <td>-</td>
+                            {% endif %}
+                            <td>
+                                <time datetime="{{ e.time_iso }}">{{ e.time }}</time>
+                            </td>
                             {% if is_admin %}
                                 <td>
                                     <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">

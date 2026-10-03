@@ -71,6 +71,9 @@ pub struct Evaluation {
   pub source_scope:       Option<String>,
   pub superseded_by:      Option<Uuid>,
   pub source_base_commit: Option<String>,
+  pub started_at:         Option<DateTime<Utc>>,
+  pub finished_at:        Option<DateTime<Utc>>,
+  pub commit_subject:     Option<String>,
 }
 
 impl Evaluation {

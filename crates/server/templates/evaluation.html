@@ -58,23 +58,59 @@
             {% endif %}
         </div>
     {% endif %}
-    <p>
-        <strong>Status:</strong>
-        <span class="badge badge-{{ eval.status_class }}">{{ eval.status_text }}</span>
-        {% if eval.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
-    </p>
-    <p>
-        <strong>Commit:</strong> <code>{{ eval.commit_hash }}</code>
-    </p>
-    <p>
-        <strong>Time:</strong> {{ eval.time }}
-    </p>
-    {% if let Some(replacement) = eval.superseded_by %}
-        <p>
-            <strong>Superseded by:</strong>
-            <a href="/evaluation/{{ replacement }}">newer evaluation</a>
-        </p>
-    {% endif %}
+    <div class="build-meta">
+        <div class="build-meta-item">
+            <span class="build-meta-label">Status</span>
+            <span class="build-meta-value">
+                <span class="badge badge-{{ eval.status_class }}">{{ eval.status_text }}</span>
+                {% if eval.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
+            </span>
+        </div>
+        <div class="build-meta-item">
+            <span class="build-meta-label">Queued</span>
+            <span class="build-meta-value">
+                <time datetime="{{ eval.time_iso }}" data-zone>{{ eval.time }}</time>
+            </span>
+        </div>
+        <div class="build-meta-item">
+            <span class="build-meta-label">Started</span>
+            <span class="build-meta-value">
+                {% if eval.started_iso.is_empty() %}
+                    -
+                {% else %}
+                    <time datetime="{{ eval.started_iso }}" data-zone>{{ eval.started }}</time>
+                {% endif %}
+            </span>
+        </div>
+        {% if let Some(ts) = eval.running_since %}
+            <div class="build-meta-item">
+                <span class="build-meta-label">Elapsed</span>
+                <span class="build-meta-value" data-live-elapsed="{{ ts }}">-</span>
+            </div>
+        {% elif !eval.duration.is_empty() %}
+            <div class="build-meta-item">
+                <span class="build-meta-label">Duration</span>
+                <span class="build-meta-value">{{ eval.duration }}</span>
+            </div>
+        {% endif %}
+        <div class="build-meta-item build-meta-wide">
+            <span class="build-meta-label">Commit</span>
+            <span class="build-meta-value">
+                <code>{{ eval.commit_hash }}</code>
+                {% if !eval.commit_subject.is_empty() %}
+                    <span class="commit-message">{{ eval.commit_subject }}</span>
+                {% endif %}
+            </span>
+        </div>
+        {% if let Some(replacement) = eval.superseded_by %}
+            <div class="build-meta-item">
+                <span class="build-meta-label">Superseded by</span>
+                <span class="build-meta-value">
+                    <a href="/evaluation/{{ replacement }}">newer evaluation</a>
+                </span>
+            </div>
+        {% endif %}
+    </div>
     {% if !eval.error_message.is_empty() %}
         <section class="evaluation-diagnostics">
             <div class="section-heading">

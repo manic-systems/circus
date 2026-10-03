@@ -1,4 +1,4 @@
---: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?, source_base_commit?)
+--: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?, source_base_commit?, finished_at?, commit_subject?)
 
 --! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, source_scope?, source_base_commit?) : EvaluationRow
 INSERT INTO evaluations (
@@ -59,6 +59,9 @@ LIMIT 1;
 
 --! set_inputs_hash
 UPDATE evaluations SET inputs_hash = :inputs_hash WHERE id = :id;
+
+--! set_commit_subject
+UPDATE evaluations SET commit_subject = :commit_subject WHERE id = :id;
 
 --! get_by_inputs_hash : EvaluationRow
 SELECT * FROM evaluations

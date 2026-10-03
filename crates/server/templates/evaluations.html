@@ -53,21 +53,36 @@
     {% else %}
         <div class="table-wrap">
             <table>
+                <colgroup>
+                    <col style="width:26%">
+                    <col style="width:13%">
+                    <col style="width:13%">
+                    <col style="width:12%">
+                    <col style="width:16%">
+                    <col style="width:10%">
+                    {% if is_admin %}<col style="width:10%">{% endif %}
+                </colgroup>
                 <thead>
                     <tr>
                         <th>Commit</th>
                         <th>Project</th>
                         <th>Jobset</th>
                         <th>Status</th>
-                        <th>Time</th>
+                        <th>Started</th>
+                        <th>Duration</th>
                         {% if is_admin %}<th>Actions</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
                     {% for e in evals %}
                         <tr>
-                            <td>
+                            <td class="commit-cell">
                                 <a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a>
+                                {% if !e.commit_subject.is_empty() %}
+                                    <span class="commit-subject" title="{{ e.commit_subject }}">
+                                        {{ e.commit_subject }}
+                                    </span>
+                                {% endif %}
                             </td>
                             <td>{{ e.project_name }}</td>
                             <td>{{ e.jobset_name }}</td>
@@ -75,7 +90,20 @@
                                 <span class="badge badge-{{ e.status_class }}">{{ e.status_text }}</span>
                                 {% if e.hidden %}<span class="badge badge-skipped">Hidden</span>{% endif %}
                             </td>
-                            <td>{{ e.time }}</td>
+                            <td>
+                                {% if e.started_iso.is_empty() %}
+                                    -
+                                {% else %}
+                                    <time datetime="{{ e.started_iso }}">{{ e.started }}</time>
+                                {% endif %}
+                            </td>
+                            {% if let Some(ts) = e.running_since %}
+                                <td data-live-elapsed="{{ ts }}">-</td>
+                            {% elif !e.duration.is_empty() %}
+                                <td>{{ e.duration }}</td>
+                            {% else %}
+                                <td>-</td>
+                            {% endif %}
                             {% if is_admin %}
                                 <td class="row-actions">
                                     <form class="inline" method="POST" action="/evaluation/{{ e.id }}/visibility">
