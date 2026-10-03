@@ -422,6 +422,7 @@ pub async fn run_on_agent(
   let cmd = DispatchCommand {
     build_id: build.id,
     drv_path: drv_path.to_owned(),
+    is_fod: build.is_fod,
     max_log_size: 100 * 1024 * 1024,
     max_silent_time: opts
       .max_silent_time
