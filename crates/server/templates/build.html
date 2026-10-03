@@ -166,6 +166,58 @@
         </div>
     </section>
 
+    {% if let Some(diff) = package_changes %}
+        <section class="panel build-detail-section">
+            <div class="panel-header">
+                <h2>Package Changes</h2>
+                <span>
+                    since
+                    <a href="/build/{{ diff.against_build_id }}">
+                        {#- -#}<code class="commit-ref">{{ diff.against_short }}</code>{#- -#}
+                    </a>
+                </span>
+            </div>
+            {% if diff.changes.is_empty() %}
+                <div class="empty compact-empty">
+                    <div class="empty-title">Same package versions as the last success.</div>
+                </div>
+            {% else %}
+                <div class="table-wrap compact-table-wrap">
+                    <table class="dense-table">
+                        <colgroup>
+                            <col style="width:30%">
+                            <col style="width:14%">
+                            <col style="width:28%">
+                            <col style="width:28%">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>Package</th>
+                                <th>Change</th>
+                                <th>Before</th>
+                                <th>After</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for change in diff.changes %}
+                                <tr>
+                                    <td>{{ change.name }}</td>
+                                    <td>
+                                        <span class="package-change package-{{ change.kind }}">
+                                            {{- change.kind -}}
+                                        </span>
+                                    </td>
+                                    <td class="mono-trunc">{{ change.old }}</td>
+                                    <td class="mono-trunc">{{ change.new }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </section>
+    {% endif %}
+
     <section class="panel build-detail-section">
         <div class="panel-header">
             <h2>Reproduce This Build</h2>

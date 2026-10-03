@@ -32,6 +32,8 @@ use super::{
     JobStatusCell,
     JobStatusColumn,
     JobStatusRow,
+    PackageChangeView,
+    PackageChangesView,
     PageError,
     Pagination,
     ProjectSummaryView,
@@ -953,6 +955,34 @@ pub(super) async fn build_page(
     .zip(expected_secs)
     .map(|(started, secs)| started.timestamp() + secs);
 
+  let package_changes = circus_common::repo::build_closure_diffs::get(
+    &state.pool,
+    id,
+  )
+  .await
+  .unwrap_or_else(|error| {
+    tracing::warn!(build_id = %id, "Failed to load the closure diff: {error}");
+    None
+  })
+  .map(|diff| {
+    PackageChangesView {
+      against_build_id: diff.against_build_id,
+      against_short:    diff.against_commit.chars().take(12).collect(),
+      changes:          diff
+        .changes
+        .into_iter()
+        .map(|change| {
+          PackageChangeView {
+            name: change.name,
+            kind: change.kind.as_str(),
+            old:  change.old.join(", "),
+            new:  change.new.join(", "),
+          }
+        })
+        .collect(),
+    }
+  });
+
   // Resolve who ran the build
   let builder_label = if let Some(machine_id) = build.agent_machine_id {
     circus_common::repo::builder_sessions::get(&state.pool, machine_id)
@@ -970,6 +1000,7 @@ pub(super) async fn build_page(
     dependencies,
     dependents,
     closure,
+    package_changes,
     expected: expected_secs.map(format_elapsed),
     eta_epoch,
     eval_id: eval.id,
