@@ -12,7 +12,7 @@ use circus_common::{
   BuildProduct,
   PaginatedResponse,
   PaginationParams,
-  repo::builds::JobHistoryEntry,
+  repo::{build_closure_diffs::ClosureDiff, builds::JobHistoryEntry},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -144,6 +144,20 @@ async fn build_history(
   let history =
     circus_common::repo::builds::job_history(&state.pool, id, limit).await?;
   Ok(Json(history))
+}
+
+async fn build_closure_diff(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+) -> Result<Json<ClosureDiff>, ApiError> {
+  circus_common::repo::build_closure_diffs::get(&state.pool, id)
+    .await?
+    .map(Json)
+    .ok_or_else(|| {
+      ApiError(circus_common::CiError::NotFound(
+        "No closure diff recorded for this build".to_string(),
+      ))
+    })
 }
 
 async fn list_build_dependents(
@@ -367,6 +381,7 @@ pub fn router() -> Router<AppState> {
     .route("/builds/{id}/dependencies", get(list_build_dependencies))
     .route("/builds/{id}/dependents", get(list_build_dependents))
     .route("/builds/{id}/history", get(build_history))
+    .route("/builds/{id}/closure-diff", get(build_closure_diff))
     .route(
       "/builds/{build_id}/products/{product_id}/download",
       get(download_build_product),

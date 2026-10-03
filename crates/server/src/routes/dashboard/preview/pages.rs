@@ -9,6 +9,8 @@ use super::{
       BrokeInView,
       ClosureChangeView,
       ClosureView,
+      PackageChangeView,
+      PackageChangesView,
       PrivateTemplate,
       QueueSystemView,
       StarredJobView,
@@ -360,6 +362,24 @@ pub(super) async fn build() -> Response {
         build_id:     id(4),
         commit_short: "9f2c7a113bad".into(),
       }),
+    }),
+    package_changes:   Some(PackageChangesView {
+      against_build_id: id(4),
+      against_short:    "9f2c7a113bad".into(),
+      changes:          vec![
+        PackageChangeView {
+          name: "openssl".into(),
+          kind: "upgraded",
+          old:  "3.4.1".into(),
+          new:  "3.5.0".into(),
+        },
+        PackageChangeView {
+          name: "libfoo".into(),
+          kind: "added",
+          old:  String::new(),
+          new:  "0.2.0".into(),
+        },
+      ],
     }),
     expected:          None,
     eta_epoch:         None,

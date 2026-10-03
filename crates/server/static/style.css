@@ -2951,6 +2951,23 @@ td.commit-cell {
   line-height: 22px;
 }
 
+.package-change {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  text-transform: capitalize;
+}
+
+.package-upgraded,
+.package-added {
+  color: var(--status-success);
+}
+
+.package-downgraded,
+.package-removed {
+  color: var(--status-failed);
+}
+
 .eta {
   display: block;
   margin-top: 2px;

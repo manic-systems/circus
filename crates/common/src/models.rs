@@ -657,6 +657,40 @@ pub struct BuildProduct {
   pub created_at:   DateTime<Utc>,
 }
 
+/// How one package's versions differ between two closures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageChange {
+  pub name: String,
+  pub kind: PackageChangeKind,
+  pub old:  Vec<String>,
+  pub new:  Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageChangeKind {
+  Upgraded,
+  Downgraded,
+  Added,
+  Removed,
+  Changed,
+  Mixed,
+}
+
+impl PackageChangeKind {
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Upgraded => "upgraded",
+      Self::Downgraded => "downgraded",
+      Self::Added => "added",
+      Self::Removed => "removed",
+      Self::Changed => "changed",
+      Self::Mixed => "mixed",
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildDependency {
   pub id:                  Uuid,
