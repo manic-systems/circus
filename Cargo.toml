@@ -53,6 +53,7 @@ dashmap = "6.2.1"
 data-encoding = "2.11.1"
 deadpool-postgres = { version = "0.14.2", features = [ "rt_tokio_1" ] }
 derive_more = { version = "2.1.1", features = [ "display" ] }
+dix-diff = "2.0.0"
 ed25519-dalek = "3.0.0"
 futures = "0.3.34"
 futures-core = "0.3.34"
