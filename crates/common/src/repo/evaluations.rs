@@ -60,6 +60,9 @@ impl TryFrom<q::EvaluationRow> for Evaluation {
       source_scope:       r.source_scope,
       superseded_by:      r.superseded_by,
       source_base_commit: r.source_base_commit,
+      started_at:         r.started_at,
+      finished_at:        r.finished_at,
+      commit_subject:     r.commit_subject,
     })
   }
 }
@@ -728,6 +731,19 @@ pub async fn set_inputs_hash(
 ) -> Result<()> {
   let client = pool.get().await?;
   q::set_inputs_hash().bind(&client, &hash, &id).await?;
+  Ok(())
+}
+
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn set_commit_subject(
+  pool: &PgPool,
+  id: Uuid,
+  subject: &str,
+) -> Result<()> {
+  let client = pool.get().await?;
+  q::set_commit_subject().bind(&client, &subject, &id).await?;
   Ok(())
 }
 

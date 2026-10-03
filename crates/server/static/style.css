@@ -2919,6 +2919,34 @@ body:has(#login-dialog[open]) .login-container {
   font-size: 12px;
 }
 
+td.commit-cell {
+  padding-block: 10px;
+  line-height: 18px;
+}
+
+.commit-subject {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-meta-wide {
+  grid-column: 1 / -1;
+}
+
+.build-meta-value .commit-message {
+  display: block;
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 20px;
+}
+
 .nar-detail summary {
   cursor: pointer;
 }

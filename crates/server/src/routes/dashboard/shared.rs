@@ -203,9 +203,15 @@ pub(super) struct EvalView {
   pub(super) id:             Uuid,
   pub(super) commit_hash:    String,
   pub(super) commit_short:   String,
+  pub(super) commit_subject: String,
   pub(super) status_text:    String,
   pub(super) status_class:   String,
   pub(super) time:           String,
+  pub(super) time_iso:       String,
+  pub(super) started:        String,
+  pub(super) started_iso:    String,
+  pub(super) duration:       String,
+  pub(super) running_since:  Option<i64>,
   pub(super) error_message:  String,
   pub(super) error_segments: Vec<DiagnosticSegment>,
   pub(super) hidden:         bool,
@@ -221,15 +227,19 @@ pub(super) struct DiagnosticSegment {
 }
 
 pub(super) struct EvalSummaryView {
-  pub(super) id:           Uuid,
-  pub(super) commit_short: String,
-  pub(super) status_text:  String,
-  pub(super) status_class: String,
-  pub(super) time:         String,
-  pub(super) succeeded:    i64,
-  pub(super) failed:       i64,
-  pub(super) pending:      i64,
-  pub(super) hidden:       bool,
+  pub(super) id:             Uuid,
+  pub(super) commit_short:   String,
+  pub(super) commit_subject: String,
+  pub(super) status_text:    String,
+  pub(super) status_class:   String,
+  pub(super) time:           String,
+  pub(super) time_iso:       String,
+  pub(super) duration:       String,
+  pub(super) running_since:  Option<i64>,
+  pub(super) succeeded:      i64,
+  pub(super) failed:         i64,
+  pub(super) pending:        i64,
+  pub(super) hidden:         bool,
 }
 
 pub(super) struct JobStatusColumn {
@@ -903,9 +913,24 @@ impl From<&Evaluation> for EvalView {
       id:             e.id,
       commit_hash:    e.commit_hash.clone(),
       commit_short:   short,
+      commit_subject: e.commit_subject.clone().unwrap_or_default(),
       status_text:    text.to_string(),
       status_class:   class.to_string(),
-      time:           e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      time:           e
+        .evaluation_time
+        .format("%Y-%m-%d %H:%M UTC")
+        .to_string(),
+      time_iso:       e.evaluation_time.to_rfc3339(),
+      started:        e.started_at.map_or_else(
+        || "-".to_owned(),
+        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+      ),
+      started_iso:    e.started_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+      duration:       format_duration(
+        e.started_at.as_ref(),
+        e.finished_at.as_ref(),
+      ),
+      running_since:  eval_running_since(e),
       error_message:  e.error_message.clone().unwrap_or_default(),
       error_segments: e
         .error_message
@@ -917,6 +942,14 @@ impl From<&Evaluation> for EvalView {
       jobset_name:    String::new(),
       project_name:   String::new(),
     }
+  }
+}
+
+pub(super) fn eval_running_since(e: &Evaluation) -> Option<i64> {
+  if e.status == EvaluationStatus::Running {
+    e.started_at.map(|t| t.timestamp())
+  } else {
+    None
   }
 }
 
