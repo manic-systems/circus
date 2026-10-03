@@ -46,11 +46,23 @@
         </div>
         <div class="stat-card">
             <div class="stat-label">Last uploaded</div>
-            <div class="stat-value">{{ last_uploaded }}</div>
+            <div class="stat-value">
+                {% if last_uploaded_iso.is_empty() %}
+                    {{ last_uploaded }}
+                {% else %}
+                    <time datetime="{{ last_uploaded_iso }}">{{ last_uploaded }}</time>
+                {% endif %}
+            </div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Oldest fetched</div>
-            <div class="stat-value">{{ oldest_fetched }}</div>
+            <div class="stat-value">
+                {% if oldest_fetched_iso.is_empty() %}
+                    {{ oldest_fetched }}
+                {% else %}
+                    <time datetime="{{ oldest_fetched_iso }}">{{ oldest_fetched }}</time>
+                {% endif %}
+            </div>
         </div>
     </div>
 
@@ -107,13 +119,40 @@
                             <td>
                                 <details class="nar-detail">
                                     <summary>{{ n.package }}</summary>
-                                    <code class="nar-store-path">{{ n.store_path }}</code>
+                                    <div class="store-path">
+                                        <code title="{{ n.store_path }}">
+                                            {#- -#}<span class="store-path-prefix">
+                                                {{- "/nix/store/" -}}
+                                            </span>
+                                            {#- -#}<span class="store-path-hash">
+                                                {{- n.hash -}}
+                                            </span>
+                                            {#- -#}<span class="store-path-name">
+                                                {{- "-" }}{{ n.package -}}
+                                            </span>
+                                        {#- -#}</code>
+                                        <button type="button"
+                                                class="store-path-copy"
+                                                data-copy-text="{{ n.store_path }}"
+                                                aria-label="Copy store path"
+                                                title="Copy store path"></button>
+                                    </div>
                                 </details>
                             </td>
-                            <td>{{ n.nar_size }}</td>
-                            <td>{{ n.compressed }}</td>
-                            <td>{{ n.created_at }}</td>
-                            <td>{{ n.last_fetched }}</td>
+                            <td title="{{ n.nar_bytes }}">{{ n.nar_size }}</td>
+                            <td title="{{ n.compressed_bytes }}">{{ n.compressed }}</td>
+                            <td>
+                                <time datetime="{{ n.created_iso }}">{{ n.created_at }}</time>
+                            </td>
+                            <td>
+                                {% if n.last_fetched_iso.is_empty() %}
+                                    {{ n.last_fetched }}
+                                {% else %}
+                                    <time datetime="{{ n.last_fetched_iso }}">
+                                        {{- n.last_fetched -}}
+                                    </time>
+                                {% endif %}
+                            </td>
                         </tr>
                     {% endfor %}
                 </tbody>
@@ -135,4 +174,16 @@
             </nav>
         {% endif %}
     {% endif %}
+{% endblock %}
+{% block scripts %}
+    <script>
+document.addEventListener('click', event => {
+const btn = event.target.closest('[data-copy-text]');
+if (!btn || !navigator.clipboard) return;
+navigator.clipboard.writeText(btn.dataset.copyText).then(() => {
+btn.classList.add('is-copied');
+setTimeout(() => btn.classList.remove('is-copied'), 1200);
+}).catch(() => {});
+});
+    </script>
 {% endblock %}
