@@ -41,6 +41,7 @@ use tokio::net::TcpStream;
 use tokio_util::{
   compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _},
   sync::CancellationToken,
+  task::AbortOnDropHandle,
 };
 use uuid::Uuid;
 
@@ -65,42 +66,8 @@ use crate::{
   reason = "capnp futures are not Send; agent uses a single-threaded runtime"
 )]
 pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
-  let (host, port, want_tls) = parse_endpoint(&cfg.runner_url)?;
-  tracing::info!(host = %host, port, want_tls, "dialing runner");
-  let socket = TcpStream::connect((host.as_str(), port))
-    .await
-    .with_context(|| format!("connect to runner {host}:{port}"))?;
-  let _ = socket.set_nodelay(true);
-
-  let want_tls = want_tls || cfg.tls.is_some();
-
-  // Branch on TLS at the type level: keep both arms inside the RPC system
-  // by erasing through `Box<dyn>` and the tokio-util compat adapters.
-  let mut rpc = if want_tls {
-    let default_tls = TlsConfig::default();
-    let tls = cfg.tls.as_ref().unwrap_or(&default_tls);
-    let connector = crate::tls::build_client_connector(tls)?;
-    let server_name = rustls::pki_types::ServerName::try_from(host.clone())
-      .map_err(|e| eyre!("invalid server name {host}: {e}"))?;
-    let stream = connector.connect(server_name, socket).await?;
-    let (rh, wh) = tokio::io::split(stream);
-    let network = twoparty::VatNetwork::new(
-      rh.compat(),
-      wh.compat_write(),
-      rpc_twoparty_capnp::Side::Client,
-      capnp::message::ReaderOptions::default(),
-    );
-    RpcSystem::new(Box::new(network), None)
-  } else {
-    let (read_half, write_half) = socket.into_split();
-    let network = twoparty::VatNetwork::new(
-      read_half.compat(),
-      write_half.compat_write(),
-      rpc_twoparty_capnp::Side::Client,
-      capnp::message::ReaderOptions::default(),
-    );
-    RpcSystem::new(Box::new(network), None)
-  };
+  let endpoint = Endpoint::from_config(cfg)?;
+  let mut rpc = endpoint.dial().await?;
 
   let runner_cap: runner::Client =
     rpc.bootstrap(rpc_twoparty_capnp::Side::Server);
@@ -116,6 +83,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     cfg.cores,
     machine_id,
     runner_cap.clone(),
+    endpoint,
     cfg.rootless,
     lifecycle.clone(),
   ));
@@ -191,6 +159,61 @@ async fn drain_inflight() {
       return;
     }
     ticker.tick().await;
+  }
+}
+
+/// Where the runner listens, kept so uploads can open their own connections.
+struct Endpoint {
+  host: String,
+  port: u16,
+  tls:  Option<TlsConfig>,
+}
+
+impl Endpoint {
+  fn from_config(cfg: &Agent) -> color_eyre::Result<Self> {
+    let (host, port, want_tls) = parse_endpoint(&cfg.runner_url)?;
+    let tls = (want_tls || cfg.tls.is_some())
+      .then(|| cfg.tls.clone().unwrap_or_default());
+    Ok(Self { host, port, tls })
+  }
+
+  async fn dial(
+    &self,
+  ) -> color_eyre::Result<RpcSystem<rpc_twoparty_capnp::Side>> {
+    let Self { host, port, tls } = self;
+    tracing::info!(host = %host, port, tls = tls.is_some(), "dialing runner");
+    let socket = TcpStream::connect((host.as_str(), *port))
+      .await
+      .with_context(|| format!("connect to runner {host}:{port}"))?;
+    let _ = socket.set_nodelay(true);
+
+    // Both arms erase to the same `RpcSystem` through `Box<dyn>` and the
+    // tokio-util compat adapters, so TLS is a runtime choice.
+    let rpc = if let Some(tls) = tls {
+      let connector = crate::tls::build_client_connector(tls)?;
+      let server_name =
+        rustls::pki_types::ServerName::try_from(host.clone())
+          .map_err(|e| eyre!("invalid server name {host}: {e}"))?;
+      let stream = connector.connect(server_name, socket).await?;
+      let (rh, wh) = tokio::io::split(stream);
+      let network = twoparty::VatNetwork::new(
+        rh.compat(),
+        wh.compat_write(),
+        rpc_twoparty_capnp::Side::Client,
+        capnp::message::ReaderOptions::default(),
+      );
+      RpcSystem::new(Box::new(network), None)
+    } else {
+      let (read_half, write_half) = socket.into_split();
+      let network = twoparty::VatNetwork::new(
+        read_half.compat(),
+        write_half.compat_write(),
+        rpc_twoparty_capnp::Side::Client,
+        capnp::message::ReaderOptions::default(),
+      );
+      RpcSystem::new(Box::new(network), None)
+    };
+    Ok(rpc)
   }
 }
 
@@ -396,6 +419,9 @@ fn fs_available_bytes(path: &Path) -> u64 {
   })
 }
 
+/// Below this, a second TLS handshake costs more than sharing the session.
+const OWN_CONNECTION_MIN_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Well under the runner's `MAX_CLOSURE_PATHS` bound per `missing` call.
 const MISSING_QUERY_PATHS: usize = 8192;
 
@@ -530,6 +556,7 @@ struct BuilderInner {
   /// Runner capability, used to request presigned URLs and notify the
   /// runner of upload completion. Cloning a capnp client is cheap.
   runner_cap: runner::Client,
+  endpoint:   Endpoint,
   /// `build_id` -> `CancellationToken`. Inserted by `assign`, removed by
   /// the per-build task at completion, signalled by `abort`.
   running:    Mutex<HashMap<Uuid, CancellationToken>>,
@@ -551,6 +578,7 @@ impl BuilderImpl {
     cores: u32,
     machine_id: Uuid,
     runner_cap: runner::Client,
+    endpoint: Endpoint,
     rootless: bool,
     lifecycle: Option<Arc<Lifecycle>>,
   ) -> Self {
@@ -560,6 +588,7 @@ impl BuilderImpl {
         cores,
         machine_id: machine_id.to_string(),
         runner_cap,
+        endpoint,
         running: Mutex::new(HashMap::new()),
         rootless,
         lifecycle,
@@ -585,6 +614,7 @@ impl builder::Server for BuilderImpl {
       let drv_path = job.get_drv_path()?.to_str()?.to_owned();
       let cache_substituter = job.get_cache_substituter()?.to_str()?.to_owned();
       let cache_public_key = job.get_cache_public_key()?.to_str()?.to_owned();
+      let output_token = job.get_output_token()?.to_str()?.to_owned();
       let max_log_size = job.get_max_log_size();
       let max_silent_time = job.get_max_silent_time();
       let build_timeout = job.get_build_timeout();
@@ -749,8 +779,15 @@ impl builder::Server for BuilderImpl {
             .iter()
             .map(|o| o.path.clone())
             .collect::<Vec<String>>();
-          if let Err(e) =
-            export_outputs_to_sink(sink, &paths, inner_for_task.rootless).await
+          if let Err(e) = export_outputs_to_sink(
+            sink,
+            &inner_for_task.endpoint,
+            &build_id_str,
+            &output_token,
+            &paths,
+            inner_for_task.rootless,
+          )
+          .await
           {
             tracing::warn!(
               %build_id,
@@ -876,6 +913,9 @@ async fn report_result(
 /// successful return means the runner has imported it into its store.
 async fn export_outputs_to_sink(
   sink: &output_sink::Client,
+  endpoint: &Endpoint,
+  build_id: &str,
+  token: &str,
   output_paths: &[String],
   rootless: bool,
 ) -> color_eyre::Result<()> {
@@ -901,6 +941,31 @@ async fn export_outputs_to_sink(
     return Ok(());
   }
 
+  let own_sink = if token.is_empty() {
+    None
+  } else {
+    match nar_size(&wanted, rootless).await {
+      Ok(size) if size >= OWN_CONNECTION_MIN_BYTES => {
+        match open_own_sink(endpoint, build_id, token).await {
+          Ok(own) => Some(own),
+          Err(e) => {
+            tracing::warn!(
+              build_id,
+              "own output connection failed, using the session: {e}"
+            );
+            None
+          },
+        }
+      },
+      Ok(_) => None,
+      Err(e) => {
+        tracing::warn!(build_id, "sizing output closure failed: {e}");
+        None
+      },
+    }
+  };
+  let target = own_sink.as_ref().map_or(sink, |own| &own.sink);
+
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
   cmd
     .arg("--export")
@@ -925,15 +990,20 @@ async fn export_outputs_to_sink(
         break;
       },
     };
-    let mut req = sink.write_request();
+    let mut req = target.write_request();
     req.get().set_chunk(&buf[..n]);
     if let Err(e) = req.send().promise.await {
       stream_err = Some(eyre!("stream output closure: {e}"));
       break;
     }
   }
+  if let Some(own) = own_sink {
+    own.disconnect().await;
+  }
 
   // Always close so the runner reaps its import child, even on a short read.
+  // The session sink shares that child, so this works if the own connection
+  // died mid-stream.
   let close_res = sink.close_request().send().promise.await;
   if let Some(e) = stream_err {
     return Err(e);
@@ -945,6 +1015,79 @@ async fn export_outputs_to_sink(
   close_res
     .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
   Ok(())
+}
+
+/// An `OutputSink` on a connection of its own, see `Runner.openOutputSink`.
+struct OwnSink {
+  sink:         output_sink::Client,
+  disconnector: capnp_rpc::Disconnector<rpc_twoparty_capnp::Side>,
+  rpc:          AbortOnDropHandle<()>,
+}
+
+impl OwnSink {
+  async fn disconnect(self) {
+    #![expect(
+      clippy::future_not_send,
+      reason = "capnp futures are not Send; agent uses a single-threaded \
+                runtime"
+    )]
+    drop(self.sink);
+    let _ = tokio::time::timeout(DISCONNECT_GRACE, self.disconnector).await;
+    drop(self.rpc);
+  }
+}
+
+async fn open_own_sink(
+  endpoint: &Endpoint,
+  build_id: &str,
+  token: &str,
+) -> color_eyre::Result<OwnSink> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
+  let mut rpc = endpoint.dial().await?;
+  let runner_cap: runner::Client =
+    rpc.bootstrap(rpc_twoparty_capnp::Side::Server);
+  let disconnector = rpc.get_disconnector();
+  let rpc = AbortOnDropHandle::new(tokio::task::spawn_local(async move {
+    if let Err(e) = rpc.await {
+      tracing::debug!("output connection ended: {e}");
+    }
+  }));
+
+  let mut req = runner_cap.open_output_sink_request();
+  req.get().set_build_id(build_id);
+  req.get().set_token(token);
+  let sink = req.send().promise.await?.get()?.get_sink()?;
+  Ok(OwnSink {
+    sink,
+    disconnector,
+    rpc,
+  })
+}
+
+async fn nar_size(paths: &[String], rootless: bool) -> color_eyre::Result<u64> {
+  let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
+  cmd
+    .arg("--query")
+    .arg("--size")
+    .args(paths)
+    .stdout(std::process::Stdio::piped());
+  let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
+  let out = cmd.output().await.context("nix-store --query --size")?;
+  if !out.status.success() {
+    bail!("nix-store --query --size exited with {}", out.status);
+  }
+  String::from_utf8_lossy(&out.stdout)
+    .lines()
+    .map(|line| {
+      line
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("bad nar size {line:?}"))
+    })
+    .sum()
 }
 
 async fn runner_missing_paths(
