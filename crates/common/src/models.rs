@@ -292,6 +292,31 @@ impl std::str::FromStr for JobsetTriggerMode {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+  Asc,
+  Desc,
+}
+
+impl SortDirection {
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Asc => "asc",
+      Self::Desc => "desc",
+    }
+  }
+
+  #[must_use]
+  pub const fn toggle(self) -> Self {
+    match self {
+      Self::Asc => Self::Desc,
+      Self::Desc => Self::Asc,
+    }
+  }
+}
+
 /// Job-name prefix marking an intermediate dependency build synthesized by the
 /// evaluator from the derivation graph, as opposed to a top-level jobset job.
 /// These builds are internal scheduling artifacts and are excluded from
