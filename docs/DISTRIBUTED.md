@@ -172,9 +172,9 @@ The flow is as follows
    cap, while `report` accepts exactly one final result before waking the
    scheduler.
 6. For non-presigned uploads, the agent asks `output.missing(closure)` which
-   paths the runner lacks and streams only those through `OutputSink`. For S3
-   presigned uploads, `output` is null and the agent uploads compressed NAR
-   files directly to S3.
+   paths the runner lacks and streams only those through `OutputSink`. The
+   runner first substitutes what its own caches have. For S3 presigned uploads,
+   `output` is null and the agent uploads compressed NAR files directly to S3.
 7. The agent calls `session.heartbeat(ping)` every N seconds with load averages,
    memory, store/build-dir free, current job count, and PSI (`cpuAvg10`,
    `memAvg10`, `ioAvg10`). The runner uses these to gate subsequent dispatch

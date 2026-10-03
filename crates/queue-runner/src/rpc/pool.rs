@@ -33,6 +33,7 @@ pub const MAX_AGENT_MAX_JOBS: u32 = 670;
 pub struct DispatchCommand {
   pub build_id:         Uuid,
   pub drv_path:         String,
+  pub is_fod:           bool,
   pub max_log_size:     u64,
   pub max_silent_time:  u32,
   pub build_timeout:    u32,

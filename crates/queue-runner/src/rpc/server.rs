@@ -1133,7 +1133,11 @@ async fn dispatch_one(
   // Give the agent a sink to stream its output closure into so the runner can
   // serve this build locally.
   let output_cap = cmd.presigned_upload.is_none().then(|| {
-    capnp_rpc::new_client(OutputSinkImpl::new(cmd.build_id.to_string()))
+    capnp_rpc::new_client(OutputSinkImpl::new(
+      cmd.build_id.to_string(),
+      cmd.drv_path.clone(),
+      cmd.is_fod,
+    ))
   });
 
   let mut req = builder_cap.assign_request();
