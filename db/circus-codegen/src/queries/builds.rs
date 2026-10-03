@@ -299,6 +299,40 @@ pub struct GetStats {
     pub pending_builds: Option<i64>,
     pub avg_duration_seconds: Option<f64>,
 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrokeIn {
+    pub build_id: uuid::Uuid,
+    pub commit_hash: String,
+    pub commit_subject: Option<String>,
+    pub last_success_build_id: uuid::Uuid,
+    pub last_success_commit: String,
+}
+pub struct BrokeInBorrowed<'a> {
+    pub build_id: uuid::Uuid,
+    pub commit_hash: &'a str,
+    pub commit_subject: Option<&'a str>,
+    pub last_success_build_id: uuid::Uuid,
+    pub last_success_commit: &'a str,
+}
+impl<'a> From<BrokeInBorrowed<'a>> for BrokeIn {
+    fn from(
+        BrokeInBorrowed {
+            build_id,
+            commit_hash,
+            commit_subject,
+            last_success_build_id,
+            last_success_commit,
+        }: BrokeInBorrowed<'a>,
+    ) -> Self {
+        Self {
+            build_id,
+            commit_hash: commit_hash.into(),
+            commit_subject: commit_subject.map(|v| v.into()),
+            last_success_build_id,
+            last_success_commit: last_success_commit.into(),
+        }
+    }
+}
 use crate::client::async_::GenericClient;
 use futures::{self, StreamExt, TryStreamExt};
 pub struct BuildRowQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
@@ -639,6 +673,70 @@ where
 {
     pub fn map<R>(self, mapper: fn(i64) -> R) -> I64Query<'c, 'a, 's, C, R, N> {
         I64Query {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct BrokeInQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<BrokeInBorrowed, tokio_postgres::Error>,
+    mapper: fn(BrokeInBorrowed) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> BrokeInQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(BrokeInBorrowed) -> R) -> BrokeInQuery<'c, 'a, 's, C, R, N> {
+        BrokeInQuery {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -3161,5 +3259,44 @@ impl DeleteStmt {
         id: &'a uuid::Uuid,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[id]).await
+    }
+}
+pub struct BrokeInStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn broke_in() -> BrokeInStmt {
+    BrokeInStmt(
+        "WITH current_build AS ( SELECT b.job_name, b.system, e.jobset_id, e.source_scope, e.evaluation_time, j.branch_pattern IS NOT NULL OR j.tag_pattern IS NOT NULL AS multi_ref FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.id = $1 AND e.pr_number IS NULL ), history AS ( SELECT b.id, b.status, e.commit_hash, e.commit_subject, e.evaluation_time FROM current_build c JOIN evaluations e ON e.jobset_id = c.jobset_id AND e.pr_number IS NULL AND (NOT c.multi_ref OR e.source_scope = c.source_scope OR e.source_scope IS NULL OR c.source_scope IS NULL) AND e.evaluation_time <= c.evaluation_time JOIN builds b ON b.evaluation_id = e.id AND b.job_name = c.job_name AND b.system IS NOT DISTINCT FROM c.system ), last_success AS ( SELECT * FROM history WHERE status = 'succeeded' ORDER BY evaluation_time DESC LIMIT 1 ) SELECT red.id AS build_id, red.commit_hash, red.commit_subject, green.id AS last_success_build_id, green.commit_hash AS last_success_commit FROM last_success green JOIN LATERAL ( SELECT * FROM history WHERE history.evaluation_time > green.evaluation_time AND history.status NOT IN ('pending', 'running', 'succeeded', 'cancelled', 'aborted') ORDER BY history.evaluation_time LIMIT 1 ) red ON TRUE",
+        None,
+    )
+}
+impl BrokeInStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+    ) -> BrokeInQuery<'c, 'a, 's, C, BrokeIn, 1> {
+        BrokeInQuery {
+            client,
+            params: [id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BrokeInBorrowed, tokio_postgres::Error> {
+                    Ok(BrokeInBorrowed {
+                        build_id: row.try_get(0)?,
+                        commit_hash: row.try_get(1)?,
+                        commit_subject: row.try_get(2)?,
+                        last_success_build_id: row.try_get(3)?,
+                        last_success_commit: row.try_get(4)?,
+                    })
+                },
+            mapper: |it| BrokeIn::from(it),
+        }
     }
 }

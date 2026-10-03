@@ -402,6 +402,10 @@ pub struct EvaluationSearchRow {
     pub source_scope: Option<String>,
     pub superseded_by: Option<uuid::Uuid>,
     pub source_base_commit: Option<String>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub commit_subject: Option<String>,
+    pub attrs_done: Option<i32>,
+    pub attrs_total: Option<i32>,
 }
 pub struct EvaluationSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -422,6 +426,10 @@ pub struct EvaluationSearchRowBorrowed<'a> {
     pub source_scope: Option<&'a str>,
     pub superseded_by: Option<uuid::Uuid>,
     pub source_base_commit: Option<&'a str>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub commit_subject: Option<&'a str>,
+    pub attrs_done: Option<i32>,
+    pub attrs_total: Option<i32>,
 }
 impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
     fn from(
@@ -444,6 +452,10 @@ impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
             source_scope,
             superseded_by,
             source_base_commit,
+            finished_at,
+            commit_subject,
+            attrs_done,
+            attrs_total,
         }: EvaluationSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -465,6 +477,10 @@ impl<'a> From<EvaluationSearchRowBorrowed<'a>> for EvaluationSearchRow {
             source_scope: source_scope.map(|v| v.into()),
             superseded_by,
             source_base_commit: source_base_commit.map(|v| v.into()),
+            finished_at,
+            commit_subject: commit_subject.map(|v| v.into()),
+            attrs_done,
+            attrs_total,
         }
     }
 }
@@ -1304,6 +1320,10 @@ impl SearchEvaluationsStmt {
                     source_scope: row.try_get(15)?,
                     superseded_by: row.try_get(16)?,
                     source_base_commit: row.try_get(17)?,
+                    finished_at: row.try_get(18)?,
+                    commit_subject: row.try_get(19)?,
+                    attrs_done: row.try_get(20)?,
+                    attrs_total: row.try_get(21)?,
                 })
             },
             mapper: |it| EvaluationSearchRow::from(it),

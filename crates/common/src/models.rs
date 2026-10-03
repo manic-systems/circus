@@ -71,6 +71,11 @@ pub struct Evaluation {
   pub source_scope:       Option<String>,
   pub superseded_by:      Option<Uuid>,
   pub source_base_commit: Option<String>,
+  pub started_at:         Option<DateTime<Utc>>,
+  pub finished_at:        Option<DateTime<Utc>>,
+  pub commit_subject:     Option<String>,
+  pub attrs_done:         Option<i32>,
+  pub attrs_total:        Option<i32>,
 }
 
 impl Evaluation {
@@ -288,6 +293,31 @@ impl std::str::FromStr for JobsetTriggerMode {
       "source_change" => Ok(Self::SourceChange),
       "interval" => Ok(Self::Interval),
       _ => Err(format!("invalid jobset trigger mode '{s}'")),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+  Asc,
+  Desc,
+}
+
+impl SortDirection {
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Asc => "asc",
+      Self::Desc => "desc",
+    }
+  }
+
+  #[must_use]
+  pub const fn toggle(self) -> Self {
+    match self {
+      Self::Asc => Self::Desc,
+      Self::Desc => Self::Asc,
     }
   }
 }

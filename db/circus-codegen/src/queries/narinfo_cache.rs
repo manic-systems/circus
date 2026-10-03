@@ -44,10 +44,11 @@ pub struct GetByUrlParams<T1: crate::StringSql> {
     pub project_id: Option<uuid::Uuid>,
 }
 #[derive(Debug)]
-pub struct ListFilteredParams<T1: crate::StringSql, T2: crate::StringSql> {
+pub struct ListFilteredParams<T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql> {
     pub project_id: Option<uuid::Uuid>,
     pub hash_prefix: Option<T1>,
     pub package_query: Option<T2>,
+    pub sort: Option<T3>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -1188,7 +1189,7 @@ impl StorageExtremesStmt {
 pub struct ListFilteredStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_filtered() -> ListFilteredStmt {
     ListFilteredStmt(
-        "WITH uploaded AS ( SELECT store_path, nar_size, file_size, compression, created_at, last_fetched_at FROM narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ), local AS ( SELECT DISTINCT ON (path) path AS store_path, COALESCE(file_size, 0) AS nar_size, NULL::bigint AS file_size, 'none' AS compression, created_at, NULL::timestamptz AS last_fetched_at FROM ( SELECT bp.path, bp.file_size, bp.created_at FROM build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, NULL::bigint AS file_size, COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = $1) ) candidates WHERE NOT EXISTS ( SELECT 1 FROM narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ) ORDER BY path, created_at DESC ), inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local) SELECT store_path, COALESCE(substring(store_path FROM '^/nix/store/[^-]+-(.*)$'), store_path) AS package_name, nar_size, file_size, compression, created_at, last_fetched_at FROM inventory WHERE ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') AND ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%') ORDER BY created_at DESC LIMIT $4 OFFSET $5",
+        "WITH uploaded AS ( SELECT store_path, nar_size, file_size, compression, created_at, last_fetched_at FROM narinfo_cache n WHERE ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ), local AS ( SELECT DISTINCT ON (path) path AS store_path, COALESCE(file_size, 0) AS nar_size, NULL::bigint AS file_size, 'none' AS compression, created_at, NULL::timestamptz AS last_fetched_at FROM ( SELECT bp.path, bp.file_size, bp.created_at FROM build_products bp JOIN builds b ON b.id = bp.build_id JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND ($1::uuid IS NULL OR j.project_id = $1) UNION ALL SELECT b.build_output_path AS path, NULL::bigint AS file_size, COALESCE(b.completed_at, b.created_at) AS created_at FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.status = 'succeeded' AND b.signed = true AND b.build_output_path IS NOT NULL AND ($1::uuid IS NULL OR j.project_id = $1) ) candidates WHERE NOT EXISTS ( SELECT 1 FROM narinfo_cache n WHERE n.store_path = candidates.path AND ($1::uuid IS NULL OR n.project_id = $1 OR EXISTS (SELECT 1 FROM narinfo_cache_projects ncp WHERE ncp.store_path = n.store_path AND ncp.project_id = $1)) ) ORDER BY path, created_at DESC ), inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local), listed AS ( SELECT store_path, COALESCE(substring(store_path FROM '^/nix/store/[^-]+-(.*)$'), store_path) AS package_name, nar_size, file_size, compression, created_at, last_fetched_at FROM inventory WHERE ($2::text IS NULL OR store_path LIKE '/nix/store/' || $2 || '%') AND ($3::text IS NULL OR store_path LIKE '%-%' || $3 || '%') ) SELECT * FROM listed ORDER BY CASE WHEN $4::text = 'hash_asc'          THEN store_path      END ASC, CASE WHEN $4::text = 'hash_desc'         THEN store_path      END DESC, CASE WHEN $4::text = 'package_asc'       THEN package_name    END ASC, CASE WHEN $4::text = 'package_desc'      THEN package_name    END DESC, CASE WHEN $4::text = 'nar_size_asc'      THEN nar_size        END ASC, CASE WHEN $4::text = 'nar_size_desc'     THEN nar_size        END DESC, CASE WHEN $4::text = 'compressed_asc'    THEN file_size       END ASC  NULLS LAST, CASE WHEN $4::text = 'compressed_desc'   THEN file_size       END DESC NULLS LAST, CASE WHEN $4::text = 'created_asc'       THEN created_at      END ASC, CASE WHEN $4::text = 'created_desc'      THEN created_at      END DESC, CASE WHEN $4::text = 'last_fetched_asc'  THEN last_fetched_at END ASC  NULLS LAST, CASE WHEN $4::text = 'last_fetched_desc' THEN last_fetched_at END DESC NULLS LAST, created_at DESC, store_path LIMIT $5 OFFSET $6",
         None,
     )
 }
@@ -1200,18 +1201,27 @@ impl ListFilteredStmt {
         self.1 = Some(client.prepare(self.0).await?);
         Ok(self)
     }
-    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+    >(
         &'s self,
         client: &'c C,
         project_id: &'a Option<uuid::Uuid>,
         hash_prefix: &'a Option<T1>,
         package_query: &'a Option<T2>,
+        sort: &'a Option<T3>,
         limit: &'a i64,
         offset: &'a i64,
-    ) -> ListFilteredQuery<'c, 'a, 's, C, ListFiltered, 5> {
+    ) -> ListFilteredQuery<'c, 'a, 's, C, ListFiltered, 6> {
         ListFilteredQuery {
             client,
-            params: [project_id, hash_prefix, package_query, limit, offset],
+            params: [project_id, hash_prefix, package_query, sort, limit, offset],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1230,26 +1240,27 @@ impl ListFilteredStmt {
         }
     }
 }
-impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>
+impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T3: crate::StringSql>
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        ListFilteredParams<T1, T2>,
-        ListFilteredQuery<'c, 'a, 's, C, ListFiltered, 5>,
+        ListFilteredParams<T1, T2, T3>,
+        ListFilteredQuery<'c, 'a, 's, C, ListFiltered, 6>,
         C,
     > for ListFilteredStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a ListFilteredParams<T1, T2>,
-    ) -> ListFilteredQuery<'c, 'a, 's, C, ListFiltered, 5> {
+        params: &'a ListFilteredParams<T1, T2, T3>,
+    ) -> ListFilteredQuery<'c, 'a, 's, C, ListFiltered, 6> {
         self.bind(
             client,
             &params.project_id,
             &params.hash_prefix,
             &params.package_query,
+            &params.sort,
             &params.limit,
             &params.offset,
         )

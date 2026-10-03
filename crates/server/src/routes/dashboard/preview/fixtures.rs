@@ -16,6 +16,7 @@ use super::super::{
   shared::{
     BuildErrorLine,
     BuildView,
+    EvalProgressView,
     EvalSummaryView,
     EvalView,
     JobStatusCell,
@@ -289,9 +290,26 @@ pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
     id:             id(n),
     commit_hash:    "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
     commit_short:   "9f2c7a113bad".into(),
+    commit_subject: "evaluator: record the commit subject".into(),
     status_text:    status.into(),
     status_class:   class.into(),
-    time:           "2026-06-18 11:42".into(),
+    time:           "2026-06-18 11:42 UTC".into(),
+    time_iso:       "2026-06-18T11:42:00+00:00".into(),
+    started:        "2026-06-18 11:42 UTC".into(),
+    started_iso:    "2026-06-18T11:42:00+00:00".into(),
+    duration:       if status == "Running" {
+      String::new()
+    } else {
+      "1m 12s".into()
+    },
+    running_since:  (status == "Running").then(|| Utc::now().timestamp() - 40),
+    progress:       (status == "Running").then(|| {
+      EvalProgressView {
+        id:      id(n),
+        count:   "1,204 / 1,530".into(),
+        percent: 78,
+      }
+    }),
     error_message:  String::new(),
     error_segments: Vec::new(),
     hidden:         false,
@@ -310,15 +328,20 @@ pub(super) fn evals_fixture() -> Vec<EvalView> {
 
 pub(super) fn eval_summaries() -> Vec<EvalSummaryView> {
   vec![EvalSummaryView {
-    id:           id(3),
-    commit_short: "9f2c7a113bad".into(),
-    status_text:  "Completed".into(),
-    status_class: "completed".into(),
-    time:         "2026-06-18 11:42".into(),
-    succeeded:    18,
-    failed:       1,
-    pending:      0,
-    hidden:       false,
+    id:             id(3),
+    commit_short:   "9f2c7a113bad".into(),
+    commit_subject: "evaluator: record the commit subject".into(),
+    status_text:    "Completed".into(),
+    status_class:   "completed".into(),
+    time:           "2026-06-18 11:42 UTC".into(),
+    time_iso:       "2026-06-18T11:42:00+00:00".into(),
+    duration:       "1m 12s".into(),
+    running_since:  None,
+    progress:       None,
+    succeeded:      18,
+    failed:         1,
+    pending:        0,
+    hidden:         false,
   }]
 }
 

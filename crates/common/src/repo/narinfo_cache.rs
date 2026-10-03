@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::{
   db::PgPool,
   error::{CiError, Result},
+  models::SortDirection,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,8 +297,68 @@ pub fn package_name_from_store_path(store_path: &str) -> String {
     .map_or_else(|| store_path.to_owned(), |(_hash, name)| name.to_owned())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NarSortColumn {
+  Hash,
+  Package,
+  NarSize,
+  Compressed,
+  Created,
+  LastFetched,
+}
+
+impl NarSortColumn {
+  pub const ALL: [Self; 6] = [
+    Self::Hash,
+    Self::Package,
+    Self::NarSize,
+    Self::Compressed,
+    Self::Created,
+    Self::LastFetched,
+  ];
+
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Hash => "hash",
+      Self::Package => "package",
+      Self::NarSize => "nar_size",
+      Self::Compressed => "compressed",
+      Self::Created => "created",
+      Self::LastFetched => "last_fetched",
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NarSort {
+  pub column:    NarSortColumn,
+  pub direction: SortDirection,
+}
+
+impl NarSort {
+  const fn sql_key(self) -> &'static str {
+    match (self.column, self.direction) {
+      (NarSortColumn::Hash, SortDirection::Asc) => "hash_asc",
+      (NarSortColumn::Hash, SortDirection::Desc) => "hash_desc",
+      (NarSortColumn::Package, SortDirection::Asc) => "package_asc",
+      (NarSortColumn::Package, SortDirection::Desc) => "package_desc",
+      (NarSortColumn::NarSize, SortDirection::Asc) => "nar_size_asc",
+      (NarSortColumn::NarSize, SortDirection::Desc) => "nar_size_desc",
+      (NarSortColumn::Compressed, SortDirection::Asc) => "compressed_asc",
+      (NarSortColumn::Compressed, SortDirection::Desc) => "compressed_desc",
+      (NarSortColumn::Created, SortDirection::Asc) => "created_asc",
+      (NarSortColumn::Created, SortDirection::Desc) => "created_desc",
+      (NarSortColumn::LastFetched, SortDirection::Asc) => "last_fetched_asc",
+      (NarSortColumn::LastFetched, SortDirection::Desc) => "last_fetched_desc",
+    }
+  }
+}
+
 /// List NARs for a scope, filtered by store-path hash prefix and/or a
-/// substring of the post-hash package name. Ordered newest-first.
+/// substring of the post-hash package name. Ordered by `sort`, or
+/// newest-first without one.
 ///
 /// # Errors
 ///
@@ -307,6 +368,7 @@ pub async fn list_filtered(
   project_id: Option<Uuid>,
   hash_prefix: Option<&str>,
   package_query: Option<&str>,
+  sort: Option<NarSort>,
   limit: i64,
   offset: i64,
 ) -> Result<Vec<NarListItem>> {
@@ -317,6 +379,7 @@ pub async fn list_filtered(
       &project_id,
       &hash_prefix,
       &package_query,
+      &sort.map(NarSort::sql_key),
       &limit,
       &offset,
     )

@@ -11,13 +11,17 @@ use axum::{
   http::{Extensions, StatusCode, request::Parts},
   response::{Html, IntoResponse, Redirect, Response},
 };
-use circus_common::models::{
-  ApiKey,
-  Build,
-  BuildStatus,
-  Evaluation,
-  EvaluationStatus,
-  User,
+use circus_common::{
+  models::{
+    ApiKey,
+    Build,
+    BuildStatus,
+    Evaluation,
+    EvaluationStatus,
+    SortDirection,
+    User,
+  },
+  repo::narinfo_cache::NarSortColumn,
 };
 use circus_config::{Config, PageAccessLevel, ServerConfig, UiConfig};
 use cognos::internal::json::{self as nix_json, Actions, Verbosity};
@@ -124,6 +128,8 @@ pub(super) struct CacheNarsParams {
     deserialize_with = "crate::routes::serde_util::empty_string_as_none"
   )]
   pub(super) package: Option<String>,
+  pub(super) sort:    Option<NarSortColumn>,
+  pub(super) dir:     Option<SortDirection>,
   pub(super) limit:   Option<i64>,
   pub(super) offset:  Option<i64>,
 }
@@ -197,15 +203,36 @@ pub(super) struct EvalView {
   pub(super) id:             Uuid,
   pub(super) commit_hash:    String,
   pub(super) commit_short:   String,
+  pub(super) commit_subject: String,
   pub(super) status_text:    String,
   pub(super) status_class:   String,
   pub(super) time:           String,
+  pub(super) time_iso:       String,
+  pub(super) started:        String,
+  pub(super) started_iso:    String,
+  pub(super) duration:       String,
+  pub(super) running_since:  Option<i64>,
+  pub(super) progress:       Option<EvalProgressView>,
   pub(super) error_message:  String,
   pub(super) error_segments: Vec<DiagnosticSegment>,
   pub(super) hidden:         bool,
   pub(super) superseded_by:  Option<Uuid>,
   pub(super) jobset_name:    String,
   pub(super) project_name:   String,
+}
+
+pub(super) struct EvalProgressView {
+  pub(super) id:      Uuid,
+  pub(super) count:   String,
+  pub(super) percent: i64,
+}
+
+pub(super) struct BrokeInView {
+  pub(super) build_id:              Uuid,
+  pub(super) commit_short:          String,
+  pub(super) commit_subject:        String,
+  pub(super) last_success_build_id: Uuid,
+  pub(super) last_success_short:    String,
 }
 
 /// Text and presentation extracted from one ANSI SGR run.
@@ -215,15 +242,20 @@ pub(super) struct DiagnosticSegment {
 }
 
 pub(super) struct EvalSummaryView {
-  pub(super) id:           Uuid,
-  pub(super) commit_short: String,
-  pub(super) status_text:  String,
-  pub(super) status_class: String,
-  pub(super) time:         String,
-  pub(super) succeeded:    i64,
-  pub(super) failed:       i64,
-  pub(super) pending:      i64,
-  pub(super) hidden:       bool,
+  pub(super) id:             Uuid,
+  pub(super) commit_short:   String,
+  pub(super) commit_subject: String,
+  pub(super) status_text:    String,
+  pub(super) status_class:   String,
+  pub(super) time:           String,
+  pub(super) time_iso:       String,
+  pub(super) duration:       String,
+  pub(super) running_since:  Option<i64>,
+  pub(super) progress:       Option<EvalProgressView>,
+  pub(super) succeeded:      i64,
+  pub(super) failed:         i64,
+  pub(super) pending:        i64,
+  pub(super) hidden:         bool,
 }
 
 pub(super) struct JobStatusColumn {
@@ -386,6 +418,24 @@ pub(super) fn format_bytes(bytes: i64) -> String {
   } else {
     format!("{value:.1} {}", UNITS[unit])
   }
+}
+
+/// Format an exact byte count with digit grouping (e.g. `1,572,864 bytes`).
+#[must_use]
+pub(super) fn format_exact_bytes(bytes: i64) -> String {
+  format!("{} bytes", group_digits(bytes))
+}
+
+fn group_digits(number: i64) -> String {
+  let digits = number.max(0).to_string();
+  let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+  for (index, digit) in digits.chars().enumerate() {
+    if index > 0 && (digits.len() - index).is_multiple_of(3) {
+      grouped.push(',');
+    }
+    grouped.push(digit);
+  }
+  grouped
 }
 
 /// The 32-character store-path hash from a `/nix/store/<hash>-<name>` path, or
@@ -897,9 +947,25 @@ impl From<&Evaluation> for EvalView {
       id:             e.id,
       commit_hash:    e.commit_hash.clone(),
       commit_short:   short,
+      commit_subject: e.commit_subject.clone().unwrap_or_default(),
       status_text:    text.to_string(),
       status_class:   class.to_string(),
-      time:           e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      time:           e
+        .evaluation_time
+        .format("%Y-%m-%d %H:%M UTC")
+        .to_string(),
+      time_iso:       e.evaluation_time.to_rfc3339(),
+      started:        e.started_at.map_or_else(
+        || "-".to_owned(),
+        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+      ),
+      started_iso:    e.started_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+      duration:       format_duration(
+        e.started_at.as_ref(),
+        e.finished_at.as_ref(),
+      ),
+      running_since:  eval_running_since(e),
+      progress:       eval_progress(e),
       error_message:  e.error_message.clone().unwrap_or_default(),
       error_segments: e
         .error_message
@@ -912,6 +978,38 @@ impl From<&Evaluation> for EvalView {
       project_name:   String::new(),
     }
   }
+}
+
+pub(super) fn eval_running_since(e: &Evaluation) -> Option<i64> {
+  if e.status == EvaluationStatus::Running {
+    e.started_at.map(|t| t.timestamp())
+  } else {
+    None
+  }
+}
+
+pub(super) fn eval_progress(e: &Evaluation) -> Option<EvalProgressView> {
+  if e.status != EvaluationStatus::Running {
+    return None;
+  }
+
+  let (count, percent) = match e.attrs_done.zip(e.attrs_total) {
+    Some((done, total)) if total > 0 => {
+      let percent = (i64::from(done) * 100 / i64::from(total)).clamp(0, 100);
+      let count = format!(
+        "{} / {}",
+        group_digits(done.into()),
+        group_digits(total.into())
+      );
+      (count, percent)
+    },
+    _ => ("-".to_owned(), 0),
+  };
+  Some(EvalProgressView {
+    id: e.id,
+    count,
+    percent,
+  })
 }
 
 pub(super) fn eval_view(e: &Evaluation) -> EvalView {

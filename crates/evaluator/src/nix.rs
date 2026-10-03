@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, time::Duration};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
-use tokio::{process::Command, time::Instant};
+use tokio::{process::Command, sync::watch, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 mod eval_command;
@@ -174,6 +174,14 @@ pub struct EvalResult {
   pub errors:      Vec<String>,
 }
 
+/// Attributes evaluated so far out of those discovered so far. The total keeps
+/// growing while evix expands attribute sets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EvalProgress {
+  pub done:  usize,
+  pub total: usize,
+}
+
 /// Evaluate nix expressions and return discovered jobs.
 /// If `flake_mode` is true, evaluates a flake output via evix.
 /// If `flake_mode` is false, evaluates a legacy expression file via evix.
@@ -199,6 +207,7 @@ pub async fn evaluate(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  progress: &watch::Sender<EvalProgress>,
   worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   // Validate nix expression before constructing any commands
@@ -225,6 +234,7 @@ pub async fn evaluate(
       config,
       inputs,
       cancel,
+      progress,
       worker_exe,
     )
     .await
@@ -236,6 +246,7 @@ pub async fn evaluate(
       config,
       inputs,
       cancel,
+      progress,
       worker_exe,
     )
     .await
@@ -350,6 +361,7 @@ async fn evaluate_flake(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  progress: &watch::Sender<EvalProgress>,
   worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   if nix_expression == "nixosConfigurations" {
@@ -419,7 +431,8 @@ async fn evaluate_flake(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, remaining, "flake", cancel).await
+  eval_command::run_eval(evix_config, remaining, "flake", cancel, progress)
+    .await
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -560,6 +573,7 @@ async fn evaluate_legacy(
   config: &EvaluatorConfig,
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  progress: &watch::Sender<EvalProgress>,
   worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   let repo_path = repo_path.canonicalize().map_err(|e| {
@@ -630,7 +644,7 @@ async fn evaluate_legacy(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, timeout, "legacy", cancel).await
+  eval_command::run_eval(evix_config, timeout, "legacy", cancel, progress).await
 }
 
 /// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)
