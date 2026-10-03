@@ -110,6 +110,33 @@
                         </span>
                     </div>
                 {% endif %}
+                {% if let Some(broke) = broke_in %}
+                    <div class="build-meta-item build-meta-wide">
+                        <span class="build-meta-label">Broke in</span>
+                        <span class="build-meta-value">
+                            {% if broke.build_id == build.id %}
+                                This evaluation
+                            {% else %}
+                                <a href="/build/{{ broke.build_id }}">
+                                    {#- -#}<code class="commit-ref">
+                                        {{- broke.commit_short -}}
+                                    </code>{#- -#}
+                                </a>
+                            {% endif %}
+                            {% if !broke.commit_subject.is_empty() %}
+                                <span class="commit-message">{{ broke.commit_subject }}</span>
+                            {% endif %}
+                            <span class="broke-in-since">
+                                Last passed at
+                                <a href="/build/{{ broke.last_success_build_id }}">
+                                    {#- -#}<code class="commit-ref">
+                                        {{- broke.last_success_short -}}
+                                    </code>{#- -#}
+                                </a>
+                            </span>
+                        </span>
+                    </div>
+                {% endif %}
             </div>
 
             {% if !build.error_lines.is_empty() %}

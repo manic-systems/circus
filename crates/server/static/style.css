@@ -2951,6 +2951,24 @@ td.commit-cell {
   line-height: 22px;
 }
 
+code.commit-ref {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+.broke-in-since {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-subtle);
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .eval-progress {
   display: flex;
   align-items: center;

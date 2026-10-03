@@ -24,6 +24,7 @@ use super::{
   build_log::BuildLogView,
   shared::{
     ApiKeyView,
+    BrokeInView,
     BuildView,
     EvalSummaryView,
     EvalView,
@@ -188,6 +189,7 @@ pub(super) struct BuildTemplate {
   pub(super) products:          Vec<BuildProduct>,
   pub(super) dependencies:      Vec<BuildView>,
   pub(super) dependents:        Vec<BuildView>,
+  pub(super) broke_in:          Option<BrokeInView>,
   pub(super) eval_id:           Uuid,
   pub(super) eval_commit_short: String,
   pub(super) jobset_id:         Uuid,

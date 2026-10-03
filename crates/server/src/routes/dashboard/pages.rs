@@ -23,6 +23,7 @@ use uuid::Uuid;
 use super::{
   build_log::parse_build_log,
   shared::{
+    BrokeInView,
     BuildView,
     DashboardContext,
     DashboardPage,
@@ -905,6 +906,30 @@ pub(super) async fn build_page(
     .map(build_view)
     .collect();
 
+  let broke_in = if is_failed_status(build.status) {
+    circus_common::repo::builds::broke_in(&state.pool, id)
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!(build_id = %id, "Failed to find where the job broke: {error}");
+        None
+      })
+      .map(|found| {
+        BrokeInView {
+          build_id:              found.build_id,
+          commit_short:          found.commit_hash.chars().take(12).collect(),
+          commit_subject:        found.commit_subject.unwrap_or_default(),
+          last_success_build_id: found.last_success_build_id,
+          last_success_short:    found
+            .last_success_commit
+            .chars()
+            .take(12)
+            .collect(),
+        }
+      })
+  } else {
+    None
+  };
+
   // Resolve who ran the build
   let builder_label = if let Some(machine_id) = build.agent_machine_id {
     circus_common::repo::builder_sessions::get(&state.pool, machine_id)
@@ -921,6 +946,7 @@ pub(super) async fn build_page(
     products,
     dependencies,
     dependents,
+    broke_in,
     eval_id: eval.id,
     eval_commit_short,
     jobset_id: jobset.id,
