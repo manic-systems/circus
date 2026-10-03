@@ -156,6 +156,7 @@ pub struct BuildRow {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
+    pub agent_losses: i32,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -190,6 +191,7 @@ pub struct BuildRowBorrowed<'a> {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub agent_losses: i32,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -226,6 +228,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features,
+            agent_losses,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -261,6 +264,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
+            agent_losses,
         }
     }
 }
@@ -413,6 +417,70 @@ where
 {
     pub fn map<R>(self, mapper: fn(uuid::Uuid) -> R) -> UuidUuidQuery<'c, 'a, 's, C, R, N> {
         UuidUuidQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct I32Query<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<i32, tokio_postgres::Error>,
+    mapper: fn(i32) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> I32Query<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(i32) -> R) -> I32Query<'c, 'a, 's, C, R, N> {
+        I32Query {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -892,6 +960,7 @@ impl CreateStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1009,6 +1078,7 @@ impl GetCompletedByDrvPathStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1072,6 +1142,7 @@ impl GetStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1168,6 +1239,7 @@ impl ListForEvaluationStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1235,6 +1307,7 @@ impl ListForJobsetEvaluationsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1320,6 +1393,7 @@ impl ListPendingStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1404,6 +1478,7 @@ impl StartStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1500,9 +1575,40 @@ impl RequeueStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
+        }
+    }
+}
+pub struct RecordAgentLossStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn record_agent_loss() -> RecordAgentLossStmt {
+    RecordAgentLossStmt(
+        "UPDATE builds SET agent_losses = agent_losses + 1 WHERE id = $1 RETURNING agent_losses",
+        None,
+    )
+}
+impl RecordAgentLossStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+    ) -> I32Query<'c, 'a, 's, C, i32, 1> {
+        I32Query {
+            client,
+            params: [id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
         }
     }
 }
@@ -1602,6 +1708,7 @@ impl CompleteStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1703,6 +1810,7 @@ impl CompleteDependencyFailedStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1790,6 +1898,7 @@ impl ListPendingInSchedulerOrderStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1887,6 +1996,7 @@ impl ListPendingForSystemsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1984,6 +2094,7 @@ impl BumpPriorityStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2068,6 +2179,7 @@ impl ListRecentStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2136,6 +2248,7 @@ impl ListForProjectStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2366,6 +2479,7 @@ impl ListPendingWithFailedDepsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2445,6 +2559,7 @@ impl ListFilteredStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2632,6 +2747,7 @@ impl CancelStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2671,7 +2787,7 @@ impl CancelCascadeDependentsStmt {
 pub struct RestartStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart() -> RestartStmt {
     RestartStmt(
-        "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL, retry_count = 0 WHERE id = $1 AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure', 'dependency_failed') RETURNING *",
+        "UPDATE builds SET status = 'pending', started_at = NULL, completed_at = NULL, log_path = NULL, build_output_path = NULL, error_message = NULL, started_notified_at = NULL, effective_features = NULL, retry_count = 0, agent_losses = 0 WHERE id = $1 AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure', 'dependency_failed') RETURNING *",
         None,
     )
 }
@@ -2728,6 +2844,7 @@ impl RestartStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2794,6 +2911,7 @@ impl ResetDependencyFailedDependentsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2940,6 +3058,7 @@ impl GetCompletedByDrvPathsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3062,6 +3181,7 @@ impl SetKeepStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3235,6 +3355,7 @@ impl ListConstituentsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),

@@ -533,7 +533,19 @@ pub async fn run_on_agent(
     },
     Ok(DispatchResult::Disconnected) | Err(_) => {
       tracing::warn!(name = %snap.name, "agent disconnected mid-build; falling back");
-      None
+      match repo::builds::record_agent_loss(pool, build.id).await {
+        Ok(losses) if losses >= MAX_AGENT_LOSSES => {
+          Some(transient(
+            1,
+            format!("{losses} agents disconnected while running this build"),
+          ))
+        },
+        Ok(_) => None,
+        Err(e) => {
+          tracing::warn!(build_id = %build.id, "Failed to count the lost agent: {e}");
+          None
+        },
+      }
     },
     Ok(DispatchResult::Refused(reason)) => {
       tracing::warn!(
@@ -546,6 +558,10 @@ pub async fn run_on_agent(
     },
   }
 }
+
+/// Deploys drop every connected agent, so a build survives a few losses before
+/// it is taken to be the one crashing them.
+const MAX_AGENT_LOSSES: i32 = 3;
 
 /// A refusal like "already running" only clears once the agent finishes.
 const AGENT_REFUSAL_BACKOFF: Duration = Duration::from_secs(30);

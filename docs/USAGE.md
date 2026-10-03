@@ -678,6 +678,10 @@ once before it is marked failed. That covers agents that run out of memory, and
 agents that fail to fetch inputs or upload outputs. Build failures and timeouts
 are not retried, and a manual restart starts the retry budget over.
 
+If an agent disconnects mid-build, the build goes back to the queue without
+using a retry. From the third disconnect on, each one counts as a machine
+failure and uses up the retry.
+
 When a build fails permanently (including after exhausting its retries), every
 build that depends on it is marked `dependency_failed` rather than waiting in
 the queue forever. Restarting the failed build also returns its

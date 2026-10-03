@@ -180,6 +180,7 @@ pub struct BuildQuickSearchRow {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
+    pub agent_losses: i32,
 }
 pub struct BuildQuickSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -214,6 +215,7 @@ pub struct BuildQuickSearchRowBorrowed<'a> {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub agent_losses: i32,
 }
 impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
     fn from(
@@ -250,6 +252,7 @@ impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
             agent_machine_id,
             started_notified_at,
             effective_features,
+            agent_losses,
         }: BuildQuickSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -285,6 +288,7 @@ impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
             agent_machine_id,
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
+            agent_losses,
         }
     }
 }
@@ -948,6 +952,7 @@ impl QuickBuildsStmt {
                     agent_machine_id: row.try_get(29)?,
                     started_notified_at: row.try_get(30)?,
                     effective_features: row.try_get(31)?,
+                    agent_losses: row.try_get(32)?,
                 })
             },
             mapper: |it| BuildQuickSearchRow::from(it),
@@ -1515,6 +1520,7 @@ impl SearchBuildsStmt {
                     agent_machine_id: row.try_get(29)?,
                     started_notified_at: row.try_get(30)?,
                     effective_features: row.try_get(31)?,
+                    agent_losses: row.try_get(32)?,
                 })
             },
             mapper: |it| BuildQuickSearchRow::from(it),
