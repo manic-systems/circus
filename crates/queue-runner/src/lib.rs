@@ -2,6 +2,7 @@ pub mod builder;
 mod cache_gc;
 pub mod caps;
 pub mod cli;
+mod closure;
 pub mod context;
 pub mod dispatch;
 pub mod features;

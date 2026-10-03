@@ -102,6 +102,11 @@ pub struct CountFilteredParams<T1: crate::StringSql, T2: crate::StringSql, T3: c
     pub system: Option<T2>,
     pub job_name: Option<T3>,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct SetClosureSizeParams {
+    pub closure_size: i64,
+    pub id: uuid::Uuid,
+}
 #[derive(Debug)]
 pub struct SetEffectiveFeaturesParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T1>> {
     pub features: T2,
@@ -121,6 +126,11 @@ pub struct SetBuilderParams {
 pub struct SetAgentParams {
     pub machine_id: uuid::Uuid,
     pub id: uuid::Uuid,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct JobHistoryParams {
+    pub id: uuid::Uuid,
+    pub limit: i64,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildRow {
@@ -157,6 +167,7 @@ pub struct BuildRow {
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
     pub agent_losses: i32,
+    pub closure_size: Option<i64>,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -192,6 +203,7 @@ pub struct BuildRowBorrowed<'a> {
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
     pub agent_losses: i32,
+    pub closure_size: Option<i64>,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -229,6 +241,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             started_notified_at,
             effective_features,
             agent_losses,
+            closure_size,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -265,6 +278,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
             agent_losses,
+            closure_size,
         }
     }
 }
@@ -334,6 +348,48 @@ impl<'a> From<BrokeInBorrowed<'a>> for BrokeIn {
             commit_subject: commit_subject.map(|v| v.into()),
             last_success_build_id,
             last_success_commit: last_success_commit.into(),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobHistory {
+    pub build_id: uuid::Uuid,
+    pub status: String,
+    pub commit_hash: String,
+    pub evaluation_time: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub closure_size: Option<i64>,
+}
+pub struct JobHistoryBorrowed<'a> {
+    pub build_id: uuid::Uuid,
+    pub status: &'a str,
+    pub commit_hash: &'a str,
+    pub evaluation_time: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub closure_size: Option<i64>,
+}
+impl<'a> From<JobHistoryBorrowed<'a>> for JobHistory {
+    fn from(
+        JobHistoryBorrowed {
+            build_id,
+            status,
+            commit_hash,
+            evaluation_time,
+            started_at,
+            completed_at,
+            closure_size,
+        }: JobHistoryBorrowed<'a>,
+    ) -> Self {
+        Self {
+            build_id,
+            status: status.into(),
+            commit_hash: commit_hash.into(),
+            evaluation_time,
+            started_at,
+            completed_at,
+            closure_size,
         }
     }
 }
@@ -855,6 +911,73 @@ where
         Ok(mapped)
     }
 }
+pub struct JobHistoryQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<JobHistoryBorrowed, tokio_postgres::Error>,
+    mapper: fn(JobHistoryBorrowed) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> JobHistoryQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(
+        self,
+        mapper: fn(JobHistoryBorrowed) -> R,
+    ) -> JobHistoryQuery<'c, 'a, 's, C, R, N> {
+        JobHistoryQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
 pub struct CreateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create() -> CreateStmt {
     CreateStmt(
@@ -961,6 +1084,7 @@ impl CreateStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1079,6 +1203,7 @@ impl GetCompletedByDrvPathStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1143,6 +1268,7 @@ impl GetStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1240,6 +1366,7 @@ impl ListForEvaluationStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1308,6 +1435,7 @@ impl ListForJobsetEvaluationsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1394,6 +1522,7 @@ impl ListPendingStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1479,6 +1608,7 @@ impl StartStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1576,6 +1706,7 @@ impl RequeueStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1709,6 +1840,7 @@ impl CompleteStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1811,6 +1943,7 @@ impl CompleteDependencyFailedStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1899,6 +2032,7 @@ impl ListPendingInSchedulerOrderStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -1997,6 +2131,7 @@ impl ListPendingForSystemsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2095,6 +2230,7 @@ impl BumpPriorityStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2180,6 +2316,7 @@ impl ListRecentStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2249,6 +2386,7 @@ impl ListForProjectStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2480,6 +2618,7 @@ impl ListPendingWithFailedDepsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2560,6 +2699,7 @@ impl ListFilteredStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2748,6 +2888,7 @@ impl CancelStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2845,6 +2986,7 @@ impl RestartStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -2912,10 +3054,54 @@ impl ResetDependencyFailedDependentsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
         }
+    }
+}
+pub struct SetClosureSizeStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_closure_size() -> SetClosureSizeStmt {
+    SetClosureSizeStmt("UPDATE builds SET closure_size = $1 WHERE id = $2", None)
+}
+impl SetClosureSizeStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        closure_size: &'a i64,
+        id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[closure_size, id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetClosureSizeParams,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetClosureSizeStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetClosureSizeParams,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.closure_size, &params.id))
     }
 }
 pub struct SetEffectiveFeaturesStmt(&'static str, Option<tokio_postgres::Statement>);
@@ -3059,6 +3245,7 @@ impl GetCompletedByDrvPathsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3182,6 +3369,7 @@ impl SetKeepStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3356,6 +3544,7 @@ impl ListConstituentsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -3419,5 +3608,65 @@ impl BrokeInStmt {
                 },
             mapper: |it| BrokeIn::from(it),
         }
+    }
+}
+pub struct JobHistoryStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn job_history() -> JobHistoryStmt {
+    JobHistoryStmt(
+        "WITH current_build AS ( SELECT b.job_name, b.system, e.jobset_id, e.source_scope, e.evaluation_time, j.branch_pattern IS NOT NULL OR j.tag_pattern IS NOT NULL AS multi_ref FROM builds b JOIN evaluations e ON e.id = b.evaluation_id JOIN jobsets j ON j.id = e.jobset_id WHERE b.id = $1 AND e.pr_number IS NULL ) SELECT b.id AS build_id, b.status, e.commit_hash, e.evaluation_time, b.started_at, b.completed_at, b.closure_size FROM current_build c JOIN evaluations e ON e.jobset_id = c.jobset_id AND e.pr_number IS NULL AND (NOT c.multi_ref OR e.source_scope = c.source_scope OR e.source_scope IS NULL OR c.source_scope IS NULL) AND e.evaluation_time < c.evaluation_time JOIN builds b ON b.evaluation_id = e.id AND b.job_name = c.job_name AND b.system IS NOT DISTINCT FROM c.system AND b.status NOT IN ('pending', 'running') ORDER BY e.evaluation_time DESC LIMIT $2",
+        None,
+    )
+}
+impl JobHistoryStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        id: &'a uuid::Uuid,
+        limit: &'a i64,
+    ) -> JobHistoryQuery<'c, 'a, 's, C, JobHistory, 2> {
+        JobHistoryQuery {
+            client,
+            params: [id, limit],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<JobHistoryBorrowed, tokio_postgres::Error> {
+                    Ok(JobHistoryBorrowed {
+                        build_id: row.try_get(0)?,
+                        status: row.try_get(1)?,
+                        commit_hash: row.try_get(2)?,
+                        evaluation_time: row.try_get(3)?,
+                        started_at: row.try_get(4)?,
+                        completed_at: row.try_get(5)?,
+                        closure_size: row.try_get(6)?,
+                    })
+                },
+            mapper: |it| JobHistory::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        JobHistoryParams,
+        JobHistoryQuery<'c, 'a, 's, C, JobHistory, 2>,
+        C,
+    > for JobHistoryStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a JobHistoryParams,
+    ) -> JobHistoryQuery<'c, 'a, 's, C, JobHistory, 2> {
+        self.bind(client, &params.id, &params.limit)
     }
 }

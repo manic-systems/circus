@@ -45,6 +45,7 @@ use uuid::Uuid;
 use crate::{
   builder::{self as build_runner, BuildResult},
   caps::RunnerCaps,
+  closure,
   context::BuildContext,
   dispatch,
   features,
@@ -53,13 +54,13 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-struct ClosurePathInfo {
-  store_path: String,
-  nar_hash:   String,
-  nar_size:   i64,
-  references: Vec<String>,
-  deriver:    Option<String>,
-  ca:         Option<String>,
+pub(crate) struct ClosurePathInfo {
+  pub(crate) store_path: String,
+  nar_hash:              String,
+  pub(crate) nar_size:   i64,
+  references:            Vec<String>,
+  deriver:               Option<String>,
+  ca:                    Option<String>,
 }
 
 pub type ActiveBuilds = Arc<DashMap<Uuid, CancellationToken>>;
@@ -312,7 +313,7 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
   Some((nar_hash, nar_size))
 }
 
-async fn get_recursive_path_infos_with_nix(
+pub(crate) async fn get_recursive_path_infos_with_nix(
   nix: &Path,
   output_paths: &[String],
 ) -> Option<Vec<ClosurePathInfo>> {
@@ -1297,6 +1298,11 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           && let Err(e) = repo::builds::mark_signed(pool, build.id).await
         {
           tracing::warn!(build_id = %build.id, "Failed to mark build as signed: {e}");
+        }
+
+        // Outputs an agent uploaded straight to S3 never reach this store.
+        if !build_result.cache_upload_handled {
+          closure::record(pool, build.id, &build_result.output_paths).await;
         }
 
         persist_closure_narinfos(

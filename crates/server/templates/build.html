@@ -110,6 +110,25 @@
                         </span>
                     </div>
                 {% endif %}
+                {% if let Some(closure) = closure %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Closure size</span>
+                        <span class="build-meta-value">
+                            <span title="{{ closure.exact }}">{{ closure.size }}</span>
+                            {% if let Some(change) = closure.change %}
+                                <span class="closure-change">
+                                    <span class="closure-{{ change.class }}">{{ change.text }}</span>
+                                    since
+                                    <a href="/build/{{ change.build_id }}">
+                                        {#- -#}<code class="commit-ref">
+                                            {{- change.commit_short -}}
+                                        </code>{#- -#}
+                                    </a>
+                                </span>
+                            {% endif %}
+                        </span>
+                    </div>
+                {% endif %}
                 {% if let Some(broke) = broke_in %}
                     <div class="build-meta-item build-meta-wide">
                         <span class="build-meta-label">Broke in</span>
