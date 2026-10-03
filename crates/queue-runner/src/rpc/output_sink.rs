@@ -17,6 +17,7 @@ use crate::{
   rpc::server::read_bounded_text_list,
 };
 
+#[derive(Clone)]
 pub struct OutputSinkImpl {
   inner: Arc<Inner>,
 }
