@@ -353,6 +353,8 @@ pub(super) async fn build() -> Response {
         commit_short: "9f2c7a113bad".into(),
       }),
     }),
+    expected:          None,
+    eta_epoch:         None,
     eval_id:           id(3),
     eval_commit_short: "9f2c7a113bad".into(),
     jobset_id:         id(2),

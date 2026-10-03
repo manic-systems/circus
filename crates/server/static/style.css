@@ -2929,6 +2929,20 @@ code.commit-ref {
   vertical-align: baseline;
 }
 
+.eta {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.build-meta-value .eta {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .closure-change {
   display: block;
   margin-top: 4px;

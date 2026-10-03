@@ -67,6 +67,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (38, "0038_user_external_identity"),
   (39, "0039_build_transient_retry"),
   (43, "0043_build_closure_size"),
+  (44, "0044_build_duration_index"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.

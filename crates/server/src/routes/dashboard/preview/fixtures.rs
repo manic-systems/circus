@@ -278,6 +278,7 @@ pub(super) fn queue_build(
     },
     elapsed:       "1m 30s".into(),
     started_epoch: builder.map(|_| Utc::now().timestamp() - 90),
+    eta_epoch:     builder.map(|_| Utc::now().timestamp() + 150),
     priority:      100,
     builder_name:  builder.map(str::to_string),
     queue_pos:     pos,
