@@ -66,6 +66,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (37, "0037_drop_build_steps"),
   (38, "0038_user_external_identity"),
   (39, "0039_build_transient_retry"),
+  (40, "0040_evaluation_timeline"),
   (42, "0042_build_agent_losses"),
 ];
 

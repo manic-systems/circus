@@ -463,6 +463,8 @@ async fn run_path_filtered_evaluation(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
 ) -> color_eyre::Result<bool> {
+  record_commit_subject(pool, repo_path, eval).await;
+
   if crate::path_filter::should_evaluate(repo_path, eval, jobset).await {
     run_nix_and_record_builds(
       pool,
@@ -488,6 +490,36 @@ async fn run_path_filtered_evaluation(
     );
   }
   Ok(false)
+}
+
+async fn record_commit_subject(
+  pool: &PgPool,
+  repo_path: &std::path::Path,
+  eval: &Evaluation,
+) {
+  let repo_path = repo_path.to_owned();
+  let commit = eval.commit_hash.clone();
+  let subject = match tokio::task::spawn_blocking(move || {
+    crate::git::commit_subject(&repo_path, &commit)
+  })
+  .await
+  {
+    Ok(Ok(subject)) => subject,
+    Ok(Err(error)) => {
+      tracing::warn!(eval_id = %eval.id, "Failed to read commit subject: {error}");
+      return;
+    },
+    Err(error) => {
+      tracing::warn!(eval_id = %eval.id, "Commit subject task failed: {error}");
+      return;
+    },
+  };
+
+  if let Err(error) =
+    repo::evaluations::set_commit_subject(pool, eval.id, &subject).await
+  {
+    tracing::warn!(eval_id = %eval.id, "Failed to set commit subject: {error}");
+  }
 }
 
 /// Shared back-half: invoke nix, persist builds, dispatch notifications,

@@ -719,6 +719,9 @@ mod tests {
       source_scope: None,
       superseded_by: None,
       source_base_commit: None,
+      started_at: None,
+      finished_at: None,
+      commit_subject: None,
     }
   }
 
