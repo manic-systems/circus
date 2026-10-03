@@ -4,6 +4,8 @@
 use serde_json::Value;
 
 const BUILD_LOG_LINE: i64 = 101;
+const PROGRESS: i64 = 105;
+const SET_EXPECTED: i64 = 106;
 const POST_BUILD_LOG_LINE: i64 = 107;
 
 /// A parsed `@nix {...}` line that carries displayable text.
@@ -15,6 +17,23 @@ pub enum LogLine {
 #[must_use]
 pub fn is_envelope(line: &str) -> bool {
   line.starts_with("@nix ")
+}
+
+/// Whether `line` is a progress counter update, which nix emits on every
+/// transfer tick and which carries no log text.
+#[must_use]
+pub fn is_progress(line: &str) -> bool {
+  let Some(json) = line.strip_prefix("@nix ") else {
+    return false;
+  };
+  let Ok(v) = serde_json::from_str::<Value>(json.trim()) else {
+    return false;
+  };
+  v.get("action").and_then(Value::as_str) == Some("result")
+    && matches!(
+      v.get("type").and_then(Value::as_i64),
+      Some(PROGRESS | SET_EXPECTED)
+    )
 }
 
 /// # Returns

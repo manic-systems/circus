@@ -456,7 +456,11 @@ async fn run_command(
         recent_msgs.push_back(text);
       }
 
-      if !log_size_exceeded && !log_truncated && !sink_failed {
+      if !log_size_exceeded
+        && !log_truncated
+        && !sink_failed
+        && !nix_log::is_progress(&line)
+      {
         if bytes_sent.saturating_add(line.len() as u64 + 1) > opts.max_log_size
         {
           if child_status.is_none() {
