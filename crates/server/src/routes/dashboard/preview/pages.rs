@@ -6,6 +6,7 @@ use super::{
   super::{
     shared::{
       ApiKeyView,
+      BrokeInView,
       PrivateTemplate,
       QueueSystemView,
       StarredJobView,
@@ -341,6 +342,13 @@ pub(super) async fn build() -> Response {
       "completed",
     )],
     dependents:        Vec::new(),
+    broke_in:          Some(BrokeInView {
+      build_id:              id(5),
+      commit_short:          "4be1c0ffee21".into(),
+      commit_subject:        "server: bump axum to 0.9".into(),
+      last_success_build_id: id(4),
+      last_success_short:    "9f2c7a113bad".into(),
+    }),
     eval_id:           id(3),
     eval_commit_short: "9f2c7a113bad".into(),
     jobset_id:         id(2),

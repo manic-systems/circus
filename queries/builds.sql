@@ -327,3 +327,50 @@ ORDER BY b.created_at;
 
 --! delete
 DELETE FROM builds WHERE id = :id;
+
+--! broke_in : (build_id, commit_hash, commit_subject?, last_success_build_id, last_success_commit)
+-- Only multi-ref jobsets keep separate branch histories. Manual, interval, and
+-- restarted evaluations carry no scope and count toward every branch.
+WITH current_build AS (
+  SELECT
+    b.job_name, b.system, e.jobset_id, e.source_scope, e.evaluation_time,
+    j.branch_pattern IS NOT NULL OR j.tag_pattern IS NOT NULL AS multi_ref
+  FROM builds b
+  JOIN evaluations e ON e.id = b.evaluation_id
+  JOIN jobsets j ON j.id = e.jobset_id
+  WHERE b.id = :id AND e.pr_number IS NULL
+),
+history AS (
+  SELECT b.id, b.status, e.commit_hash, e.commit_subject, e.evaluation_time
+  FROM current_build c
+  JOIN evaluations e ON e.jobset_id = c.jobset_id
+    AND e.pr_number IS NULL
+    AND (NOT c.multi_ref
+      OR e.source_scope = c.source_scope
+      OR e.source_scope IS NULL
+      OR c.source_scope IS NULL)
+    AND e.evaluation_time <= c.evaluation_time
+  JOIN builds b ON b.evaluation_id = e.id
+    AND b.job_name = c.job_name
+    AND b.system IS NOT DISTINCT FROM c.system
+),
+last_success AS (
+  SELECT * FROM history
+  WHERE status = 'succeeded'
+  ORDER BY evaluation_time DESC
+  LIMIT 1
+)
+SELECT
+  red.id AS build_id,
+  red.commit_hash,
+  red.commit_subject,
+  green.id AS last_success_build_id,
+  green.commit_hash AS last_success_commit
+FROM last_success green
+JOIN LATERAL (
+  SELECT * FROM history
+  WHERE history.evaluation_time > green.evaluation_time
+    AND history.status NOT IN ('pending', 'running', 'succeeded', 'cancelled', 'aborted')
+  ORDER BY history.evaluation_time
+  LIMIT 1
+) red ON TRUE;
