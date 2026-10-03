@@ -24,6 +24,7 @@ use circus_proto::{
   drv_sink,
   limits,
   log_sink,
+  output_sink,
   result_sink,
   runner,
 };
@@ -81,6 +82,9 @@ pub struct ServerConfig {
   /// OIDC verifier. `None` disables the OIDC auth path.
   pub oidc:               Option<Arc<super::oidc::OidcVerifier>>,
   active_uploads: Arc<parking_lot::Mutex<HashMap<UploadKey, ExpectedUpload>>>,
+  /// `build_id` -> (`outputToken`, sink) for builds streaming outputs back.
+  output_sinks:
+    Arc<parking_lot::Mutex<HashMap<Uuid, (String, OutputSinkImpl)>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -160,6 +164,7 @@ impl ServerConfig {
       cache_public_key: cfg.cache_public_key.clone(),
       oidc,
       active_uploads: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+      output_sinks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     })
   }
 
@@ -197,6 +202,7 @@ impl ServerConfig {
     self.active_uploads.lock().retain(|key, _| {
       key.machine_id != machine_id || key.build_id != build_id
     });
+    self.output_sinks.lock().remove(&build_id);
   }
 }
 
@@ -977,6 +983,37 @@ impl runner::Server for RunnerImpl {
       })
     })
   }
+
+  fn open_output_sink(
+    self: capnp::capability::Rc<Self>,
+    params: runner::OpenOutputSinkParams,
+    mut results: runner::OpenOutputSinkResults,
+  ) -> Promise<(), capnp::Error> {
+    let output_sinks = Arc::clone(&self.cfg.output_sinks);
+    Promise::from_future(async move {
+      let pr = params.get()?;
+      let build_id =
+        parse_uuid_param(pr.get_build_id()?.to_str()?, "build_id")?;
+      let token = pr.get_token()?.to_str()?;
+
+      let sink = match output_sinks.lock().get(&build_id) {
+        Some((expected, sink))
+          if bool::from(expected.as_bytes().ct_eq(token.as_bytes())) =>
+        {
+          sink.clone()
+        },
+        _ => {
+          return Err(capnp::Error::failed(
+            "no output sink for this build and token".into(),
+          ));
+        },
+      };
+      results
+        .get()
+        .set_sink(capnp_rpc::new_client::<output_sink::Client, _>(sink));
+      Ok(())
+    })
+  }
 }
 
 /// Stream `nix-store --export` of a derivation's closure into an agent's sink.
@@ -1132,8 +1169,18 @@ async fn dispatch_one(
 
   // Give the agent a sink to stream its output closure into so the runner can
   // serve this build locally.
+  let output_token = Uuid::new_v4().simple().to_string();
   let output_cap = cmd.presigned_upload.is_none().then(|| {
-    capnp_rpc::new_client(OutputSinkImpl::new(cmd.build_id.to_string()))
+    let sink = OutputSinkImpl::new(
+      cmd.build_id.to_string(),
+      cmd.drv_path.clone(),
+      cmd.is_fod,
+    );
+    cfg
+      .output_sinks
+      .lock()
+      .insert(cmd.build_id, (output_token.clone(), sink.clone()));
+    capnp_rpc::new_client::<output_sink::Client, _>(sink)
   });
 
   let mut req = builder_cap.assign_request();
@@ -1150,6 +1197,9 @@ async fn dispatch_one(
       }
       if let Some(key) = cfg.cache_public_key.as_deref() {
         job.set_cache_public_key(key);
+      }
+      if output_cap.is_some() {
+        job.set_output_token(output_token.as_str());
       }
       job.set_max_log_size(cmd.max_log_size);
       job.set_max_silent_time(cmd.max_silent_time);

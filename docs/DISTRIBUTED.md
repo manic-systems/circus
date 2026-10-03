@@ -104,6 +104,7 @@ interface Runner {
                        -> (responses :List(PresignedNarResponse));
   notifyUploadComplete @3 (machineId :Text, buildId :Text, narInfo :NarInfo)
                        -> ();
+  openOutputSink @5 (buildId :Text, token :Text) -> (sink :OutputSink);
 }
 
 interface Builder {
@@ -172,7 +173,10 @@ The flow is as follows
    cap, while `report` accepts exactly one final result before waking the
    scheduler.
 6. For non-presigned uploads, the agent asks `output.missing(closure)` which
-   paths the runner lacks and streams only those through `OutputSink`. For S3
+   paths the runner lacks and streams only those through `OutputSink`. The
+   runner first substitutes what its own caches have. Transfers over 8 MiB open
+   a separate connection and fetch the sink with `openOutputSink` and the job's
+   `outputToken`, so one lossy TCP flow does not throttle every build. For S3
    presigned uploads, `output` is null and the agent uploads compressed NAR
    files directly to S3.
 7. The agent calls `session.heartbeat(ping)` every N seconds with load averages,

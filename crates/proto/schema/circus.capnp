@@ -39,6 +39,10 @@ interface Runner {
   # Stream the assigned derivation's closure to the agent so realising it
   # needs no reachable binary cache. Only the active build's drv is served.
   fetchDrvClosure @4 (machineId :Text, buildId :Text, sink :DrvSink) -> ();
+
+  # Hand back a build's `OutputSink` on this connection, so a large output
+  # closure gets its own TCP flow. `token` is `BuildAssignment.outputToken`.
+  openOutputSink @5 (buildId :Text, token :Text) -> (sink :OutputSink);
 }
 
 # Capability the agent passes to the runner during register. The runner calls
@@ -146,6 +150,7 @@ struct BuildAssignment {
   presignedUpload @8 :PresignedUploadOpts;
   cacheSubstituter @9 :Text;      # Cache to substitute the drv closure from
   cachePublicKey   @10 :Text;     # Key to trust for it
+  outputToken      @11 :Text;     # Opens this build's OutputSink, empty for S3 builds
 }
 
 struct PresignedUploadOpts {
