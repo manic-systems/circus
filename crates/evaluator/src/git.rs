@@ -413,6 +413,20 @@ pub fn history_contains(
   contains_commit(&repo, tip, commit)
 }
 
+/// The first line of the message of commit `hash` in the checkout at
+/// `repo_path`.
+///
+/// # Errors
+///
+/// Returns an error if the repository cannot be opened or the commit is
+/// missing.
+pub fn commit_subject(repo_path: &Path, hash: &str) -> Result<String> {
+  let repo = open(repo_path)?;
+  let commit = repo.find_commit(parse_commit(&repo, hash)?)?;
+  let message = commit.message().map_err(gix::Error::from)?;
+  Ok(message.summary().to_str_lossy().into_owned())
+}
+
 /// Whether the repository URL pins a revision, which no branch can rewrite.
 #[must_use]
 pub fn pins_revision(url: &str) -> bool {

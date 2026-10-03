@@ -16,6 +16,7 @@ use axum::{
 use circus_common::models::{
   CreateNotificationConfig,
   NotificationType,
+  SortDirection,
   SystemStatus,
   UserType,
 };
@@ -55,7 +56,7 @@ fn ui_config(state: &AppState) -> UiTemplateConfig {
 #[derive(Default, serde::Deserialize)]
 pub(super) struct AdminParams {
   agent_sort: Option<String>,
-  agent_dir:  Option<String>,
+  agent_dir:  Option<SortDirection>,
   gc:         Option<String>,
 }
 
@@ -69,12 +70,6 @@ enum AgentSort {
   Succeeded,
   Failed,
   LastSeen,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum SortDirection {
-  Asc,
-  Desc,
 }
 
 const AGENT_SORT_COLUMNS: [(AgentSort, &str); 8] = [
@@ -128,30 +123,6 @@ impl AgentSort {
   }
 }
 
-impl SortDirection {
-  fn from_param(param: Option<&str>, sort: AgentSort) -> Self {
-    match param {
-      Some("asc") => Self::Asc,
-      Some("desc") => Self::Desc,
-      _ => sort.default_direction(),
-    }
-  }
-
-  const fn as_param(self) -> &'static str {
-    match self {
-      Self::Asc => "asc",
-      Self::Desc => "desc",
-    }
-  }
-
-  const fn toggle(self) -> Self {
-    match self {
-      Self::Asc => Self::Desc,
-      Self::Desc => Self::Asc,
-    }
-  }
-}
-
 fn agent_sort_headers(
   active_sort: AgentSort,
   active_dir: SortDirection,
@@ -171,12 +142,12 @@ fn agent_sort_headers(
         href: format!(
           "/admin?agent_sort={}&agent_dir={}#agents",
           sort.as_param(),
-          next_dir.as_param(),
+          next_dir.as_str(),
         ),
-        default_dir: sort.default_direction().as_param().to_string(),
+        default_dir: sort.default_direction().as_str().to_string(),
         active,
         indicator: if active {
-          active_dir.as_param().to_string()
+          active_dir.as_str().to_string()
         } else {
           String::new()
         },
@@ -302,8 +273,9 @@ pub(super) async fn admin_page(
     .unwrap_or_default();
   let agent_sort = AgentSort::from_param(params.agent_sort.as_deref())
     .unwrap_or(AgentSort::Name);
-  let agent_dir =
-    SortDirection::from_param(params.agent_dir.as_deref(), agent_sort);
+  let agent_dir = params
+    .agent_dir
+    .unwrap_or_else(|| agent_sort.default_direction());
   let mut agents = raw_sessions
     .into_iter()
     .map(|s| {
@@ -430,7 +402,7 @@ pub(super) async fn admin_page(
     agents,
     agent_sort_headers,
     agent_sort_key: agent_sort.as_param().to_string(),
-    agent_sort_dir: agent_dir.as_param().to_string(),
+    agent_sort_dir: agent_dir.as_str().to_string(),
     api_keys,
     notification_tasks,
     pinned_outputs,

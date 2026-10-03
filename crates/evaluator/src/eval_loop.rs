@@ -27,7 +27,7 @@ use circus_common::{
 use circus_config::{DeclarativeJobset, EvaluatorConfig, NotificationsConfig};
 use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use uuid::Uuid;
@@ -35,6 +35,7 @@ use uuid::Uuid;
 use crate::{
   builds::{compute_inputs_hash, create_builds_from_eval},
   evaluation_state::{ExistingEvaluationClaim, claim_existing},
+  nix::EvalProgress,
 };
 
 /// Main evaluator loop. Polls jobsets and runs nix evaluations.
@@ -463,6 +464,8 @@ async fn run_path_filtered_evaluation(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
 ) -> color_eyre::Result<bool> {
+  record_commit_subject(pool, repo_path, eval).await;
+
   if crate::path_filter::should_evaluate(repo_path, eval, jobset).await {
     run_nix_and_record_builds(
       pool,
@@ -488,6 +491,36 @@ async fn run_path_filtered_evaluation(
     );
   }
   Ok(false)
+}
+
+async fn record_commit_subject(
+  pool: &PgPool,
+  repo_path: &std::path::Path,
+  eval: &Evaluation,
+) {
+  let repo_path = repo_path.to_owned();
+  let commit = eval.commit_hash.clone();
+  let subject = match tokio::task::spawn_blocking(move || {
+    crate::git::commit_subject(&repo_path, &commit)
+  })
+  .await
+  {
+    Ok(Ok(subject)) => subject,
+    Ok(Err(error)) => {
+      tracing::warn!(eval_id = %eval.id, "Failed to read commit subject: {error}");
+      return;
+    },
+    Err(error) => {
+      tracing::warn!(eval_id = %eval.id, "Commit subject task failed: {error}");
+      return;
+    },
+  };
+
+  if let Err(error) =
+    repo::evaluations::set_commit_subject(pool, eval.id, &subject).await
+  {
+    tracing::warn!(eval_id = %eval.id, "Failed to set commit subject: {error}");
+  }
 }
 
 /// Shared back-half: invoke nix, persist builds, dispatch notifications,
@@ -534,7 +567,8 @@ async fn run_nix_and_record_builds(
     eval.id,
     cancel.clone(),
   ));
-  let (result, ()) = tokio::join!(
+  let (progress_tx, progress_rx) = watch::channel(EvalProgress::default());
+  let (result, (), ()) = tokio::join!(
     async {
       let result = crate::nix::evaluate(
         repo_path,
@@ -546,6 +580,7 @@ async fn run_nix_and_record_builds(
         config,
         inputs,
         &cancel,
+        &progress_tx,
         None,
       )
       .await;
@@ -553,6 +588,7 @@ async fn run_nix_and_record_builds(
       result
     },
     watch_branch_history(pool, jobset, eval, config, &cancel),
+    record_progress(pool, eval.id, progress_rx, &cancel),
   );
   if let Err(error) = watcher.await {
     tracing::warn!(eval_id = %eval.id, "Evaluation cancellation watcher stopped: {error}");
@@ -655,6 +691,48 @@ async fn watch_evaluation_cancellation(
         Ok(false) => {},
         Err(error) => tracing::warn!(%evaluation_id, "Failed to check evaluation cancellation: {error}"),
       },
+    }
+  }
+}
+
+/// evix reports every attribute, so the database sees at most one progress
+/// write per interval.
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
+
+async fn record_progress(
+  pool: &PgPool,
+  evaluation_id: Uuid,
+  mut progress: watch::Receiver<EvalProgress>,
+  cancel: &CancellationToken,
+) {
+  if let Err(error) =
+    repo::evaluations::set_progress(pool, evaluation_id, None, None).await
+  {
+    tracing::warn!(%evaluation_id, "Failed to clear evaluation progress: {error}");
+  }
+
+  loop {
+    let finished = tokio::select! {
+      () = tokio::time::sleep(PROGRESS_INTERVAL) => false,
+      () = cancel.cancelled() => true,
+    };
+
+    if progress.has_changed().unwrap_or(false) {
+      let EvalProgress { done, total } = *progress.borrow_and_update();
+      if let Err(error) = repo::evaluations::set_progress(
+        pool,
+        evaluation_id,
+        i32::try_from(done).ok(),
+        i32::try_from(total).ok(),
+      )
+      .await
+      {
+        tracing::warn!(%evaluation_id, "Failed to record evaluation progress: {error}");
+      }
+    }
+
+    if finished {
+      return;
     }
   }
 }

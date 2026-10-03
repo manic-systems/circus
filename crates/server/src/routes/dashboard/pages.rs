@@ -23,6 +23,7 @@ use uuid::Uuid;
 use super::{
   build_log::parse_build_log,
   shared::{
+    BrokeInView,
     BuildView,
     DashboardContext,
     DashboardPage,
@@ -40,8 +41,11 @@ use super::{
     build_view_with_context,
     enforce_page_access,
     eval_badge,
+    eval_progress,
+    eval_running_since,
     eval_view,
     eval_view_with_context,
+    format_duration,
     not_found,
     status_badge,
   },
@@ -439,9 +443,14 @@ pub(super) async fn jobset_page(
     summaries.push(EvalSummaryView {
       id: e.id,
       commit_short: short,
+      commit_subject: e.commit_subject.clone().unwrap_or_default(),
       status_text: text,
       status_class: class,
-      time: e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+      time: e.evaluation_time.format("%Y-%m-%d %H:%M UTC").to_string(),
+      time_iso: e.evaluation_time.to_rfc3339(),
+      duration: format_duration(e.started_at.as_ref(), e.finished_at.as_ref()),
+      running_since: eval_running_since(e),
+      progress: eval_progress(e),
       succeeded,
       failed,
       pending,
@@ -897,6 +906,30 @@ pub(super) async fn build_page(
     .map(build_view)
     .collect();
 
+  let broke_in = if is_failed_status(build.status) {
+    circus_common::repo::builds::broke_in(&state.pool, id)
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!(build_id = %id, "Failed to find where the job broke: {error}");
+        None
+      })
+      .map(|found| {
+        BrokeInView {
+          build_id:              found.build_id,
+          commit_short:          found.commit_hash.chars().take(12).collect(),
+          commit_subject:        found.commit_subject.unwrap_or_default(),
+          last_success_build_id: found.last_success_build_id,
+          last_success_short:    found
+            .last_success_commit
+            .chars()
+            .take(12)
+            .collect(),
+        }
+      })
+  } else {
+    None
+  };
+
   // Resolve who ran the build
   let builder_label = if let Some(machine_id) = build.agent_machine_id {
     circus_common::repo::builder_sessions::get(&state.pool, machine_id)
@@ -913,6 +946,7 @@ pub(super) async fn build_page(
     products,
     dependencies,
     dependents,
+    broke_in,
     eval_id: eval.id,
     eval_commit_short,
     jobset_id: jobset.id,

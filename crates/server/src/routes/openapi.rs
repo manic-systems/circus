@@ -171,7 +171,12 @@ fn document_value() -> Value {
             "hidden":          { "type": "boolean" },
             "source_scope":    { "type": ["string", "null"] },
             "superseded_by":   { "type": ["string", "null"], "format": "uuid" },
-            "source_base_commit": { "type": ["string", "null"] }
+            "source_base_commit": { "type": ["string", "null"] },
+            "started_at":      { "type": ["string", "null"], "format": "date-time" },
+            "finished_at":     { "type": ["string", "null"], "format": "date-time" },
+            "commit_subject":  { "type": ["string", "null"] },
+            "attrs_done":      { "type": ["integer", "null"] },
+            "attrs_total":     { "type": ["integer", "null"] }
           }
         },
         "Channel": {

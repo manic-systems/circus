@@ -58,6 +58,17 @@ pub struct SetInputsHashParams<T1: crate::StringSql> {
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
+pub struct SetCommitSubjectParams<T1: crate::StringSql> {
+    pub commit_subject: T1,
+    pub id: uuid::Uuid,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct SetProgressParams {
+    pub attrs_done: Option<i32>,
+    pub attrs_total: Option<i32>,
+    pub id: uuid::Uuid,
+}
+#[derive(Debug)]
 pub struct GetByInputsHashParams<T1: crate::StringSql> {
     pub jobset_id: uuid::Uuid,
     pub inputs_hash: T1,
@@ -159,6 +170,10 @@ pub struct EvaluationRow {
     pub source_scope: Option<String>,
     pub superseded_by: Option<uuid::Uuid>,
     pub source_base_commit: Option<String>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub commit_subject: Option<String>,
+    pub attrs_done: Option<i32>,
+    pub attrs_total: Option<i32>,
 }
 pub struct EvaluationRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -179,6 +194,10 @@ pub struct EvaluationRowBorrowed<'a> {
     pub source_scope: Option<&'a str>,
     pub superseded_by: Option<uuid::Uuid>,
     pub source_base_commit: Option<&'a str>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub commit_subject: Option<&'a str>,
+    pub attrs_done: Option<i32>,
+    pub attrs_total: Option<i32>,
 }
 impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
     fn from(
@@ -201,6 +220,10 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             source_scope,
             superseded_by,
             source_base_commit,
+            finished_at,
+            commit_subject,
+            attrs_done,
+            attrs_total,
         }: EvaluationRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -222,6 +245,10 @@ impl<'a> From<EvaluationRowBorrowed<'a>> for EvaluationRow {
             source_scope: source_scope.map(|v| v.into()),
             superseded_by,
             source_base_commit: source_base_commit.map(|v| v.into()),
+            finished_at,
+            commit_subject: commit_subject.map(|v| v.into()),
+            attrs_done,
+            attrs_total,
         }
     }
 }
@@ -666,6 +693,10 @@ impl CreateWithKindStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -758,6 +789,10 @@ impl GetStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -811,6 +846,10 @@ impl GetVisibleStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -881,6 +920,10 @@ impl ListForJobsetStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -937,6 +980,10 @@ impl ListFilteredWithVisibilityStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1070,6 +1117,10 @@ impl SetHiddenStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1140,6 +1191,10 @@ impl TryClaimPendingStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1194,6 +1249,10 @@ impl UpdateStatusStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1264,6 +1323,10 @@ impl GetLatestStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1316,6 +1379,99 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
         Box::pin(self.bind(client, &params.inputs_hash, &params.id))
     }
 }
+pub struct SetCommitSubjectStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_commit_subject() -> SetCommitSubjectStmt {
+    SetCommitSubjectStmt(
+        "UPDATE evaluations SET commit_subject = $1 WHERE id = $2",
+        None,
+    )
+}
+impl SetCommitSubjectStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        commit_subject: &'a T1,
+        id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[commit_subject, id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetCommitSubjectParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetCommitSubjectStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetCommitSubjectParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.commit_subject, &params.id))
+    }
+}
+pub struct SetProgressStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_progress() -> SetProgressStmt {
+    SetProgressStmt(
+        "UPDATE evaluations SET attrs_done = $1, attrs_total = $2 WHERE id = $3",
+        None,
+    )
+}
+impl SetProgressStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        attrs_done: &'a Option<i32>,
+        attrs_total: &'a Option<i32>,
+        id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[attrs_done, attrs_total, id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetProgressParams,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetProgressStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetProgressParams,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.attrs_done, &params.attrs_total, &params.id))
+    }
+}
 pub struct GetByInputsHashStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_by_inputs_hash() -> GetByInputsHashStmt {
     GetByInputsHashStmt(
@@ -1363,6 +1519,10 @@ impl GetByInputsHashStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1458,6 +1618,10 @@ impl ListPendingStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1643,6 +1807,10 @@ impl GetByJobsetAndCommitStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1755,6 +1923,10 @@ impl FinishRunningStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1848,6 +2020,10 @@ impl CancelStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -1900,6 +2076,10 @@ impl SweepOrphanedStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -2061,6 +2241,10 @@ impl ListUnfinishedSourceStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -2223,6 +2407,10 @@ impl RestartRequeueStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
@@ -2398,6 +2586,10 @@ impl ListPageFilteredStmt {
                         source_scope: row.try_get(15)?,
                         superseded_by: row.try_get(16)?,
                         source_base_commit: row.try_get(17)?,
+                        finished_at: row.try_get(18)?,
+                        commit_subject: row.try_get(19)?,
+                        attrs_done: row.try_get(20)?,
+                        attrs_total: row.try_get(21)?,
                     })
                 },
             mapper: |it| EvaluationRow::from(it),
