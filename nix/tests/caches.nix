@@ -60,17 +60,20 @@ pkgs.testers.nixosTest {
     # 32-char hashes use Nix's base32 alphabet so the cache route accepts them.
     foo_hash = "00000000000000000000000000000000"
     bar_hash = "11111111111111111111111111111111"
+    # Signed with the key above over each row's narinfo fingerprint, so editing a seeded column breaks them.
+    foo_sig = "circus-test-cache-1:QTH8gvOhx5qPUMIyRooPrG7X5MQkIFOnwW7MRo+NSacCUNVmCHMLEdPtkVcdJ28UhPWC8T2FHG2tgxQz8LvuAQ=="
+    bar_sig = "circus-test-cache-1:7zr/nyYg4dJ6IGm2uReR+yh4XuopsBSi23Kut/jP5hLCS207iHANG4cFhyWgu1yKyf+LX8ELQOrXurbLvBzODQ=="
     # The "references" column has a '{}' default, so it is left unset here to
     # keep the literal SQL free of nested identifier quoting.
     psql(
         "INSERT INTO narinfo_cache "
         "(store_path, nar_hash, nar_size, file_size, compression, url, sig) VALUES "
-        f"('/nix/store/{foo_hash}-foopkg', 'sha256:aaaa', 200, 100, 'zstd', 'nar/{foo_hash}.nar.zst', 'circus:testsig')"
+        f"('/nix/store/{foo_hash}-foopkg', 'sha256:aaaa', 200, 100, 'zstd', 'nar/{foo_hash}.nar.zst', '{foo_sig}')"
     )
     psql(
         "INSERT INTO narinfo_cache "
         "(store_path, nar_hash, nar_size, file_size, compression, url, sig) VALUES "
-        f"('/nix/store/{bar_hash}-barpkg', 'sha256:bbbb', 300, 150, 'zstd', 'nar/{bar_hash}.nar.zst', 'circus:testsig')"
+        f"('/nix/store/{bar_hash}-barpkg', 'sha256:bbbb', 300, 150, 'zstd', 'nar/{bar_hash}.nar.zst', '{bar_sig}')"
     )
 
     with subtest("Admin cache list reports the global cache with storage"):
