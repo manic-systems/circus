@@ -57,6 +57,7 @@ impl TryFrom<q::BuildRow> for Build {
       meta_maintainers: r.meta_maintainers,
       required_features: r.required_features,
       effective_features: r.effective_features,
+      closure_size: r.closure_size,
     })
   }
 }

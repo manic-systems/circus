@@ -1,5 +1,5 @@
 --: BuildDependencyRow()
---: BuildRow(started_at?, completed_at?, log_path?, build_output_path?, error_message?, system?, notification_pending_since?, outputs?, constituents?, builder_id?, agent_machine_id?, fod_hash?, meta_description?, meta_license?, meta_homepage?, meta_maintainers?, started_notified_at?, effective_features?)
+--: BuildRow(started_at?, completed_at?, log_path?, build_output_path?, error_message?, system?, notification_pending_since?, outputs?, constituents?, builder_id?, agent_machine_id?, fod_hash?, meta_description?, meta_license?, meta_homepage?, meta_maintainers?, started_notified_at?, effective_features?, closure_size?)
 --! create : BuildDependencyRow
 INSERT INTO
   build_dependencies (build_id, dependency_build_id)

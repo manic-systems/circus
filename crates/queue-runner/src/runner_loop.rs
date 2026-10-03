@@ -14,6 +14,7 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+  closure,
   helpers::{get_project_for_build, is_interval_rebuild},
   worker::{ActiveBuilds, WorkerPool},
 };
@@ -300,12 +301,24 @@ fn spawn_succeeded_output_closure_publication(
   worker_pool: &Arc<WorkerPool>,
   build_id: Uuid,
   output_paths: Vec<String>,
+  measured_size: Option<i64>,
 ) {
   let pool = pool.clone();
   let worker_pool = Arc::clone(worker_pool);
   // Published off the scheduler loop, but tracked so a panic surfaces in
   // reap_closure_publications.
   tasks.spawn(async move {
+    match measured_size {
+      Some(size) => {
+        if let Err(error) =
+          repo::builds::set_closure_size(&pool, build_id, size).await
+        {
+          tracing::warn!(%build_id, "Failed to record closure size: {error}");
+        }
+      },
+      None => closure::record(&pool, build_id, &output_paths).await,
+    }
+
     publish_succeeded_output_closure(
       &pool,
       &worker_pool,
@@ -500,6 +513,7 @@ pub async fn run(
                     &worker_pool,
                     build.id,
                     output_paths,
+                    existing.closure_size,
                   );
                 }
                 continue;
@@ -555,6 +569,7 @@ pub async fn run(
                   &worker_pool,
                   build.id,
                   vec![output_path.clone()],
+                  None,
                 );
               }
               continue;
