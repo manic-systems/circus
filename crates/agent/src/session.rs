@@ -130,7 +130,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
   let session = register(&runner_cap, cfg, machine_id, local_builder).await?;
   tracing::info!("registered with runner");
 
-  let heartbeat_join = spawn_heartbeat(
+  let mut heartbeat_join = spawn_heartbeat(
     session,
     Duration::from_secs(cfg.heartbeat_interval_secs.max(1)),
     cfg.work_dir.clone(),
@@ -149,17 +149,23 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
       _ = &mut rpc_join => {
         tracing::info!("connection ended before ephemeral limits");
       },
+      _ = &mut heartbeat_join => {},
       () = quit.cancelled() => {
         drain_inflight().await;
       },
     }
     monitor.abort();
   } else {
-    let _ = rpc_join.await;
+    tokio::select! {
+      _ = &mut rpc_join => {},
+      _ = &mut heartbeat_join => {},
+    }
   }
 
   heartbeat_join.abort();
-  let _ = disconnector.await;
+  // A half-open socket never completes the graceful disconnect.
+  let _ = tokio::time::timeout(DISCONNECT_GRACE, disconnector).await;
+  rpc_join.abort();
   Ok(())
 }
 
@@ -297,6 +303,10 @@ fn num_cpus() -> usize {
   std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
+/// Unanswered heartbeat intervals before the runner is presumed gone.
+const HEARTBEAT_MISSES: u32 = 3;
+const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
+
 fn spawn_heartbeat(
   session: agent_session::Client,
   interval: Duration,
@@ -307,9 +317,21 @@ fn spawn_heartbeat(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
       ticker.tick().await;
-      if let Err(e) = send_heartbeat(&session, &work_dir).await {
-        tracing::warn!("heartbeat failed: {e}; ending loop");
-        break;
+      match tokio::time::timeout(
+        interval.saturating_mul(HEARTBEAT_MISSES),
+        send_heartbeat(&session, &work_dir),
+      )
+      .await
+      {
+        Ok(Ok(())) => {},
+        Ok(Err(e)) => {
+          tracing::warn!("heartbeat failed: {e}, dropping connection");
+          break;
+        },
+        Err(_) => {
+          tracing::warn!("heartbeat unanswered, dropping connection");
+          break;
+        },
       }
     }
   })
