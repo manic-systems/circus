@@ -18,6 +18,7 @@ use super::{
       RenderExt,
       enforce_page_access,
       format_bytes,
+      format_exact_bytes,
       store_path_hash,
     },
     templates::{
@@ -40,7 +41,7 @@ fn cache_db_err(error: circus_common::CiError) -> Response {
 fn fmt_opt_ts(ts: Option<chrono::DateTime<chrono::Utc>>) -> String {
   ts.map_or_else(
     || "-".to_owned(),
-    |t| t.format("%Y-%m-%d %H:%M").to_string(),
+    |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
   )
 }
 
@@ -346,16 +347,31 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
     .into_iter()
     .map(|it| {
       NarRowView {
-        hash:         store_path_hash(&it.store_path),
-        package:      it.package_name,
-        nar_size:     format_bytes(it.nar_size),
-        compressed:   it.file_size.map_or_else(|| "-".to_owned(), format_bytes),
-        created_at:   it.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        last_fetched: it.last_fetched_at.map_or_else(
+        hash:             store_path_hash(&it.store_path),
+        package:          it.package_name,
+        nar_size:         format_bytes(it.nar_size),
+        nar_bytes:        format_exact_bytes(it.nar_size),
+        compressed:       it
+          .file_size
+          .map_or_else(|| "-".to_owned(), format_bytes),
+        compressed_bytes: it
+          .file_size
+          .map(format_exact_bytes)
+          .unwrap_or_default(),
+        created_at:       it
+          .created_at
+          .format("%Y-%m-%d %H:%M UTC")
+          .to_string(),
+        created_iso:      it.created_at.to_rfc3339(),
+        last_fetched:     it.last_fetched_at.map_or_else(
           || "Never".to_owned(),
-          |t| t.format("%Y-%m-%d %H:%M").to_string(),
+          |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
         ),
-        store_path:   it.store_path,
+        last_fetched_iso: it
+          .last_fetched_at
+          .map(|t| t.to_rfc3339())
+          .unwrap_or_default(),
+        store_path:       it.store_path,
       }
     })
     .collect();
@@ -387,7 +403,13 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
     nar_size: format_bytes(summary.uncompressed_bytes),
     file_size: format_bytes(summary.compressed_bytes),
     last_uploaded: fmt_opt_ts(last_uploaded),
+    last_uploaded_iso: last_uploaded
+      .map(|t| t.to_rfc3339())
+      .unwrap_or_default(),
     oldest_fetched: fmt_opt_ts(oldest_fetched),
+    oldest_fetched_iso: oldest_fetched
+      .map(|t| t.to_rfc3339())
+      .unwrap_or_default(),
     nars,
     page: pagination.page,
     total_pages: pagination.total_pages,
