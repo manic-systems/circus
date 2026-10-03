@@ -16,6 +16,7 @@ use super::super::{
   shared::{
     BuildErrorLine,
     BuildView,
+    EvalProgressView,
     EvalSummaryView,
     EvalView,
     JobStatusCell,
@@ -302,6 +303,13 @@ pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
       "1m 12s".into()
     },
     running_since:  (status == "Running").then(|| Utc::now().timestamp() - 40),
+    progress:       (status == "Running").then(|| {
+      EvalProgressView {
+        id:      id(n),
+        count:   "1,204 / 1,530".into(),
+        percent: 78,
+      }
+    }),
     error_message:  String::new(),
     error_segments: Vec::new(),
     hidden:         false,
@@ -329,6 +337,7 @@ pub(super) fn eval_summaries() -> Vec<EvalSummaryView> {
     time_iso:       "2026-06-18T11:42:00+00:00".into(),
     duration:       "1m 12s".into(),
     running_since:  None,
+    progress:       None,
     succeeded:      18,
     failed:         1,
     pending:        0,

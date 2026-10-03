@@ -93,6 +93,17 @@
                 <span class="build-meta-value">{{ eval.duration }}</span>
             </div>
         {% endif %}
+        {% if let Some(progress) = eval.progress %}
+            <div class="build-meta-item">
+                <span class="build-meta-label">Attributes</span>
+                <span class="build-meta-value eval-progress" data-eval-progress="{{ progress.id }}">
+                    <span class="eval-progress-count">{{ progress.count }}</span>
+                    <span class="eval-progress-bar">
+                        <span style="width: {{ progress.percent }}%"></span>
+                    </span>
+                </span>
+            </div>
+        {% endif %}
         <div class="build-meta-item build-meta-wide">
             <span class="build-meta-label">Commit</span>
             <span class="build-meta-value">

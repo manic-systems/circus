@@ -705,6 +705,8 @@ mod tests {
       started_at: None,
       finished_at: None,
       commit_subject: None,
+      attrs_done: None,
+      attrs_total: None,
     }
   }
 

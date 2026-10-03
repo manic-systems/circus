@@ -74,6 +74,8 @@ pub struct Evaluation {
   pub started_at:         Option<DateTime<Utc>>,
   pub finished_at:        Option<DateTime<Utc>>,
   pub commit_subject:     Option<String>,
+  pub attrs_done:         Option<i32>,
+  pub attrs_total:        Option<i32>,
 }
 
 impl Evaluation {

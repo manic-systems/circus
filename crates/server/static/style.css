@@ -2951,6 +2951,45 @@ td.commit-cell {
   line-height: 22px;
 }
 
+.eval-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+}
+
+.build-meta-value.eval-progress {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.eval-progress-bar {
+  flex: 0 0 56px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.build-meta-value .eval-progress-bar {
+  flex-basis: auto;
+}
+
+.eval-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--status-running);
+  transition: width 0.6s ease;
+}
+
 tr:has(.nar-detail[open]) td {
   padding-top: 12px;
   padding-bottom: 10px;
