@@ -2,6 +2,10 @@ use axum::{
   extract::{Path, Query, State},
   response::{Html, IntoResponse, Response},
 };
+use circus_common::{
+  models::SortDirection,
+  repo::narinfo_cache::{NarSort, NarSortColumn},
+};
 
 use super::{
   super::{
@@ -22,6 +26,7 @@ use super::{
       CacheRowView,
       CachesTemplate,
       NarRowView,
+      SortHeaderView,
     },
   },
   ui_config,
@@ -204,6 +209,81 @@ pub(in crate::routes::dashboard) async fn cache_detail_page(
   .render_html_or_500()
 }
 
+/// Each header click steps its column through ascending, descending, and back
+/// to the default newest-first order.
+fn nar_sort_headers(
+  detail_href: &str,
+  params: &CacheNarsParams,
+  active: Option<NarSort>,
+) -> Vec<SortHeaderView> {
+  NarSortColumn::ALL
+    .into_iter()
+    .map(|column| {
+      let active_dir = active
+        .filter(|sort| sort.column == column)
+        .map(|sort| sort.direction);
+      let next_dir = match active_dir {
+        None => Some(SortDirection::Asc),
+        Some(SortDirection::Asc) => Some(SortDirection::Desc),
+        Some(SortDirection::Desc) => None,
+      };
+
+      let next_sort = next_dir.map(|direction| NarSort { column, direction });
+
+      SortHeaderView {
+        key:         column.as_str().to_owned(),
+        label:       nar_sort_label(column).to_owned(),
+        href:        nars_href(detail_href, params, next_sort, None),
+        default_dir: SortDirection::Asc.as_str().to_owned(),
+        active:      active_dir.is_some(),
+        indicator:   active_dir.map_or("", SortDirection::as_str).to_owned(),
+        aria_sort:   match active_dir {
+          None => "none",
+          Some(SortDirection::Asc) => "ascending",
+          Some(SortDirection::Desc) => "descending",
+        }
+        .to_owned(),
+      }
+    })
+    .collect()
+}
+
+/// `page` is an `(offset, limit)` pair, and `None` starts from the first page.
+fn nars_href(
+  detail_href: &str,
+  params: &CacheNarsParams,
+  sort: Option<NarSort>,
+  page: Option<(i64, i64)>,
+) -> String {
+  let mut query = url::form_urlencoded::Serializer::new(String::new());
+  if let Some(hash) = &params.hash {
+    query.append_pair("hash", hash);
+  }
+  if let Some(package) = &params.package {
+    query.append_pair("package", package);
+  }
+  if let Some(active) = sort {
+    query.append_pair("sort", active.column.as_str());
+    query.append_pair("dir", active.direction.as_str());
+  }
+  if let Some((offset, limit)) = page {
+    query.append_pair("offset", &offset.to_string());
+    query.append_pair("limit", &limit.to_string());
+  }
+  format!("{detail_href}/nars?{}", query.finish())
+}
+
+const fn nar_sort_label(column: NarSortColumn) -> &'static str {
+  match column {
+    NarSortColumn::Hash => "Hash",
+    NarSortColumn::Package => "Package",
+    NarSortColumn::NarSize => "NAR size",
+    NarSortColumn::Compressed => "Compressed",
+    NarSortColumn::Created => "Created",
+    NarSortColumn::LastFetched => "Last fetched",
+  }
+}
+
 pub(in crate::routes::dashboard) async fn cache_nars_page(
   State(state): State<AppState>,
   ctx: DashboardContext,
@@ -222,12 +302,19 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
   let offset = params.offset.unwrap_or(0).max(0);
   let hash = params.hash.clone();
   let package = params.package.clone();
+  let sort = params.sort.map(|column| {
+    NarSort {
+      column,
+      direction: params.dir.unwrap_or(SortDirection::Asc),
+    }
+  });
 
   let items = circus_common::repo::narinfo_cache::list_filtered(
     &state.pool,
     cache.scope,
     hash.as_deref(),
     package.as_deref(),
+    sort,
     limit,
     offset,
   )
@@ -274,11 +361,24 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
     .collect();
 
   let pagination = Pagination::new(total, offset, limit);
+  let detail_href = format!("/caches/{}", cache.name);
+  let page_href = |page_offset| {
+    nars_href(&detail_href, &params, sort, Some((page_offset, limit)))
+  };
+  let prev_href = page_href(pagination.prev_offset);
+  let next_href = page_href(pagination.next_offset);
+  let sort_headers = nar_sort_headers(&detail_href, &params, sort);
+
   CacheNarsTemplate {
     ui: ui_config(&state),
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name,
-    detail_href: format!("/caches/{}", cache.name),
+    sort_headers,
+    sort_key: sort.map_or("", |active| active.column.as_str()).to_owned(),
+    sort_dir: sort
+      .map_or("", |active| active.direction.as_str())
+      .to_owned(),
+    detail_href,
     scope_label: cache.scope_label().to_owned(),
     name: cache.name,
     filter_hash: params.hash.unwrap_or_default(),
@@ -293,9 +393,8 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
     total_pages: pagination.total_pages,
     has_prev: pagination.has_prev,
     has_next: pagination.has_next,
-    prev_offset: pagination.prev_offset,
-    next_offset: pagination.next_offset,
-    limit,
+    prev_href,
+    next_href,
   }
   .render_html_or_500()
 }

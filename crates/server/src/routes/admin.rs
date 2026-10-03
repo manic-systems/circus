@@ -608,6 +608,7 @@ async fn list_cache_nars(
     cache.scope,
     hash.as_deref(),
     package.as_deref(),
+    None,
     limit,
     offset,
   )

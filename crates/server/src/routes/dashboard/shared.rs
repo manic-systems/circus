@@ -11,13 +11,17 @@ use axum::{
   http::{Extensions, StatusCode, request::Parts},
   response::{Html, IntoResponse, Redirect, Response},
 };
-use circus_common::models::{
-  ApiKey,
-  Build,
-  BuildStatus,
-  Evaluation,
-  EvaluationStatus,
-  User,
+use circus_common::{
+  models::{
+    ApiKey,
+    Build,
+    BuildStatus,
+    Evaluation,
+    EvaluationStatus,
+    SortDirection,
+    User,
+  },
+  repo::narinfo_cache::NarSortColumn,
 };
 use circus_config::{Config, PageAccessLevel, ServerConfig, UiConfig};
 use cognos::internal::json::{self as nix_json, Actions, Verbosity};
@@ -124,6 +128,8 @@ pub(super) struct CacheNarsParams {
     deserialize_with = "crate::routes::serde_util::empty_string_as_none"
   )]
   pub(super) package: Option<String>,
+  pub(super) sort:    Option<NarSortColumn>,
+  pub(super) dir:     Option<SortDirection>,
   pub(super) limit:   Option<i64>,
   pub(super) offset:  Option<i64>,
 }

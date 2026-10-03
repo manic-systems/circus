@@ -157,7 +157,7 @@ SELECT
   MIN(last_fetched_at) AS oldest_fetched
 FROM inventory;
 
---! list_filtered (project_id?, hash_prefix?, package_query?) : (file_size?, last_fetched_at?)
+--! list_filtered (project_id?, hash_prefix?, package_query?, sort?) : (file_size?, last_fetched_at?)
 WITH uploaded AS (
   SELECT store_path, nar_size, file_size, compression, created_at,
     last_fetched_at
@@ -198,18 +198,35 @@ local AS (
   )
   ORDER BY path, created_at DESC
 ),
-inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local)
-SELECT
-  store_path,
-  COALESCE(substring(store_path FROM '^/nix/store/[^-]+-(.*)$'), store_path)
-    AS package_name,
-  nar_size, file_size, compression, created_at, last_fetched_at
-FROM inventory
-WHERE (:hash_prefix::text IS NULL
-    OR store_path LIKE '/nix/store/' || :hash_prefix || '%')
-  AND (:package_query::text IS NULL
-    OR store_path LIKE '%-%' || :package_query || '%')
-ORDER BY created_at DESC
+inventory AS (SELECT * FROM uploaded UNION ALL SELECT * FROM local),
+listed AS (
+  SELECT
+    store_path,
+    COALESCE(substring(store_path FROM '^/nix/store/[^-]+-(.*)$'), store_path)
+      AS package_name,
+    nar_size, file_size, compression, created_at, last_fetched_at
+  FROM inventory
+  WHERE (:hash_prefix::text IS NULL
+      OR store_path LIKE '/nix/store/' || :hash_prefix || '%')
+    AND (:package_query::text IS NULL
+      OR store_path LIKE '%-%' || :package_query || '%')
+)
+SELECT * FROM listed
+ORDER BY
+  CASE WHEN :sort::text = 'hash_asc'          THEN store_path      END ASC,
+  CASE WHEN :sort::text = 'hash_desc'         THEN store_path      END DESC,
+  CASE WHEN :sort::text = 'package_asc'       THEN package_name    END ASC,
+  CASE WHEN :sort::text = 'package_desc'      THEN package_name    END DESC,
+  CASE WHEN :sort::text = 'nar_size_asc'      THEN nar_size        END ASC,
+  CASE WHEN :sort::text = 'nar_size_desc'     THEN nar_size        END DESC,
+  CASE WHEN :sort::text = 'compressed_asc'    THEN file_size       END ASC  NULLS LAST,
+  CASE WHEN :sort::text = 'compressed_desc'   THEN file_size       END DESC NULLS LAST,
+  CASE WHEN :sort::text = 'created_asc'       THEN created_at      END ASC,
+  CASE WHEN :sort::text = 'created_desc'      THEN created_at      END DESC,
+  CASE WHEN :sort::text = 'last_fetched_asc'  THEN last_fetched_at END ASC  NULLS LAST,
+  CASE WHEN :sort::text = 'last_fetched_desc' THEN last_fetched_at END DESC NULLS LAST,
+  created_at DESC,
+  store_path
 LIMIT :limit
 OFFSET :offset;
 
