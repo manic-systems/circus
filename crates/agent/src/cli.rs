@@ -131,18 +131,19 @@ where
       unsafe { std::env::set_var(sandbox::DATA_DIR_ENV, dir) };
     }
     sandbox::preflight()?;
-  }
 
-  let kvm_usable = || {
-    std::fs::OpenOptions::new()
-      .read(true)
-      .write(true)
-      .open("/dev/kvm")
-      .is_ok()
-  };
-  if cfg.agent.supported_features.iter().any(|f| f == "kvm") && !kvm_usable() {
-    tracing::warn!("/dev/kvm is not read-write, dropping the kvm feature");
-    cfg.agent.supported_features.retain(|f| f != "kvm");
+    let kvm_usable = || {
+      std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .is_ok()
+    };
+    if cfg.agent.supported_features.iter().any(|f| f == "kvm") && !kvm_usable()
+    {
+      tracing::warn!("/dev/kvm is not read-write, dropping the kvm feature");
+      cfg.agent.supported_features.retain(|f| f != "kvm");
+    }
   }
 
   let rt = tokio::runtime::Builder::new_current_thread()
