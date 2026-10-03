@@ -54,6 +54,7 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/builds/{id}` | Get a build | 200 |
 | POST | `/api/v1/builds/{id}/bump` | Bump build priority | 200 |
 | POST | `/api/v1/builds/{id}/cancel` | Cancel a build | 200 |
+| GET | `/api/v1/builds/{id}/closure-diff` | Package version changes in this build's closure against the job's previous success | 200, 404 |
 | GET | `/api/v1/builds/{id}/constituents` | List constituents of an aggregate build | 200, 422 |
 | GET | `/api/v1/builds/{id}/dependencies` | List builds this build depends on | 200 |
 | GET | `/api/v1/builds/{id}/dependents` | List builds that depend on this build | 200 |

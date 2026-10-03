@@ -23,6 +23,7 @@ clap.workspace              = true
 color-eyre.workspace        = true
 dashmap.workspace           = true
 data-encoding.workspace     = true
+dix-diff.workspace          = true
 futures.workspace           = true
 jiff.workspace              = true
 jsonwebtoken.workspace      = true

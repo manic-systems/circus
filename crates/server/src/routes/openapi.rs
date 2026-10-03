@@ -794,6 +794,14 @@ fn document_value() -> Value {
           ],
           "responses": { "200": { "description": "Array of history entries, newest first" } } }
       },
+      "/builds/{id}/closure-diff": {
+        "get": { "summary": "Package version changes in this build's closure against the job's previous success",
+          "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": {
+            "200": { "description": "against_build_id, against_commit, and a changes array" },
+            "404": { "description": "No diff was recorded" }
+          } }
+      },
       "/builds/{id}/dependents": {
         "get": { "summary": "List builds that depend on this build",
           "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
