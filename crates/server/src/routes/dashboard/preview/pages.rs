@@ -658,6 +658,30 @@ pub(super) async fn cache_nars() -> Response {
     detail_href:    "/caches/global".into(),
     filter_hash:    String::new(),
     filter_package: String::new(),
+    sort_headers:   [
+      ("hash", "Hash"),
+      ("package", "Package"),
+      ("nar_size", "NAR size"),
+      ("compressed", "Compressed"),
+      ("created", "Created"),
+      ("last_fetched", "Last fetched"),
+    ]
+    .into_iter()
+    .map(|(key, label)| {
+      let active = key == "last_fetched";
+      SortHeaderView {
+        key: key.into(),
+        label: label.into(),
+        href: format!("/caches/global/nars?sort={key}&dir=asc"),
+        default_dir: "asc".into(),
+        active,
+        indicator: if active { "desc" } else { "" }.into(),
+        aria_sort: if active { "descending" } else { "none" }.into(),
+      }
+    })
+    .collect(),
+    sort_key:       "last_fetched".into(),
+    sort_dir:       "desc".into(),
     total_nars:     30,
     nar_size:       "45.6 MiB".into(),
     file_size:      "8.1 MiB".into(),
@@ -687,8 +711,7 @@ pub(super) async fn cache_nars() -> Response {
     total_pages:    2,
     has_prev:       false,
     has_next:       true,
-    prev_offset:    0,
-    next_offset:    20,
-    limit:          20,
+    prev_href:      "/caches/global/nars?offset=0&limit=20".into(),
+    next_href:      "/caches/global/nars?offset=20&limit=20".into(),
   })
 }

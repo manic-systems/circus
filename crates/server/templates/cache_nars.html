@@ -61,6 +61,10 @@
         <label>
             Package: <input type="text" name="package" value="{{ filter_package }}" placeholder="package name">
         </label>
+        {% if !sort_key.is_empty() %}
+            <input type="hidden" name="sort" value="{{ sort_key }}">
+            <input type="hidden" name="dir" value="{{ sort_dir }}">
+        {% endif %}
         <button type="submit" class="btn btn-secondary">Filter</button>
     </form>
 
@@ -82,12 +86,16 @@
                 </colgroup>
                 <thead>
                     <tr>
-                        <th>Hash</th>
-                        <th>Package</th>
-                        <th>NAR size</th>
-                        <th>Compressed</th>
-                        <th>Created</th>
-                        <th>Last fetched</th>
+                        {% for header in sort_headers %}
+                            <th aria-sort="{{ header.aria_sort }}">
+                                <a class="sort-link{% if header.active %} is-active{% endif %}"
+                                   href="{{ header.href }}">
+                                    <span>{{ header.label }}</span>
+                                    <span class="sort-indicator sort-{{ header.indicator }}"
+                                          aria-hidden="true"></span>
+                                </a>
+                            </th>
+                        {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
@@ -114,15 +122,13 @@
         {% if total_pages > 1 %}
             <nav class="pagination">
                 {% if has_prev %}
-                    <a href="{{ detail_href }}/nars?offset={{ prev_offset }}&limit={{ limit }}&hash={{ filter_hash }}&package={{ filter_package }}"
-                       class="btn btn-small btn-secondary">
+                    <a href="{{ prev_href }}" class="btn btn-small btn-secondary">
                         &laquo; Previous
                     </a>
                 {% endif %}
                 <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
                 {% if has_next %}
-                    <a href="{{ detail_href }}/nars?offset={{ next_offset }}&limit={{ limit }}&hash={{ filter_hash }}&package={{ filter_package }}"
-                       class="btn btn-small btn-secondary">
+                    <a href="{{ next_href }}" class="btn btn-small btn-secondary">
                         Next &raquo;
                     </a>
                 {% endif %}
