@@ -1,5 +1,6 @@
 use std::{
   ffi::OsString,
+  os::unix::process::ExitStatusExt,
   path::{Path, PathBuf},
   time::Duration,
 };
@@ -20,6 +21,9 @@ pub struct BuildResult {
   pub stderr:               String,
   pub output_paths:         Vec<String>,
   pub cache_upload_handled: bool,
+  /// The failure came from the machine rather than the derivation, so
+  /// another attempt can succeed.
+  pub transient:            bool,
 }
 
 /// Run `nix build` for a derivation path.
@@ -82,6 +86,15 @@ fn common_nix_build_args(drv_path: &str, extra: &[String]) -> Vec<OsString> {
   args
 }
 
+/// Nix reports a builder killed by a signal only as message text, so a build
+/// that fails while the kernel OOM killer fires is taken to be its victim.
+fn kernel_oom_kills() -> Option<u64> {
+  std::fs::read_to_string("/proc/vmstat")
+    .ok()?
+    .lines()
+    .find_map(|line| line.strip_prefix("oom_kill ")?.parse().ok())
+}
+
 async fn run_nix_build_command(
   args: Vec<OsString>,
   work_dir: &Path,
@@ -100,6 +113,7 @@ async fn run_nix_build_command(
       .stderr(std::process::Stdio::piped());
     configure(&mut cmd);
 
+    let oom_kills_before = kernel_oom_kills();
     let mut child = cmd
       .spawn()
       .map_err(|e| CiError::Build(format!("Failed to run {operation}: {e}")))?;
@@ -131,6 +145,11 @@ async fn run_nix_build_command(
       stderr: stderr_buf,
       output_paths,
       cache_upload_handled: false,
+      transient: matches!(status.signal(), Some(9))
+        || !status.success()
+          && oom_kills_before
+            .zip(kernel_oom_kills())
+            .is_some_and(|(before, after)| after > before),
     })
   })
   .await;

@@ -457,6 +457,13 @@ pub async fn run_on_agent(
       stderr,
       output_paths,
       cache_upload_handled: opts.cache_upload_enabled_s3,
+      transient: false,
+    }
+  };
+  let transient = |exit_code, stderr: String| {
+    BuildResult {
+      transient: true,
+      ..result(false, exit_code, stderr, Vec::new())
     }
   };
 
@@ -518,8 +525,11 @@ pub async fn run_on_agent(
     Ok(DispatchResult::Aborted) => {
       Some(result(false, 130, "build aborted".into(), Vec::new()))
     },
+    Ok(DispatchResult::InfraFailed(error_message)) => {
+      Some(transient(1, error_message))
+    },
     Ok(DispatchResult::OomKilled(error_message)) => {
-      Some(result(false, -9, error_message, Vec::new()))
+      Some(transient(-9, error_message))
     },
     Ok(DispatchResult::Disconnected) | Err(_) => {
       tracing::warn!(name = %snap.name, "agent disconnected mid-build; falling back");

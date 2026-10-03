@@ -673,6 +673,11 @@ highest priority first, then by jobset scheduling-share fairness, then oldest
 creation time. This is a preference, not a preemption mechanism: it does not
 stop or reorder builds that are already running.
 
+A build that fails because of the machine rather than the derivation is retried
+once before it is marked failed. That covers agents that run out of memory, and
+agents that fail to fetch inputs or upload outputs. Build failures and timeouts
+are not retried, and a manual restart starts the retry budget over.
+
 When a build fails permanently (including after exhausting its retries), every
 build that depends on it is marked `dependency_failed` rather than waiting in
 the queue forever. Restarting the failed build also returns its

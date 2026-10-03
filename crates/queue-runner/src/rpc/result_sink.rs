@@ -29,6 +29,7 @@ pub struct ResultSinkImpl {
 pub enum BuildOutcomeKind {
   Success { error_message: Option<String> },
   Failure { error_message: Option<String> },
+  InfraFailure { error_message: Option<String> },
   TimedOut,
   Aborted,
   OomKilled { error_message: Option<String> },
@@ -65,15 +66,23 @@ impl result_sink::Server for ResultSinkImpl {
             error_message: result_error_message(r),
           }
         },
+        BuildOutcome::BuildFailure => {
+          BuildOutcomeKind::Failure {
+            error_message: result_error_message(r),
+          }
+        },
+        BuildOutcome::PreparingFailure
+        | BuildOutcome::ImportFailure
+        | BuildOutcome::UploadFailure
+        | BuildOutcome::PostProcessFailure => {
+          BuildOutcomeKind::InfraFailure {
+            error_message: result_error_message(r),
+          }
+        },
         BuildOutcome::TimedOut => BuildOutcomeKind::TimedOut,
         BuildOutcome::Aborted => BuildOutcomeKind::Aborted,
         BuildOutcome::OomKilled => {
           BuildOutcomeKind::OomKilled {
-            error_message: result_error_message(r),
-          }
-        },
-        _ => {
-          BuildOutcomeKind::Failure {
             error_message: result_error_message(r),
           }
         },

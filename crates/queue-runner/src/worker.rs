@@ -1382,12 +1382,12 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         tracing::info!(build_id = %build.id, "Build completed successfully");
       } else {
         // Check if we should retry
-        if build.retry_count < build.max_retries {
+        if build_result.transient && build.retry_count < build.max_retries {
           tracing::info!(
               build_id = %build.id,
               retry = build.retry_count + 1,
               max = build.max_retries,
-              "Build failed, scheduling retry"
+              "Build failed on the machine, scheduling retry"
           );
           repo::builds::retry(pool, build.id).await?;
           if let Err(e) = fs::remove_file(&live_log_path).await {
@@ -1409,13 +1409,14 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         )
         .await?;
 
-        if let Err(e) = repo::failed_paths_cache::insert(
-          pool,
-          &build.drv_path,
-          failure_status,
-          build.id,
-        )
-        .await
+        if !build_result.transient
+          && let Err(e) = repo::failed_paths_cache::insert(
+            pool,
+            &build.drv_path,
+            failure_status,
+            build.id,
+          )
+          .await
         {
           tracing::warn!(build_id = %build.id, "Failed to cache failed path: {e}");
         }

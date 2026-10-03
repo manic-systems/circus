@@ -272,6 +272,7 @@ async fn run_command(
   cancel: CancellationToken,
 ) -> color_eyre::Result<LocalResult> {
   let started = Instant::now();
+  let oom_kills_before = kernel_oom_kills();
   let mut child = cmd.spawn()?;
   let stdout = child
     .stdout
@@ -646,8 +647,14 @@ async fn run_command(
   };
 
   let exit_code = status.code().unwrap_or(-1);
-  let oom_killed =
-    !killed && !aborted && !timed_out && matches!(status.signal(), Some(9));
+  let oom_killed = !killed
+    && !aborted
+    && !timed_out
+    && (matches!(status.signal(), Some(9))
+      || !status.success()
+        && oom_kills_before
+          .zip(kernel_oom_kills())
+          .is_some_and(|(before, after)| after > before));
   let success = status.success()
     && !log_size_exceeded
     && !sink_failed
@@ -746,6 +753,15 @@ async fn query_outputs(drv_path: &str, rootless: bool) -> Vec<ResolvedOutput> {
     },
     _ => Vec::new(),
   }
+}
+
+/// Nix reports a builder killed by a signal only as message text, so a build
+/// that fails while the kernel OOM killer fires is taken to be its victim.
+fn kernel_oom_kills() -> Option<u64> {
+  std::fs::read_to_string("/proc/vmstat")
+    .ok()?
+    .lines()
+    .find_map(|line| line.strip_prefix("oom_kill ")?.parse().ok())
 }
 
 /// Join the last few nix messages into a capped error summary.

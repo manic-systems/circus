@@ -65,6 +65,7 @@ pub enum DispatchResult {
     error_message: Option<String>,
   },
   Failed(String),
+  InfraFailed(String),
   TimedOut,
   Aborted,
   OomKilled(String),

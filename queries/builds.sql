@@ -264,7 +264,7 @@ UPDATE builds
 SET status = 'pending', started_at = NULL, completed_at = NULL,
     log_path = NULL, build_output_path = NULL, error_message = NULL,
     started_notified_at = NULL, effective_features = NULL,
-    retry_count = retry_count + 1
+    retry_count = 0
 WHERE id = :id
   AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure',
                  'dependency_failed')

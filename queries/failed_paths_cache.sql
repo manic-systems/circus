@@ -46,7 +46,7 @@ WITH cleared AS (
       error_message = NULL,
       started_notified_at = NULL,
       effective_features = NULL,
-      retry_count = retry_count + 1
+      retry_count = 0
   WHERE b.status = 'cached_failure'
     AND (
       b.drv_path IN (SELECT drv_path FROM cleared)
