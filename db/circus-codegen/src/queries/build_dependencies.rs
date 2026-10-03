@@ -46,6 +46,7 @@ pub struct BuildRow {
     pub started_notified_at: Option<jiff::Timestamp>,
     pub effective_features: Option<Vec<String>>,
     pub agent_losses: i32,
+    pub closure_size: Option<i64>,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -81,6 +82,7 @@ pub struct BuildRowBorrowed<'a> {
     pub started_notified_at: Option<jiff::Timestamp>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
     pub agent_losses: i32,
+    pub closure_size: Option<i64>,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -118,6 +120,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             started_notified_at,
             effective_features,
             agent_losses,
+            closure_size,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -154,6 +157,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
             agent_losses,
+            closure_size,
         }
     }
 }
@@ -569,6 +573,7 @@ impl ListDependencyBuildsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -636,6 +641,7 @@ impl ListDependentBuildsStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -763,6 +769,7 @@ impl ListFailedDependenciesStmt {
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),

@@ -57,6 +57,7 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/builds/{id}/constituents` | List constituents of an aggregate build | 200, 422 |
 | GET | `/api/v1/builds/{id}/dependencies` | List builds this build depends on | 200 |
 | GET | `/api/v1/builds/{id}/dependents` | List builds that depend on this build | 200 |
+| GET | `/api/v1/builds/{id}/history` | List finished builds of the same job from earlier branch evaluations | 200 |
 | PUT | `/api/v1/builds/{id}/keep/{value}` | Pin or unpin a build from GC | 200 |
 | GET | `/api/v1/builds/{id}/log` | Get build log (text) | 200 |
 | GET | `/api/v1/builds/{id}/log/stream` | SSE-stream the live build log | 200 |
