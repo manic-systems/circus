@@ -3213,6 +3213,22 @@ code.commit-ref {
   vertical-align: baseline;
 }
 
+.closure-change {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-subtle);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.closure-grew {
+  color: var(--status-failed);
+}
+
+.closure-shrank {
+  color: var(--status-success);
+}
+
 .broke-in-since {
   display: block;
   margin-top: 4px;

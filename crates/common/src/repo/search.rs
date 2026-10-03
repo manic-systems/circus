@@ -326,6 +326,7 @@ fn build_from_quick_search_row(row: q::BuildQuickSearchRow) -> Result<Build> {
     meta_maintainers:           row.meta_maintainers,
     required_features:          row.required_features,
     effective_features:         row.effective_features,
+    closure_size:               row.closure_size,
   })
 }
 

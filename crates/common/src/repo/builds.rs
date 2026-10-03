@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
 use circus_codegen::queries::builds as q;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
@@ -48,6 +50,7 @@ impl TryFrom<q::BuildRow> for Build {
       meta_maintainers: r.meta_maintainers,
       required_features: r.required_features,
       effective_features: r.effective_features,
+      closure_size: r.closure_size,
     })
   }
 }
@@ -580,6 +583,68 @@ pub async fn broke_in(pool: &PgPool, id: Uuid) -> Result<Option<BrokeIn>> {
       last_success_commit:   found.last_success_commit,
     }
   }))
+}
+
+/// An earlier finished build of the same job.
+#[derive(Debug, Clone, Serialize)]
+pub struct JobHistoryEntry {
+  pub build_id:        Uuid,
+  pub status:          BuildStatus,
+  pub commit_hash:     String,
+  pub evaluation_time: DateTime<Utc>,
+  pub started_at:      Option<DateTime<Utc>>,
+  pub completed_at:    Option<DateTime<Utc>>,
+  pub closure_size:    Option<i64>,
+}
+
+/// List the finished builds of a branch build's job from earlier
+/// evaluations, newest first.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn job_history(
+  pool: &PgPool,
+  id: Uuid,
+  limit: i64,
+) -> Result<Vec<JobHistoryEntry>> {
+  let client = pool.get().await?;
+  let rows = q::job_history().bind(&client, &id, &limit).all().await?;
+  rows
+    .into_iter()
+    .map(|row| {
+      let status = row.status.parse::<BuildStatus>().map_err(|error| {
+        CiError::Internal(format!(
+          "build {} in the database has {error}",
+          row.build_id
+        ))
+      })?;
+      Ok(JobHistoryEntry {
+        build_id: row.build_id,
+        status,
+        commit_hash: row.commit_hash,
+        evaluation_time: row.evaluation_time,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        closure_size: row.closure_size,
+      })
+    })
+    .collect()
+}
+
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn set_closure_size(
+  pool: &PgPool,
+  id: Uuid,
+  closure_size: i64,
+) -> Result<()> {
+  let client = pool.get().await?;
+  q::set_closure_size()
+    .bind(&client, &closure_size, &id)
+    .await?;
+  Ok(())
 }
 
 /// Get aggregate build statistics.
