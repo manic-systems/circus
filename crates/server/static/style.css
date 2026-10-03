@@ -107,8 +107,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -152,8 +152,8 @@ pre,
 .path-short,
 .hash-short {
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 450;
 }
 
@@ -218,15 +218,15 @@ pre {
 }
 
 .brand-name {
-  font-size: 14px;
-  line-height: 18px;
+  font-size: 15px;
+  line-height: 20px;
   font-weight: 650;
 }
 
 .brand-subtitle {
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 13px;
+  font-size: 12px;
+  line-height: 14px;
 }
 
 .sidebar-panel {
@@ -247,15 +247,15 @@ pre {
 }
 
 .sidebar-panel-header strong {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 680;
 }
 
 .sidebar-panel-header span {
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .builder-list {
@@ -267,8 +267,8 @@ pre {
 
 .sidebar-panel-header .numeric {
   font-family: inherit;
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .builder-list li {
@@ -279,8 +279,8 @@ pre {
 }
 
 .builder-list strong {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .builder-bar {
@@ -311,8 +311,8 @@ pre {
   margin: 14px 10px 6px;
   padding: 0;
   color: var(--text-subtle);
-  font-size: 10px;
-  line-height: 12px;
+  font-size: 11px;
+  line-height: 13px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -333,8 +333,8 @@ pre {
   border: 0;
   border-left: 2px solid transparent;
   border-radius: 0;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 500;
   text-decoration: none;
 }
@@ -381,8 +381,8 @@ pre {
   display: block;
   overflow: hidden;
   color: var(--text);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 14px;
+  line-height: 18px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -392,8 +392,8 @@ pre {
   display: block;
   overflow: hidden;
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -414,8 +414,8 @@ pre {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-control);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .command-input::placeholder,
@@ -431,8 +431,8 @@ textarea::placeholder {
   justify-content: flex-end;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   flex: 0 0 auto;
 }
 
@@ -461,8 +461,8 @@ textarea::placeholder {
   padding: 8px 16px;
   color: var(--text-subtle);
   border-top: 1px solid var(--border);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .footer-version {
@@ -482,8 +482,8 @@ h2,
 h3 {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -519,8 +519,8 @@ p {
 .wizard-hint,
 .admin-notice {
   color: var(--text-subtle);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .breadcrumbs {
@@ -529,8 +529,8 @@ p {
   gap: 6px;
   margin-bottom: 12px;
   color: var(--text-subtle);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .breadcrumbs a {
@@ -572,16 +572,16 @@ p {
 .panel-header h2,
 .panel-header h3 {
   color: var(--text);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 680;
 }
 
 .panel-header a,
 .card-header a {
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 550;
   text-decoration: none;
 }
@@ -593,8 +593,8 @@ p {
 }
 
 .panel-actions .badge {
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .panel-header a:hover,
@@ -720,8 +720,8 @@ p {
 
 .metric-cell span {
   color: var(--text);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 680;
 }
 
@@ -736,8 +736,8 @@ p {
 
 .metric-cell small {
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .metric-success {
@@ -791,8 +791,8 @@ a.stat-card:hover {
 
 .stat-label {
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 12px;
+  line-height: 18px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -801,7 +801,7 @@ a.stat-card:hover {
 .stat-value {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 19px;
   line-height: 24px;
   font-weight: 650;
 }
@@ -829,8 +829,8 @@ a.stat-card:hover {
 .section-heading span,
 .page-subtitle {
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .page-subtitle {
@@ -908,8 +908,8 @@ a.stat-card:hover {
 
 .health-label {
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 650;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -917,8 +917,8 @@ a.stat-card:hover {
 
 .health-value {
   color: var(--text);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 14px;
+  line-height: 18px;
   font-weight: 680;
   font-variant-numeric: tabular-nums;
 }
@@ -963,8 +963,8 @@ table {
   border-collapse: collapse;
   table-layout: fixed;
   color: var(--text);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .probe-outputs-table {
@@ -1034,7 +1034,7 @@ table {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -1069,7 +1069,7 @@ table {
 }
 th,
 td {
-  height: 38px;
+  height: 42px;
   padding: 0 10px;
   text-align: left;
   vertical-align: middle;
@@ -1085,14 +1085,14 @@ td {
 
 .dense-table th,
 .dense-table td {
-  height: 38px;
+  height: 40px;
 }
 
 th {
   color: var(--text-muted);
   background: var(--surface-2);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 650;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -1189,8 +1189,8 @@ tbody tr:hover {
   border-radius: 0;
   padding: 0;
   min-height: 16px;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 560;
   letter-spacing: 0;
   text-transform: none;
@@ -1303,8 +1303,8 @@ tbody tr:hover {
 
 .empty-title {
   color: var(--text);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 650;
 }
 
@@ -1334,6 +1334,10 @@ tbody tr:hover {
   margin-bottom: 12px;
 }
 
+.pagination {
+  align-items: center;
+}
+
 .metrics-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1348,8 +1352,8 @@ tbody tr:hover {
   gap: 6px;
   margin-bottom: 0;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 550;
 }
 
@@ -1407,8 +1411,8 @@ select,
 .form-group select {
   height: 28px;
   padding: 0 10px;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 textarea,
@@ -1450,8 +1454,8 @@ button,
   color: var(--accent-contrast);
   cursor: pointer;
   font-family: inherit;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 550;
   text-decoration: none;
   transition:
@@ -1469,8 +1473,8 @@ button,
 .filter-form button {
   height: 28px;
   padding: 0 10px;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 600;
 }
 
@@ -1565,8 +1569,8 @@ button:disabled {
   display: grid;
   gap: 4px;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 550;
 }
 
@@ -1676,8 +1680,8 @@ button:disabled {
   margin: 10px 10px 8px;
   padding: 0;
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 650;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -1700,8 +1704,8 @@ button:disabled {
 .metric-card h3 {
   flex: 0 0 auto;
   margin: 0 0 12px;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 650;
 }
 
@@ -1743,8 +1747,8 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 550;
   overflow: hidden;
 }
@@ -1813,8 +1817,8 @@ button:disabled {
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1885,8 +1889,8 @@ button:disabled {
 .build-log-kicker {
   margin-bottom: 3px;
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1904,8 +1908,8 @@ button:disabled {
   gap: 8px;
   margin-top: 6px;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .build-log-facts {
@@ -1932,14 +1936,14 @@ button:disabled {
 
 .build-log-fact strong {
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 19px;
   line-height: 24px;
 }
 
 .build-log-fact span {
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 650;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -1982,14 +1986,14 @@ button:disabled {
 
 .log-pane-header h2 {
   margin: 0;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .log-pane-header span {
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 650;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -2017,8 +2021,8 @@ button:disabled {
 .failure-title {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 13px;
+  line-height: 19px;
   overflow-wrap: anywhere;
 }
 
@@ -2028,8 +2032,8 @@ button:disabled {
   flex-wrap: wrap;
   gap: 6px;
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .failure-meta span:not(:last-child)::after,
@@ -2042,8 +2046,8 @@ button:disabled {
 .activity-context-title {
   padding: 9px 14px 6px;
   color: var(--text-subtle);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: 11px;
+  line-height: 16px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2092,8 +2096,8 @@ button:disabled {
 .activity-label {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   overflow-wrap: anywhere;
 }
 
@@ -2112,8 +2116,8 @@ button:disabled {
   padding: 5px 12px;
   border-bottom: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 13px;
+  line-height: 19px;
   content-visibility: auto;
   contain-intrinsic-size: auto 29px;
 }
@@ -2156,8 +2160,8 @@ button:disabled {
 .log-phase-label {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 13px;
+  line-height: 19px;
   font-weight: 650;
 }
 
@@ -2206,7 +2210,7 @@ button:disabled {
 
 .login-card h1 {
   margin-bottom: 20px;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 22px;
   text-align: center;
 }
@@ -2257,8 +2261,8 @@ button:disabled {
   gap: 12px;
   margin: 16px 0;
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 12px;
+  line-height: 18px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2305,8 +2309,8 @@ pre code {
 }
 
 .text-sm {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .text-center {
@@ -2340,7 +2344,7 @@ pre code {
 
 .outputs-detail summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-subtle);
   user-select: none;
 }
@@ -2373,13 +2377,13 @@ pre code {
 .outputs-list .output-path {
   padding: 8px 0 8px 14px;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text);
 }
 
 .outputs-list .output-meta {
   padding: 8px 14px 8px 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-subtle);
 }
 
@@ -2563,7 +2567,7 @@ pre code {
   width: 24px;
   height: 24px;
   padding: 0;
-  font-size: 18px;
+  font-size: 19px;
   line-height: 1;
 }
 
@@ -2607,8 +2611,8 @@ body:has(#login-dialog[open]) .login-container {
 }
 
 .dialog-header h2 {
-  font-size: 14px;
-  line-height: 18px;
+  font-size: 15px;
+  line-height: 20px;
   font-weight: 650;
 }
 
@@ -2616,7 +2620,7 @@ body:has(#login-dialog[open]) .login-container {
   width: 28px;
   height: 28px;
   padding: 0;
-  font-size: 18px;
+  font-size: 19px;
   line-height: 1;
 }
 
@@ -2676,8 +2680,8 @@ body:has(#login-dialog[open]) .login-container {
 
 .build-meta-label {
   color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2685,8 +2689,8 @@ body:has(#login-dialog[open]) .login-container {
 
 .build-meta-value {
   color: var(--text);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
   word-break: break-word;
 }
 
@@ -2717,8 +2721,8 @@ body:has(#login-dialog[open]) .login-container {
 /* Section panel titles */
 .section-title {
   margin: 0 0 10px;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 650;
 }
 
@@ -2854,7 +2858,7 @@ body:has(#login-dialog[open]) .login-container {
   border: none;
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   padding: 5px 12px;
   cursor: pointer;
@@ -2880,7 +2884,7 @@ body:has(#login-dialog[open]) .login-container {
   display: block;
   margin: 14px 0 4px;
   color: var(--text-subtle);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2900,7 +2904,7 @@ body:has(#login-dialog[open]) .login-container {
 .copy-field textarea {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   padding: 6px 10px;
   color: var(--text);
   background: var(--surface-2);
@@ -2916,12 +2920,12 @@ body:has(#login-dialog[open]) .login-container {
 /* NAR inventory table cells */
 .mono-trunc {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 td.commit-cell {
   padding-block: 10px;
-  line-height: 18px;
+  line-height: 20px;
 }
 
 .commit-subject {
@@ -2929,8 +2933,8 @@ td.commit-cell {
   margin-top: 2px;
   overflow: hidden;
   color: var(--text-subtle);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2943,8 +2947,8 @@ td.commit-cell {
   display: block;
   margin-top: 6px;
   color: var(--text);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 15px;
+  line-height: 22px;
 }
 
 tr:has(.nar-detail[open]) td {
