@@ -1,7 +1,7 @@
 //! GC root management - prevents nix-store --gc from deleting build outputs
 
 use std::{
-  collections::HashSet,
+  collections::{HashMap, HashSet},
   hash::BuildHasher,
   os::unix::fs::symlink,
   path::{Path, PathBuf},
@@ -66,6 +66,60 @@ pub fn cleanup_old_roots<S1: BuildHasher, S2: BuildHasher, S3: BuildHasher>(
   }
 
   Ok(count)
+}
+
+/// Root every derivation in `active_drvs` under `roots_dir`, one symlink per
+/// store path basename, and drop roots whose derivation is no longer active.
+/// Returns `(added, removed)`.
+///
+/// # Errors
+///
+/// Returns error if `roots_dir` cannot be created or read.
+pub fn reconcile_drv_roots<S: BuildHasher>(
+  roots_dir: &Path,
+  store_dir: &Path,
+  active_drvs: &HashSet<String, S>,
+) -> std::io::Result<(u64, u64)> {
+  std::fs::create_dir_all(roots_dir)?;
+
+  let store = store_dir.to_string_lossy();
+  let wanted = active_drvs
+    .iter()
+    .filter(|drv| circus_nix::StorePath::is_valid(drv, &store))
+    .filter_map(|drv| Some((Path::new(drv).file_name()?.to_owned(), drv)))
+    .collect::<HashMap<_, _>>();
+
+  let mut removed = 0u64;
+  for entry in std::fs::read_dir(roots_dir)? {
+    let entry = entry?;
+    if wanted.contains_key(&entry.file_name()) {
+      continue;
+    }
+    match std::fs::remove_file(entry.path()) {
+      Ok(()) => removed += 1,
+      Err(e) => {
+        warn!(
+          "Failed to remove drv GC root {}: {e}",
+          entry.path().display()
+        );
+      },
+    }
+  }
+
+  let mut added = 0u64;
+  for (name, drv) in wanted {
+    let link = roots_dir.join(name);
+    if link.symlink_metadata().is_ok() || !Path::new(drv).exists() {
+      continue;
+    }
+    match symlink(drv, &link) {
+      Ok(()) => added += 1,
+      Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+      Err(e) => warn!("Failed to root {drv}: {e}"),
+    }
+  }
+
+  Ok((added, removed))
 }
 
 fn is_pinned_root<S1: BuildHasher, S2: BuildHasher, S3: BuildHasher>(

@@ -102,6 +102,7 @@ where
   let qr_config = config.queue_runner;
   let ephemeral_pools = qr_config.ephemeral_pools.clone();
   let nix_store_dir = config.nix.store_dir;
+  let store_dir_for_gc = nix_store_dir.clone();
 
   let workers = cli.workers.unwrap_or(qr_config.workers);
   let runner_caps = Arc::new(
@@ -230,7 +231,7 @@ where
               tracing::error!("Runner loop failed: {e}");
           }
       }
-      () = gc_loops(gc_config_for_loop, cache_gc_config, cache_upload_for_gc, database_url.clone(), db.pool().clone()) => {}
+      () = gc_loops(gc_config_for_loop, store_dir_for_gc, cache_gc_config, cache_upload_for_gc, database_url.clone(), db.pool().clone()) => {}
       () = failed_paths_cleanup_loop(db.pool().clone(), Arc::clone(&hot_config), failed_paths_cache) => {}
       () = cancel_checker_loop(db.pool().clone(), active_builds) => {}
       () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
@@ -312,15 +313,69 @@ fn start_autoscalers(
 
 async fn gc_loops(
   roots: GcConfig,
+  store_dir: PathBuf,
   cache: CacheGcConfig,
   upload: CacheUploadConfig,
   database_url: String,
   pool: circus_common::PgPool,
 ) {
+  let drv_roots = drv_roots_dir(&roots);
   tokio::join!(
-    gc_loop(roots, database_url, pool.clone()),
+    drv_roots_loop(pool.clone(), drv_roots.clone(), store_dir.clone()),
+    gc_loop(roots, drv_roots, store_dir, database_url, pool.clone()),
     crate::cache_gc::run(cache, upload, pool),
   );
+}
+
+const DRV_ROOTS_INTERVAL: Duration = Duration::from_mins(1);
+
+/// Kept beside the output roots, whose age-based cleanup would otherwise
+/// sweep them.
+fn drv_roots_dir(gc: &GcConfig) -> PathBuf {
+  gc.gc_roots_dir.with_file_name("circus-pending-drvs")
+}
+
+/// Root the derivations of pending and running builds so a GC between
+/// evaluation and dispatch cannot delete them, whether or not circus GC is
+/// enabled.
+async fn drv_roots_loop(
+  pool: circus_common::PgPool,
+  roots_dir: PathBuf,
+  store_dir: PathBuf,
+) {
+  #![expect(clippy::infinite_loop, reason = "runs for the runner's lifetime")]
+  let mut ticker = tokio::time::interval(DRV_ROOTS_INTERVAL);
+  loop {
+    ticker.tick().await;
+    reconcile_drv_roots(&pool, &roots_dir, &store_dir).await;
+  }
+}
+
+/// Serialized, so the minute loop cannot apply a stale snapshot over the
+/// pre-GC pass and drop roots just before nix-collect-garbage.
+async fn reconcile_drv_roots(
+  pool: &circus_common::PgPool,
+  roots_dir: &Path,
+  store_dir: &Path,
+) {
+  static RECONCILE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+  let _guard = RECONCILE.lock().await;
+  let active = match repo::builds::list_active_drv_paths(pool).await {
+    Ok(active) => active,
+    Err(e) => {
+      tracing::warn!("Failed to list pending derivations for GC roots: {e}");
+      return;
+    },
+  };
+  match gc_roots::reconcile_drv_roots(roots_dir, store_dir, &active) {
+    Ok((added, removed)) if added + removed > 0 => {
+      tracing::info!(added, removed, "Reconciled pending derivation GC roots");
+    },
+    Ok(_) => {},
+    Err(e) => {
+      tracing::warn!("Failed to reconcile pending derivation GC roots: {e}");
+    },
+  }
 }
 
 /// Spawn the capnp-rpc agent listener on its own current-thread runtime.
@@ -392,6 +447,8 @@ async fn cleanup_stale_logs(log_dir: &Path) {
 
 async fn gc_loop(
   gc_config: GcConfig,
+  drv_roots: PathBuf,
+  store_dir: PathBuf,
   database_url: String,
   pool: circus_common::PgPool,
 ) {
@@ -473,6 +530,7 @@ async fn gc_loop(
     // A scheduled cycle only pays for nix-collect-garbage when roots aged
     // out; a manual request always runs it.
     if removed_roots > 0 || forced {
+      reconcile_drv_roots(&pool, &drv_roots, &store_dir).await;
       match tokio::process::Command::new("nix-collect-garbage")
         .output()
         .await

@@ -835,6 +835,17 @@ pub async fn list_pinned_ids(pool: &PgPool) -> Result<HashSet<Uuid>> {
   Ok(rows.into_iter().collect())
 }
 
+/// Derivations of builds that are still pending or running.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn list_active_drv_paths(pool: &PgPool) -> Result<HashSet<String>> {
+  let client = pool.get().await?;
+  let rows = q::list_active_drv_paths().bind(&client).all().await?;
+  Ok(rows.into_iter().collect())
+}
+
 /// Set the `keep` (GC pin) flag on a build.
 ///
 /// # Errors

@@ -301,6 +301,9 @@ ORDER BY drv_path, completed_at DESC;
 --! list_pinned_ids
 SELECT id FROM builds WHERE keep = true;
 
+--! list_active_drv_paths
+SELECT DISTINCT drv_path FROM builds WHERE status IN ('pending', 'running');
+
 --! set_keep : BuildRow
 UPDATE builds SET keep = :keep WHERE id = :id RETURNING *;
 

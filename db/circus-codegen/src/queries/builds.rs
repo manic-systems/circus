@@ -2874,6 +2874,35 @@ impl ListPinnedIdsStmt {
         }
     }
 }
+pub struct ListActiveDrvPathsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn list_active_drv_paths() -> ListActiveDrvPathsStmt {
+    ListActiveDrvPathsStmt(
+        "SELECT DISTINCT drv_path FROM builds WHERE status IN ('pending', 'running')",
+        None,
+    )
+}
+impl ListActiveDrvPathsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+    ) -> StringQuery<'c, 'a, 's, C, String, 0> {
+        StringQuery {
+            client,
+            params: [],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it.into(),
+        }
+    }
+}
 pub struct SetKeepStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn set_keep() -> SetKeepStmt {
     SetKeepStmt(
