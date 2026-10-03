@@ -45,6 +45,7 @@ pub struct BuildRow {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<Vec<String>>,
+    pub agent_losses: i32,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -79,6 +80,7 @@ pub struct BuildRowBorrowed<'a> {
     pub agent_machine_id: Option<uuid::Uuid>,
     pub started_notified_at: Option<chrono::DateTime<chrono::Utc>>,
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
+    pub agent_losses: i32,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -115,6 +117,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features,
+            agent_losses,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -150,6 +153,7 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             agent_machine_id,
             started_notified_at,
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
+            agent_losses,
         }
     }
 }
@@ -564,6 +568,7 @@ impl ListDependencyBuildsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -630,6 +635,7 @@ impl ListDependentBuildsStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -756,6 +762,7 @@ impl ListFailedDependenciesStmt {
                         agent_machine_id: row.try_get(29)?,
                         started_notified_at: row.try_get(30)?,
                         effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),

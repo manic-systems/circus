@@ -68,6 +68,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (39, "0039_build_transient_retry"),
   (40, "0040_evaluation_timeline"),
   (41, "0041_evaluation_progress"),
+  (42, "0042_build_agent_losses"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.
