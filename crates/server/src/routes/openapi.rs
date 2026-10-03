@@ -95,7 +95,8 @@ fn document_value() -> Value {
             "keep":              { "type": "boolean" },
             "created_at":        { "$ref": "#/components/schemas/Timestamp" },
             "started_at":        { "type": ["string", "null"], "format": "date-time" },
-            "completed_at":      { "type": ["string", "null"], "format": "date-time" }
+            "completed_at":      { "type": ["string", "null"], "format": "date-time" },
+            "closure_size":      { "type": ["integer", "null"] }
           }
         },
         "BuildProduct": {
@@ -779,6 +780,14 @@ fn document_value() -> Value {
         "get": { "summary": "List builds this build depends on",
           "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
           "responses": { "200": { "description": "Array of Build" } } }
+      },
+      "/builds/{id}/history": {
+        "get": { "summary": "List finished builds of the same job from earlier branch evaluations",
+          "parameters": [
+            { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+            { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "maximum": 200 } }
+          ],
+          "responses": { "200": { "description": "Array of history entries, newest first" } } }
       },
       "/builds/{id}/dependents": {
         "get": { "summary": "List builds that depend on this build",

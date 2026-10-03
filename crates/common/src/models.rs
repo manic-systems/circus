@@ -344,6 +344,7 @@ pub struct Build {
   /// build. [`None`] means this was not yet computed.
   #[serde(default)]
   pub effective_features:         Option<Vec<String>>,
+  pub closure_size:               Option<i64>,
 }
 
 impl Build {

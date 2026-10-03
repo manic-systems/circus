@@ -25,6 +25,7 @@ use super::{
   shared::{
     ApiKeyView,
     BuildView,
+    ClosureView,
     EvalSummaryView,
     EvalView,
     JobStatusColumn,
@@ -188,6 +189,7 @@ pub(super) struct BuildTemplate {
   pub(super) products:          Vec<BuildProduct>,
   pub(super) dependencies:      Vec<BuildView>,
   pub(super) dependents:        Vec<BuildView>,
+  pub(super) closure:           Option<ClosureView>,
   pub(super) eval_id:           Uuid,
   pub(super) eval_commit_short: String,
   pub(super) jobset_id:         Uuid,

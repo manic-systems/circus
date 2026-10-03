@@ -208,6 +208,19 @@ pub(super) struct EvalView {
   pub(super) project_name:   String,
 }
 
+pub(super) struct ClosureView {
+  pub(super) size:   String,
+  pub(super) exact:  String,
+  pub(super) change: Option<ClosureChangeView>,
+}
+
+pub(super) struct ClosureChangeView {
+  pub(super) text:         String,
+  pub(super) class:        &'static str,
+  pub(super) build_id:     Uuid,
+  pub(super) commit_short: String,
+}
+
 /// Text and presentation extracted from one ANSI SGR run.
 pub(super) struct DiagnosticSegment {
   pub(super) text:  String,
@@ -386,6 +399,20 @@ pub(super) fn format_bytes(bytes: i64) -> String {
   } else {
     format!("{value:.1} {}", UNITS[unit])
   }
+}
+
+/// Format an exact byte count with digit grouping (e.g. `1,572,864 bytes`).
+#[must_use]
+pub(super) fn format_exact_bytes(bytes: i64) -> String {
+  let digits = bytes.max(0).to_string();
+  let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+  for (index, digit) in digits.chars().enumerate() {
+    if index > 0 && (digits.len() - index).is_multiple_of(3) {
+      grouped.push(',');
+    }
+    grouped.push(digit);
+  }
+  format!("{grouped} bytes")
 }
 
 /// The 32-character store-path hash from a `/nix/store/<hash>-<name>` path, or

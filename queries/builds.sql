@@ -1,4 +1,4 @@
---: BuildRow(started_at?, completed_at?, log_path?, build_output_path?, error_message?, system?, notification_pending_since?, outputs?, constituents?, builder_id?, agent_machine_id?, fod_hash?, meta_description?, meta_license?, meta_homepage?, meta_maintainers?, started_notified_at?, effective_features?)
+--: BuildRow(started_at?, completed_at?, log_path?, build_output_path?, error_message?, system?, notification_pending_since?, outputs?, constituents?, builder_id?, agent_machine_id?, fod_hash?, meta_description?, meta_license?, meta_homepage?, meta_maintainers?, started_notified_at?, effective_features?, closure_size?)
 
 --! create (system?, outputs?, constituents?, fod_hash?, meta_description?, meta_license?, meta_homepage?, meta_maintainers?) : BuildRow
 INSERT INTO builds (
@@ -286,6 +286,9 @@ WHERE id IN (SELECT build_id FROM dependents)
   AND status = 'dependency_failed'
 RETURNING *;
 
+--! set_closure_size
+UPDATE builds SET closure_size = :closure_size WHERE id = :id;
+
 --! set_effective_features
 UPDATE builds SET effective_features = :features WHERE id = :id;
 
@@ -322,3 +325,31 @@ ORDER BY b.created_at;
 
 --! delete
 DELETE FROM builds WHERE id = :id;
+
+--! job_history : (build_id, status, commit_hash, evaluation_time, started_at?, completed_at?, closure_size?)
+WITH current_build AS (
+  SELECT
+    b.job_name, b.system, e.jobset_id, e.source_scope, e.evaluation_time,
+    j.branch_pattern IS NOT NULL OR j.tag_pattern IS NOT NULL AS multi_ref
+  FROM builds b
+  JOIN evaluations e ON e.id = b.evaluation_id
+  JOIN jobsets j ON j.id = e.jobset_id
+  WHERE b.id = :id AND e.pr_number IS NULL
+)
+SELECT
+  b.id AS build_id, b.status, e.commit_hash, e.evaluation_time,
+  b.started_at, b.completed_at, b.closure_size
+FROM current_build c
+JOIN evaluations e ON e.jobset_id = c.jobset_id
+  AND e.pr_number IS NULL
+  AND (NOT c.multi_ref
+    OR e.source_scope = c.source_scope
+    OR e.source_scope IS NULL
+    OR c.source_scope IS NULL)
+  AND e.evaluation_time < c.evaluation_time
+JOIN builds b ON b.evaluation_id = e.id
+  AND b.job_name = c.job_name
+  AND b.system IS NOT DISTINCT FROM c.system
+  AND b.status NOT IN ('pending', 'running')
+ORDER BY e.evaluation_time DESC
+LIMIT :limit;

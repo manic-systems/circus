@@ -2919,6 +2919,32 @@ body:has(#login-dialog[open]) .login-container {
   font-size: 12px;
 }
 
+code.commit-ref {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+.closure-change {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-subtle);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.closure-grew {
+  color: var(--status-failed);
+}
+
+.closure-shrank {
+  color: var(--status-success);
+}
+
 .nar-detail summary {
   cursor: pointer;
 }

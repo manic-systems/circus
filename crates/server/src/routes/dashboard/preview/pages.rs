@@ -6,6 +6,8 @@ use super::{
   super::{
     shared::{
       ApiKeyView,
+      ClosureChangeView,
+      ClosureView,
       PrivateTemplate,
       QueueSystemView,
       StarredJobView,
@@ -341,6 +343,16 @@ pub(super) async fn build() -> Response {
       "completed",
     )],
     dependents:        Vec::new(),
+    closure:           Some(ClosureView {
+      size:   "245.3 MiB".into(),
+      exact:  "257,212,416 bytes".into(),
+      change: Some(ClosureChangeView {
+        text:         "+1.2 MiB".into(),
+        class:        "grew",
+        build_id:     id(4),
+        commit_short: "9f2c7a113bad".into(),
+      }),
+    }),
     eval_id:           id(3),
     eval_commit_short: "9f2c7a113bad".into(),
     jobset_id:         id(2),

@@ -24,6 +24,8 @@ use super::{
   build_log::parse_build_log,
   shared::{
     BuildView,
+    ClosureChangeView,
+    ClosureView,
     DashboardContext,
     DashboardPage,
     EvalSummaryView,
@@ -42,6 +44,8 @@ use super::{
     eval_badge,
     eval_view,
     eval_view_with_context,
+    format_bytes,
+    format_exact_bytes,
     not_found,
     status_badge,
   },
@@ -897,6 +901,42 @@ pub(super) async fn build_page(
     .map(build_view)
     .collect();
 
+  let history = circus_common::repo::builds::job_history(&state.pool, id, 20)
+    .await
+    .unwrap_or_else(|error| {
+      tracing::warn!(build_id = %id, "Failed to load the job's history: {error}");
+      Vec::new()
+    });
+  let closure = build.closure_size.map(|size| {
+    let change = history
+      .iter()
+      .find_map(|past| {
+        let past_size = past
+          .closure_size
+          .filter(|_| past.status == BuildStatus::Succeeded)?;
+        Some((past, past_size))
+      })
+      .map(|(past, past_size)| {
+        let delta = size - past_size;
+        let (text, class) = match delta.signum() {
+          1 => (format!("+{}", format_bytes(delta)), "grew"),
+          -1 => (format!("-{}", format_bytes(-delta)), "shrank"),
+          _ => ("unchanged".to_owned(), "same"),
+        };
+        ClosureChangeView {
+          text,
+          class,
+          build_id: past.build_id,
+          commit_short: past.commit_hash.chars().take(12).collect(),
+        }
+      });
+    ClosureView {
+      size: format_bytes(size),
+      exact: format_exact_bytes(size),
+      change,
+    }
+  });
+
   // Resolve who ran the build
   let builder_label = if let Some(machine_id) = build.agent_machine_id {
     circus_common::repo::builder_sessions::get(&state.pool, machine_id)
@@ -913,6 +953,7 @@ pub(super) async fn build_page(
     products,
     dependencies,
     dependents,
+    closure,
     eval_id: eval.id,
     eval_commit_short,
     jobset_id: jobset.id,
