@@ -323,6 +323,20 @@ pub async fn requeue(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
     .transpose()
 }
 
+/// Count an agent lost while running the build, returning the new total.
+///
+/// # Returns
+///
+/// Returns `None` if the build is no longer running.
+///
+/// # Errors
+///
+/// Returns an error if the database update fails.
+pub async fn record_agent_loss(pool: &PgPool, id: Uuid) -> Result<Option<i32>> {
+  let client = pool.get().await?;
+  Ok(q::record_agent_loss().bind(&client, &id).opt().await?)
+}
+
 /// Return a failed build to the pending queue, counting a retry and clearing
 /// dispatch-time effective features so they are recomputed on redispatch.
 ///
