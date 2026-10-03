@@ -98,7 +98,20 @@
                                 {% endif %}
                             </td>
                             {% if let Some(ts) = e.running_since %}
-                                <td data-live-elapsed="{{ ts }}">-</td>
+                                <td>
+                                    <span data-live-elapsed="{{ ts }}">-</span>
+                                    {% if let Some(progress) = e.progress %}
+                                        <span class="eval-progress"
+                                              data-eval-progress="{{ progress.id }}">
+                                            <span class="eval-progress-bar">
+                                                <span style="width: {{ progress.percent }}%"></span>
+                                            </span>
+                                            <span class="eval-progress-count">
+                                                {{- progress.count -}}
+                                            </span>
+                                        </span>
+                                    {% endif %}
+                                </td>
                             {% elif !e.duration.is_empty() %}
                                 <td>{{ e.duration }}</td>
                             {% else %}

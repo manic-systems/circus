@@ -63,6 +63,8 @@ impl TryFrom<q::EvaluationRow> for Evaluation {
       started_at:         r.started_at,
       finished_at:        r.finished_at,
       commit_subject:     r.commit_subject,
+      attrs_done:         r.attrs_done,
+      attrs_total:        r.attrs_total,
     })
   }
 }
@@ -744,6 +746,22 @@ pub async fn set_commit_subject(
 ) -> Result<()> {
   let client = pool.get().await?;
   q::set_commit_subject().bind(&client, &subject, &id).await?;
+  Ok(())
+}
+
+/// # Errors
+///
+/// Returns error if database update fails.
+pub async fn set_progress(
+  pool: &PgPool,
+  id: Uuid,
+  attrs_done: Option<i32>,
+  attrs_total: Option<i32>,
+) -> Result<()> {
+  let client = pool.get().await?;
+  q::set_progress()
+    .bind(&client, &attrs_done, &attrs_total, &id)
+    .await?;
   Ok(())
 }
 

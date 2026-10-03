@@ -1,4 +1,4 @@
---: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?, source_base_commit?, finished_at?, commit_subject?)
+--: EvaluationRow(error_message?, inputs_hash?, pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, started_at?, source_scope?, superseded_by?, source_base_commit?, finished_at?, commit_subject?, attrs_done?, attrs_total?)
 
 --! create_with_kind (pr_number?, pr_head_branch?, pr_base_branch?, pr_action?, source_scope?, source_base_commit?) : EvaluationRow
 INSERT INTO evaluations (
@@ -62,6 +62,9 @@ UPDATE evaluations SET inputs_hash = :inputs_hash WHERE id = :id;
 
 --! set_commit_subject
 UPDATE evaluations SET commit_subject = :commit_subject WHERE id = :id;
+
+--! set_progress (attrs_done?, attrs_total?)
+UPDATE evaluations SET attrs_done = :attrs_done, attrs_total = :attrs_total WHERE id = :id;
 
 --! get_by_inputs_hash : EvaluationRow
 SELECT * FROM evaluations
