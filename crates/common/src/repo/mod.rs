@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod build_closure_diffs;
 pub mod build_dependencies;
 pub mod build_metrics;
 pub mod build_outputs;

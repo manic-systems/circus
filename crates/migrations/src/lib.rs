@@ -70,6 +70,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (41, "0041_evaluation_progress"),
   (42, "0042_build_agent_losses"),
   (43, "0043_build_closure_size"),
+  (45, "0045_build_closure_diffs"),
   (53, "0053_user_identities"),
   (54, "0054_build_priority_notify"),
 ];
