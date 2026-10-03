@@ -212,12 +212,19 @@ pub(super) struct EvalView {
   pub(super) started_iso:    String,
   pub(super) duration:       String,
   pub(super) running_since:  Option<i64>,
+  pub(super) progress:       Option<EvalProgressView>,
   pub(super) error_message:  String,
   pub(super) error_segments: Vec<DiagnosticSegment>,
   pub(super) hidden:         bool,
   pub(super) superseded_by:  Option<Uuid>,
   pub(super) jobset_name:    String,
   pub(super) project_name:   String,
+}
+
+pub(super) struct EvalProgressView {
+  pub(super) id:      Uuid,
+  pub(super) count:   String,
+  pub(super) percent: i64,
 }
 
 /// Text and presentation extracted from one ANSI SGR run.
@@ -236,6 +243,7 @@ pub(super) struct EvalSummaryView {
   pub(super) time_iso:       String,
   pub(super) duration:       String,
   pub(super) running_since:  Option<i64>,
+  pub(super) progress:       Option<EvalProgressView>,
   pub(super) succeeded:      i64,
   pub(super) failed:         i64,
   pub(super) pending:        i64,
@@ -407,7 +415,11 @@ pub(super) fn format_bytes(bytes: i64) -> String {
 /// Format an exact byte count with digit grouping (e.g. `1,572,864 bytes`).
 #[must_use]
 pub(super) fn format_exact_bytes(bytes: i64) -> String {
-  let digits = bytes.max(0).to_string();
+  format!("{} bytes", group_digits(bytes))
+}
+
+fn group_digits(number: i64) -> String {
+  let digits = number.max(0).to_string();
   let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
   for (index, digit) in digits.chars().enumerate() {
     if index > 0 && (digits.len() - index).is_multiple_of(3) {
@@ -415,7 +427,7 @@ pub(super) fn format_exact_bytes(bytes: i64) -> String {
     }
     grouped.push(digit);
   }
-  format!("{grouped} bytes")
+  grouped
 }
 
 /// The 32-character store-path hash from a `/nix/store/<hash>-<name>` path, or
@@ -945,6 +957,7 @@ impl From<&Evaluation> for EvalView {
         e.finished_at.as_ref(),
       ),
       running_since:  eval_running_since(e),
+      progress:       eval_progress(e),
       error_message:  e.error_message.clone().unwrap_or_default(),
       error_segments: e
         .error_message
@@ -965,6 +978,30 @@ pub(super) fn eval_running_since(e: &Evaluation) -> Option<i64> {
   } else {
     None
   }
+}
+
+pub(super) fn eval_progress(e: &Evaluation) -> Option<EvalProgressView> {
+  if e.status != EvaluationStatus::Running {
+    return None;
+  }
+
+  let (count, percent) = match e.attrs_done.zip(e.attrs_total) {
+    Some((done, total)) if total > 0 => {
+      let percent = (i64::from(done) * 100 / i64::from(total)).clamp(0, 100);
+      let count = format!(
+        "{} / {}",
+        group_digits(done.into()),
+        group_digits(total.into())
+      );
+      (count, percent)
+    },
+    _ => ("-".to_owned(), 0),
+  };
+  Some(EvalProgressView {
+    id: e.id,
+    count,
+    percent,
+  })
 }
 
 pub(super) fn eval_view(e: &Evaluation) -> EvalView {

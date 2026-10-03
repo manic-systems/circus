@@ -8,7 +8,7 @@
               content="{{ ui.brand_name }} dashboard for Nix CI builds, evaluations, queues, and binary caches.">
         <title>{% block title %}{{ ui.brand_name }}{% endblock %}</title>
         {% if ui.has_favicon %}<link rel="icon" href="{{ ui.favicon_url }}">{% endif %}
-        <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v14">
+        <link rel="stylesheet" href="/static/style.css?v=graphite-dashboard-v15">
         <link rel="stylesheet" href="/static/theme.css">
         {% if ui.has_custom_css %}
             <link rel="stylesheet" href="/static/custom.css">{% endif %}</head>
@@ -155,6 +155,32 @@ if (!isNaN(start)) nodes[i].textContent = fmt(now - start);
 }
 tick();
 setInterval(tick, 1000);
+})();
+        </script>
+        <script>
+// Poll running evaluations so their attribute counts advance, and reload once
+// one finishes so its builds show up.
+(function() {
+function count(n) { return n.toLocaleString('en-US'); }
+function poll(node) {
+var id = node.getAttribute('data-eval-progress');
+fetch('/api/v1/evaluations/' + id, {credentials: 'same-origin'})
+.then(function(response) { return response.ok ? response.json() : Promise.reject(); })
+.then(function(evaluation) {
+if (evaluation.status !== 'running') return location.reload();
+var done = evaluation.attrs_done;
+var total = evaluation.attrs_total;
+if (done != null && total) {
+node.querySelector('.eval-progress-count').textContent = count(done) + ' / ' + count(total);
+var percent = Math.min(100, Math.floor(done * 100 / total));
+node.querySelector('.eval-progress-bar > span').style.width = percent + '%';
+}
+setTimeout(function() { poll(node); }, 3000);
+})
+.catch(function() {});
+}
+var nodes = document.querySelectorAll('[data-eval-progress]');
+for (var i = 0; i < nodes.length; i++) setTimeout(poll, 3000, nodes[i]);
 })();
         </script>
         <script>

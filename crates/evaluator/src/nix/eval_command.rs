@@ -3,10 +3,10 @@ use std::time::Duration;
 use circus_common::{CiError, error::Result};
 use circus_config::EvaluatorConfig;
 use futures::StreamExt as _;
-use tokio::process::Command;
+use tokio::{process::Command, sync::watch};
 use tokio_util::sync::CancellationToken;
 
-use super::{EvalResult, nix_job_from_derivation};
+use super::{EvalProgress, EvalResult, nix_job_from_derivation};
 
 const MAX_REPORTED_ERRORS: usize = 3;
 const MAX_REPORTED_ERROR_CHARS: usize = 1024;
@@ -121,6 +121,7 @@ pub(super) async fn run_eval(
   timeout: Duration,
   description: &'static str,
   cancel: &CancellationToken,
+  progress: &watch::Sender<EvalProgress>,
 ) -> Result<EvalResult> {
   // evix rejects a zero item timeout instead of treating it as a timeout, so
   // enforce an immediate timeout here rather than letting the session start.
@@ -143,11 +144,23 @@ pub(super) async fn run_eval(
     let mut jobs = Vec::new();
     let mut error_count = 0usize;
     let mut errors = Vec::new();
+    // evix emits exactly one event per attribute it visits, the root
+    // included, so counting every event against the root plus each attrset's
+    // children keeps done at or below total.
+    progress.send_replace(EvalProgress { done: 0, total: 1 });
 
-    while let Some(event) = events.next().await {
-      match event
-        .map_err(|e| evix_eval_failure(description, &error_chain(&e)))?
-      {
+    while let Some(next) = events.next().await {
+      let event = next.map_err(|error| {
+        evix_eval_failure(description, &error_chain(&error))
+      })?;
+      progress.send_modify(|counts| {
+        counts.done += 1;
+        if let evix::Event::AttrSet { attrs, .. } = &event {
+          counts.total += attrs.len();
+        }
+      });
+
+      match event {
         evix::Event::Derivation(drv) => {
           jobs.push(nix_job_from_derivation(&drv));
         },

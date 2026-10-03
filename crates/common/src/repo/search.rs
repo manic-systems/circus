@@ -288,6 +288,8 @@ fn evaluation_from_search_row(
     started_at:         row.started_at,
     finished_at:        row.finished_at,
     commit_subject:     row.commit_subject,
+    attrs_done:         row.attrs_done,
+    attrs_total:        row.attrs_total,
   })
 }
 
