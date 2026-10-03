@@ -227,6 +227,14 @@ pub(super) struct EvalProgressView {
   pub(super) percent: i64,
 }
 
+pub(super) struct BrokeInView {
+  pub(super) build_id:              Uuid,
+  pub(super) commit_short:          String,
+  pub(super) commit_subject:        String,
+  pub(super) last_success_build_id: Uuid,
+  pub(super) last_success_short:    String,
+}
+
 /// Text and presentation extracted from one ANSI SGR run.
 pub(super) struct DiagnosticSegment {
   pub(super) text:  String,

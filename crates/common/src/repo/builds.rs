@@ -553,6 +553,35 @@ pub async fn project_summary(
   })
 }
 
+/// The first failing build of a job since its most recent success on the
+/// same branch.
+pub struct BrokeIn {
+  pub build_id:              Uuid,
+  pub commit_hash:           String,
+  pub commit_subject:        Option<String>,
+  pub last_success_build_id: Uuid,
+  pub last_success_commit:   String,
+}
+
+/// Find where the job of a failed branch build started failing.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn broke_in(pool: &PgPool, id: Uuid) -> Result<Option<BrokeIn>> {
+  let client = pool.get().await?;
+  let row = q::broke_in().bind(&client, &id).opt().await?;
+  Ok(row.map(|found| {
+    BrokeIn {
+      build_id:              found.build_id,
+      commit_hash:           found.commit_hash,
+      commit_subject:        found.commit_subject,
+      last_success_build_id: found.last_success_build_id,
+      last_success_commit:   found.last_success_commit,
+    }
+  }))
+}
+
 /// Get aggregate build statistics.
 ///
 /// # Errors
