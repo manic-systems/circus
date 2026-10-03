@@ -76,6 +76,17 @@
                         <span class="build-meta-value" data-live-elapsed="{{ ts }}">-</span>
                     </div>
                 {% endif %}
+                {% if let Some(expected) = expected %}
+                    <div class="build-meta-item">
+                        <span class="build-meta-label">Usually takes</span>
+                        <span class="build-meta-value">
+                            {{ expected }}
+                            {% if let Some(eta) = eta_epoch %}
+                                <span class="eta" data-live-eta="{{ eta }}"></span>
+                            {% endif %}
+                        </span>
+                    </div>
+                {% endif %}
                 <div class="build-meta-item">
                     <span class="build-meta-label">Priority</span>
                     <span class="build-meta-value">{{ build.priority }}</span>

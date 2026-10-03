@@ -194,6 +194,7 @@ pub(super) struct QueueBuildView {
   /// started; populated for running builds so the browser can tick a live
   /// elapsed counter without polling.
   pub(super) started_epoch: Option<i64>,
+  pub(super) eta_epoch:     Option<i64>,
   pub(super) priority:      i32,
   pub(super) builder_name:  Option<String>,
   pub(super) queue_pos:     i64,

@@ -620,6 +620,26 @@ pub async fn job_history(
     .collect()
 }
 
+/// How long each build is expected to take, in seconds. Builds whose job has
+/// never succeeded before are absent.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn expected_durations(
+  pool: &PgPool,
+  ids: &[Uuid],
+) -> Result<HashMap<Uuid, i64>> {
+  let client = pool.get().await?;
+  let rows = q::expected_durations().bind(&client, &ids).all().await?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|row| (row.build_id, row.expected_secs))
+      .collect(),
+  )
+}
+
 /// # Errors
 ///
 /// Returns error if database update fails.

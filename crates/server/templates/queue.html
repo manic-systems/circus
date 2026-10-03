@@ -87,8 +87,15 @@
                                     </td>
                                     <td>{{ b.system }}</td>
                                     <td>{{ b.started_at }}</td>
-                                    <td{% if let Some(ts) = b.started_epoch %} data-live-elapsed="{{ ts }}"{% endif %}>
-                                        {{ b.elapsed }}
+                                    <td>
+                                        {% if let Some(ts) = b.started_epoch %}
+                                            <span data-live-elapsed="{{ ts }}">{{ b.elapsed }}</span>
+                                        {% else %}
+                                            {{ b.elapsed }}
+                                        {% endif %}
+                                        {% if let Some(eta) = b.eta_epoch %}
+                                            <span class="eta" data-live-eta="{{ eta }}"></span>
+                                        {% endif %}
                                     </td>
                                     <td>
                                         {% match b.builder_name %}

@@ -970,6 +970,22 @@ pub(super) async fn build_page(
     }
   });
 
+  let expected_secs = if build.status.is_finished() {
+    None
+  } else {
+    circus_common::repo::builds::expected_durations(&state.pool, &[id])
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!(build_id = %id, "Failed to estimate the build's duration: {error}");
+        HashMap::new()
+      })
+      .remove(&id)
+  };
+  let eta_epoch = build
+    .started_at
+    .zip(expected_secs)
+    .map(|(started, secs)| started.timestamp() + secs);
+
   // Resolve who ran the build
   let builder_label = if let Some(machine_id) = build.agent_machine_id {
     circus_common::repo::builder_sessions::get(&state.pool, machine_id)
@@ -988,6 +1004,8 @@ pub(super) async fn build_page(
     dependents,
     broke_in,
     closure,
+    expected: expected_secs.map(format_elapsed),
+    eta_epoch,
     eval_id: eval.id,
     eval_commit_short,
     jobset_id: jobset.id,

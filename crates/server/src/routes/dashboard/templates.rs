@@ -192,6 +192,8 @@ pub(super) struct BuildTemplate {
   pub(super) dependents:        Vec<BuildView>,
   pub(super) broke_in:          Option<BrokeInView>,
   pub(super) closure:           Option<ClosureView>,
+  pub(super) expected:          Option<String>,
+  pub(super) eta_epoch:         Option<i64>,
   pub(super) eval_id:           Uuid,
   pub(super) eval_commit_short: String,
   pub(super) jobset_id:         Uuid,
