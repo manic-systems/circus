@@ -211,6 +211,8 @@ pub(super) struct EvalView {
   pub(super) time_iso:       String,
   pub(super) started:        String,
   pub(super) started_iso:    String,
+  pub(super) finished:       String,
+  pub(super) finished_iso:   String,
   pub(super) duration:       String,
   pub(super) running_since:  Option<i64>,
   pub(super) progress:       Option<EvalProgressView>,
@@ -968,6 +970,11 @@ impl From<&Evaluation> for EvalView {
         |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
       ),
       started_iso:    e.started_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+      finished:       e.finished_at.map_or_else(
+        || "-".to_owned(),
+        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+      ),
+      finished_iso:   e.finished_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
       duration:       format_duration(
         e.started_at.as_ref(),
         e.finished_at.as_ref(),
