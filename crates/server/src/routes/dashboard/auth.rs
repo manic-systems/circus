@@ -67,6 +67,22 @@ pub(super) async fn login_action(
   if let (Some(username), Some(password)) =
     (form.username.as_ref(), form.password.as_ref())
   {
+    if !state.config.server.password_login {
+      let tmpl = LoginTemplate::new(
+        &state.config,
+        Some("Password sign-in is disabled".into()),
+      );
+      return (
+        StatusCode::FORBIDDEN,
+        Html(
+          tmpl
+            .render()
+            .unwrap_or_else(|e| format!("Template error: {e}")),
+        ),
+      )
+        .into_response();
+    }
+
     let creds = circus_common::models::LoginCredentials {
       username: username.clone(),
       password: password.clone(),
@@ -320,7 +336,8 @@ pub(super) async fn account_page(
     auth_name: ctx.auth_name.clone(),
     csrf_token: ctx.csrf_token.clone(),
     role: user.role.to_string(),
-    has_password: user.password_hash.is_some(),
+    has_password: state.config.server.password_login
+      && user.password_hash.is_some(),
     username: user.username,
     providers,
   }

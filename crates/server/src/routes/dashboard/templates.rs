@@ -490,11 +490,12 @@ pub(super) struct ProjectSetupTemplate {
 #[derive(Template)]
 #[template(path = "login.html")]
 pub struct LoginTemplate {
-  pub(super) ui:        UiTemplateConfig,
-  pub(super) error:     Option<String>,
-  pub(super) is_admin:  bool,
-  pub(super) auth_name: String,
-  pub(super) providers: Vec<LoginProvider>,
+  pub(super) ui:             UiTemplateConfig,
+  pub(super) error:          Option<String>,
+  pub(super) is_admin:       bool,
+  pub(super) auth_name:      String,
+  pub(super) providers:      Vec<LoginProvider>,
+  pub(super) password_login: bool,
 }
 
 pub(super) struct LoginProvider {
@@ -533,6 +534,7 @@ impl LoginTemplate {
       is_admin: false,
       auth_name: String::new(),
       providers,
+      password_login: config.server.password_login,
     }
   }
 }

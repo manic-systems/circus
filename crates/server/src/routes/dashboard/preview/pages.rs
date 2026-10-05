@@ -562,11 +562,11 @@ pub(super) async fn metrics() -> Response {
 
 pub(super) async fn login() -> Response {
   render(LoginTemplate {
-    ui:        ui(),
-    error:     Some("Preview mode accepts no credentials.".into()),
-    is_admin:  false,
-    auth_name: String::new(),
-    providers: vec![
+    ui:             ui(),
+    error:          Some("Preview mode accepts no credentials.".into()),
+    is_admin:       false,
+    auth_name:      String::new(),
+    providers:      vec![
       LoginProvider {
         href:  "/api/v1/auth/github".into(),
         label: "GitHub".into(),
@@ -578,6 +578,7 @@ pub(super) async fn login() -> Response {
         icon:  LoginIcon::Oidc,
       },
     ],
+    password_login: true,
   })
 }
 

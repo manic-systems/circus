@@ -516,6 +516,17 @@ impl Config {
       bail!("Log directory cannot be empty");
     }
 
+    if !self.server.password_login
+      && self.oauth.github.is_none()
+      && self.oauth.oidc.is_empty()
+      && !self.server.ldap.as_ref().is_some_and(|ldap| ldap.enabled)
+    {
+      bail!(
+        "server.password_login = false needs oauth.github, an oauth.oidc \
+         provider, or server.ldap, or nobody can sign in"
+      );
+    }
+
     // OAuth: when GitHub OAuth is configured, a client secret must be
     // available (inline or via file).
     if let Some(ref github) = self.oauth.github
