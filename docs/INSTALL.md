@@ -198,6 +198,7 @@ configuration or the Nix store.
 | `server`             | `openapi_enabled`                                      | `true`                                              | Serve `/api/v1/openapi.json`                                              |
 | `server`             | `webhook_secret_encryption_key`                        | none                                                | Encrypt webhook and notification secrets                                  |
 | `server`             | `webhook_secret_encryption_key_file`                   | none                                                | File containing the encryption key                                        |
+| `server`             | `password_login`                                       | `true`                                              | Accept username and password logins on the dashboard                      |
 | `server`             | `ldap.enabled`                                         | `true`                                              | Enable configured LDAP login                                              |
 | `server`             | `ldap.url`                                             | none                                                | LDAP server URL                                                           |
 | `server`             | `ldap.bind_dn_template`                                | none                                                | LDAP bind DN template (`{username}` placeholder)                          |
@@ -721,6 +722,11 @@ are never merged with an existing account by email. The username is the
 only when that name is taken. To sign in to an existing account through a
 provider instead, log in as that account and link the provider from the account
 page at `/account`. Linked accounts keep their own role.
+
+Set `server.password_login = false` to sign in only through providers. The
+login form disappears and password logins are refused, while API keys keep
+working. Circus refuses to start this way unless GitHub, an OIDC provider, or
+LDAP is configured.
 
 Groups come from `groups_claim` in the ID token, or from userinfo when the ID
 token lacks it. Role mappings are checked in order and the first match wins.

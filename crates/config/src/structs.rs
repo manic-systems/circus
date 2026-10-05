@@ -101,6 +101,10 @@ pub struct ServerConfig {
   pub email_validation_regex:             Option<String>,
   /// LDAP authentication configuration.
   pub ldap:                               Option<LdapConfig>,
+  /// Accept username and password logins on the dashboard. Turning this off
+  /// requires another way in, such as an OIDC provider.
+  #[serde(default = "default_true")]
+  pub password_login:                     bool,
   /// Dashboard page-level access policy.
   pub page_access:                        PageAccessConfig,
   /// Allow admins to read and replace the config file through the
@@ -810,6 +814,7 @@ impl Default for ServerConfig {
       force_secure_cookies:               false,
       email_validation_regex:             None,
       ldap:                               None,
+      password_login:                     true,
       page_access:                        PageAccessConfig::default(),
       config_editor_enabled:              false,
       require_api_key_for_reads:          true,
