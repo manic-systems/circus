@@ -45,20 +45,32 @@ use crate::{
 
 #[derive(serde::Deserialize)]
 pub(super) struct LoginQuery {
-  next: Option<String>,
+  next:  Option<String>,
+  /// Show the page even when it would hand straight off to a provider, so an
+  /// API key can still be entered.
+  local: Option<String>,
 }
 
 pub(super) async fn login_page(
   State(state): State<AppState>,
   Query(query): Query<LoginQuery>,
-) -> Html<String> {
+) -> Response {
   let tmpl =
     LoginTemplate::new(&state.config, None).with_next(query.next.as_deref());
+
+  if let [provider] = tmpl.providers.as_slice()
+    && !state.config.server.password_login
+    && query.local.is_none()
+  {
+    return Redirect::to(&provider.href).into_response();
+  }
+
   Html(
     tmpl
       .render()
       .unwrap_or_else(|e| format!("Template error: {e}")),
   )
+  .into_response()
 }
 
 #[derive(serde::Deserialize)]

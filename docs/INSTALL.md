@@ -726,7 +726,8 @@ page at `/account`. Linked accounts keep their own role.
 Set `server.password_login = false` to sign in only through providers. The
 login form disappears and password logins are refused, while API keys keep
 working. Circus refuses to start this way unless GitHub, an OIDC provider, or
-LDAP is configured.
+LDAP is configured. With a single provider, `/login` goes straight to it, and
+`/login?local=1` shows the page anyway for API key sign-in.
 
 Groups come from `groups_claim` in the ID token, or from userinfo when the ID
 token lacks it. Role mappings are checked in order and the first match wins.
