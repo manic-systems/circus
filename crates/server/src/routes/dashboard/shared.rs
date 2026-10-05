@@ -204,6 +204,7 @@ pub(super) struct EvalView {
   pub(super) commit_hash:    String,
   pub(super) commit_short:   String,
   pub(super) commit_subject: String,
+  pub(super) commit_url:     Option<String>,
   pub(super) status_text:    String,
   pub(super) status_class:   String,
   pub(super) time:           String,
@@ -954,6 +955,7 @@ impl From<&Evaluation> for EvalView {
       commit_hash:    e.commit_hash.clone(),
       commit_short:   short,
       commit_subject: e.commit_subject.clone().unwrap_or_default(),
+      commit_url:     None,
       status_text:    text.to_string(),
       status_class:   class.to_string(),
       time:           e
@@ -1026,11 +1028,50 @@ pub(super) fn eval_view_with_context(
   e: &Evaluation,
   jobset_name: &str,
   project_name: &str,
+  repository_url: Option<&str>,
 ) -> EvalView {
   let mut v = eval_view(e);
   v.jobset_name = jobset_name.to_string();
   v.project_name = project_name.to_string();
+  v.commit_url = repository_url.and_then(|url| commit_url(url, &e.commit_hash));
   v
+}
+
+/// The web page of `commit` in the repository at `repository_url`. GitLab
+/// nests commit pages under `/-/`, and an ssh or git port says nothing about
+/// where the web UI listens.
+pub(super) fn commit_url(repository_url: &str, commit: &str) -> Option<String> {
+  let url = url::Url::parse(repository_url).ok()?;
+
+  if !matches!(
+    url.scheme(),
+    "http" | "https" | "ssh" | "git" | "git+https" | "git+ssh"
+  ) || commit.is_empty()
+    || !commit.chars().all(|c| c.is_ascii_hexdigit())
+  {
+    return None;
+  }
+
+  let host = url.host_str()?;
+  let path = url.path().trim_matches('/').trim_end_matches(".git");
+
+  if path.is_empty() {
+    return None;
+  }
+
+  let origin = match (url.scheme(), url.port()) {
+    ("http" | "https", Some(port)) => {
+      format!("{}://{host}:{port}", url.scheme())
+    },
+    ("http" | "https", None) => format!("{}://{host}", url.scheme()),
+    _ => format!("https://{host}"),
+  };
+  let commits = if host.contains("gitlab") {
+    "-/commit"
+  } else {
+    "commit"
+  };
+  Some(format!("{origin}/{path}/{commits}/{commit}"))
 }
 
 pub(super) fn status_badge(s: BuildStatus) -> (String, String) {

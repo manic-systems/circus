@@ -107,7 +107,12 @@
         <div class="build-meta-item build-meta-wide">
             <span class="build-meta-label">Commit</span>
             <span class="build-meta-value">
-                <code>{{ eval.commit_hash }}</code>
+                {% match eval.commit_url %}
+                    {% when Some with (url) %}
+                        <a class="commit-link" href="{{ url }}" rel="noopener noreferrer"><code>{{ eval.commit_hash }}</code></a>
+                    {% when None %}
+                        <code>{{ eval.commit_hash }}</code>
+                {% endmatch %}
                 {% if !eval.commit_subject.is_empty() %}
                     <span class="commit-message">{{ eval.commit_subject }}</span>
                 {% endif %}

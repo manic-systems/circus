@@ -3015,6 +3015,25 @@ td.commit-cell {
   white-space: nowrap;
 }
 
+a.commit-subject {
+  text-decoration: none;
+}
+
+a.commit-subject:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.commit-link code {
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+}
+
+.commit-link:hover code {
+  text-decoration-color: currentColor;
+}
+
 .build-meta-wide {
   grid-column: 1 / -1;
 }

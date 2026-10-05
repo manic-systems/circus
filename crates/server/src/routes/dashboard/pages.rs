@@ -28,6 +28,7 @@ use super::{
     DashboardContext,
     DashboardPage,
     EvalSummaryView,
+    EvalView,
     JobStatusCell,
     JobStatusColumn,
     JobStatusRow,
@@ -39,6 +40,7 @@ use super::{
     WorkerSummaryView,
     build_view,
     build_view_with_context,
+    commit_url,
     enforce_page_access,
     eval_badge,
     eval_progress,
@@ -624,18 +626,27 @@ pub(super) async fn evaluations_page(
   // Enrich evaluations with jobset/project names
   let mut enriched = Vec::new();
   for e in &items {
-    let (jname, pname) =
+    let (jname, project) =
       match circus_common::repo::jobsets::get(&state.pool, e.jobset_id).await {
         Ok(js) => {
-          let pname =
+          let project =
             circus_common::repo::projects::get(&state.pool, js.project_id)
               .await
-              .map_or_else(|_| "-".to_string(), |p| p.name);
-          (js.name, pname)
+              .ok();
+          (js.name, project)
         },
-        Err(_) => ("-".to_string(), "-".to_string()),
+        Err(_) => ("-".to_string(), None),
       };
-    enriched.push(eval_view_with_context(e, &jname, &pname));
+    let (pname, repository_url) = project.map_or_else(
+      || ("-".to_string(), None),
+      |project| (project.name, Some(project.repository_url)),
+    );
+    enriched.push(eval_view_with_context(
+      e,
+      &jname,
+      &pname,
+      repository_url.as_deref(),
+    ));
   }
 
   let pagination = Pagination::new(total, offset, limit);
@@ -722,7 +733,10 @@ pub(super) async fn evaluation_page(
 
   let tmpl = EvaluationTemplate {
     ui: ui_config(&state),
-    eval: eval_view(&eval),
+    eval: EvalView {
+      commit_url: commit_url(&project.repository_url, &eval.commit_hash),
+      ..eval_view(&eval)
+    },
     builds: top_level_builds.into_iter().map(build_view).collect(),
     failed_derivations,
     project_name: project.name,
