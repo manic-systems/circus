@@ -34,6 +34,7 @@ use crate::{
   },
   session_cookie::{
     API_KEY_SESSION_COOKIE,
+    OIDC_PROVIDER_COOKIE,
     USER_SESSION_COOKIE,
     api_key_session_cookie,
     clear_cookie,
@@ -284,17 +285,23 @@ pub(super) async fn logout_action(
     }
   }
 
-  // Clear both cookies
+  let provider_logout =
+    match cookie_value(request.headers(), OIDC_PROVIDER_COOKIE) {
+      Some(provider) => oidc::end_session_url(&state, &provider).await,
+      None => None,
+    };
+
   let cookies = [
     clear_cookie(USER_SESSION_COOKIE, &state.config.server),
     clear_cookie(API_KEY_SESSION_COOKIE, &state.config.server),
+    clear_cookie(OIDC_PROVIDER_COOKIE, &state.config.server),
   ];
-  // Header arrays insert, so only AppendHeaders keeps both cookies.
+  // Header arrays insert, so only AppendHeaders keeps every cookie.
   (
     axum::response::AppendHeaders(
       cookies.map(|cookie| (axum::http::header::SET_COOKIE, cookie)),
     ),
-    Redirect::to("/"),
+    Redirect::to(provider_logout.as_deref().unwrap_or("/")),
   )
     .into_response()
 }

@@ -574,6 +574,19 @@ impl Config {
         bail!("oauth.oidc.{name}.redirect_uri requires HTTPS or loopback HTTP");
       }
 
+      if let Some(uri) = &provider.post_logout_redirect_uri {
+        let uri = Url::parse(uri).wrap_err_with(|| {
+          format!("oauth.oidc.{name}.post_logout_redirect_uri is invalid")
+        })?;
+
+        if !https_or_loopback(&uri) {
+          bail!(
+            "oauth.oidc.{name}.post_logout_redirect_uri requires HTTPS or \
+             loopback HTTP"
+          );
+        }
+      }
+
       if provider
         .session_max_age
         .is_some_and(|secs| secs == 0 || secs > 365 * 24 * 60 * 60)

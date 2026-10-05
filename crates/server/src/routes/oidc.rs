@@ -66,6 +66,7 @@ use crate::{
     clear_oidc_flow_cookie,
     oauth_user_session_cookie,
     oidc_flow_cookie,
+    oidc_provider_cookie,
   },
   state::AppState,
 };
@@ -103,16 +104,18 @@ struct ProviderMetadata {
   token_endpoint:                        TokenUrl,
   jwks_uri:                              String,
   userinfo_endpoint:                     Option<String>,
+  end_session_endpoint:                  Option<String>,
   #[serde(default)]
   token_endpoint_auth_methods_supported: Vec<String>,
 }
 
 struct Provider {
-  http:              HttpClient,
-  client:            OidcClient,
-  issuer:            String,
-  jwks_uri:          String,
-  userinfo_endpoint: Option<String>,
+  http:                 HttpClient,
+  client:               OidcClient,
+  issuer:               String,
+  jwks_uri:             String,
+  userinfo_endpoint:    Option<String>,
+  end_session_endpoint: Option<String>,
 }
 
 /// Discovered providers keyed by config name, so unauthenticated login starts
@@ -426,6 +429,7 @@ async fn discover(config: &OidcProviderConfig) -> Result<Provider, LoginError> {
     issuer: metadata.issuer,
     jwks_uri: metadata.jwks_uri,
     userinfo_endpoint: metadata.userinfo_endpoint,
+    end_session_endpoint: metadata.end_session_endpoint,
   })
 }
 
@@ -840,6 +844,12 @@ async fn start_session(
       &config.redirect_uri,
       max_age,
     ),
+    oidc_provider_cookie(
+      provider,
+      &state.config.server,
+      &config.redirect_uri,
+      max_age,
+    ),
   ];
 
   Ok(
@@ -866,6 +876,31 @@ async fn oidc_login(
     Ok(response) => response,
     Err(error) => login_failure(&state, &provider, error).await,
   }
+}
+
+/// The provider's logout page for a session from `provider`, when that
+/// provider has a `post_logout_redirect_uri` to come back to.
+pub async fn end_session_url(
+  state: &AppState,
+  provider: &str,
+) -> Option<String> {
+  let config = state.config.oauth.oidc.get(provider)?;
+  let back = config.post_logout_redirect_uri.as_deref()?;
+  let idp = match cached_provider(state, provider, config).await {
+    Ok(idp) => idp,
+    Err(error) => {
+      tracing::warn!(%provider, ?error, "OIDC provider unavailable at logout");
+      return None;
+    },
+  };
+  let mut url =
+    oauth2::url::Url::parse(idp.end_session_endpoint.as_deref()?).ok()?;
+
+  url
+    .query_pairs_mut()
+    .append_pair("client_id", &config.client_id)
+    .append_pair("post_logout_redirect_uri", back);
+  Some(url.into())
 }
 
 /// Starts a flow that links the identity the provider returns to `user`,

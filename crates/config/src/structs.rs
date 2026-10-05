@@ -313,25 +313,29 @@ pub struct GitHubOAuthConfig {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OidcProviderConfig {
-  pub display_name:       String,
-  pub issuer_url:         String,
-  pub client_id:          String,
-  pub client_secret:      Option<String>,
-  pub client_secret_file: Option<PathBuf>,
-  pub redirect_uri:       String,
+  pub display_name:             String,
+  pub issuer_url:               String,
+  pub client_id:                String,
+  pub client_secret:            Option<String>,
+  pub client_secret_file:       Option<PathBuf>,
+  pub redirect_uri:             String,
   #[serde(default = "default_oidc_scopes")]
-  pub scopes:             Vec<String>,
+  pub scopes:                   Vec<String>,
   #[serde(default = "default_groups_claim")]
-  pub groups_claim:       String,
+  pub groups_claim:             String,
   #[serde(default = "default_role")]
-  pub default_role:       GlobalRole,
+  pub default_role:             GlobalRole,
   #[serde(default)]
-  pub allowed_groups:     Vec<String>,
+  pub allowed_groups:           Vec<String>,
   #[serde(default)]
-  pub role_mappings:      Vec<OidcRoleMapping>,
+  pub role_mappings:            Vec<OidcRoleMapping>,
   /// Seconds a session from this provider lasts, so role or group changes at
   /// the provider apply by the next sign-in. Defaults to seven days.
-  pub session_max_age:    Option<u64>,
+  pub session_max_age:          Option<u64>,
+  /// Where the provider sends the browser after signing out there. Setting it
+  /// makes circus logout end the provider session too, and it must be
+  /// registered with the provider.
+  pub post_logout_redirect_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
