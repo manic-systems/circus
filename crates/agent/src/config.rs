@@ -4,7 +4,10 @@
 //! `/etc/circus-agent.toml`. Environment overrides with prefix
 //! `CIRCUS_AGENT__` and `__` as a path separator.
 
-use std::path::{Path, PathBuf};
+use std::{
+  collections::BTreeMap,
+  path::{Path, PathBuf},
+};
 
 pub use circus_logs::TracingConfig;
 use serde::{Deserialize, Serialize};
@@ -99,11 +102,43 @@ pub struct Agent {
   #[serde(default)]
   pub rootless_data_dir: Option<PathBuf>,
 
+  /// Opt-in configuration for post-build effects.
+  #[serde(default)]
+  pub effects: Option<EffectsConfig>,
+
   /// When present (or `--ephemeral`), run as a single-session builder: fresh
   /// machine ID, drain the queue, then exit instead of reconnecting. For CI
   /// runners such as GitHub Actions.
   #[serde(default)]
   pub ephemeral: Option<EphemeralConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EffectsConfig {
+  /// Hercules-format secret definitions kept on this agent.
+  pub secrets_file: PathBuf,
+
+  /// Permit effect assignments over unauthenticated plaintext RPC.
+  #[serde(default)]
+  pub allow_insecure_transport: bool,
+
+  /// Host paths effects may request through `mounts`, keyed by name.
+  #[serde(default)]
+  pub mountables: BTreeMap<String, EffectMountable>,
+}
+
+/// Host path that matching effects may mount.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EffectMountable {
+  pub source:    PathBuf,
+  #[serde(default = "read_only_by_default")]
+  pub read_only: bool,
+  /// Same condition language as `secrets.json`.
+  pub condition: serde_json::Value,
+}
+
+const fn read_only_by_default() -> bool {
+  true
 }
 
 /// Lifecycle bounds for an ephemeral (single-session) agent. In-flight builds

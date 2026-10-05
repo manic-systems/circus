@@ -5,7 +5,7 @@ use crate::{
   Build,
   db::{DbTransaction, GenericClient, PgPool, is_unique_violation},
   error::{CiError, Result},
-  models::{BuildDependency, BuildStatus},
+  models::{BuildDependency, BuildKind, BuildStatus},
 };
 
 impl From<q::BuildDependencyRow> for BuildDependency {
@@ -23,6 +23,9 @@ impl TryFrom<q::BuildRow> for Build {
 
   fn try_from(r: q::BuildRow) -> Result<Self> {
     let status = r.status.parse::<BuildStatus>().map_err(|e| {
+      CiError::Internal(format!("build {} in the database has {e}", r.id))
+    })?;
+    let kind = r.kind.parse::<BuildKind>().map_err(|e| {
       CiError::Internal(format!("build {} in the database has {e}", r.id))
     })?;
     Ok(Self {
@@ -58,6 +61,7 @@ impl TryFrom<q::BuildRow> for Build {
       required_features: r.required_features,
       effective_features: r.effective_features,
       closure_size: r.closure_size,
+      kind,
     })
   }
 }

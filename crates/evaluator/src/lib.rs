@@ -6,3 +6,4 @@ pub mod git;
 mod memory;
 pub mod nix;
 mod path_filter;
+mod schedule;

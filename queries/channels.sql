@@ -96,7 +96,8 @@ FROM
   JOIN evaluations e ON e.id = b.evaluation_id
 WHERE
   b.evaluation_id =:evaluation_id
-  AND e.status = 'completed';
+  AND e.status = 'completed'
+  AND b.kind = 'build';
 
 --! auto_promote_channels : ChannelRow
 SELECT

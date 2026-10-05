@@ -9,6 +9,7 @@ use circus_common::{
   PgPool,
   models::{
     Build,
+    BuildKind,
     CreateBuild,
     DEPENDENCY_JOB_PREFIX,
     EvaluationStatus,
@@ -51,6 +52,76 @@ struct DerivationInfo {
   outputs:           Option<HashMap<String, String>>,
   input_drvs:        Option<HashMap<String, serde_json::Value>>,
   required_features: Vec<String>,
+  is_effect:         bool,
+  wants_git_token:   bool,
+}
+
+fn effect_marker(value: &serde_json::Value) -> bool {
+  match value {
+    serde_json::Value::Bool(value) => *value,
+    serde_json::Value::Number(value) => value.as_i64() == Some(1),
+    serde_json::Value::String(value) => {
+      matches!(value.as_str(), "1" | "true")
+    },
+    _ => false,
+  }
+}
+
+fn derivation_is_effect(value: &serde_json::Value) -> bool {
+  if value
+    .get("structuredAttrs")
+    .and_then(|attrs| attrs.get("isEffect"))
+    .is_some_and(effect_marker)
+  {
+    return true;
+  }
+
+  let Some(env) = value.get("env") else {
+    return false;
+  };
+  if env.get("isEffect").is_some_and(effect_marker) {
+    return true;
+  }
+
+  env
+    .get("__json")
+    .and_then(serde_json::Value::as_str)
+    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+    .is_some_and(|attrs| attrs.get("isEffect").is_some_and(effect_marker))
+}
+
+/// Whether `secretsToUse` or `secretsMap` asks for a `GitToken`.
+fn derivation_wants_git_token(value: &serde_json::Value) -> bool {
+  let json_attrs = value
+    .get("env")
+    .and_then(|env| env.get("__json"))
+    .and_then(serde_json::Value::as_str)
+    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
+  let sources = [
+    value.get("env"),
+    value.get("structuredAttrs"),
+    json_attrs.as_ref(),
+  ];
+  sources.into_iter().flatten().any(|attrs| {
+    ["secretsToUse", "secretsMap"].into_iter().any(|key| {
+      let map = match attrs.get(key) {
+        Some(serde_json::Value::String(json)) => {
+          serde_json::from_str(json).ok()
+        },
+        Some(map) => Some(map.clone()),
+        None => None,
+      };
+      map
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|map| {
+          map.values().any(|secret| {
+            secret.get("type").and_then(serde_json::Value::as_str)
+              == Some("GitToken")
+          })
+        })
+    })
+  })
 }
 
 fn parse_derivation_infos(
@@ -75,12 +146,16 @@ fn parse_derivation_infos(
         circus_nix::derivation::drv_input_drvs(store_dir, drv_val);
       let required_features =
         circus_nix::derivation::drv_required_features(drv_val);
+      let is_effect = derivation_is_effect(drv_val);
+      let wants_git_token = is_effect && derivation_wants_git_token(drv_val);
 
       (drv_path, DerivationInfo {
         system,
         outputs,
         input_drvs,
         required_features,
+        is_effect,
+        wants_git_token,
       })
     })
     .collect()
@@ -307,12 +382,13 @@ fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
 /// Resolve the dependency edges to insert for `jobs`, deduplicated. Jobs can
 /// alias one drv path (`packages.default`), so edges are anchored to each
 /// job's own build id rather than the drv-keyed map, which only retains the
-/// last build per drv.
+/// last build per drv. Nothing depends on an effect.
 fn resolve_dependency_pairs(
   jobs: &[NixJob],
   build_ids: &[Uuid],
   drv_to_build: &HashMap<String, Uuid>,
   name_to_build: &HashMap<String, Uuid>,
+  effects: &HashSet<Uuid>,
 ) -> Vec<(Uuid, Uuid)> {
   let mut seen = HashSet::new();
   let mut pairs = Vec::new();
@@ -321,6 +397,7 @@ fn resolve_dependency_pairs(
       for dep_drv in input_drvs.keys() {
         if let Some(&dep_build_id) = drv_to_build.get(dep_drv)
           && dep_build_id != build_id
+          && !effects.contains(&dep_build_id)
           && seen.insert((build_id, dep_build_id))
         {
           pairs.push((build_id, dep_build_id));
@@ -332,6 +409,7 @@ fn resolve_dependency_pairs(
       for constituent_name in constituents {
         if let Some(&dep_build_id) = name_to_build.get(constituent_name)
           && dep_build_id != build_id
+          && !effects.contains(&dep_build_id)
           && seen.insert((build_id, dep_build_id))
         {
           pairs.push((build_id, dep_build_id));
@@ -346,8 +424,9 @@ fn resolve_dependency_pairs(
 ///
 /// Each batch commits together with every dependency build and edge it needs,
 /// so the queue runner never sees a build before the edges that hold it back.
-/// Aggregates wait for [`BuildStream::complete`] because their constituents can
-/// arrive in any later batch.
+/// Aggregates and effects wait for [`BuildStream::complete`], because
+/// constituents can arrive in any later batch and an effect depends on every
+/// build of the evaluation.
 pub(crate) struct BuildStream<'a> {
   pool:            &'a PgPool,
   eval_id:         Uuid,
@@ -361,6 +440,8 @@ pub(crate) struct BuildStream<'a> {
   touched:         HashSet<Uuid>,
   substituters:    Vec<String>,
   aggregates:      Vec<NixJob>,
+  effects:         Vec<NixJob>,
+  effect_ids:      HashSet<Uuid>,
   dropped:         usize,
 }
 
@@ -377,11 +458,16 @@ impl<'a> BuildStream<'a> {
     let mut name_to_build = HashMap::new();
     let mut name_to_drv = HashMap::new();
     let mut dependencies = HashMap::new();
+    let mut effect_ids = HashSet::new();
     for build in repo::builds::list_for_evaluation(pool, eval_id).await? {
       if build.job_name.starts_with(DEPENDENCY_JOB_PREFIX) {
         dependencies.insert(build.drv_path.clone(), build.id);
       }
-      drv_to_build.insert(build.drv_path.clone(), build.id);
+      if build.kind.is_effect() {
+        effect_ids.insert(build.id);
+      } else {
+        drv_to_build.insert(build.drv_path.clone(), build.id);
+      }
       name_to_build.insert(build.job_name.clone(), build.id);
       name_to_drv.insert(build.job_name, build.drv_path);
     }
@@ -399,6 +485,8 @@ impl<'a> BuildStream<'a> {
       touched: HashSet::new(),
       substituters: http_substituters(memory_limit).await,
       aggregates: Vec::new(),
+      effects: Vec::new(),
+      effect_ids,
       dropped: 0,
     })
   }
@@ -419,14 +507,15 @@ impl<'a> BuildStream<'a> {
     self.persist(jobs, false).await
   }
 
-  /// Record the aggregates and mark the evaluation completed.
+  /// Record the aggregates and effects and mark the evaluation completed.
   ///
   /// # Returns
   ///
   /// `false` if the evaluation stopped running first.
   pub(crate) async fn complete(mut self) -> color_eyre::Result<bool> {
-    let aggregates = std::mem::take(&mut self.aggregates);
-    let completed = self.persist(aggregates, true).await?.is_some();
+    let mut jobs = std::mem::take(&mut self.aggregates);
+    jobs.append(&mut self.effects);
+    let completed = self.persist(jobs, true).await?.is_some();
     if self.dropped > 0 {
       tracing::info!(
         dropped = self.dropped,
@@ -537,10 +626,30 @@ impl<'a> BuildStream<'a> {
       })
       .collect::<Vec<_>>();
     let (expanded, derivations) = self.expand(jobs).await;
-    let jobs = self.allowed(expanded);
+    let (effects, jobs): (Vec<_>, Vec<_>) =
+      self.allowed(expanded).into_iter().partition(|job| {
+        !job.name.starts_with(DEPENDENCY_JOB_PREFIX)
+          && derivations
+            .get(&job.drv_path)
+            .is_some_and(|info| info.is_effect)
+      });
+    let (jobs, effect_count) = if finish {
+      let effect_count = effects.len();
+      ([jobs, effects].concat(), effect_count)
+    } else {
+      // A deferred effect's stale build goes once the effect is recorded.
+      stale.retain(|id| {
+        !effects
+          .iter()
+          .any(|effect| self.name_to_build.get(&effect.name) == Some(id))
+      });
+      self.effects.extend(effects);
+      (jobs, 0)
+    };
+    let effect_start = jobs.len() - effect_count;
 
     let mut builds = Vec::with_capacity(jobs.len());
-    for job in &jobs {
+    for (index, job) in jobs.iter().enumerate() {
       let outputs_json = job
         .outputs
         .as_ref()
@@ -571,6 +680,11 @@ impl<'a> BuildStream<'a> {
         meta_homepage: job.meta.homepage.clone(),
         meta_maintainers: job.meta.maintainers.clone(),
         required_features,
+        kind: if index < effect_start {
+          BuildKind::Build
+        } else {
+          BuildKind::Effect
+        },
       });
     }
 
@@ -596,6 +710,7 @@ impl<'a> BuildStream<'a> {
     for build in builds {
       let adopted = if build.job_name.starts_with(DEPENDENCY_JOB_PREFIX)
         || build.is_aggregate == Some(true)
+        || build.kind.is_effect()
       {
         None
       } else {
@@ -611,7 +726,18 @@ impl<'a> BuildStream<'a> {
       if build.job_name.starts_with(DEPENDENCY_JOB_PREFIX) {
         self.dependencies.insert(build.drv_path.clone(), build.id);
       }
-      self.drv_to_build.insert(build.drv_path.clone(), build.id);
+      if build.kind.is_effect() {
+        if derivations
+          .get(&build.drv_path)
+          .is_some_and(|info| info.wants_git_token)
+        {
+          repo::effect_git_token_requests::insert_in_transaction(&tx, build.id)
+            .await?;
+        }
+        self.effect_ids.insert(build.id);
+      } else {
+        self.drv_to_build.insert(build.drv_path.clone(), build.id);
+      }
       self.name_to_build.insert(build.job_name.clone(), build.id);
       self
         .name_to_drv
@@ -621,12 +747,21 @@ impl<'a> BuildStream<'a> {
       created.push(build);
     }
 
-    let pairs = resolve_dependency_pairs(
+    let mut pairs = resolve_dependency_pairs(
       &jobs,
       &build_ids,
       &self.drv_to_build,
       &self.name_to_build,
+      &self.effect_ids,
     );
+    let mut seen = pairs.iter().copied().collect::<HashSet<_>>();
+    for &effect in &build_ids[effect_start..] {
+      for &id in &self.touched {
+        if !self.effect_ids.contains(&id) && seen.insert((effect, id)) {
+          pairs.push((effect, id));
+        }
+      }
+    }
     for (build_id, dep_build_id) in pairs
       .into_iter()
       .filter(|(build_id, _)| !adopted_ids.contains(build_id))
@@ -693,7 +828,7 @@ pub(crate) fn compute_inputs_hash(
 
 #[cfg(test)]
 mod tests {
-  use std::collections::HashMap;
+  use std::collections::{HashMap, HashSet};
 
   use circus_common::{
     PgPool,
@@ -705,9 +840,10 @@ mod tests {
     },
     repo,
   };
+  use serde_json::json;
   use uuid::Uuid;
 
-  use super::{BuildStream, resolve_dependency_pairs};
+  use super::{BuildStream, derivation_is_effect, resolve_dependency_pairs};
   use crate::{
     memory::MemoryLimit,
     nix::{NixJob, NixMeta},
@@ -727,6 +863,30 @@ mod tests {
       }),
       constituents: None,
       meta:         NixMeta::default(),
+    }
+  }
+
+  #[test]
+  fn parses_effect_markers_from_derivation_json() {
+    for drv in [
+      json!({"env": {"isEffect": "1"}}),
+      json!({"env": {"isEffect": "true"}}),
+      json!({"structuredAttrs": {"isEffect": true}}),
+      json!({"env": {"__json": r#"{"isEffect":true}"#}}),
+    ] {
+      assert!(derivation_is_effect(&drv), "{drv}");
+    }
+  }
+
+  #[test]
+  fn rejects_false_or_unrelated_effect_text() {
+    for drv in [
+      json!({"env": {"isEffect": "0"}}),
+      json!({"structuredAttrs": {"isEffect": false}}),
+      json!({"env": {"note": r#"("isEffect","1")"#}}),
+      json!({"env": {"__json": r#"{"isEffect":false}"#}}),
+    ] {
+      assert!(!derivation_is_effect(&drv), "{drv}");
     }
   }
 
@@ -757,6 +917,7 @@ mod tests {
       &build_ids,
       &drv_to_build,
       &name_to_build,
+      &HashSet::new(),
     );
 
     assert_eq!(pairs, vec![

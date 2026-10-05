@@ -37,8 +37,11 @@ pub static AGENT_CAPACITY_CHANGED: Notify = Notify::const_new();
 /// One command queued from the scheduler to a connected agent.
 pub struct DispatchCommand {
   pub build_id:         Uuid,
+  /// Retry generation used to reject late results from an older assignment.
+  pub attempt:          i32,
   pub drv_path:         String,
   pub is_fod:           bool,
+  pub effect:           Option<EffectContext>,
   pub max_log_size:     u64,
   pub max_silent_time:  u32,
   pub build_timeout:    u32,
@@ -50,6 +53,8 @@ pub struct DispatchCommand {
   /// runner's own `nix copy --to s3://...` post-build path stays in
   /// charge.
   pub presigned_upload: Option<PresignedUpload>,
+  /// Signals the connection task to abort the assignment on drop.
+  pub abort:            tokio::sync::oneshot::Receiver<()>,
   /// Keep the agent slot reservation with the command so failed handoff and
   /// connection-task cleanup use the same release path.
   pub reservation:      SlotGuard,
@@ -57,6 +62,17 @@ pub struct DispatchCommand {
   /// after the agent reports via `ResultSink`. Some scheduler errors are
   /// also surfaced here (queue full, connection closed mid-dispatch).
   pub completion:       tokio::sync::oneshot::Sender<DispatchResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectContext {
+  pub project_id:        String,
+  pub project_path:      String,
+  pub owner:             String,
+  pub repo:              String,
+  pub branch:            String,
+  pub tag:               String,
+  pub is_default_branch: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -77,9 +93,7 @@ pub enum DispatchResult {
   TimedOut,
   Aborted,
   OomKilled(String),
-  /// Agent connection dropped before the result arrived; the caller
-  /// should treat this as a transient failure and retry on another
-  /// agent.
+  /// Agent connection dropped before the result arrived.
   Disconnected,
   Refused(String),
 }
@@ -98,6 +112,8 @@ pub struct AgentMeta {
   pub cpu_count:          u32,
   pub max_jobs:           u32,
   pub ephemeral:          bool,
+  /// Agent opted in to running post-build effects.
+  pub effects:            bool,
   pub auth_kind:          circus_common::models::AuthKind,
   pub oidc_repository:    Option<String>,
   pub oidc_subject:       Option<String>,
@@ -145,6 +161,7 @@ impl AgentMeta {
     cpu_count: u32,
     max_jobs: u32,
     ephemeral: bool,
+    effects: bool,
     auth_kind: circus_common::models::AuthKind,
     oidc_repository: Option<String>,
     oidc_subject: Option<String>,
@@ -163,6 +180,7 @@ impl AgentMeta {
       cpu_count,
       max_jobs,
       ephemeral,
+      effects,
       auth_kind,
       oidc_repository,
       oidc_subject,
@@ -219,6 +237,7 @@ impl AgentMeta {
       max_jobs: self.max_jobs,
       current_jobs,
       ephemeral: self.ephemeral,
+      effects: self.effects,
       auth_kind: self.auth_kind,
       oidc_repository: self.oidc_repository.clone(),
       oidc_subject: self.oidc_subject.clone(),
@@ -264,6 +283,7 @@ pub struct AgentSnapshot {
   pub max_jobs:           u32,
   pub current_jobs:       u32,
   pub ephemeral:          bool,
+  pub effects:            bool,
   pub auth_kind:          circus_common::models::AuthKind,
   pub oidc_repository:    Option<String>,
   pub oidc_subject:       Option<String>,
@@ -467,6 +487,23 @@ impl AgentPool {
       .collect()
   }
 
+  #[must_use]
+  pub fn active_build_ids(&self) -> Vec<Uuid> {
+    self
+      .inner
+      .read()
+      .values()
+      .flat_map(|meta| {
+        meta
+          .active_builds
+          .read()
+          .iter()
+          .copied()
+          .collect::<Vec<_>>()
+      })
+      .collect()
+  }
+
   /// Free build slots across connected agents. The scheduler uses this as the
   /// per-cycle cap when fetching pending builds.
   #[must_use]
@@ -551,6 +588,7 @@ mod tests {
       1,
       max_jobs,
       false,
+      false,
       circus_common::models::AuthKind::Token,
       None,
       None,
@@ -629,6 +667,17 @@ mod tests {
 
     drop(first);
     assert!(pool.reserve(machine_id, kind, None, None).is_ok());
+  }
+
+  #[test]
+  fn active_build_ids_snapshot_tracks_connection_tasks() {
+    let pool = AgentPool::default();
+    let agent = meta(Uuid::new_v4(), Uuid::new_v4());
+    let build_id = Uuid::new_v4();
+    agent.active_builds.write().insert(build_id);
+    assert!(publish(&pool, agent).is_ok());
+
+    assert_eq!(pool.active_build_ids(), vec![build_id]);
   }
 
   #[test]
