@@ -176,11 +176,11 @@ you think is worth answering in the documentation for future reference.
 
 ## Hacking
 
-Circus is built with Rust, using 1.95.0 and 2024 edition features. For an
+Circus is built with Rust, using 1.98.0 and 2024 edition features. For an
 optimal development experience, using Nix is your best bet. The
 [Nix flake](../flake.nix) contains a development shell providing the necessary
 toolchain. For a consistent experience, Nix is encouraged. Otherwise ensure that
-you have at least Rust 1.95.0.
+you have at least Rust 1.98.0.
 
 ### Building Circus
 

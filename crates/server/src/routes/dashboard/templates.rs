@@ -31,14 +31,12 @@ use super::{
     JobStatusColumn,
     JobStatusRow,
     ProjectSummaryView,
-    QueueBuildView,
     QueueSystemView,
     StarredJobView,
     UserView,
     WorkerSummaryView,
   },
 };
-use crate::permissions::UiPermissions;
 
 #[derive(Template)]
 #[template(path = "home.html")]
@@ -218,25 +216,6 @@ pub(super) struct BuildLogTemplate {
 }
 
 #[derive(Template)]
-#[template(path = "queue.html")]
-pub(super) struct QueueTemplate {
-  pub(super) ui:             UiTemplateConfig,
-  pub(super) pending_builds: Vec<QueueBuildView>,
-  pub(super) running_builds: Vec<QueueBuildView>,
-  pub(super) pending_count:  i64,
-  pub(super) running_count:  i64,
-  pub(super) show_running:   bool,
-  pub(super) show_pending:   bool,
-  pub(super) filter_status:  String,
-  pub(super) filter_system:  String,
-  pub(super) filter_job:     String,
-  pub(super) permissions:    UiPermissions,
-  pub(super) csrf_token:     String,
-  pub(super) is_admin:       bool,
-  pub(super) auth_name:      String,
-}
-
-#[derive(Template)]
 #[template(path = "channels.html")]
 pub(super) struct ChannelsTemplate {
   pub(super) ui:        UiTemplateConfig,
@@ -324,6 +303,18 @@ pub(super) struct PinnedOutputView {
   pub(super) gc_root_path:       String,
   pub(super) product_created_at: String,
 }
+
+/// The dashboard frame around a Topcoat page, split at [`LIVE_SLOT`].
+#[derive(Template)]
+#[template(path = "live_shell.html")]
+pub(super) struct LiveShellTemplate<'page> {
+  pub(super) ui:        UiTemplateConfig,
+  pub(super) title:     &'page str,
+  pub(super) is_admin:  bool,
+  pub(super) auth_name: &'page str,
+}
+
+pub(super) const LIVE_SLOT: &str = "<!-- topcoat page -->";
 
 #[cfg(test)]
 mod tests {

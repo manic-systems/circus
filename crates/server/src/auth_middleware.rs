@@ -1,6 +1,6 @@
 use axum::{
   extract::{FromRequestParts, Request, State},
-  http::{StatusCode, request::Parts},
+  http::{Extensions, HeaderMap, StatusCode, request::Parts},
   middleware::Next,
   response::Response,
 };
@@ -47,22 +47,15 @@ struct RequestCredentials {
 }
 
 impl RequestCredentials {
-  fn from_request(request: &Request) -> Self {
+  fn from_headers(headers: &HeaderMap) -> Self {
     Self {
-      bearer_token:          request
-        .headers()
+      bearer_token:          headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|header| header.strip_prefix("Bearer "))
         .map(str::to_owned),
-      user_session_id:       cookie_value(
-        request.headers(),
-        USER_SESSION_COOKIE,
-      ),
-      legacy_api_session_id: cookie_value(
-        request.headers(),
-        API_KEY_SESSION_COOKIE,
-      ),
+      user_session_id:       cookie_value(headers, USER_SESSION_COOKIE),
+      legacy_api_session_id: cookie_value(headers, API_KEY_SESSION_COOKIE),
     }
   }
 }
@@ -103,7 +96,7 @@ pub async fn require_api_key(
     || method == axum::http::Method::HEAD
     || method == axum::http::Method::OPTIONS;
 
-  let credentials = RequestCredentials::from_request(&request);
+  let credentials = RequestCredentials::from_headers(request.headers());
   let auth = RequestAuth::resolve(&state, credentials).await;
 
   if let Some(api_key) = auth.bearer_api_key {
@@ -222,28 +215,36 @@ pub async fn extract_session(
   mut request: Request,
   next: Next,
 ) -> Response {
-  let credentials = RequestCredentials::from_request(&request);
-  let auth = RequestAuth::resolve(&state, credentials).await;
+  let session = session_extensions(&state, request.headers()).await;
+  request.extensions_mut().extend(session);
+  next.run(request).await
+}
+
+/// What [`extract_session`] adds for `headers`, for requests that skip axum's
+/// middleware.
+pub async fn session_extensions(
+  state: &AppState,
+  headers: &HeaderMap,
+) -> Extensions {
+  let credentials = RequestCredentials::from_headers(headers);
+  let auth = RequestAuth::resolve(state, credentials).await;
+  let mut extensions = Extensions::new();
 
   if let Some(api_key) = auth.bearer_api_key {
-    request.extensions_mut().insert(api_key);
+    extensions.insert(api_key);
   }
 
   if let Some(session) = auth.user_session {
-    request.extensions_mut().insert(session.user);
-    request
-      .extensions_mut()
-      .insert(CsrfToken(state.csrf_token_for(&session.session_id)));
+    extensions.insert(session.user);
+    extensions.insert(CsrfToken(state.csrf_token_for(&session.session_id)));
   } else if let Some(session) = auth.legacy_session {
     if let Some(api_key) = session.api_key {
-      request.extensions_mut().insert(api_key);
+      extensions.insert(api_key);
     }
-    request
-      .extensions_mut()
-      .insert(CsrfToken(state.csrf_token_for(&session.session_id)));
+    extensions.insert(CsrfToken(state.csrf_token_for(&session.session_id)));
   }
 
-  next.run(request).await
+  extensions
 }
 
 async fn resolve_bearer_api_key(

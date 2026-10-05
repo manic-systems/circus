@@ -380,7 +380,7 @@ impl FromRequestParts<AppState> for DashboardContext {
 }
 
 impl DashboardPage {
-  const fn access(self, config: &ServerConfig) -> PageAccessLevel {
+  pub(super) const fn access(self, config: &ServerConfig) -> PageAccessLevel {
     let pages = &config.page_access;
     match self {
       Self::Home => pages.home,

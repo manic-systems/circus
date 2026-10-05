@@ -36,6 +36,7 @@ tokio.workspace               = true
 tokio-rusqlite.workspace      = true
 tokio-util.workspace          = true
 toml.workspace                = true
+topcoat.workspace             = true
 tower-http.workspace          = true
 tracing.workspace             = true
 url.workspace                 = true

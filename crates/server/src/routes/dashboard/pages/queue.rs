@@ -1,63 +1,36 @@
 use std::collections::HashMap;
 
-use axum::{
-  extract::{Query, State},
-  response::Html,
-};
 use circus_common::models::Build;
 use uuid::Uuid;
 
-use super::{
-  super::{
-    shared::{
-      DashboardContext,
-      DashboardPage,
-      PageError,
-      QueueBuildView,
-      RenderExt,
-      enforce_page_access,
-    },
-    templates::QueueTemplate,
-  },
-  format_elapsed,
-  ui_config,
-};
+use super::{super::shared::QueueBuildView, format_elapsed};
 use crate::state::AppState;
 
-#[derive(serde::Deserialize)]
-pub(in crate::routes::dashboard) struct QueueFilterParams {
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  status:   Option<String>,
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  system:   Option<String>,
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  job_name: Option<String>,
+#[derive(Clone, Default)]
+pub(in crate::routes::dashboard) struct QueueFilter {
+  pub(in crate::routes::dashboard) status:   Option<String>,
+  pub(in crate::routes::dashboard) system:   Option<String>,
+  pub(in crate::routes::dashboard) job_name: Option<String>,
 }
 
-pub(in crate::routes::dashboard) async fn queue_page(
-  State(state): State<AppState>,
-  Query(params): Query<QueueFilterParams>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Queue)?;
-  let show_running = params.status.as_deref() != Some("pending");
-  let show_pending = params.status.as_deref() != Some("running");
+pub(in crate::routes::dashboard) struct Queue {
+  pub(in crate::routes::dashboard) running: Option<Vec<QueueBuildView>>,
+  pub(in crate::routes::dashboard) pending: Option<Vec<QueueBuildView>>,
+}
+
+pub(in crate::routes::dashboard) async fn load(
+  state: &AppState,
+  filter: &QueueFilter,
+) -> Queue {
+  let show_running = filter.status.as_deref() != Some("pending");
+  let show_pending = filter.status.as_deref() != Some("running");
   let running = if show_running {
     circus_common::repo::builds::list_filtered(
       &state.pool,
       None,
       Some("running"),
-      params.system.as_deref(),
-      params.job_name.as_deref(),
+      filter.system.as_deref(),
+      filter.job_name.as_deref(),
       100,
       0,
     )
@@ -69,8 +42,8 @@ pub(in crate::routes::dashboard) async fn queue_page(
   let pending = if show_pending {
     circus_common::repo::builds::list_pending_in_scheduler_order_filtered(
       &state.pool,
-      params.system.as_deref(),
-      params.job_name.as_deref(),
+      filter.system.as_deref(),
+      filter.job_name.as_deref(),
       100,
       0,
     )
@@ -122,9 +95,6 @@ pub(in crate::routes::dashboard) async fn queue_page(
       },
     )
   };
-
-  let running_count = running.len() as i64;
-  let pending_count = pending.len() as i64;
 
   let running_builds: Vec<QueueBuildView> = running
     .iter()
@@ -182,21 +152,8 @@ pub(in crate::routes::dashboard) async fn queue_page(
     })
     .collect();
 
-  QueueTemplate {
-    ui: ui_config(&state),
-    pending_builds,
-    running_builds,
-    pending_count,
-    running_count,
-    show_running,
-    show_pending,
-    filter_status: params.status.unwrap_or_default(),
-    filter_system: params.system.unwrap_or_default(),
-    filter_job: params.job_name.unwrap_or_default(),
-    permissions: ctx.permissions,
-    csrf_token: ctx.csrf_token.clone(),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
+  Queue {
+    running: show_running.then_some(running_builds),
+    pending: show_pending.then_some(pending_builds),
   }
-  .render_html_or_500()
 }

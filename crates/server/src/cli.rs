@@ -34,6 +34,11 @@ struct Cli {
   /// Force mounting the bundled dashboard UI even if config disables it.
   #[arg(long)]
   ui: bool,
+
+  /// Write the dashboard's browser assets into this directory and exit. The
+  /// asset sources only exist where the binary was built.
+  #[arg(long, value_name = "DIR", hide = true)]
+  bundle_assets: Option<PathBuf>,
 }
 
 #[expect(
@@ -100,6 +105,12 @@ where
   T: Into<OsString> + Clone,
 {
   let cli = Cli::parse_from(args);
+
+  if let Some(dir) = cli.bundle_assets {
+    let binary = std::fs::read(std::env::current_exe()?)?;
+    routes::dashboard::assets::bundle(&binary, &dir)?;
+    return Ok(());
+  }
 
   let mut config = Config::load(cli.config.as_deref())?;
   circus_common::init_tracing(&config.tracing);
