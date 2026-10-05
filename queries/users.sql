@@ -72,6 +72,26 @@ DO UPDATE SET email = COALESCE(:email::text, users.email),
               last_login_at = NOW(), updated_at = NOW()
 RETURNING *;
 
+--! login_linked_identity : UserRow
+UPDATE users SET last_login_at = NOW(), updated_at = NOW()
+FROM user_identities i
+WHERE i.external_id = :external_id AND users.id = i.user_id
+RETURNING users.*;
+
+--! link_identity
+INSERT INTO user_identities (external_id, user_id, provider)
+VALUES (:external_id, :user_id, :provider);
+
+--! unlink_identity
+DELETE FROM user_identities WHERE user_id = :user_id AND provider = :provider;
+
+--! native_external_id
+SELECT external_id FROM users
+WHERE id = :user_id AND user_type = 'oidc' AND external_id IS NOT NULL;
+
+--! linked_providers
+SELECT provider FROM user_identities WHERE user_id = :user_id ORDER BY provider;
+
 --! create_session
 INSERT INTO user_sessions (user_id, session_token_hash, expires_at)
 VALUES (:user_id, :session_token_hash, :expires_at)
