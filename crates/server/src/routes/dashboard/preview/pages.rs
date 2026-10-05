@@ -7,6 +7,7 @@ use super::{
     shared::{
       ApiKeyView,
       BrokeInView,
+      LinkedIdentityView,
       PrivateTemplate,
       QueueSystemView,
       StarredJobView,
@@ -517,6 +518,10 @@ pub(super) async fn users() -> Response {
       user_type:     "local".into(),
       enabled:       true,
       last_login_at: "2026-06-18 12:00".into(),
+      linked:        vec![LinkedIdentityView {
+        provider: "pocketid".into(),
+        label:    "PocketID".into(),
+      }],
     }],
     limit:       20,
     has_prev:    false,
