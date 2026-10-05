@@ -308,6 +308,19 @@ pub fn api_router(state: AppState) -> Router<AppState> {
     .route_layer(middleware::from_fn_with_state(state, require_api_key))
 }
 
+/// `raw` if it is a path on this site to send someone back to after login.
+/// Anything that could leave the site, like `//host` or `/\host`, is refused.
+#[must_use]
+pub fn return_to(raw: Option<&str>) -> Option<&str> {
+  raw.filter(|path| {
+    path.starts_with('/')
+      && !path.starts_with("//")
+      && !path.contains('\\')
+      && !path.chars().any(char::is_control)
+      && !path.starts_with("/login")
+  })
+}
+
 pub fn public_router(config: &Config) -> Router<AppState> {
   let mut router = Router::new()
     .merge(health::router())

@@ -579,6 +579,7 @@ pub(super) async fn login() -> Response {
       },
     ],
     password_login: true,
+    next:           None,
   })
 }
 

@@ -199,6 +199,15 @@ nodes[i].title = at.toLocaleString(undefined, {dateStyle: 'full', timeStyle: 'lo
 }
 })();
         </script>
+        <script>
+// Send people back to the page they were on once they sign in.
+(function() {
+if (location.pathname === '/login') return;
+var next = encodeURIComponent(location.pathname + location.search);
+var links = document.querySelectorAll('a[href="/login"]');
+for (var i = 0; i < links.length; i++) links[i].href = '/login?next=' + next;
+})();
+        </script>
         {% block scripts %}
         {% endblock %}
     </body>

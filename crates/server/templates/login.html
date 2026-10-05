@@ -13,6 +13,7 @@
             {% endmatch %}
             {% if password_login %}
                 <form method="POST" action="/login">
+                    {% if let Some(next) = next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
                     <div class="form-group">
                         <label for="username">Username</label>
                         <input type="text" id="username" name="username" autocomplete="username" autofocus>
@@ -53,6 +54,7 @@
                         Continue with an API key
                     </summary>
                     <form method="POST" action="/login">
+                        {% if let Some(next) = next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
                         <input type="password"
                                name="api_key"
                                placeholder="circus_..."
