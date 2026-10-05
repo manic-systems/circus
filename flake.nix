@@ -104,6 +104,7 @@
         circus-agent = agent.package;
         circus-evaluator = callCratePackage ./nix/packages/circus-evaluator.nix;
         circus-queue-runner = callCratePackage ./nix/packages/circus-queue-runner.nix;
+        circus-remote-cache = callCratePackage ./nix/packages/circus-remote-cache.nix;
         circus-server = callCratePackage ./nix/packages/circus-server.nix;
       };
     };
@@ -124,6 +125,7 @@
           package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-server;
           evaluatorPackage = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-evaluator;
           queueRunnerPackage = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-queue-runner;
+          remoteCachePackage = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-remote-cache;
           migratePackage = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.circus-cli;
         };
       };
