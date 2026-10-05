@@ -34,6 +34,7 @@ use subtle::ConstantTimeEq;
 use super::super::{error::ApiError, state::AppState};
 use crate::session_cookie::{
   OAUTH_STATE_COOKIE,
+  USER_SESSION_MAX_AGE_SECS,
   clear_oauth_state_cookie,
   oauth_state_cookie,
   oauth_user_session_cookie,
@@ -277,6 +278,7 @@ async fn github_callback(
     &session.0,
     &state.config.server,
     &config.redirect_uri,
+    USER_SESSION_MAX_AGE_SECS,
   );
 
   Ok(
@@ -539,6 +541,7 @@ mod tests {
       session_token,
       &config,
       "https://example.com/callback",
+      USER_SESSION_MAX_AGE_SECS,
     );
 
     assert!(cookie.contains("circus_user_session=test-session-token"));

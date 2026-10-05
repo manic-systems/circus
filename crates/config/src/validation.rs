@@ -574,6 +574,16 @@ impl Config {
         bail!("oauth.oidc.{name}.redirect_uri requires HTTPS or loopback HTTP");
       }
 
+      if provider
+        .session_max_age
+        .is_some_and(|secs| secs == 0 || secs > 365 * 24 * 60 * 60)
+      {
+        bail!(
+          "oauth.oidc.{name}.session_max_age must be between 1 second and a \
+           year"
+        );
+      }
+
       if redirect.path() != format!("/api/v1/auth/oidc/{name}/callback") {
         bail!(
           "oauth.oidc.{name}.redirect_uri must point to \

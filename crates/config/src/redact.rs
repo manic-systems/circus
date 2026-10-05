@@ -70,6 +70,7 @@ redact_debug!(OidcProviderConfig {
   default_role:       visible,
   allowed_groups:     visible,
   role_mappings:      visible,
+  session_max_age:    visible,
 });
 
 redact_debug!(NotificationsConfig {
