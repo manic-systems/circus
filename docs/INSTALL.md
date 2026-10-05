@@ -717,7 +717,8 @@ role = "restart-jobs"
 Omit both secret options for a public client. Login starts at
 `/api/v1/auth/oidc/<name>`. Accounts are keyed on the issuer and subject, and
 are never merged with an existing account by email. The username is the
-`preferred_username` claim, or the email's local part, followed by `_<name>`.
+`preferred_username` claim, or the email's local part, with `_<name>` appended
+only when that name is taken.
 
 Groups come from `groups_claim` in the ID token, or from userinfo when the ID
 token lacks it. Role mappings are checked in order and the first match wins.

@@ -152,13 +152,10 @@ struct UserInfo {
   extra: BTreeMap<String, Value>,
 }
 
-/// `disambiguate` appends a hash of `sub` for a second user whose claims
-/// sanitize to a taken name.
-fn username(
-  claims: &IdTokenClaims,
-  provider: &str,
-  disambiguate: bool,
-) -> String {
+/// Usernames to try in order, the bare name first, then with `_<provider>`
+/// for a name already taken locally, then with a hash of `sub` for a second
+/// user of the same provider whose claims sanitize alike.
+fn usernames(claims: &IdTokenClaims, provider: &str) -> [String; 3] {
   let base = [
     claims.preferred_username.as_deref(),
     claims
@@ -170,7 +167,7 @@ fn username(
   .flatten()
   .find(|name| !name.is_empty())
   .unwrap_or(&claims.sub);
-  let mut name: String = base
+  let name: String = base
     .chars()
     .map(|character| {
       if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
@@ -181,17 +178,15 @@ fn username(
     })
     .collect();
 
-  let suffix = if disambiguate {
-    let digest = Sha256::digest(claims.sub.as_bytes());
-    format!("-{}", hex::encode(&digest[..2]))
-  } else {
-    String::new()
-  };
+  let digest = Sha256::digest(claims.sub.as_bytes());
+  let hashed = format!("-{}_{provider}", hex::encode(&digest[..2]));
+  let suffixed = format!("_{provider}");
 
-  name.truncate(
-    MAX_USERNAME_LEN.saturating_sub(suffix.len() + provider.len() + 1),
-  );
-  format!("{name}{suffix}_{provider}")
+  [String::new(), suffixed, hashed].map(|suffix| {
+    let keep = MAX_USERNAME_LEN.saturating_sub(suffix.len());
+    let head: String = name.chars().take(keep).collect();
+    format!("{head}{suffix}")
+  })
 }
 
 fn claim_groups(
@@ -663,9 +658,13 @@ async fn complete_login(
     )
     .await
   };
-  let user = match upsert(&username(&claims, provider, false)).await {
+  let [bare, suffixed, hashed] = usernames(&claims, provider);
+  let user = match upsert(&bare).await {
     Err(CiError::Conflict(_)) => {
-      upsert(&username(&claims, provider, true)).await
+      match upsert(&suffixed).await {
+        Err(CiError::Conflict(_)) => upsert(&hashed).await,
+        result => result,
+      }
     },
     result => result,
   }?;
@@ -736,7 +735,7 @@ pub fn router() -> Router<AppState> {
 mod tests {
   use serde_json::json;
 
-  use super::{IdTokenClaims, MAX_USERNAME_LEN, claim_groups, username};
+  use super::{IdTokenClaims, MAX_USERNAME_LEN, claim_groups, usernames};
 
   fn claims(value: serde_json::Value) -> IdTokenClaims {
     serde_json::from_value(value).unwrap()
@@ -759,18 +758,20 @@ mod tests {
   }
 
   #[test]
-  fn usernames_are_valid_and_keep_the_provider_suffix() {
+  fn usernames_are_valid_and_fall_back_to_suffixes() {
     let long = claims(json!({
       "sub": "0f8fad5b-d9cb-469f-a165-70867728950e",
       "aud": "circus",
       "preferred_username": "jane.doe+ci@corp.example.com-with-a-long-tail",
     }));
-    let provider = "sixteen-chars-ab";
 
-    for disambiguate in [false, true] {
-      let name = username(&long, provider, disambiguate);
+    let [bare, suffixed, hashed] = usernames(&long, "sixteen-chars-ab");
+    assert!(suffixed.ends_with("_sixteen-chars-ab"), "{suffixed}");
+    assert!(hashed.ends_with("_sixteen-chars-ab"), "{hashed}");
+    assert_ne!(suffixed, hashed);
+
+    for name in [&bare, &suffixed, &hashed] {
       assert!(name.len() <= MAX_USERNAME_LEN, "{name}");
-      assert!(name.ends_with("_sixteen-chars-ab"), "{name}");
       assert!(
         name.chars().all(|character| {
           character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
@@ -779,17 +780,14 @@ mod tests {
       );
     }
 
-    assert_ne!(
-      username(&long, provider, false),
-      username(&long, provider, true)
-    );
-
     let email_only = claims(json!({
       "sub": "opaque-subject",
       "aud": "circus",
       "preferred_username": "",
       "email": "kilgore@kilgore.trout",
     }));
-    assert_eq!(username(&email_only, "dex", false), "kilgore_dex");
+    let [bare, suffixed, _] = usernames(&email_only, "dex");
+    assert_eq!(bare, "kilgore");
+    assert_eq!(suffixed, "kilgore_dex");
   }
 }
