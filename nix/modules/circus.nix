@@ -373,7 +373,7 @@
 
   serverFiles =
     serviceFiles "circus-server"
-    ((builtins.removeAttrs cfg.settings ["notifications" "queue_runner"])
+    ((builtins.removeAttrs cfg.settings ["notifications" "queue_runner" "remote_cache"])
       // {
         cache = builtins.removeAttrs cfg.settings.cache ["secret_key_file"];
         signing = builtins.removeAttrs cfg.settings.signing ["key_file"];
@@ -387,8 +387,12 @@
   };
   runnerFiles =
     serviceFiles "circus-queue-runner"
-    ((builtins.removeAttrs cfg.settings ["ui" "oauth" "declarative" "evaluator"])
+    ((builtins.removeAttrs cfg.settings ["ui" "oauth" "declarative" "evaluator" "remote_cache"])
       // {server = notificationSecrets;});
+  remoteCacheFiles = serviceFiles "circus-remote-cache" {
+    remote_cache = cfg.settings.remote_cache or {};
+    tracing = cfg.settings.tracing or {};
+  };
 
   logDirectory = cfg.settings.logs.log_dir;
   evaluatorDirectory = cfg.settings.evaluator.work_dir;
@@ -409,6 +413,11 @@ in {
     queueRunnerPackage = mkOption {
       type = package;
       description = "The circus queue runner package.";
+    };
+
+    remoteCachePackage = mkOption {
+      type = package;
+      description = "The circus remote cache package.";
     };
 
     migratePackage = mkOption {
@@ -450,6 +459,7 @@ in {
     server.enable = mkEnableOption "circus server (REST API)";
     evaluator.enable = mkEnableOption "circus evaluator (Git polling and nix evaluation)";
     queueRunner.enable = mkEnableOption "circus queue runner (build dispatch)";
+    remoteCache.enable = mkEnableOption "circus remote cache (REAPI action cache and CAS)";
   };
 
   config = mkIf cfg.enable {
@@ -710,6 +720,51 @@ in {
           };
 
           environment.CIRCUS_CONFIG_FILE = "${runnerFiles.config}";
+        };
+
+        circus-remote-cache = mkIf cfg.remoteCache.enable {
+          description = "circus Remote Cache";
+          wantedBy = ["multi-user.target"];
+          wants = ["network-online.target"];
+          after = ["network-online.target"];
+
+          serviceConfig = {
+            ExecStart = getExe' cfg.remoteCachePackage "circus-remote-cache";
+            LoadCredential = remoteCacheFiles.credentials;
+            BindReadOnlyPaths = optional (remoteCacheFiles.credentials != []) "%d:/run/circus-credentials";
+            Restart = "on-failure";
+            RestartSec = 5;
+            User = "circus";
+            Group = "circus";
+            StateDirectory = "circus";
+            WorkingDirectory = "/var/lib/circus";
+            # A busy CAS keeps many uploads and reads open at once.
+            LimitNOFILE = 65536;
+
+            # Hardening
+            CapabilityBoundingSet = [""];
+            LockPersonality = true;
+            MemoryDenyWriteExecute = true;
+            NoNewPrivileges = true;
+            PrivateDevices = true;
+            PrivateTmp = true;
+            ProtectClock = true;
+            ProtectControlGroups = true;
+            ProtectHome = true;
+            ProtectHostname = true;
+            ProtectKernelLogs = true;
+            ProtectKernelModules = true;
+            ProtectKernelTunables = true;
+            ProtectSystem = "strict";
+            RestrictAddressFamilies = ["AF_INET" "AF_INET6" "AF_UNIX"];
+            RestrictNamespaces = true;
+            RestrictRealtime = true;
+            RestrictSUIDSGID = true;
+            SystemCallArchitectures = "native";
+            SystemCallFilter = ["@system-service" "~@privileged"];
+          };
+
+          environment.CIRCUS_CONFIG_FILE = "${remoteCacheFiles.config}";
         };
       };
     };
