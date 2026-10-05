@@ -149,6 +149,7 @@ together.
 [DISTRIBUTED.md]: ./DISTRIBUTED.md
 [COMPARISON.md]: ./COMPARISON.md
 [API.md]: ./API.md
+[EFFECTS.md]: ./EFFECTS.md
 
 Circus documentation is split into different documents, detailing different
 aspects of its usage. Quickstart options, demo VM usage, configuration, database
@@ -164,7 +165,8 @@ maintained at [DESIGN.md], which contains architecture, data flow, rationale and
 more. If you're interested in a comparison, [COMPARISON.md] holds a somewhat
 up-to-date document detailing the weaknesses and strengths of Circus compared to
 Hydra. Worth noting that Hydra has picked up steam again, and evolved since the
-time of writing for this document.
+time of writing for this document. Post-build Effects are described in
+[EFFECTS.md].
 
 On a running instance, you may find the machine-readable OpenAPI spec document
 at `/api/v1/openapi.json`, unless `server.openapi_enabled = false` is

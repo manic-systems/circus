@@ -153,5 +153,10 @@ async fn path_infos(output_paths: &[String]) -> Option<Vec<ClosurePathInfo>> {
   if output_paths.is_empty() {
     return None;
   }
-  get_recursive_path_infos_with_nix(Path::new("nix"), output_paths).await
+  get_recursive_path_infos_with_nix(Path::new("nix"), output_paths)
+    .await
+    .inspect_err(|error| {
+      tracing::warn!("Failed to query output closure: {error}");
+    })
+    .ok()
 }

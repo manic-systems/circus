@@ -42,9 +42,15 @@ pub async fn claim_existing(
       )
     },
     EvaluationStatus::Completed => {
-      let build_count =
-        repo::builds::count_filtered(pool, Some(existing.id), None, None, None)
-          .await?;
+      let build_count = repo::builds::count_filtered(
+        pool,
+        Some(existing.id),
+        None,
+        None,
+        None,
+        None,
+      )
+      .await?;
       if build_count > 0 {
         return Ok(ExistingEvaluationClaim::Completed { build_count });
       }

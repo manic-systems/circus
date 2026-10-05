@@ -16,10 +16,11 @@ use std::{
 
 use capnp::capability::Promise;
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
-use circus_common::{PgPool, repo};
+use circus_common::{BuildStatus, PgPool, repo};
 use circus_proto::{
   PROTO_VERSION,
   agent_session,
+  build_assignment,
   builder,
   drv_sink,
   limits,
@@ -48,7 +49,7 @@ use super::{
   AgentPool,
   log_sink::LogSinkImpl,
   output_sink::OutputSinkImpl,
-  pool::{AgentMeta, DispatchCommand, DispatchResult},
+  pool::{AgentMeta, DispatchCommand, DispatchResult, EffectContext},
   result_sink::{BuildOutcomeKind, ResultSinkImpl},
   session::SessionImpl,
 };
@@ -80,8 +81,12 @@ pub struct ServerConfig {
   pub cache_substituter:  Option<String>,
   /// Key forwarded to agents so they can substitute drv closures.
   pub cache_public_key:   Option<String>,
+  /// Public Circus HTTP API base URL exposed to effects.
+  pub api_base_url:       String,
   /// OIDC verifier. `None` disables the OIDC auth path.
   pub oidc:               Option<Arc<super::oidc::OidcVerifier>>,
+  /// Mints `GitToken` secrets for effects that request one.
+  pub github_app:         Option<Arc<crate::github_app::GithubApp>>,
   active_uploads: Arc<parking_lot::Mutex<HashMap<UploadKey, ExpectedUpload>>>,
   /// `build_id` -> (`outputToken`, sink) for builds streaming outputs back.
   output_sinks:
@@ -163,10 +168,21 @@ impl ServerConfig {
       signing_key_file: None,
       cache_substituter: cfg.cache_substituter.clone(),
       cache_public_key: cfg.cache_public_key.clone(),
+      api_base_url: cfg.api_base_url.clone().unwrap_or_default(),
       oidc,
+      github_app: None,
       active_uploads: Arc::new(parking_lot::Mutex::new(HashMap::new())),
       output_sinks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     })
+  }
+
+  #[must_use]
+  pub fn with_github_app(
+    mut self,
+    app: Option<Arc<crate::github_app::GithubApp>>,
+  ) -> Self {
+    self.github_app = app;
+    self
   }
 
   /// Attach the runner's narinfo signing key. When set, the runner
@@ -546,6 +562,27 @@ impl runner::Server for RunnerImpl {
       // An OIDC identity is always ephemeral.
       let ephemeral = info.get_ephemeral()
         || auth_kind == circus_common::models::AuthKind::Oidc;
+      let requested_effects = info.get_effects();
+      let effects = effect_capability_enabled(
+        requested_effects,
+        ephemeral,
+        cfg.cache_substituter.as_deref(),
+        cfg.cache_public_key.as_deref(),
+      );
+      if requested_effects && !effects {
+        tracing::warn!(
+          name = %name,
+          ephemeral,
+          cache_substituter = configured_nonempty(
+            cfg.cache_substituter.as_deref()
+          ),
+          cache_public_key = configured_nonempty(
+            cfg.cache_public_key.as_deref()
+          ),
+          "Ignoring advertised Effects capability because prerequisites are \
+           missing"
+        );
+      }
       validate_agent_capacity(&systems, speed, cpu, maxj)?;
 
       let connection_id = Uuid::new_v4();
@@ -601,6 +638,7 @@ impl runner::Server for RunnerImpl {
         cpu,
         maxj,
         ephemeral,
+        effects,
         auth_kind,
         oidc_identity.as_ref().map(|id| id.repository.clone()),
         oidc_identity.as_ref().map(|id| id.subject.clone()),
@@ -1137,7 +1175,7 @@ async fn run_dispatch_pump(
   db_pool: PgPool,
   mut rx: mpsc::UnboundedReceiver<DispatchCommand>,
 ) {
-  while let Some(cmd) = rx.recv().await {
+  while let Some(mut cmd) = rx.recv().await {
     let Some(meta) = meta.upgrade() else {
       break;
     };
@@ -1150,7 +1188,7 @@ async fn run_dispatch_pump(
     tokio::task::spawn_local(async move {
       let outcome = dispatch_one(
         &builder_cap,
-        &cmd,
+        &mut cmd,
         &pool,
         &cfg,
         machine_id,
@@ -1168,14 +1206,45 @@ async fn run_dispatch_pump(
 #[expect(clippy::future_not_send, reason = "capnp future")]
 async fn dispatch_one(
   builder_cap: &builder::Client,
-  cmd: &DispatchCommand,
+  cmd: &mut DispatchCommand,
   pool: &PgPool,
   cfg: &ServerConfig,
   machine_id: Uuid,
   meta: &AgentMeta,
 ) -> DispatchResult {
   meta.active_builds.write().insert(cmd.build_id);
-  let (done_tx, done_rx) = oneshot::channel::<BuildOutcomeKind>();
+  let task_token = if cmd.effect.is_some() {
+    match repo::effect_task_tokens::issue(pool, cmd.build_id, cmd.attempt).await
+    {
+      Ok(token) => token,
+      Err(e) => {
+        let out = DispatchResult::Failed(format!(
+          "could not issue the effect task token: {e}"
+        ));
+        if reconcile_effect_result(pool, cmd, machine_id, &out, false).await {
+          meta.active_builds.write().remove(&cmd.build_id);
+        }
+        cfg.forget_uploads_for(machine_id, cmd.build_id);
+        return out;
+      },
+    }
+  } else {
+    String::new()
+  };
+  let git_token = match effect_git_token(pool, cfg, cmd).await {
+    Ok(token) => token,
+    Err(e) => {
+      let out = DispatchResult::Failed(format!(
+        "could not mint the effect's GitToken: {e}"
+      ));
+      if reconcile_effect_result(pool, cmd, machine_id, &out, false).await {
+        meta.active_builds.write().remove(&cmd.build_id);
+      }
+      cfg.forget_uploads_for(machine_id, cmd.build_id);
+      return out;
+    },
+  };
+  let (done_tx, mut done_rx) = oneshot::channel::<BuildOutcomeKind>();
   let log_sink_impl = LogSinkImpl::new(cmd.log_path.clone(), cmd.max_log_size);
   let log_cap: log_sink::Client = capnp_rpc::new_client(log_sink_impl);
   let result_sink_impl = ResultSinkImpl {
@@ -1188,18 +1257,19 @@ async fn dispatch_one(
   // Give the agent a sink to stream its output closure into so the runner can
   // serve this build locally.
   let output_token = Uuid::new_v4().simple().to_string();
-  let output_cap = cmd.presigned_upload.is_none().then(|| {
-    let sink = OutputSinkImpl::new(
-      cmd.build_id.to_string(),
-      cmd.drv_path.clone(),
-      cmd.is_fod,
-    );
-    cfg
-      .output_sinks
-      .lock()
-      .insert(cmd.build_id, (output_token.clone(), sink.clone()));
-    capnp_rpc::new_client::<output_sink::Client, _>(sink)
-  });
+  let output_cap = (cmd.effect.is_none() && cmd.presigned_upload.is_none())
+    .then(|| {
+      let sink = OutputSinkImpl::new(
+        cmd.build_id.to_string(),
+        cmd.drv_path.clone(),
+        cmd.is_fod,
+      );
+      cfg
+        .output_sinks
+        .lock()
+        .insert(cmd.build_id, (output_token.clone(), sink.clone()));
+      capnp_rpc::new_client::<output_sink::Client, _>(sink)
+    });
 
   let mut req = builder_cap.assign_request();
   {
@@ -1235,6 +1305,15 @@ async fn dispatch_one(
         opts.set_compression_level(0);
         opts.set_fail_build_on_upload_error(upload.fail_build_on_upload_error);
       }
+      if let Some(effect) = cmd.effect.as_ref() {
+        set_effect_options(
+          &mut job,
+          effect,
+          &cfg.api_base_url,
+          &task_token,
+          &git_token,
+        );
+      }
     }
     p.set_log(log_cap);
     p.set_result(result_cap);
@@ -1245,7 +1324,9 @@ async fn dispatch_one(
 
   if let Err(e) = req.send().promise.await {
     tracing::warn!(build_id = %cmd.build_id, "assign call failed: {e}");
-    meta.active_builds.write().remove(&cmd.build_id);
+    if quarantine_ambiguous_effect(pool, cmd, machine_id).await {
+      meta.active_builds.write().remove(&cmd.build_id);
+    }
     cfg.forget_uploads_for(machine_id, cmd.build_id);
     return if e.kind == capnp::ErrorKind::Disconnected {
       DispatchResult::Disconnected
@@ -1254,13 +1335,37 @@ async fn dispatch_one(
     };
   }
 
-  let outcome = tokio::select! {
-    outcome = done_rx => outcome.ok(),
+  let (outcome, abort_requested) = tokio::select! {
+    outcome = &mut done_rx => (outcome.ok(), false),
     () = meta.closed.cancelled() => {
       tracing::warn!(build_id = %cmd.build_id, %machine_id, "agent connection closed before the build reported");
-      None
+      (None, false)
+    },
+    _ = &mut cmd.abort => {
+      tracing::info!(
+        build_id = %cmd.build_id,
+        "requesting agent abort after scheduler cancellation"
+      );
+      if let Err(e) = request_agent_abort(builder_cap, cmd.build_id).await {
+        tracing::warn!(
+          build_id = %cmd.build_id,
+          "agent abort call failed: {e}"
+        );
+        if quarantine_ambiguous_effect(pool, cmd, machine_id).await {
+          meta.active_builds.write().remove(&cmd.build_id);
+        }
+        cfg.forget_uploads_for(machine_id, cmd.build_id);
+        return DispatchResult::Disconnected;
+      }
+
+      let outcome = tokio::select! {
+        outcome = done_rx => outcome.ok(),
+        () = meta.closed.cancelled() => None,
+      };
+      (outcome, true)
     },
   };
+
   let out = match outcome {
     Some(BuildOutcomeKind::Success { error_message }) => {
       DispatchResult::Succeeded { error_message }
@@ -1278,9 +1383,319 @@ async fn dispatch_one(
     },
     None => DispatchResult::Disconnected,
   };
-  meta.active_builds.write().remove(&cmd.build_id);
+  let may_release_active =
+    reconcile_effect_result(pool, cmd, machine_id, &out, abort_requested).await;
+  if may_release_active {
+    meta.active_builds.write().remove(&cmd.build_id);
+  }
   cfg.forget_uploads_for(machine_id, cmd.build_id);
   out
+}
+
+async fn reconcile_effect_result(
+  pool: &PgPool,
+  cmd: &DispatchCommand,
+  machine_id: Uuid,
+  outcome: &DispatchResult,
+  abort_requested: bool,
+) -> bool {
+  if cmd.effect.is_none() {
+    return true;
+  }
+
+  if matches!(outcome, DispatchResult::Disconnected) {
+    return quarantine_ambiguous_effect(pool, cmd, machine_id).await;
+  }
+
+  if matches!(outcome, DispatchResult::Aborted) {
+    return match repo::builds::acknowledge_effect_stopped(
+      pool,
+      cmd.build_id,
+      machine_id,
+      cmd.attempt,
+    )
+    .await
+    {
+      Ok(true) => true,
+      Ok(false) => {
+        match repo::builds::record_assigned_effect_outcome(
+          pool,
+          cmd.build_id,
+          machine_id,
+          cmd.attempt,
+          BuildStatus::Aborted,
+          Some("effect aborted"),
+        )
+        .await
+        {
+          Ok(true) => true,
+          Ok(false) => {
+            effect_state_allows_connection_release(
+              pool,
+              cmd.build_id,
+              machine_id,
+              cmd.attempt,
+            )
+            .await
+          },
+          Err(e) => {
+            tracing::error!(
+              build_id = %cmd.build_id,
+              "failed to persist unexpected Effect abort outcome: {e}"
+            );
+            quarantine_ambiguous_effect(pool, cmd, machine_id).await
+          },
+        }
+      },
+      Err(e) => {
+        tracing::error!(
+          build_id = %cmd.build_id,
+          "failed to persist cancelled effect acknowledgement: {e}; \
+           quarantining"
+        );
+        quarantine_ambiguous_effect(pool, cmd, machine_id).await
+      },
+    };
+  }
+
+  let Some((status, error_message)) = known_effect_outcome(outcome) else {
+    return true;
+  };
+  if abort_requested {
+    tracing::warn!(
+      build_id = %cmd.build_id,
+      actual_status = status.as_db_str(),
+      "Effect returned a terminal result after its abort was requested"
+    );
+  }
+  match repo::builds::record_assigned_effect_outcome(
+    pool,
+    cmd.build_id,
+    machine_id,
+    cmd.attempt,
+    status,
+    error_message,
+  )
+  .await
+  {
+    Ok(true) if abort_requested => {
+      match repo::builds::release_terminal_effect_attempt(
+        pool,
+        cmd.build_id,
+        cmd.attempt,
+      )
+      .await
+      {
+        Ok(true) => true,
+        Ok(false) => {
+          tracing::error!(
+            build_id = %cmd.build_id,
+            attempt = cmd.attempt,
+            "Effect result was persisted after cancellation, but its worker \
+             barrier was not released"
+          );
+          false
+        },
+        Err(e) => {
+          tracing::error!(
+            build_id = %cmd.build_id,
+            attempt = cmd.attempt,
+            "failed to release cancelled worker's terminal Effect barrier: \
+             {e}"
+          );
+          false
+        },
+      }
+    },
+    Ok(true) => true,
+    Ok(false) => {
+      effect_state_allows_connection_release(
+        pool,
+        cmd.build_id,
+        machine_id,
+        cmd.attempt,
+      )
+      .await
+    },
+    Err(e) => {
+      tracing::error!(
+        build_id = %cmd.build_id,
+        "failed to persist Effect result after cancellation: {e}; retaining \
+         agent-active barrier"
+      );
+      quarantine_ambiguous_effect(pool, cmd, machine_id).await
+    },
+  }
+}
+
+async fn effect_state_allows_connection_release(
+  pool: &PgPool,
+  build_id: Uuid,
+  machine_id: Uuid,
+  attempt: i32,
+) -> bool {
+  match repo::builds::get(pool, build_id).await {
+    Ok(build)
+      if build.agent_machine_id != Some(machine_id)
+        || build.retry_count != attempt =>
+    {
+      true
+    },
+    Ok(build)
+      if build.status.is_terminal()
+        && !matches!(
+          build.status,
+          BuildStatus::Cancelled | BuildStatus::Running | BuildStatus::Pending
+        ) =>
+    {
+      true
+    },
+    Ok(build) => {
+      tracing::error!(
+        %build_id,
+        status = build.status.as_db_str(),
+        agent_machine_id = ?build.agent_machine_id,
+        "Effect connection no longer owns an updateable assignment; retaining \
+         agent-active barrier"
+      );
+      false
+    },
+    Err(e) => {
+      tracing::error!(
+        %build_id,
+        "failed to inspect Effect assignment after no-op update: {e}; \
+         retaining agent-active barrier"
+      );
+      false
+    },
+  }
+}
+
+fn known_effect_outcome(
+  outcome: &DispatchResult,
+) -> Option<(BuildStatus, Option<&str>)> {
+  match outcome {
+    DispatchResult::Succeeded { error_message } => {
+      Some((BuildStatus::Succeeded, error_message.as_deref()))
+    },
+    DispatchResult::Failed(error_message)
+    | DispatchResult::InfraFailed(error_message) => {
+      Some((BuildStatus::Failed, Some(error_message)))
+    },
+    DispatchResult::TimedOut => {
+      Some((BuildStatus::Timeout, Some("effect timed out")))
+    },
+    DispatchResult::OomKilled(error_message) => {
+      Some((BuildStatus::OomKilled, Some(error_message)))
+    },
+    DispatchResult::Aborted
+    | DispatchResult::Disconnected
+    | DispatchResult::Refused(_) => None,
+  }
+}
+
+async fn quarantine_ambiguous_effect(
+  pool: &PgPool,
+  cmd: &DispatchCommand,
+  machine_id: Uuid,
+) -> bool {
+  if cmd.effect.is_none() {
+    return true;
+  }
+  match repo::builds::quarantine_effect(
+    pool,
+    cmd.build_id,
+    machine_id,
+    cmd.attempt,
+    circus_common::EFFECT_OUTCOME_UNKNOWN_ERROR,
+  )
+  .await
+  {
+    Ok(true) => true,
+    Ok(false) => {
+      if effect_state_allows_connection_release(
+        pool,
+        cmd.build_id,
+        machine_id,
+        cmd.attempt,
+      )
+      .await
+      {
+        tracing::info!(
+          build_id = %cmd.build_id,
+          "Ignoring late Effect disconnect after ownership was released"
+        );
+        true
+      } else {
+        tracing::error!(
+          build_id = %cmd.build_id,
+          "could not quarantine ambiguous effect state; retaining \
+           agent-active barrier"
+        );
+        false
+      }
+    },
+    Err(e) => {
+      tracing::error!(
+        build_id = %cmd.build_id,
+        "failed to quarantine ambiguous effect: {e}; retaining agent-active barrier"
+      );
+      false
+    },
+  }
+}
+
+#[expect(clippy::future_not_send, reason = "capnp future")]
+async fn request_agent_abort(
+  builder_cap: &builder::Client,
+  build_id: Uuid,
+) -> Result<(), capnp::Error> {
+  let mut abort = builder_cap.abort_request();
+  let build_id = build_id.to_string();
+  abort.get().set_build_id(build_id.as_str());
+  abort.send().promise.await?;
+  Ok(())
+}
+
+/// An empty token when the effect did not ask for one.
+async fn effect_git_token(
+  pool: &PgPool,
+  cfg: &ServerConfig,
+  cmd: &DispatchCommand,
+) -> color_eyre::Result<String> {
+  let Some(effect) = cmd.effect.as_ref() else {
+    return Ok(String::new());
+  };
+  if !repo::effect_git_token_requests::requested(pool, cmd.build_id).await? {
+    return Ok(String::new());
+  }
+  if !effect.project_path.starts_with("github/") {
+    color_eyre::eyre::bail!("GitToken is only minted for GitHub repositories");
+  }
+  let app = cfg.github_app.as_ref().ok_or_else(|| {
+    color_eyre::eyre::eyre!("queue_runner.github_app is not configured")
+  })?;
+  app.repository_token(&effect.owner, &effect.repo).await
+}
+
+fn set_effect_options(
+  job: &mut build_assignment::Builder<'_>,
+  effect: &EffectContext,
+  api_base_url: &str,
+  task_token: &str,
+  git_token: &str,
+) {
+  let mut opts = job.reborrow().init_effect();
+  opts.set_project_id(effect.project_id.as_str());
+  opts.set_project_path(effect.project_path.as_str());
+  opts.set_api_base_url(api_base_url);
+  opts.set_owner(effect.owner.as_str());
+  opts.set_repo(effect.repo.as_str());
+  opts.set_branch(effect.branch.as_str());
+  opts.set_tag(effect.tag.as_str());
+  opts.set_is_default_branch(effect.is_default_branch);
+  opts.set_task_token(task_token);
+  opts.set_git_token(git_token);
 }
 
 fn parse_uuid_param(value: &str, name: &str) -> Result<Uuid, capnp::Error> {
@@ -1345,6 +1760,23 @@ fn validate_agent_capacity(
     )));
   }
   Ok(())
+}
+
+fn configured_nonempty(value: Option<&str>) -> bool {
+  value.is_some_and(|value| !value.trim().is_empty())
+}
+
+#[must_use]
+fn effect_capability_enabled(
+  requested: bool,
+  ephemeral: bool,
+  cache_substituter: Option<&str>,
+  cache_public_key: Option<&str>,
+) -> bool {
+  requested
+    && !ephemeral
+    && configured_nonempty(cache_substituter)
+    && configured_nonempty(cache_public_key)
 }
 
 fn validate_text_len(
@@ -1426,15 +1858,113 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+  use std::{cell::RefCell, rc::Rc};
   use data_encoding::HEXLOWER;
 
   use super::*;
+
+  struct RecordingBuilder {
+    aborted: Rc<RefCell<Vec<String>>>,
+  }
+
+  #[allow(refining_impl_trait_internal)]
+  impl builder::Server for RecordingBuilder {
+    fn assign(
+      self: capnp::capability::Rc<Self>,
+      _params: builder::AssignParams,
+      _results: builder::AssignResults,
+    ) -> Promise<(), capnp::Error> {
+      Promise::ok(())
+    }
+
+    fn abort(
+      self: capnp::capability::Rc<Self>,
+      params: builder::AbortParams,
+      _results: builder::AbortResults,
+    ) -> Promise<(), capnp::Error> {
+      let aborted = Rc::clone(&self.aborted);
+      Promise::from_future(async move {
+        let build_id = params.get()?.get_build_id()?.to_str()?.to_owned();
+        aborted.borrow_mut().push(build_id);
+        Ok(())
+      })
+    }
+
+    fn shutdown(
+      self: capnp::capability::Rc<Self>,
+      _params: builder::ShutdownParams,
+      _results: builder::ShutdownResults,
+    ) -> Promise<(), capnp::Error> {
+      Promise::ok(())
+    }
+  }
 
   #[test]
   fn verify_token_accepts_configured_sha256_digest() {
     let token = "correct horse battery staple";
     let digest = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
     assert!(verify_token(&[digest], token));
+  }
+
+  #[test]
+  fn effects_capability_requires_persistent_agent_and_complete_cache_trust() {
+    assert!(effect_capability_enabled(
+      true,
+      false,
+      Some("https://cache.example"),
+      Some("cache.example-1:key"),
+    ));
+    assert!(!effect_capability_enabled(
+      false,
+      false,
+      Some("https://cache.example"),
+      Some("cache.example-1:key"),
+    ));
+    assert!(!effect_capability_enabled(
+      true,
+      true,
+      Some("https://cache.example"),
+      Some("cache.example-1:key"),
+    ));
+    assert!(!effect_capability_enabled(
+      true,
+      false,
+      Some("  "),
+      Some("cache.example-1:key"),
+    ));
+    assert!(!effect_capability_enabled(
+      true,
+      false,
+      Some("https://cache.example"),
+      Some(""),
+    ));
+  }
+
+  #[test]
+  fn success_after_abort_request_is_a_known_terminal_outcome() {
+    let result = DispatchResult::Succeeded {
+      error_message: Some("completed before abort".into()),
+    };
+    let (status, message) =
+      known_effect_outcome(&result).expect("success has a terminal outcome");
+    assert_eq!(status, BuildStatus::Succeeded);
+    assert_eq!(message, Some("completed before abort"));
+    assert!(known_effect_outcome(&DispatchResult::Aborted).is_none());
+  }
+
+  #[tokio::test(flavor = "current_thread")]
+  async fn cancellation_sends_builder_abort_for_the_assigned_build() {
+    let aborted = Rc::new(RefCell::new(Vec::new()));
+    let client: builder::Client = capnp_rpc::new_client(RecordingBuilder {
+      aborted: Rc::clone(&aborted),
+    });
+    let build_id = Uuid::new_v4();
+
+    request_agent_abort(&client, build_id)
+      .await
+      .expect("abort call succeeds");
+
+    assert_eq!(aborted.borrow().as_slice(), &[build_id.to_string()]);
   }
 
   #[test]
@@ -1449,5 +1979,52 @@ mod tests {
     assert!(validate_store_path("/nix/store/").is_err());
     assert!(validate_store_path("/nix/store/abc..def").is_err());
     assert!(validate_store_path("/tmp/not-store").is_err());
+  }
+
+  #[test]
+  fn effect_assignment_serializes_the_full_runtime_context() {
+    let effect = crate::rpc::pool::EffectContext {
+      project_id:        "42c80f70-58a9-44a1-b622-202d738f40af".into(),
+      project_path:      "github/acme/infra".into(),
+      owner:             "acme".into(),
+      repo:              "infra".into(),
+      branch:            "main".into(),
+      tag:               String::new(),
+      is_default_branch: true,
+    };
+    let mut message = capnp::message::Builder::new_default();
+    {
+      let mut job = message.init_root::<build_assignment::Builder<'_>>();
+      set_effect_options(
+        &mut job,
+        &effect,
+        "https://ci.example.org",
+        "token",
+        "",
+      );
+    }
+
+    let job = message
+      .get_root_as_reader::<build_assignment::Reader<'_>>()
+      .expect("read assignment");
+    assert!(job.has_effect());
+    let opts = job.get_effect().expect("read effect options");
+    assert_eq!(
+      opts.get_project_id().expect("project id"),
+      effect.project_id
+    );
+    assert_eq!(
+      opts.get_project_path().expect("project path"),
+      effect.project_path
+    );
+    assert_eq!(
+      opts.get_api_base_url().expect("API base URL"),
+      "https://ci.example.org"
+    );
+    assert_eq!(opts.get_owner().expect("owner"), effect.owner);
+    assert_eq!(opts.get_repo().expect("repo"), effect.repo);
+    assert_eq!(opts.get_branch().expect("branch"), effect.branch);
+    assert_eq!(opts.get_tag().expect("tag"), effect.tag);
+    assert!(opts.get_is_default_branch());
   }
 }

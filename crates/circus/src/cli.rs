@@ -20,7 +20,9 @@ pub fn run() -> color_eyre::Result<()> {
   if env::var_os(evix::WORKER_ENV).is_some() {
     return circus_evaluator::cli::run_from(args);
   }
-  if args.get(1).is_some_and(|arg| arg == "--circus-sandbox") {
+  if args.get(1).is_some_and(|arg| {
+    arg == "--circus-sandbox" || arg == "--circus-effect-sandbox"
+  }) {
     return circus_agent::cli::run_from(args);
   }
 

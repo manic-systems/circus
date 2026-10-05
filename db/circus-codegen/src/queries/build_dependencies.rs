@@ -47,6 +47,8 @@ pub struct BuildRow {
     pub effective_features: Option<Vec<String>>,
     pub agent_losses: i32,
     pub closure_size: Option<i64>,
+    pub kind: String,
+    pub effect_execution_active: bool,
 }
 pub struct BuildRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -83,6 +85,8 @@ pub struct BuildRowBorrowed<'a> {
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
     pub agent_losses: i32,
     pub closure_size: Option<i64>,
+    pub kind: &'a str,
+    pub effect_execution_active: bool,
 }
 impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
     fn from(
@@ -121,6 +125,8 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             effective_features,
             agent_losses,
             closure_size,
+            kind,
+            effect_execution_active,
         }: BuildRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -158,6 +164,8 @@ impl<'a> From<BuildRowBorrowed<'a>> for BuildRow {
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
             agent_losses,
             closure_size,
+            kind: kind.into(),
+            effect_execution_active,
         }
     }
 }
@@ -574,6 +582,8 @@ impl ListDependencyBuildsStmt {
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
                         closure_size: row.try_get(33)?,
+                        kind: row.try_get(34)?,
+                        effect_execution_active: row.try_get(35)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -642,6 +652,8 @@ impl ListDependentBuildsStmt {
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
                         closure_size: row.try_get(33)?,
+                        kind: row.try_get(34)?,
+                        effect_execution_active: row.try_get(35)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),
@@ -770,6 +782,8 @@ impl ListFailedDependenciesStmt {
                         effective_features: row.try_get(31)?,
                         agent_losses: row.try_get(32)?,
                         closure_size: row.try_get(33)?,
+                        kind: row.try_get(34)?,
+                        effect_execution_active: row.try_get(35)?,
                     })
                 },
             mapper: |it| BuildRow::from(it),

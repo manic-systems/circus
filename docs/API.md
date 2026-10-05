@@ -54,9 +54,12 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/builds/{id}` | Get a build | 200 |
 | POST | `/api/v1/builds/{id}/bump` | Bump build priority | 200 |
 | POST | `/api/v1/builds/{id}/cancel` | Cancel a build | 200 |
+| GET | `/api/v1/builds/{id}/closure-diff` | Package version changes in this build's closure against the job's previous success | 200, 404 |
 | GET | `/api/v1/builds/{id}/constituents` | List constituents of an aggregate build | 200, 422 |
 | GET | `/api/v1/builds/{id}/dependencies` | List builds this build depends on | 200 |
 | GET | `/api/v1/builds/{id}/dependents` | List builds that depend on this build | 200 |
+| POST | `/api/v1/builds/{id}/force-release-effect` | Acknowledge that an outcome-unknown effect has stopped | 200 |
+| GET | `/api/v1/builds/{id}/history` | List finished builds of the same job from earlier branch evaluations | 200 |
 | PUT | `/api/v1/builds/{id}/keep/{value}` | Pin or unpin a build from GC | 200 |
 | GET | `/api/v1/builds/{id}/log` | Get build log (text) | 200 |
 | GET | `/api/v1/builds/{id}/log/stream` | SSE-stream the live build log | 200 |
@@ -68,6 +71,8 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/channels/{id}` | Get a channel | 200 |
 | DELETE | `/api/v1/channels/{id}` | Delete a channel | 204 |
 | GET | `/api/v1/channels/{id}/nixexprs.tar.xz` | Download channel nixexprs tarball | 200 |
+| GET | `/api/v1/current-task/state/{name}/data` | Read a state file of the running Effect's project | 200, 401, 404 |
+| PUT | `/api/v1/current-task/state/{name}/data` | Replace a state file of the running Effect's project | 204, 401 |
 | GET | `/api/v1/evaluations` | List evaluations | 200 |
 | POST | `/api/v1/evaluations/trigger` | Trigger an evaluation | 202 |
 | GET | `/api/v1/evaluations/{id}` | Get an evaluation | 200 |

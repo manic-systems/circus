@@ -710,7 +710,7 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::ArrayS
 pub struct AutoPromoteCountStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn auto_promote_count() -> AutoPromoteCountStmt {
     AutoPromoteCountStmt(
-        "SELECT COUNT(*) AS total, COUNT(*) FILTER ( WHERE status = 'succeeded' ) AS completed FROM builds WHERE evaluation_id =$1",
+        "SELECT COUNT(*) AS total, COUNT(*) FILTER ( WHERE status = 'succeeded' ) AS completed FROM builds WHERE evaluation_id =$1 AND kind = 'build'",
         None,
     )
 }

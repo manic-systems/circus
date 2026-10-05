@@ -327,6 +327,10 @@ fn build_from_quick_search_row(row: q::BuildQuickSearchRow) -> Result<Build> {
     required_features:          row.required_features,
     effective_features:         row.effective_features,
     closure_size:               row.closure_size,
+    kind:                       row
+      .kind
+      .parse()
+      .map_err(|e: String| CiError::Internal(e))?,
   })
 }
 

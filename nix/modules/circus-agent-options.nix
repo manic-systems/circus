@@ -4,7 +4,7 @@
   ...
 }: let
   inherit (lib.options) mkOption mkEnableOption;
-  inherit (lib.types) listOf package str path ints submodule;
+  inherit (lib.types) listOf package str path ints submodule nullOr;
   settingsFormat = pkgs.formats.toml {};
 in {
   options.services.circus-agent = {
@@ -21,6 +21,18 @@ in {
         Path to a file containing the bearer token. The token is rendered
         into a runtime config private to the service and never lands in
         the Nix store.
+      '';
+    };
+
+    effectsSecretsFile = mkOption {
+      type = nullOr str;
+      default = null;
+      description = ''
+        Canonical absolute runtime path to a Hercules-format secrets.json used
+        by post-build Effects. This must not be a Nix store path. Its presence
+        opts this persistent agent into the Effects capability. NixOS passes the
+        file through systemd credentials, nix-darwin has the agent read it in
+        place, so there it must be owned by the agent user with mode 0600.
       '';
     };
 

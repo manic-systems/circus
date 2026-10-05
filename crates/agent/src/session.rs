@@ -47,7 +47,8 @@ use uuid::Uuid;
 
 use crate::{
   build,
-  config::{Agent, EphemeralConfig, TlsConfig},
+  config::{Agent, EffectsConfig, EphemeralConfig, TlsConfig},
+  effect,
   psi,
   sandbox::NixTool,
 };
@@ -66,6 +67,12 @@ use crate::{
   reason = "capnp futures are not Send; agent uses a single-threaded runtime"
 )]
 pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
+  if cfg.ephemeral.is_none()
+    && let Some(effects) = &cfg.effects
+  {
+    effect::validate_runtime(effects, cfg.rootless)?;
+  }
+  validate_effect_transport(cfg)?;
   let endpoint = Endpoint::from_config(cfg)?;
   let mut rpc = endpoint.dial().await?;
 
@@ -77,16 +84,22 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     .ephemeral
     .as_ref()
     .map(|e| Arc::new(Lifecycle::new(e.max_builds)));
+  let effects =
+    persistent_effects_config(cfg.effects.clone(), cfg.ephemeral.is_some());
 
-  let local_builder: builder::Client = capnp_rpc::new_client(BuilderImpl::new(
+  let builder_impl = BuilderImpl::new(
     cfg.max_jobs,
     cfg.cores,
     machine_id,
     runner_cap.clone(),
     endpoint,
     cfg.rootless,
+    cfg.work_dir.clone(),
+    effects,
     lifecycle.clone(),
-  ));
+  );
+  let session_jobs = Arc::clone(&builder_impl.inner.jobs);
+  let local_builder: builder::Client = capnp_rpc::new_client(builder_impl);
 
   let mut rpc_join = tokio::task::spawn_local(async move {
     if let Err(e) = rpc.await {
@@ -106,31 +119,46 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
 
   // Ephemeral: a monitor drains and exits on the limits. Persistent: run until
   // the connection ends.
-  if let (Some(eph), Some(lc)) = (cfg.ephemeral.as_ref(), lifecycle.as_ref()) {
+  let connection_lost = if let (Some(eph), Some(lc)) =
+    (cfg.ephemeral.as_ref(), lifecycle.as_ref())
+  {
     let quit = CancellationToken::new();
     let monitor = tokio::task::spawn_local(ephemeral_monitor(
       eph.clone(),
       Arc::clone(lc),
       quit.clone(),
     ));
-    tokio::select! {
+    let connection_lost = tokio::select! {
       _ = &mut rpc_join => {
         tracing::info!("connection ended before ephemeral limits");
+        true
       },
-      _ = &mut heartbeat_join => {},
+      _ = &mut heartbeat_join => true,
       () = quit.cancelled() => {
         drain_inflight().await;
+        false
       },
-    }
+    };
     monitor.abort();
+    connection_lost
   } else {
     tokio::select! {
       _ = &mut rpc_join => {},
       _ = &mut heartbeat_join => {},
     }
-  }
+    true
+  };
 
   heartbeat_join.abort();
+  if connection_lost {
+    let drained = session_jobs.cancel_and_drain(Duration::from_secs(30)).await;
+    if !drained {
+      tracing::warn!(
+        running = session_jobs.len(),
+        "session task drain timed out after connection loss"
+      );
+    }
+  }
   // A half-open socket never completes the graceful disconnect.
   let _ = tokio::time::timeout(DISCONNECT_GRACE, disconnector).await;
   rpc_join.abort();
@@ -241,6 +269,40 @@ fn parse_endpoint(url: &str) -> color_eyre::Result<(String, u16, bool)> {
   Ok((host, port, tls))
 }
 
+pub(crate) fn validate_effect_transport(cfg: &Agent) -> color_eyre::Result<()> {
+  validate_effect_transport_parts(
+    &cfg.runner_url,
+    cfg.effects.as_ref(),
+    cfg.ephemeral.is_some(),
+    cfg.tls.is_some(),
+  )
+}
+
+fn validate_effect_transport_parts(
+  runner_url: &str,
+  effects: Option<&EffectsConfig>,
+  ephemeral: bool,
+  tls_configured: bool,
+) -> color_eyre::Result<()> {
+  let Some(effects) = effects.filter(|_| !ephemeral) else {
+    return Ok(());
+  };
+  if effects.allow_insecure_transport {
+    tracing::warn!(
+      "UNSAFE: effects are enabled over unauthenticated plaintext RPC"
+    );
+    return Ok(());
+  }
+  let (_, _, tls) = parse_endpoint(runner_url)?;
+  if !tls && !tls_configured {
+    bail!(
+      "effects require a circus+tls:// runner_url; allow_insecure_transport \
+       is unsafe and only for isolated tests"
+    );
+  }
+  Ok(())
+}
+
 async fn verify_runner_version(
   runner_cap: &runner::Client,
 ) -> color_eyre::Result<()> {
@@ -292,6 +354,10 @@ fn fill_info(mut info: agent_info::Builder<'_>, cfg: &Agent, machine_id: Uuid) {
   info.set_proto_version(PROTO_VERSION);
   info.set_auth_token(cfg.auth_token.as_str());
   info.set_ephemeral(cfg.ephemeral.is_some());
+  info.set_effects(
+    persistent_effects_config(cfg.effects.clone(), cfg.ephemeral.is_some())
+      .is_some(),
+  );
 
   {
     let mut sys = info.reborrow().init_systems(cfg.systems.len() as u32);
@@ -315,6 +381,13 @@ fn fill_info(mut info: agent_info::Builder<'_>, cfg: &Agent, machine_id: Uuid) {
       feats.set(i as u32, s.as_str());
     }
   }
+}
+
+fn persistent_effects_config(
+  effects: Option<EffectsConfig>,
+  ephemeral: bool,
+) -> Option<EffectsConfig> {
+  if ephemeral { None } else { effects }
 }
 
 /// Best-effort hostname read.
@@ -486,6 +559,100 @@ impl Lifecycle {
   }
 }
 
+struct SessionJobs {
+  state: Mutex<SessionJobsState>,
+}
+
+struct SessionJobsState {
+  closing: bool,
+  running: HashMap<Uuid, CancellationToken>,
+}
+
+#[derive(Debug)]
+enum ReserveError {
+  Closing,
+  AtCapacity,
+  Duplicate,
+  Lifecycle,
+}
+
+impl SessionJobs {
+  fn new() -> Self {
+    Self {
+      state: Mutex::new(SessionJobsState {
+        closing: false,
+        running: HashMap::new(),
+      }),
+    }
+  }
+
+  fn reserve(
+    &self,
+    build_id: Uuid,
+    max_jobs: u32,
+    lifecycle: Option<&Lifecycle>,
+  ) -> Result<CancellationToken, ReserveError> {
+    let token = {
+      let mut state = self.state.lock();
+      if state.closing {
+        return Err(ReserveError::Closing);
+      }
+      if state.running.len() as u32 >= max_jobs {
+        return Err(ReserveError::AtCapacity);
+      }
+      if state.running.contains_key(&build_id) {
+        return Err(ReserveError::Duplicate);
+      }
+      if lifecycle.is_some_and(|lifecycle| !lifecycle.reserve_build()) {
+        return Err(ReserveError::Lifecycle);
+      }
+      let token = CancellationToken::new();
+      state.running.insert(build_id, token.clone());
+      token
+    };
+    Ok(token)
+  }
+
+  fn cancel(&self, build_id: Uuid) -> bool {
+    let token = self.state.lock().running.get(&build_id).cloned();
+    token.is_some_and(|token| {
+      token.cancel();
+      true
+    })
+  }
+
+  fn finish(&self, build_id: Uuid) {
+    self.state.lock().running.remove(&build_id);
+  }
+
+  fn cancel_all(&self) {
+    let mut state = self.state.lock();
+    state.closing = true;
+    for token in state.running.values() {
+      token.cancel();
+    }
+  }
+
+  fn len(&self) -> usize {
+    self.state.lock().running.len()
+  }
+
+  async fn cancel_and_drain(&self, grace: Duration) -> bool {
+    self.cancel_all();
+    let deadline = Instant::now() + grace;
+    loop {
+      if self.len() == 0 {
+        return true;
+      }
+      let remaining = deadline.saturating_duration_since(Instant::now());
+      if remaining.is_zero() {
+        return false;
+      }
+      tokio::time::sleep(remaining.min(Duration::from_millis(25))).await;
+    }
+  }
+}
+
 /// Cancel `quit` once an exit condition is reached (max builds, lifetime, or
 /// idle), setting `draining` first so no further work is accepted.
 async fn ephemeral_monitor(
@@ -557,11 +724,14 @@ struct BuilderInner {
   /// runner of upload completion. Cloning a capnp client is cheap.
   runner_cap: runner::Client,
   endpoint:   Endpoint,
-  /// `build_id` -> `CancellationToken`. Inserted by `assign`, removed by
-  /// the per-build task at completion, signalled by `abort`.
-  running:    Mutex<HashMap<Uuid, CancellationToken>>,
+  /// Tasks accepted on this RPC connection.
+  jobs:       Arc<SessionJobs>,
   /// Indicates whether the builder will use rootless, sandboxed Nix.
   rootless:   bool,
+  /// Private base directory for per-effect scratch and resolved secrets.
+  work_dir:   PathBuf,
+  /// Effects are refused unless this persistent agent opted in.
+  effects:    Option<EffectsConfig>,
   /// Ephemeral session lifecycle; `None` for persistent agents.
   lifecycle:  Option<Arc<Lifecycle>>,
 }
@@ -580,6 +750,8 @@ impl BuilderImpl {
     runner_cap: runner::Client,
     endpoint: Endpoint,
     rootless: bool,
+    work_dir: PathBuf,
+    effects: Option<EffectsConfig>,
     lifecycle: Option<Arc<Lifecycle>>,
   ) -> Self {
     Self {
@@ -589,8 +761,10 @@ impl BuilderImpl {
         machine_id: machine_id.to_string(),
         runner_cap,
         endpoint,
-        running: Mutex::new(HashMap::new()),
+        jobs: Arc::new(SessionJobs::new()),
         rootless,
+        work_dir,
+        effects,
         lifecycle,
       }),
     }
@@ -625,6 +799,23 @@ impl builder::Server for BuilderImpl {
           Ok(s?.to_str()?.to_owned())
         })
         .collect::<Result<_, _>>()?;
+      let effect_context = if job.has_effect() {
+        let effect = job.get_effect()?;
+        Some(effect::EffectContext {
+          project_id:        effect.get_project_id()?.to_str()?.to_owned(),
+          project_path:      effect.get_project_path()?.to_str()?.to_owned(),
+          api_base_url:      effect.get_api_base_url()?.to_str()?.to_owned(),
+          owner:             effect.get_owner()?.to_str()?.to_owned(),
+          repo:              effect.get_repo()?.to_str()?.to_owned(),
+          branch:            effect.get_branch()?.to_str()?.to_owned(),
+          tag:               effect.get_tag()?.to_str()?.to_owned(),
+          is_default_branch: effect.get_is_default_branch(),
+          task_token:        effect.get_task_token()?.to_str()?.to_owned(),
+          git_token:         effect.get_git_token()?.to_str()?.to_owned(),
+        })
+      } else {
+        None
+      };
       // Optional presigned-upload opts. If the runner passes
       // PresignedUploadOpts, the agent does the binary-cache push
       // itself before reporting BuildResult.
@@ -660,29 +851,39 @@ impl builder::Server for BuilderImpl {
           "agent draining; not accepting new builds".into(),
         ));
       }
+      if effect_context.is_some() && inner.effects.is_none() {
+        return Err(capnp::Error::failed(
+          "agent is not configured to run effects".into(),
+        ));
+      }
 
-      let cancel = CancellationToken::new();
-      {
-        let mut g = inner.running.lock();
-        if g.len() as u32 >= inner.max_jobs {
+      let cancel = match inner.jobs.reserve(
+        build_id,
+        inner.max_jobs,
+        inner.lifecycle.as_deref(),
+      ) {
+        Ok(cancel) => cancel,
+        Err(ReserveError::Closing) => {
+          return Err(capnp::Error::failed(
+            "agent session is closing; refusing assignment".into(),
+          ));
+        },
+        Err(ReserveError::AtCapacity) => {
           return Err(capnp::Error::failed(
             "agent at max_jobs; refusing assignment".into(),
           ));
-        }
-        if g.contains_key(&build_id) {
+        },
+        Err(ReserveError::Duplicate) => {
           return Err(capnp::Error::failed(format!(
             "build_id {build_id} is already running"
           )));
-        }
-        if let Some(l) = inner.lifecycle.as_ref()
-          && !l.reserve_build()
-        {
+        },
+        Err(ReserveError::Lifecycle) => {
           return Err(capnp::Error::failed(
             "agent reached max_builds; draining".into(),
           ));
-        }
-        g.insert(build_id, cancel.clone());
-      }
+        },
+      };
       JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
       if let Some(lc) = &inner.lifecycle {
         lc.touch();
@@ -690,27 +891,59 @@ impl builder::Server for BuilderImpl {
 
       let inner_for_task = Arc::clone(&inner);
       tokio::task::spawn_local(async move {
-        let mut outcome = build::run(
-          build::BuildOptions {
-            drv_path: &drv_path,
-            max_log_size,
-            max_silent_time: Duration::from_secs(max_silent_time.into()),
-            build_timeout: Duration::from_secs(build_timeout.into()),
-            cores: inner_for_task.cores,
-            extra_args: extra,
-            cache_substituter,
-            cache_public_key,
-            rootless: inner_for_task.rootless,
-          },
-          build::DrvFetch {
-            runner_cap: &inner_for_task.runner_cap,
-            machine_id: &inner_for_task.machine_id,
-            build_id:   &build_id_str,
-          },
-          log,
-          cancel,
-        )
-        .await;
+        let is_effect = effect_context.is_some();
+        let mut outcome = if let Some(context) = effect_context {
+          match inner_for_task.effects.as_ref() {
+            Some(config) => {
+              effect::run(
+                effect::RunOptions {
+                  drv_path: &drv_path,
+                  max_log_size,
+                  max_silent_time: Duration::from_secs(max_silent_time.into()),
+                  build_timeout: Duration::from_secs(build_timeout.into()),
+                  cores: inner_for_task.cores,
+                  closure_source: effect::ClosureSource::Cache {
+                    substituter: cache_substituter,
+                    public_key:  cache_public_key,
+                  },
+                  rootless: inner_for_task.rootless,
+                  work_dir: &inner_for_task.work_dir,
+                  config,
+                  context,
+                },
+                log,
+                cancel,
+              )
+              .await
+            },
+            None => Err(eyre!("agent is not configured to run effects")),
+          }
+        } else {
+          build::run(
+            build::BuildOptions {
+              drv_path: &drv_path,
+              max_log_size,
+              max_silent_time: Duration::from_secs(max_silent_time.into()),
+              build_timeout: Duration::from_secs(build_timeout.into()),
+              cores: inner_for_task.cores,
+              extra_args: extra,
+              cache_substituter,
+              cache_public_key,
+              rootless: inner_for_task.rootless,
+              collect_outputs: true,
+              nix_internal_json: true,
+              redactions: Vec::new(),
+            },
+            build::DrvFetch {
+              runner_cap: &inner_for_task.runner_cap,
+              machine_id: &inner_for_task.machine_id,
+              build_id:   &build_id_str,
+            },
+            log,
+            cancel,
+          )
+          .await
+        };
 
         // Presigned upload (best-effort, mirrors Hydra). Only run when
         // the build succeeded and the runner asked for it. Failures land
@@ -801,7 +1034,8 @@ impl builder::Server for BuilderImpl {
             tracing::info!(
               %build_id,
               build_time_ms = r.build_time_ms,
-              "build succeeded"
+              kind = if is_effect { "effect" } else { "build" },
+              "job succeeded"
             );
           },
           Ok(r) => {
@@ -810,17 +1044,24 @@ impl builder::Server for BuilderImpl {
               outcome = ?r.outcome,
               exit_code = r.exit_code,
               error = %r.error_message,
-              "build failed"
+              kind = if is_effect { "effect" } else { "build" },
+              "job failed"
             );
           },
-          Err(e) => tracing::error!(%build_id, "build run errored: {e}"),
+          Err(e) => {
+            tracing::error!(
+              %build_id,
+              kind = if is_effect { "effect" } else { "build" },
+              "job run errored: {e:#}"
+            );
+          },
         }
 
         if let Err(e) = report_result(&result, outcome).await {
           tracing::warn!(%build_id, "result sink failed: {e}");
         }
         JOB_COUNTER.fetch_sub(1, Ordering::Relaxed);
-        inner_for_task.running.lock().remove(&build_id);
+        inner_for_task.jobs.finish(build_id);
         if let Some(lc) = &inner_for_task.lifecycle {
           lc.completed.fetch_add(1, Ordering::Relaxed);
           lc.touch();
@@ -840,9 +1081,7 @@ impl builder::Server for BuilderImpl {
       let pr = params.get()?;
       let id_str = pr.get_build_id()?.to_str()?;
       if let Ok(id) = Uuid::parse_str(id_str) {
-        let value = inner.running.lock().get(&id).cloned();
-        if let Some(tok) = value {
-          tok.cancel();
+        if inner.jobs.cancel(id) {
           tracing::info!(%id, "aborting build per runner request");
         } else {
           tracing::warn!(%id, "abort for unknown build_id; ignoring");
@@ -867,9 +1106,7 @@ impl builder::Server for BuilderImpl {
     // supervisor loop in `main` reconnects after the connection drops.
     let inner = Arc::clone(&self.inner);
     Promise::from_future(async move {
-      for (_, tok) in inner.running.lock().drain() {
-        tok.cancel();
-      }
+      inner.jobs.cancel_all();
       Ok(())
     })
   }
@@ -902,7 +1139,7 @@ async fn report_result(
     Err(e) => {
       r.set_outcome(circus_proto::BuildOutcome::PreparingFailure);
       r.set_exit_code(-1);
-      r.set_error_message(format!("{e}").as_str());
+      r.set_error_message(format!("{e:#}").as_str());
     },
   }
   req.send().promise.await?;
@@ -1138,4 +1375,88 @@ async fn query_requisites(
       .filter(|s| !s.is_empty())
       .collect(),
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeMap;
+
+  use super::*;
+
+  #[test]
+  fn ephemeral_agents_cannot_enable_effects() {
+    let effects = EffectsConfig {
+      secrets_file:             PathBuf::from(
+        "/run/secrets/circus-effects.json",
+      ),
+      allow_insecure_transport: false,
+      mountables:               BTreeMap::new(),
+    };
+    assert!(persistent_effects_config(Some(effects.clone()), true).is_none());
+    assert!(persistent_effects_config(Some(effects), false).is_some());
+  }
+
+  #[test]
+  fn effects_require_tls_unless_the_unsafe_override_is_explicit() {
+    let mut effects = EffectsConfig {
+      secrets_file:             PathBuf::from("/run/secrets/effects.json"),
+      allow_insecure_transport: false,
+      mountables:               BTreeMap::new(),
+    };
+    let error = validate_effect_transport_parts(
+      "circus://runner.invalid:5000",
+      Some(&effects),
+      false,
+      false,
+    )
+    .expect_err("plaintext effects must fail")
+    .to_string();
+    assert!(error.contains("circus+tls://"));
+    validate_effect_transport_parts(
+      "circus+tls://runner.invalid:5000",
+      Some(&effects),
+      false,
+      false,
+    )
+    .expect("TLS effects");
+    validate_effect_transport_parts(
+      "circus://runner.invalid:5000",
+      Some(&effects),
+      false,
+      true,
+    )
+    .expect("TLS configuration upgrades the transport");
+
+    effects.allow_insecure_transport = true;
+    validate_effect_transport_parts(
+      "circus://runner.invalid:5000",
+      Some(&effects),
+      false,
+      false,
+    )
+    .expect("explicit isolated-test override");
+  }
+
+  #[tokio::test(flavor = "current_thread")]
+  async fn closing_a_session_cancels_and_drains_its_jobs() {
+    let jobs = Arc::new(SessionJobs::new());
+    let build_id = Uuid::new_v4();
+    let token = jobs
+      .reserve(build_id, 1, None)
+      .expect("reserve session job");
+
+    let drain = jobs.cancel_and_drain(Duration::from_secs(1));
+    let finish = async {
+      token.cancelled().await;
+      jobs.finish(build_id);
+    };
+    let (drained, ()) = tokio::join!(drain, finish);
+
+    assert!(drained);
+    assert_eq!(jobs.len(), 0);
+    assert!(matches!(
+      jobs.reserve(Uuid::new_v4(), 1, None),
+      Err(ReserveError::Closing)
+    ));
+  }
 }

@@ -8,7 +8,14 @@ use uuid::Uuid;
 use crate::{
   db::{DbTransaction, GenericClient, PgPool, is_unique_violation},
   error::{CiError, Result},
-  models::{Build, BuildStats, BuildStatus, CreateBuild},
+  models::{
+    Build,
+    BuildKind,
+    BuildStats,
+    BuildStatus,
+    CreateBuild,
+    EFFECT_OUTCOME_UNKNOWN_ERROR,
+  },
 };
 
 impl TryFrom<q::BuildRow> for Build {
@@ -16,6 +23,9 @@ impl TryFrom<q::BuildRow> for Build {
 
   fn try_from(r: q::BuildRow) -> Result<Self> {
     let status = r.status.parse::<BuildStatus>().map_err(|e| {
+      CiError::Internal(format!("build {} in the database has {e}", r.id))
+    })?;
+    let kind = r.kind.parse::<BuildKind>().map_err(|e| {
       CiError::Internal(format!("build {} in the database has {e}", r.id))
     })?;
     Ok(Self {
@@ -51,6 +61,7 @@ impl TryFrom<q::BuildRow> for Build {
       required_features: r.required_features,
       effective_features: r.effective_features,
       closure_size: r.closure_size,
+      kind,
     })
   }
 }
@@ -113,6 +124,7 @@ async fn create_with<C: GenericClient>(
       &input.meta_homepage,
       &input.meta_maintainers,
       &input.required_features,
+      &input.kind.as_db_str(),
     )
     .one()
     .await
@@ -273,6 +285,49 @@ pub async fn complete_dependency_failed(
     .transpose()
 }
 
+/// Whether an effect of the project is running for another evaluation.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn project_has_running_effect(
+  pool: &PgPool,
+  project_id: Uuid,
+  evaluation_id: Uuid,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::project_has_running_effect()
+      .bind(&client, &project_id, &evaluation_id)
+      .one()
+      .await?,
+  )
+}
+
+/// Whether the agent-active IDs include an effect from another evaluation of
+/// this project.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn project_has_active_effect_among(
+  pool: &PgPool,
+  project_id: Uuid,
+  evaluation_id: Uuid,
+  active_build_ids: &[Uuid],
+) -> Result<bool> {
+  if active_build_ids.is_empty() {
+    return Ok(false);
+  }
+  let client = pool.get().await?;
+  Ok(
+    q::project_has_active_effect_among()
+      .bind(&client, &active_build_ids, &project_id, &evaluation_id)
+      .one()
+      .await?,
+  )
+}
+
 /// Atomically claim a pending build by setting it to running. The advisory
 /// lock and the running twin check keep duplicate pending builds of one
 /// `drv_path` from both dispatching.
@@ -285,9 +340,26 @@ pub async fn complete_dependency_failed(
 ///
 /// Returns error if database update fails.
 pub async fn start(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
+  start_with_agent(pool, id, Uuid::nil()).await
+}
+
+/// Atomically claim a pending build and record its selected agent.
+///
+/// # Returns
+///
+/// Returns `None` if the build was already claimed by another worker.
+///
+/// # Errors
+///
+/// Returns an error if the database update fails.
+pub async fn start_with_agent(
+  pool: &PgPool,
+  id: Uuid,
+  machine_id: Uuid,
+) -> Result<Option<Build>> {
   let client = pool.get().await?;
   q::start()
-    .bind(&client, &id)
+    .bind(&client, &id, &machine_id)
     .opt()
     .await?
     .map(Build::try_from)
@@ -340,6 +412,28 @@ pub async fn record_agent_loss(pool: &PgPool, id: Uuid) -> Result<Option<i32>> {
   Ok(q::record_agent_loss().bind(&client, &id).opt().await?)
 }
 
+/// Quarantine a running effect whose outcome became unknowable.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn quarantine_effect(
+  pool: &PgPool,
+  id: Uuid,
+  machine_id: Uuid,
+  attempt: i32,
+  error_message: &str,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::quarantine_effect()
+      .bind(&client, &error_message, &id, &machine_id, &attempt)
+      .opt()
+      .await?
+      .is_some(),
+  )
+}
+
 /// Return a failed build to the pending queue, counting a retry and clearing
 /// dispatch-time effective features so they are recomputed on redispatch.
 ///
@@ -356,7 +450,7 @@ pub async fn retry(pool: &PgPool, id: Uuid) -> Result<bool> {
   Ok(q::retry().bind(&client, &id).await? == 1)
 }
 
-/// Mark a build as completed with final status and outputs.
+/// Mark a regular build as completed with final status and outputs.
 ///
 /// # Returns
 ///
@@ -388,6 +482,39 @@ pub async fn complete(
     .await?
     .map(Build::try_from)
     .transpose()
+}
+
+/// Atomically finish a build only while it is still pending.
+///
+/// # Errors
+///
+/// Returns an error if the database update fails or the build is no longer
+/// pending.
+pub async fn complete_pending(
+  pool: &PgPool,
+  id: Uuid,
+  status: BuildStatus,
+  log_path: Option<&str>,
+  build_output_path: Option<&str>,
+  error_message: Option<&str>,
+) -> Result<Build> {
+  let client = pool.get().await?;
+  q::complete_pending()
+    .bind(
+      &client,
+      &status.as_db_str(),
+      &log_path,
+      &build_output_path,
+      &error_message,
+      &id,
+    )
+    .opt()
+    .await?
+    .map(Build::try_from)
+    .transpose()?
+    .ok_or_else(|| {
+      CiError::NotFound(format!("Build {id} not found or no longer pending"))
+    })
 }
 
 /// List pending builds in scheduler order: highest priority first, then
@@ -689,8 +816,8 @@ pub async fn get_stats(pool: &PgPool) -> Result<BuildStats> {
   }
 }
 
-/// Reset builds that were left in 'running' state, excluding IDs that are
-/// known to still be active in the current runner process.
+/// Reset regular builds left in `running`, excluding IDs known to still be
+/// active in the current runner process.
 ///
 /// # Errors
 ///
@@ -708,10 +835,7 @@ pub async fn reset_orphaned_excluding(
   )
 }
 
-/// Reset builds that were left in 'running' state (orphaned by a crashed
-/// runner). Resets every row older than the threshold; the caller is
-/// expected to run this periodically so a crash that orphans many builds
-/// converges rather than stranding the tail.
+/// Reset regular builds left in `running` by a crashed runner.
 ///
 /// # Errors
 ///
@@ -723,8 +847,7 @@ pub async fn reset_orphaned(
   reset_orphaned_excluding(pool, older_than_secs, &[]).await
 }
 
-/// List builds with optional `evaluation_id`, status, system, and `job_name`
-/// filters, with pagination.
+/// List builds matching optional filters, with pagination.
 ///
 /// # Errors
 ///
@@ -735,6 +858,7 @@ pub async fn list_filtered(
   status: Option<&str>,
   system: Option<&str>,
   job_name: Option<&str>,
+  kind: Option<&str>,
   limit: i64,
   offset: i64,
 ) -> Result<Vec<Build>> {
@@ -746,6 +870,7 @@ pub async fn list_filtered(
       &status,
       &system,
       &job_name,
+      &kind,
       &limit,
       &offset,
     )
@@ -765,11 +890,12 @@ pub async fn count_filtered(
   status: Option<&str>,
   system: Option<&str>,
   job_name: Option<&str>,
+  kind: Option<&str>,
 ) -> Result<i64> {
   let client = pool.get().await?;
   Ok(
     q::count_filtered()
-      .bind(&client, &evaluation_id, &status, &system, &job_name)
+      .bind(&client, &evaluation_id, &status, &system, &job_name, &kind)
       .one()
       .await?,
   )
@@ -856,10 +982,9 @@ pub async fn cancel_cascade(pool: &PgPool, id: Uuid) -> Result<Vec<Build>> {
   Ok(cancelled)
 }
 
-/// Restart a build by resetting it to pending state. This only works for
-/// failed, succeeded, cancelled, `cached_failure`, or `dependency_failed`
-/// builds. Transitive dependents that were marked `dependency_failed` because
-/// of this build are returned to pending as well.
+/// Restart a build by resetting any terminal state to pending.
+/// Transitive dependents that were marked `dependency_failed` because of this
+/// build are returned to pending as well.
 ///
 /// # Errors
 ///
@@ -1026,6 +1151,177 @@ pub async fn set_agent(
   let client = pool.get().await?;
   q::set_agent().bind(&client, &machine_id, &id).await?;
   Ok(())
+}
+
+/// Record that an agent has acknowledged termination of a cancelled effect.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn acknowledge_effect_stopped(
+  pool: &PgPool,
+  id: Uuid,
+  machine_id: Uuid,
+  attempt: i32,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::acknowledge_effect_stopped()
+      .bind(&client, &id, &machine_id, &attempt)
+      .opt()
+      .await?
+      .is_some(),
+  )
+}
+
+/// Clear a cancelled Effect assignment that was never handed to an agent
+/// connection task.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn release_unhanded_effect(pool: &PgPool, id: Uuid) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::release_unhanded_effect()
+      .bind(&client, &id)
+      .opt()
+      .await?
+      .is_some(),
+  )
+}
+
+/// Persist the terminal outcome an assigned agent actually reported.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn record_assigned_effect_outcome(
+  pool: &PgPool,
+  id: Uuid,
+  machine_id: Uuid,
+  attempt: i32,
+  status: BuildStatus,
+  error_message: Option<&str>,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::record_assigned_effect_outcome()
+      .bind(
+        &client,
+        &status.as_db_str(),
+        &error_message,
+        &id,
+        &machine_id,
+        &attempt,
+      )
+      .opt()
+      .await?
+      .is_some(),
+  )
+}
+
+/// Attach worker-owned log metadata to the exact terminal Effect attempt.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn finalize_assigned_effect_attempt(
+  pool: &PgPool,
+  id: Uuid,
+  machine_id: Uuid,
+  attempt: i32,
+  status: BuildStatus,
+  log_path: Option<&str>,
+  build_output_path: Option<&str>,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::finalize_assigned_effect_attempt()
+      .bind(
+        &client,
+        &log_path,
+        &build_output_path,
+        &id,
+        &status.as_db_str(),
+        &machine_id,
+        &attempt,
+      )
+      .opt()
+      .await?
+      .is_some(),
+  )
+}
+
+/// Release the worker-finalization barrier for an exact Effect attempt whose
+/// connection-owned terminal outcome is already durable.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn release_terminal_effect_attempt(
+  pool: &PgPool,
+  id: Uuid,
+  attempt: i32,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  Ok(
+    q::release_terminal_effect_attempt()
+      .bind(&client, &id, &attempt)
+      .opt()
+      .await?
+      .is_some(),
+  )
+}
+
+/// Explicitly terminate and release the persisted agent assignment for a
+/// quarantined, outcome-unknown effect.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or the build is not an assigned effect
+/// carrying the exact outcome-unknown quarantine marker.
+pub async fn force_release_effect(pool: &PgPool, id: Uuid) -> Result<Build> {
+  let client = pool.get().await?;
+  q::force_release_effect()
+    .bind(&client, &id, &EFFECT_OUTCOME_UNKNOWN_ERROR)
+    .opt()
+    .await?
+    .map(Build::try_from)
+    .transpose()?
+    .ok_or_else(|| {
+      CiError::NotFound(format!(
+        "Effect {id} not found or not awaiting explicit release"
+      ))
+    })
+}
+
+/// Mark assigned Effects that have no live runner task as outcome-unknown.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn quarantine_orphaned_effects(
+  pool: &PgPool,
+  active_build_ids: &[Uuid],
+) -> Result<u64> {
+  let client = pool.get().await?;
+  Ok(
+    q::quarantine_orphaned_effects()
+      .bind(&client, &EFFECT_OUTCOME_UNKNOWN_ERROR, &active_build_ids)
+      .await?,
+  )
+}
+
+/// Release worker-finalization barriers left on already-terminal Effects by a
+/// runner process crash.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
+pub async fn release_orphaned_terminal_effects(pool: &PgPool) -> Result<u64> {
+  let client = pool.get().await?;
+  Ok(q::release_orphaned_terminal_effects().bind(&client).await?)
 }
 
 /// List constituent builds of an aggregate build.

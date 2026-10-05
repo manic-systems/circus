@@ -251,6 +251,7 @@ configuration or the Nix store.
 | `queue_runner`       | `rpc.presign_expiry_secs`                              | `3600`                                              | Presigned URL expiry (seconds)                                            |
 | `queue_runner`       | `rpc.tls`                                              | none                                                | TLS configuration for RPC endpoint                                        |
 | `queue_runner`       | `rpc.heartbeat_ttl_secs`                               | `60`                                                | Agent heartbeat TTL before marking unavailable                            |
+| `queue_runner`       | `rpc.api_base_url`                                     | none                                                | Public Circus HTTP API URL exposed to effects                             |
 | `queue_runner`       | `rpc.cache_substituter`                                | none                                                | Cache URL forwarded to agents for drv inputs                              |
 | `queue_runner`       | `rpc.cache_public_key`                                 | none                                                | Public key trusted for `rpc.cache_substituter`                            |
 | `queue_runner`       | `rpc.oidc.issuer`                                      | `https://token.actions.githubusercontent.com`       | OIDC issuer accepted for agent registration                               |
@@ -1000,12 +1001,21 @@ agent-side settings most relevant to distributed and ephemeral builders:
 | `agent` | `tls.key_file`                | none                    | Optional client key for mTLS                                      |
 | `agent` | `rootless`                    | `false`                 | Run Nix inside the rootless namespace setup described below       |
 | `agent` | `rootless_data_dir`           | XDG data dir            | Data directory used by rootless mode                              |
+| `agent` | `effects.secrets_file`        | none                    | Local secrets file; presence opts a persistent agent into Effects |
 | `agent` | `ephemeral.max_builds`        | none                    | Exit after this many completed builds                             |
 | `agent` | `ephemeral.max_lifetime_secs` | none                    | Exit after this many wall-clock seconds                           |
 | `agent` | `ephemeral.max_idle_secs`     | `120`                   | Exit after this many idle seconds                                 |
 | `agent` | `ephemeral.unique_name`       | `true`                  | Append a unique suffix to avoid CI name collisions                |
 
 <!-- markdownlint-enable MD013 -->
+
+With the NixOS module, set
+`services.circus-agent.effectsSecretsFile = "/run/secrets/circus-effects";`
+instead of putting the secret path in `settings`. The module passes the file
+through systemd credentials and opts the persistent agent into Effects. The
+source must be a canonical absolute runtime path outside `/nix/store`; using a
+Nix path literal or `pkgs.writeText` would make the source secret
+store-readable. Effect-capable agents currently cannot use `agent.rootless`.
 
 ### Ephemeral GitHub Actions Agents
 
@@ -1022,6 +1032,7 @@ pool:
 ```toml
 [queue_runner.rpc]
 bind = "0.0.0.0:8443"
+api_base_url = "https://ci.example.org"
 cache_substituter = "https://ci.example.org/nix-cache/"
 cache_public_key = "circus-cache:..."
 

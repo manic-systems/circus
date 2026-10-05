@@ -182,6 +182,8 @@ pub struct BuildQuickSearchRow {
     pub effective_features: Option<Vec<String>>,
     pub agent_losses: i32,
     pub closure_size: Option<i64>,
+    pub kind: String,
+    pub effect_execution_active: bool,
 }
 pub struct BuildQuickSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -218,6 +220,8 @@ pub struct BuildQuickSearchRowBorrowed<'a> {
     pub effective_features: Option<crate::ArrayIterator<'a, &'a str>>,
     pub agent_losses: i32,
     pub closure_size: Option<i64>,
+    pub kind: &'a str,
+    pub effect_execution_active: bool,
 }
 impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
     fn from(
@@ -256,6 +260,8 @@ impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
             effective_features,
             agent_losses,
             closure_size,
+            kind,
+            effect_execution_active,
         }: BuildQuickSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -293,6 +299,8 @@ impl<'a> From<BuildQuickSearchRowBorrowed<'a>> for BuildQuickSearchRow {
             effective_features: effective_features.map(|v| v.map(|v| v.into()).collect()),
             agent_losses,
             closure_size,
+            kind: kind.into(),
+            effect_execution_active,
         }
     }
 }
@@ -958,6 +966,8 @@ impl QuickBuildsStmt {
                     effective_features: row.try_get(31)?,
                     agent_losses: row.try_get(32)?,
                     closure_size: row.try_get(33)?,
+                    kind: row.try_get(34)?,
+                    effect_execution_active: row.try_get(35)?,
                 })
             },
             mapper: |it| BuildQuickSearchRow::from(it),
@@ -1527,6 +1537,8 @@ impl SearchBuildsStmt {
                     effective_features: row.try_get(31)?,
                     agent_losses: row.try_get(32)?,
                     closure_size: row.try_get(33)?,
+                    kind: row.try_get(34)?,
+                    effect_execution_active: row.try_get(35)?,
                 })
             },
             mapper: |it| BuildQuickSearchRow::from(it),

@@ -100,6 +100,7 @@ enum ParsedRepo {
     scheme: Scheme,
     user:   Option<String>,
     host:   String,
+    port:   Option<u16>,
     /// Path with no leading/trailing slash and no `.git` suffix.
     path:   String,
     /// Nix flake fetcher attributes from the source URL.
@@ -129,6 +130,7 @@ impl ParsedRepo {
           scheme: Scheme::from_str(parsed.scheme()),
           user,
           host: host.to_ascii_lowercase(),
+          port: parsed.port(),
           path: clean_path(parsed.path()),
           query,
         };
@@ -139,11 +141,12 @@ impl ParsedRepo {
       // Either an scp-like `git@host:owner/repo` (rejected by repository_url
       // validation, handled defensively) or a bare local path.
       if let Some((authority, path)) = scp_split(url) {
-        let (user, host) = split_user_host(authority);
+        let (user, host, _) = split_user_host(authority);
         return Self::Remote {
           scheme: Scheme::Ssh,
           user,
           host,
+          port: None,
           path: clean_path(path),
           query: Vec::new(),
         };
@@ -158,12 +161,13 @@ impl ParsedRepo {
       Some((a, p)) => (a, p),
       None => (rest, ""),
     };
-    let (user, host) = split_user_host(authority);
+    let (user, host, port) = split_user_host(authority);
 
     Self::Remote {
       scheme: Scheme::from_str(scheme),
       user,
       host,
+      port,
       path: clean_path(path),
       query: Vec::new(),
     }
@@ -174,7 +178,7 @@ impl ParsedRepo {
     rev: &str,
     repo_path: &Path,
   ) -> Result<SourceFlakeRef> {
-    let (scheme, user, host, path, query) = match self {
+    let (scheme, user, host, port, path, query) = match self {
       Self::Local { query, .. } => {
         return local_git_ref(repo_path, rev, &query);
       },
@@ -182,9 +186,10 @@ impl ParsedRepo {
         scheme,
         user,
         host,
+        port,
         path,
         query,
-      } => (scheme, user, host, path, query),
+      } => (scheme, user, host, port, path, query),
     };
 
     let segments = path.split('/').filter(|s| !s.is_empty()).count();
@@ -202,7 +207,18 @@ impl ParsedRepo {
       "git.sr.ht" if segments == 2 && forge_query_supported => {
         forge_ref("sourcehut", &path, rev)
       },
-      _ => generic_git_ref(&scheme, user.as_deref(), &host, &path, rev, &query),
+      _ => {
+        let authority =
+          port.map_or_else(|| host.clone(), |port| format!("{host}:{port}"));
+        generic_git_ref(
+          &scheme,
+          user.as_deref(),
+          &authority,
+          &path,
+          rev,
+          &query,
+        )
+      },
     };
 
     Ok(primary)
@@ -331,17 +347,17 @@ fn scp_split(url: &str) -> Option<(&str, &str)> {
   Some((left, right))
 }
 
-/// Split `[user@]host[:port]` into (`user`, lowercased `host`).
-fn split_user_host(authority: &str) -> (Option<String>, String) {
+/// Split `[user@]host[:port]` into (`user`, lowercased `host`, `port`).
+fn split_user_host(authority: &str) -> (Option<String>, String, Option<u16>) {
   let (user, hostport) = match authority.split_once('@') {
     Some((u, h)) => (Some(u.to_string()), h),
     None => (None, authority),
   };
-  let host = hostport
-    .split_once(':')
-    .map_or(hostport, |(h, _port)| h)
-    .to_ascii_lowercase();
-  (user, host)
+  let (host, port) = match hostport.split_once(':') {
+    Some((host, port)) => (host, port.parse().ok()),
+    None => (hostport, None),
+  };
+  (user, host.to_ascii_lowercase(), port)
 }
 
 /// Strip leading/trailing slashes and a single trailing `.git`.

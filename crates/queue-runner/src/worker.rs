@@ -1,5 +1,5 @@
 use std::{
-  collections::HashMap,
+  collections::{BTreeMap, BTreeSet, HashMap},
   path::{Path, PathBuf},
   sync::Arc,
   time::Duration,
@@ -12,6 +12,7 @@ use circus_common::{
   log_storage::LogStorage,
   models::{
     Build,
+    BuildKind,
     BuildStatus,
     CreateBuildProduct,
     Project,
@@ -173,12 +174,18 @@ impl WorkerPool {
     &self.active_builds
   }
 
+  /// Publish signed narinfo rows for the complete closure of `output_paths`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error when Nix cannot inspect the closure, the signing key
+  /// cannot be read, or a narinfo row cannot be persisted.
   pub async fn persist_closure_narinfos(
     &self,
     build_id: Uuid,
     output_paths: &[String],
     project_id: Option<Uuid>,
-  ) {
+  ) -> color_eyre::Result<()> {
     persist_closure_narinfos(
       &self.pool,
       build_id,
@@ -186,7 +193,7 @@ impl WorkerPool {
       &self.signing_config,
       project_id,
     )
-    .await;
+    .await
   }
 
   #[tracing::instrument(skip(self, build), fields(build_id = %build.id, job = %build.job_name))]
@@ -199,6 +206,8 @@ impl WorkerPool {
     let semaphore = Arc::clone(&self.semaphore);
     let upload_semaphore = Arc::clone(&self.upload_semaphore);
     let pool = self.pool.clone();
+    let pool_for_cancel = self.pool.clone();
+    let pool_for_recovery = self.pool.clone();
     let work_dir = Arc::clone(&self.work_dir);
     let nix_store_dir = Arc::clone(&self.nix_store_dir);
     let hot_config = Arc::clone(&self.hot_config);
@@ -213,6 +222,11 @@ impl WorkerPool {
     let heartbeat_ttl = self.heartbeat_ttl;
     let active_builds = Arc::clone(&self.active_builds);
     let build_id = build.id;
+    let build_kind = build.kind;
+    let build_attempt = build.retry_count;
+    let agent_handoff = dispatch::AgentHandoff::default();
+    let agent_handoff_for_cancel = agent_handoff.clone();
+    let agent_handoff_for_recovery = agent_handoff.clone();
 
     // A claim's NOTIFY refetches pending rows before it commits, so the same
     // build lands here twice.
@@ -275,8 +289,16 @@ impl WorkerPool {
           heartbeat_ttl,
         };
 
-        if let Err(e) = run_build(ctx, &build).await {
+        if let Err(e) = run_build(ctx, &build, &agent_handoff).await {
           tracing::error!(build_id = %build.id, "Build dispatch failed: {e}");
+          recover_unhanded_effect(
+            &pool_for_recovery,
+            &agent_handoff_for_recovery,
+            build.kind,
+            build.id,
+            build.retry_count,
+          )
+          .await;
         }
       };
 
@@ -284,12 +306,97 @@ impl WorkerPool {
         () = result => {}
         () = cancel_token.cancelled() => {
           tracing::info!(build_id = %build_id, "Build cancelled, aborting");
+          recover_unhanded_effect(
+            &pool_for_cancel,
+            &agent_handoff_for_cancel,
+            build_kind,
+            build_id,
+            build_attempt,
+          )
+          .await;
         }
       }
 
       active_builds.remove(&build_id);
     });
   }
+}
+
+async fn recover_unhanded_effect(
+  pool: &PgPool,
+  handoff: &dispatch::AgentHandoff,
+  kind: BuildKind,
+  build_id: Uuid,
+  attempt: i32,
+) {
+  let handed_off = handoff.is_handed_off();
+  if kind.is_effect() && handed_off {
+    match repo::builds::release_terminal_effect_attempt(pool, build_id, attempt)
+      .await
+    {
+      Ok(true) => {
+        tracing::warn!(
+          %build_id,
+          attempt,
+          "Released terminal Effect barrier after its worker future ended"
+        );
+      },
+      Ok(false) => {},
+      Err(e) => {
+        tracing::error!(
+          %build_id,
+          attempt,
+          "Failed to release terminal Effect worker barrier: {e}"
+        );
+      },
+    }
+    return;
+  }
+
+  if !should_release_unhanded_effect(kind, handed_off) {
+    return;
+  }
+
+  match repo::builds::requeue(pool, build_id).await {
+    Ok(Some(_)) => {
+      tracing::info!(
+        %build_id,
+        "Requeued Effect whose assignment was never handed to an agent"
+      );
+      return;
+    },
+    Ok(None) => {},
+    Err(e) => {
+      tracing::error!(
+        %build_id,
+        "Failed to requeue pre-handoff Effect: {e}"
+      );
+      return;
+    },
+  }
+
+  match repo::builds::release_unhanded_effect(pool, build_id).await {
+    Ok(true) => {
+      tracing::info!(
+        %build_id,
+        "Released cancelled Effect before agent handoff"
+      );
+    },
+    Ok(false) => {},
+    Err(e) => {
+      tracing::error!(
+        %build_id,
+        "Failed to release cancelled pre-handoff Effect: {e}"
+      );
+    },
+  }
+}
+
+const fn should_release_unhanded_effect(
+  kind: BuildKind,
+  handed_off: bool,
+) -> bool {
+  kind.is_effect() && !handed_off
 }
 
 /// Query nix path-info for narHash and narSize of an output path.
@@ -317,9 +424,9 @@ async fn get_path_info(output_path: &str) -> Option<(String, i64)> {
 pub(crate) async fn get_recursive_path_infos_with_nix(
   nix: &Path,
   output_paths: &[String],
-) -> Option<Vec<ClosurePathInfo>> {
+) -> color_eyre::Result<Vec<ClosurePathInfo>> {
   if output_paths.is_empty() {
-    return Some(Vec::new());
+    return Ok(Vec::new());
   }
 
   let output = Command::new(nix)
@@ -327,71 +434,267 @@ pub(crate) async fn get_recursive_path_infos_with_nix(
     .args(output_paths)
     .output()
     .await
-    .ok()?;
+    .map_err(|error| {
+      color_eyre::eyre::eyre!(
+        "failed to run nix path-info for cache publication: {error}"
+      )
+    })?;
 
   if !output.status.success() {
-    tracing::warn!(
-      stderr = %String::from_utf8_lossy(&output.stderr),
-      "nix path-info --recursive failed while recording cache closure"
-    );
-    return None;
+    return Err(color_eyre::eyre::eyre!(
+      "nix path-info --recursive failed while recording cache closure: {}",
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
   }
 
+  let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+    .map_err(|error| {
+      color_eyre::eyre::eyre!(
+        "invalid nix path-info JSON while recording cache closure: {error}"
+      )
+    })?;
+  let infos = parse_recursive_path_infos(&parsed)?;
+  let published_paths = infos
+    .iter()
+    .map(|info| info.store_path.as_str())
+    .collect::<BTreeSet<_>>();
+  let missing = output_paths
+    .iter()
+    .filter(|path| !published_paths.contains(path.as_str()))
+    .collect::<Vec<_>>();
+  if !missing.is_empty() {
+    return Err(color_eyre::eyre::eyre!(
+      "nix path-info omitted cache closure root(s): {}",
+      missing
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+    ));
+  }
+  Ok(infos)
+}
+
+fn normalize_store_path(path: &str) -> String {
+  if path.starts_with("/nix/store/") {
+    path.to_owned()
+  } else {
+    format!("/nix/store/{path}")
+  }
+}
+
+fn parse_effect_input_bindings(
+  json: &[u8],
+  drv_path: &str,
+) -> color_eyre::Result<BTreeMap<String, Vec<String>>> {
   let parsed: serde_json::Value =
-    serde_json::from_slice(&output.stdout).ok()?;
-  Some(parse_recursive_path_infos(&parsed))
+    serde_json::from_slice(json).map_err(|error| {
+      color_eyre::eyre::eyre!(
+        "invalid Effect derivation JSON while preparing its cache: {error}"
+      )
+    })?;
+  let root = parsed.as_object().ok_or_else(|| {
+    color_eyre::eyre::eyre!(
+      "Effect derivation JSON must be an object while preparing its cache"
+    )
+  })?;
+  let derivations = root
+    .get("derivations")
+    .and_then(serde_json::Value::as_object)
+    .unwrap_or(root);
+  let normalized_drv_path = normalize_store_path(drv_path);
+  let derivation = derivations
+    .iter()
+    .find(|(path, _)| normalize_store_path(path) == normalized_drv_path)
+    .map(|(_, value)| value)
+    .or_else(|| {
+      (derivations.len() == 1)
+        .then(|| derivations.values().next())
+        .flatten()
+    })
+    .ok_or_else(|| {
+      color_eyre::eyre::eyre!(
+        "Nix omitted assigned Effect derivation {normalized_drv_path}"
+      )
+    })?;
+
+  let mut by_output = BTreeMap::<String, BTreeSet<String>>::new();
+  let legacy_inputs = derivation
+    .get("inputDrvs")
+    .and_then(serde_json::Value::as_object);
+  let modern_inputs = derivation
+    .get("inputs")
+    .and_then(|inputs| inputs.get("drvs"))
+    .and_then(serde_json::Value::as_object);
+  for inputs in [legacy_inputs, modern_inputs].into_iter().flatten() {
+    for (input_drv, request) in inputs {
+      let requested_outputs = request
+        .as_array()
+        .or_else(|| {
+          request.get("outputs").and_then(serde_json::Value::as_array)
+        })
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str);
+      for output in requested_outputs {
+        by_output
+          .entry(output.to_owned())
+          .or_default()
+          .insert(normalize_store_path(input_drv));
+      }
+    }
+  }
+
+  Ok(
+    by_output
+      .into_iter()
+      .map(|(output, drvs)| (output, drvs.into_iter().collect()))
+      .collect(),
+  )
+}
+
+async fn effect_cache_roots(drv_path: &str) -> color_eyre::Result<Vec<String>> {
+  let output = Command::new("nix")
+    .args([
+      "--extra-experimental-features",
+      "nix-command",
+      "derivation",
+      "show",
+      drv_path,
+    ])
+    .kill_on_drop(true)
+    .output()
+    .await
+    .map_err(|error| {
+      color_eyre::eyre::eyre!(
+        "failed to inspect Effect derivation before agent handoff: {error}"
+      )
+    })?;
+  if !output.status.success() {
+    return Err(color_eyre::eyre::eyre!(
+      "failed to inspect Effect derivation before agent handoff: {}",
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
+  }
+
+  let bindings = parse_effect_input_bindings(&output.stdout, drv_path)?;
+  let mut roots = BTreeSet::from([normalize_store_path(drv_path)]);
+  for (output_name, input_drvs) in bindings {
+    for chunk in input_drvs.chunks(128) {
+      let output = Command::new("nix-store")
+        .args(["--query", "--binding", &output_name])
+        .args(chunk)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|error| {
+          color_eyre::eyre::eyre!(
+            "failed to resolve Effect input output '{output_name}': {error}"
+          )
+        })?;
+      if !output.status.success() {
+        return Err(color_eyre::eyre::eyre!(
+          "failed to resolve Effect input output '{output_name}': {}",
+          String::from_utf8_lossy(&output.stderr).trim()
+        ));
+      }
+      let paths = String::from_utf8(output.stdout).map_err(|error| {
+        color_eyre::eyre::eyre!(
+          "Effect input output paths were not UTF-8: {error}"
+        )
+      })?;
+      for path in paths.lines().filter(|path| !path.is_empty()) {
+        if !path.starts_with("/nix/store/") {
+          return Err(color_eyre::eyre::eyre!(
+            "Effect input output '{output_name}' resolved outside the Nix \
+             store: {path}"
+          ));
+        }
+        roots.insert(path.to_owned());
+      }
+    }
+  }
+  Ok(roots.into_iter().collect())
 }
 
 fn parse_recursive_path_infos(
   parsed: &serde_json::Value,
-) -> Vec<ClosurePathInfo> {
+) -> color_eyre::Result<Vec<ClosurePathInfo>> {
   match parsed {
     serde_json::Value::Array(entries) => {
       entries
         .iter()
-        .filter_map(|entry| parse_closure_path_info(None, entry))
+        .map(|entry| parse_closure_path_info(None, entry))
         .collect()
     },
     serde_json::Value::Object(entries) => {
       entries
         .iter()
-        .filter_map(|(path, entry)| parse_closure_path_info(Some(path), entry))
+        .map(|(path, entry)| parse_closure_path_info(Some(path), entry))
         .collect()
     },
-    _ => Vec::new(),
+    _ => {
+      Err(color_eyre::eyre::eyre!(
+        "nix path-info JSON must be an array or object"
+      ))
+    },
   }
 }
 
 fn parse_closure_path_info(
-  path_key: Option<&String>,
+  path_key: Option<&str>,
   entry: &serde_json::Value,
-) -> Option<ClosurePathInfo> {
+) -> color_eyre::Result<ClosurePathInfo> {
   let store_path = entry
     .get("path")
     .and_then(serde_json::Value::as_str)
-    .or_else(|| path_key.map(String::as_str))?
+    .or(path_key)
+    .ok_or_else(|| {
+      color_eyre::eyre::eyre!("nix path-info entry has no store path")
+    })?
     .to_string();
-  let raw_nar_hash = entry.get("narHash")?.as_str()?;
-  let Some(nar_hash) = canonical_nix_sha256_hash(raw_nar_hash) else {
-    tracing::warn!(
-      store_path = %store_path,
-      nar_hash = %raw_nar_hash,
-      "skipping closure path info with unsupported nar hash format"
-    );
-    return None;
-  };
-  let nar_size = entry.get("narSize")?.as_i64()?;
-  let references = entry
-    .get("references")
-    .and_then(serde_json::Value::as_array)
-    .map(|refs| {
-      refs
+  let raw_nar_hash = entry
+    .get("narHash")
+    .and_then(serde_json::Value::as_str)
+    .ok_or_else(|| {
+    color_eyre::eyre::eyre!(
+      "nix path-info entry for {store_path} has no narHash"
+    )
+  })?;
+  let nar_hash = canonical_nix_sha256_hash(raw_nar_hash).ok_or_else(|| {
+    color_eyre::eyre::eyre!(
+      "nix path-info entry for {store_path} has unsupported narHash \
+       {raw_nar_hash}"
+    )
+  })?;
+  let nar_size = entry
+    .get("narSize")
+    .and_then(serde_json::Value::as_i64)
+    .ok_or_else(|| {
+      color_eyre::eyre::eyre!(
+        "nix path-info entry for {store_path} has no narSize"
+      )
+    })?;
+  let references = match entry.get("references") {
+    None => Vec::new(),
+    Some(serde_json::Value::Array(references)) => {
+      references
         .iter()
-        .filter_map(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
-        .collect()
-    })
-    .unwrap_or_default();
+        .map(|reference| {
+          reference.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+            color_eyre::eyre::eyre!(
+              "nix path-info entry for {store_path} has a non-string reference"
+            )
+          })
+        })
+        .collect::<color_eyre::Result<Vec<_>>>()?
+    },
+    Some(_) => {
+      return Err(color_eyre::eyre::eyre!(
+        "nix path-info entry for {store_path} has non-array references"
+      ));
+    },
+  };
   let deriver = entry
     .get("deriver")
     .and_then(serde_json::Value::as_str)
@@ -403,7 +706,7 @@ fn parse_closure_path_info(
     .filter(|value| !value.is_empty())
     .map(ToOwned::to_owned);
 
-  Some(ClosurePathInfo {
+  Ok(ClosurePathInfo {
     store_path,
     nar_hash,
     nar_size,
@@ -481,7 +784,15 @@ async fn persist_closure_narinfos(
   output_paths: &[String],
   signing_config: &SigningConfig,
   project_id: Option<Uuid>,
-) {
+) -> color_eyre::Result<()> {
+  if !signing_config.enabled
+    || signing_config
+      .key_file
+      .as_ref()
+      .is_none_or(|key_file| !key_file.exists())
+  {
+    return Ok(());
+  }
   persist_closure_narinfos_with_nix(
     Path::new("nix"),
     pool,
@@ -490,7 +801,7 @@ async fn persist_closure_narinfos(
     signing_config,
     project_id,
   )
-  .await;
+  .await
 }
 
 async fn persist_closure_narinfos_with_nix(
@@ -500,36 +811,33 @@ async fn persist_closure_narinfos_with_nix(
   output_paths: &[String],
   signing_config: &SigningConfig,
   project_id: Option<Uuid>,
-) {
-  let key_file = match &signing_config.key_file {
-    Some(kf) if signing_config.enabled && kf.exists() => kf,
-    _ => return,
-  };
-  let signing_key = match read_signing_key(key_file).await {
-    Ok(key) => key,
-    Err(e) => {
-      tracing::warn!(
-        key_file = %key_file.display(),
-        "failed to read closure narinfo signing key: {e}"
-      );
-      return;
-    },
-  };
+) -> color_eyre::Result<()> {
+  let key_file = signing_config
+    .key_file
+    .as_ref()
+    .filter(|key_file| signing_config.enabled && key_file.exists())
+    .ok_or_else(|| {
+      color_eyre::eyre::eyre!(
+        "cache closure publication requires an enabled, existing signing key"
+      )
+    })?;
+  let signing_key = read_signing_key(key_file).await.map_err(|error| {
+    color_eyre::eyre::eyre!(
+      "failed to read closure narinfo signing key {}: {error}",
+      key_file.display()
+    )
+  })?;
 
-  let Some(infos) = get_recursive_path_infos_with_nix(nix, output_paths).await
-  else {
-    return;
-  };
+  let infos = get_recursive_path_infos_with_nix(nix, output_paths).await?;
 
   for info in infos {
-    let Some(url) = nar_url_for_path(&info) else {
-      tracing::warn!(
-        store_path = %info.store_path,
-        nar_hash = %info.nar_hash,
-        "skipping closure narinfo with unsupported hash format"
-      );
-      continue;
-    };
+    let url = nar_url_for_path(&info).ok_or_else(|| {
+      color_eyre::eyre::eyre!(
+        "cannot derive cache URL for closure path {} with hash {}",
+        info.store_path,
+        info.nar_hash
+      )
+    })?;
 
     let sig = sign_narinfo(
       &signing_key,
@@ -539,31 +847,30 @@ async fn persist_closure_narinfos_with_nix(
       &info.references,
     );
 
-    if let Err(e) =
-      repo::narinfo_cache::upsert(pool, repo::narinfo_cache::UpsertNarInfo {
-        store_path: &info.store_path,
-        nar_hash: &info.nar_hash,
-        nar_size: info.nar_size,
-        file_hash: None,
-        file_size: None,
-        compression: "none",
-        url: &url,
-        deriver: info.deriver.as_deref(),
-        references: &info.references,
-        sig: Some(&sig),
-        ca: info.ca.as_deref(),
-        build_id: Some(build_id),
-        project_id,
-      })
-      .await
-    {
-      tracing::warn!(
-        build_id = %build_id,
-        store_path = %info.store_path,
-        "failed to persist closure narinfo: {e}"
-      );
-    }
+    repo::narinfo_cache::upsert(pool, repo::narinfo_cache::UpsertNarInfo {
+      store_path: &info.store_path,
+      nar_hash: &info.nar_hash,
+      nar_size: info.nar_size,
+      file_hash: None,
+      file_size: None,
+      compression: "none",
+      url: &url,
+      deriver: info.deriver.as_deref(),
+      references: &info.references,
+      sig: Some(&sig),
+      ca: info.ca.as_deref(),
+      build_id: Some(build_id),
+      project_id,
+    })
+    .await
+    .map_err(|error| {
+      color_eyre::eyre::eyre!(
+        "failed to persist closure narinfo for {}: {error}",
+        info.store_path
+      )
+    })?;
   }
+  Ok(())
 }
 
 fn nix_args_for_build(
@@ -866,6 +1173,32 @@ fn presigned_s3_upload_available(config: &CacheUploadConfig) -> bool {
   circus_s3::Presigner::from_config(store_uri, s3_config).is_some()
 }
 
+const fn should_retry_failed_execution(
+  kind: BuildKind,
+  retry_count: i32,
+  max_retries: i32,
+) -> bool {
+  !kind.is_effect() && retry_count < max_retries
+}
+
+const fn should_cache_failed_execution(kind: BuildKind) -> bool {
+  !kind.is_effect()
+}
+
+const fn should_process_success_outputs(kind: BuildKind) -> bool {
+  !kind.is_effect()
+}
+
+const fn persisted_success_outputs(
+  kind: BuildKind,
+  output_paths: &[String],
+) -> &[String] {
+  if should_process_success_outputs(kind) {
+    output_paths
+  } else {
+    &[]
+  }
+}
 #[expect(clippy::ref_option, reason = "used as fn parameter pattern")]
 async fn collect_metrics_and_alert(
   pool: &PgPool,
@@ -944,6 +1277,13 @@ async fn run_on_runner(
   runner_caps: &RunnerCaps,
 ) -> circus_common::error::Result<Option<BuildResult>> {
   let _permit = permit;
+  if !dispatch::non_agent_execution_allowed(build.kind) {
+    tracing::error!(
+      build_id = %build.id,
+      "refusing to execute an effect through the SSH/local runner path"
+    );
+    return Ok(None);
+  }
   if !runner_caps.supports(build.system.as_deref(), build.scheduling_features())
   {
     tracing::warn!(
@@ -965,8 +1305,15 @@ async fn run_on_runner(
   .map(Some)
 }
 
-#[tracing::instrument(skip(ctx, build), fields(build_id = %build.id, job = %build.job_name))]
-async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
+#[tracing::instrument(
+  skip(ctx, build, agent_handoff),
+  fields(build_id = %build.id, job = %build.job_name)
+)]
+async fn run_build(
+  ctx: BuildContext,
+  build: &Build,
+  agent_handoff: &dispatch::AgentHandoff,
+) -> color_eyre::Result<()> {
   // Reserve capacity before claiming the build so `running` means execution
   // can start immediately.
   let Some(venue) =
@@ -1006,7 +1353,13 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   let cache_upload_config = cache_upload_config.as_ref();
   let alert_manager = alert_manager.as_ref();
 
-  let Some(claimed_build) = repo::builds::start(pool, build.id).await? else {
+  let machine_id = match &venue {
+    dispatch::ExecutionReservation::Agent { meta, .. } => meta.machine_id,
+    dispatch::ExecutionReservation::Runner(_) => Uuid::nil(),
+  };
+  let Some(claimed_build) =
+    repo::builds::start_with_agent(pool, build.id, machine_id).await?
+  else {
     tracing::debug!(build_id = %build.id, "Build already claimed, skipping");
     return Ok(());
   };
@@ -1037,6 +1390,20 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
       project_context.as_ref().map(|(p, _)| p),
     ),
   );
+
+  if build.kind.is_effect() {
+    // Ordinary output signing never includes derivation files or Effect inputs.
+    let effect_roots = effect_cache_roots(drv_path).await?;
+    persist_closure_narinfos_with_nix(
+      Path::new("nix"),
+      pool,
+      build.id,
+      &effect_roots,
+      signing_config,
+      project_context.as_ref().map(|(project, _)| project.id),
+    )
+    .await?;
+  }
 
   // Dispatch build started notification
   // If the project lookup fails, leave the at-most-once marker untouched.
@@ -1074,7 +1441,12 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     presigned_s3_upload_available(cache_upload_config);
 
   let result = match venue {
-    dispatch::ExecutionReservation::Agent { meta, snap, slot } => {
+    dispatch::ExecutionReservation::Agent {
+      meta,
+      snap,
+      slot,
+      effect_context,
+    } => {
       let opts = dispatch::AgentDispatch {
         timeout,
         max_silent_time,
@@ -1084,35 +1456,40 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         fail_build_on_upload_error: cache_upload_config
           .fail_build_on_upload_error,
       };
-      if let Some(r) = dispatch::run_on_agent(
+      match dispatch::run_on_agent(
         &meta,
         &snap,
         slot,
+        effect_context,
         pool,
         build,
         drv_path,
         &live_log_path,
         &opts,
+        agent_handoff,
       )
       .await
       {
-        Ok(Some(r))
-      } else if let Ok(permit) =
-        Arc::clone(&worker_semaphore).try_acquire_owned()
-      {
-        run_on_runner(
-          permit,
-          build,
-          drv_path,
-          work_dir,
-          timeout,
-          &live_log_path,
-          &build_extra_nix_args,
-          &runner_caps,
-        )
-        .await
-      } else {
-        Ok(None)
+        dispatch::AgentRunOutcome::Completed(result) => Ok(Some(result)),
+        dispatch::AgentRunOutcome::VenueLost
+          if dispatch::non_agent_execution_allowed(build.kind)
+            && let Ok(permit) =
+              Arc::clone(&worker_semaphore).try_acquire_owned() =>
+        {
+          run_on_runner(
+            permit,
+            build,
+            drv_path,
+            work_dir,
+            timeout,
+            &live_log_path,
+            &build_extra_nix_args,
+            &runner_caps,
+          )
+          .await
+        },
+        dispatch::AgentRunOutcome::VenueLost => Ok(None),
+        dispatch::AgentRunOutcome::EffectQuarantined => return Ok(()),
       }
     },
     dispatch::ExecutionReservation::Runner(permit) => {
@@ -1145,6 +1522,14 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
             build_id = %build.id,
             "build no longer running at requeue (cancelled or completed elsewhere)"
           );
+          recover_unhanded_effect(
+            pool,
+            agent_handoff,
+            build.kind,
+            build.id,
+            build.retry_count,
+          )
+          .await;
         },
         Err(e) => {
           tracing::warn!(build_id = %build.id, "Failed to requeue after venue loss: {e}");
@@ -1157,6 +1542,36 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 
   // Initialize log storage
   let log_storage = LogStorage::new(log_config.log_dir.clone()).ok();
+
+  let effect_completion = if build.kind.is_effect() {
+    let Some(machine_id) = claimed_build.agent_machine_id else {
+      tracing::error!(
+        build_id = %build.id,
+        "Effect worker has no persisted agent assignment"
+      );
+      return Ok(());
+    };
+    let persisted = repo::builds::get(pool, build.id).await?;
+    if persisted.agent_machine_id != Some(machine_id)
+      || persisted.retry_count != claimed_build.retry_count
+      || !persisted.status.is_terminal()
+      || persisted.status == BuildStatus::Cancelled
+    {
+      tracing::warn!(
+        build_id = %build.id,
+        expected_machine_id = %machine_id,
+        expected_attempt = claimed_build.retry_count,
+        actual_machine_id = ?persisted.agent_machine_id,
+        actual_attempt = persisted.retry_count,
+        actual_status = persisted.status.as_db_str(),
+        "Skipping stale Effect worker finalization"
+      );
+      return Ok(());
+    }
+    Some((machine_id, persisted.status))
+  } else {
+    None
+  };
 
   match result {
     Ok(build_result) => {
@@ -1184,7 +1599,36 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         None
       };
 
-      if build_result.success {
+      if let Some((machine_id, authoritative_status)) = effect_completion {
+        if !repo::builds::finalize_assigned_effect_attempt(
+          pool,
+          build.id,
+          machine_id,
+          claimed_build.retry_count,
+          authoritative_status,
+          log_path.as_deref(),
+          None,
+        )
+        .await?
+        {
+          tracing::warn!(
+            build_id = %build.id,
+            machine_id = %machine_id,
+            attempt = claimed_build.retry_count,
+            status = authoritative_status.as_db_str(),
+            "Effect attempt changed during worker finalization; ignoring stale \
+             result"
+          );
+          return Ok(());
+        }
+        tracing::info!(
+          build_id = %build.id,
+          status = authoritative_status.as_db_str(),
+          "Effect worker finalization completed"
+        );
+      } else if build_result.success {
+        let output_paths =
+          persisted_success_outputs(build.kind, &build_result.output_paths);
         // Build a reverse lookup map: path -> output_name
         // The outputs JSON is a HashMap<String, String> where keys are output
         // names and values are store paths. We need to match paths to
@@ -1204,7 +1648,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           .unwrap_or_default();
 
         // Store build outputs in normalized table
-        for (i, output_path) in build_result.output_paths.iter().enumerate() {
+        for (i, output_path) in output_paths.iter().enumerate() {
           let output_name =
             path_to_name.get(output_path).cloned().unwrap_or_else(|| {
               if i == 0 {
@@ -1231,7 +1675,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         }
 
         // Register GC roots and create build products for each output
-        for (i, output_path) in build_result.output_paths.iter().enumerate() {
+        for (i, output_path) in output_paths.iter().enumerate() {
           let output_name =
             path_to_name.get(output_path).cloned().unwrap_or_else(|| {
               if i == 0 {
@@ -1295,33 +1739,44 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         }
 
         // Sign outputs at build time
-        if sign_outputs(&build_result.output_paths, signing_config).await
+        if should_process_success_outputs(build.kind)
+          && sign_outputs(output_paths, signing_config).await
           && let Err(e) = repo::builds::mark_signed(pool, build.id).await
         {
           tracing::warn!(build_id = %build.id, "Failed to mark build as signed: {e}");
         }
 
         // Outputs an agent uploaded straight to S3 never reach this store.
-        if !build_result.cache_upload_handled {
-          closure::record(pool, build.id, &build_result.output_paths).await;
+        if should_process_success_outputs(build.kind)
+          && !build_result.cache_upload_handled
+        {
+          closure::record(pool, build.id, output_paths).await;
         }
 
-        persist_closure_narinfos(
-          pool,
-          build.id,
-          &build_result.output_paths,
-          signing_config,
-          project_context.as_ref().map(|(project, _)| project.id),
-        )
-        .await;
+        if should_process_success_outputs(build.kind)
+          && let Err(error) = persist_closure_narinfos(
+            pool,
+            build.id,
+            output_paths,
+            signing_config,
+            project_context.as_ref().map(|(project, _)| project.id),
+          )
+          .await
+        {
+          tracing::warn!(
+            build_id = %build.id,
+            "failed to publish output closure narinfos: {error}"
+          );
+        }
 
         // Push to external binary cache if configured
-        let upload_failed_paths = if cache_upload_config.enabled
+        let upload_failed_paths = if should_process_success_outputs(build.kind)
+          && cache_upload_config.enabled
           && !build_result.cache_upload_handled
           && let Some(ref store_uri) = cache_upload_config.store_uri
         {
           push_to_cache(
-            &build_result.output_paths,
+            output_paths,
             store_uri,
             cache_upload_config.s3.as_ref(),
             signing_config
@@ -1367,8 +1822,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           return Ok(());
         }
 
-        let primary_output =
-          build_result.output_paths.first().map(String::as_str);
+        let primary_output = output_paths.first().map(String::as_str);
 
         if repo::builds::complete(
           pool,
@@ -1384,18 +1838,21 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           return Ok(());
         }
 
-        collect_metrics_and_alert(
-          pool,
-          build,
-          &build_result.output_paths,
-          alert_manager,
-        )
-        .await;
+        if should_process_success_outputs(build.kind) {
+          collect_metrics_and_alert(pool, build, output_paths, alert_manager)
+            .await;
+        }
 
         tracing::info!(build_id = %build.id, "Build completed successfully");
       } else {
         // Check if we should retry
-        if build_result.transient && build.retry_count < build.max_retries {
+        if build_result.transient
+          && should_retry_failed_execution(
+            build.kind,
+            build.retry_count,
+            build.max_retries,
+          )
+        {
           tracing::info!(
               build_id = %build.id,
               retry = build.retry_count + 1,
@@ -1429,6 +1886,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         }
 
         if !build_result.transient
+          && should_cache_failed_execution(build.kind)
           && let Err(e) = repo::failed_paths_cache::insert(
             pool,
             &build.drv_path,
@@ -1437,7 +1895,10 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           )
           .await
         {
-          tracing::warn!(build_id = %build.id, "Failed to cache failed path: {e}");
+          tracing::warn!(
+            build_id = %build.id,
+            "Failed to cache failed path: {e}"
+          );
         }
 
         tracing::warn!(build_id = %build.id, "Build failed: {:?}", failure_status);
@@ -1456,6 +1917,14 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         tracing::debug!(build_id = %build.id, "Failed to remove failed live log: {e}");
       }
 
+      if build.kind.is_effect() {
+        tracing::error!(
+          build_id = %build.id,
+          "Effect worker failed after agent handoff; connection-owned state \
+           left authoritative: {msg}"
+        );
+        return Ok(());
+      }
       if repo::builds::complete(
         pool,
         build.id,
@@ -1476,13 +1945,15 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   // Dispatch notifications after build completion
   let updated_build = repo::builds::get(pool, build.id).await?;
   if updated_build.status.is_finished() {
-    dispatch_build_finished_notification(
-      pool,
-      &updated_build,
-      notifications_config,
-      notification_secret_key.as_deref(),
-    )
-    .await;
+    if !updated_build.kind.is_effect() {
+      dispatch_build_finished_notification(
+        pool,
+        &updated_build,
+        notifications_config,
+        notification_secret_key.as_deref(),
+      )
+      .await;
+    }
 
     // Auto-promote channels if all builds in the evaluation are done
     if updated_build.status.is_success()
@@ -1500,11 +1971,92 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 
 #[cfg(test)]
 mod tests {
-  use circus_common::models::{BinaryCacheUpstream, BinaryCacheUpstreams};
+  use circus_common::models::{
+    BinaryCacheUpstream,
+    BinaryCacheUpstreams,
+    BuildKind,
+  };
   use circus_config::{CacheUploadConfig, S3CacheConfig};
   use data_encoding::HEXLOWER;
 
   use super::*;
+
+  #[test]
+  fn effects_never_retry_failed_execution_automatically() {
+    assert!(should_retry_failed_execution(BuildKind::Build, 0, 1));
+    assert!(!should_retry_failed_execution(BuildKind::Build, 1, 1));
+    assert!(!should_retry_failed_execution(BuildKind::Effect, 0, 3));
+  }
+
+  #[test]
+  fn effect_failures_never_enter_the_failed_paths_cache() {
+    assert!(should_cache_failed_execution(BuildKind::Build));
+    assert!(!should_cache_failed_execution(BuildKind::Effect));
+  }
+
+  #[test]
+  fn effect_success_never_persists_signs_or_uploads_outputs() {
+    let paths = vec!["/nix/store/example-output".to_owned()];
+    assert_eq!(
+      persisted_success_outputs(BuildKind::Build, &paths),
+      paths.as_slice()
+    );
+    assert!(persisted_success_outputs(BuildKind::Effect, &paths).is_empty());
+    assert!(should_process_success_outputs(BuildKind::Build));
+    assert!(!should_process_success_outputs(BuildKind::Effect));
+  }
+
+  #[test]
+  fn cancelled_effect_is_released_only_before_agent_handoff() {
+    assert!(should_release_unhanded_effect(BuildKind::Effect, false));
+    assert!(!should_release_unhanded_effect(BuildKind::Effect, true));
+    assert!(!should_release_unhanded_effect(BuildKind::Build, false));
+  }
+
+  #[test]
+  fn effect_cache_uses_only_selected_input_outputs() {
+    let drv_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-effect.drv";
+    let parsed = serde_json::json!({
+      "derivations": {
+        drv_path: {
+          "inputs": {
+            "drvs": {
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-dependency.drv": {
+                "outputs": ["out", "dev"]
+              }
+            }
+          },
+          "inputDrvs": {
+            "/nix/store/cccccccccccccccccccccccccccccccc-legacy.drv": [
+              "bin"
+            ]
+          }
+        }
+      },
+      "version": 3
+    });
+
+    let bindings =
+      parse_effect_input_bindings(parsed.to_string().as_bytes(), drv_path)
+        .expect("parse Effect inputs");
+
+    assert_eq!(
+      bindings,
+      BTreeMap::from([
+        ("bin".to_owned(), vec![
+          "/nix/store/cccccccccccccccccccccccccccccccc-legacy.drv".to_owned()
+        ]),
+        ("dev".to_owned(), vec![
+          "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-dependency.drv"
+            .to_owned()
+        ]),
+        ("out".to_owned(), vec![
+          "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-dependency.drv"
+            .to_owned()
+        ]),
+      ])
+    );
+  }
 
   #[test]
   fn test_canonical_nix_sha256_hash_accepts_common_formats() {
@@ -1549,15 +2101,10 @@ mod tests {
         ],
         "deriver": "/nix/store/cccccccccccccccccccccccccccccccc-linux.drv",
         "ca": null
-      },
-      "/nix/store/dddddddddddddddddddddddddddddddd-bad-hash": {
-        "narHash": "md5:0123456789abcdef0123456789abcdef",
-        "narSize": 99,
-        "references": []
       }
     });
 
-    let infos = parse_recursive_path_infos(&parsed);
+    let infos = parse_recursive_path_infos(&parsed).expect("path infos");
 
     assert_eq!(infos.len(), 1);
     assert_eq!(
@@ -1565,6 +2112,22 @@ mod tests {
       "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-linux-6.18.33-valve2"
     );
     assert_eq!(infos[0].nar_hash, expected_hash);
+  }
+
+  #[test]
+  fn test_parse_recursive_path_infos_rejects_unsupported_hashes() {
+    let parsed = serde_json::json!({
+      "/nix/store/dddddddddddddddddddddddddddddddd-bad-hash": {
+        "narHash": "md5:0123456789abcdef0123456789abcdef",
+        "narSize": 99,
+        "references": []
+      }
+    });
+
+    let error =
+      parse_recursive_path_infos(&parsed).expect_err("unsupported hash");
+
+    assert!(error.to_string().contains("unsupported narHash"));
   }
 
   #[tokio::test]
@@ -1718,7 +2281,8 @@ mod tests {
       },
       Some(project.id),
     )
-    .await;
+    .await
+    .expect("persist closure narinfos");
 
     let output_row = repo::narinfo_cache::get(&pool, &output_path)
       .await

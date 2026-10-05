@@ -121,6 +121,10 @@ impl Config {
       slack.webhook_url = read_secret(path)?;
     }
 
+    if let Some(ref mut app) = self.queue_runner.github_app {
+      resolve_optional!(app.private_key, app.private_key_file);
+    }
+
     // s3 (nested inside cache_upload)
     if let Some(ref mut s3) = self.cache_upload.s3 {
       resolve_optional!(s3.secret_access_key, s3.secret_access_key_file);

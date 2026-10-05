@@ -4,18 +4,20 @@
 INSERT INTO builds (
   evaluation_id, job_name, drv_path, status, system, outputs, is_aggregate,
   constituents, is_fod, fod_hash, meta_description, meta_license,
-  meta_homepage, meta_maintainers, required_features
+  meta_homepage, meta_maintainers, required_features, kind
 )
 VALUES (
   :evaluation_id, :job_name, :drv_path, 'pending', :system, :outputs,
   :is_aggregate, :constituents, :is_fod, :fod_hash, :meta_description,
-  :meta_license, :meta_homepage, :meta_maintainers, :required_features
+  :meta_license, :meta_homepage, :meta_maintainers, :required_features, :kind
 )
 RETURNING *;
 
 --! get_completed_by_drv_path : BuildRow
 SELECT * FROM builds
-WHERE drv_path = :drv_path AND status = 'succeeded'
+WHERE drv_path = :drv_path
+  AND status = 'succeeded'
+  AND kind = 'build'
 LIMIT 1;
 
 --! get : BuildRow
@@ -93,16 +95,53 @@ LIMIT :limit;
 WITH candidate AS (
   SELECT b.id
   FROM builds b
+  JOIN evaluations e ON e.id = b.evaluation_id
+  JOIN jobsets j ON j.id = e.jobset_id
   WHERE b.id = :id AND b.status = 'pending'
     AND pg_try_advisory_xact_lock(hashtextextended(b.drv_path, 0))
     AND NOT EXISTS (
       SELECT 1 FROM builds active
       WHERE active.drv_path = b.drv_path AND active.status = 'running'
     )
+    AND CASE
+      WHEN b.kind = 'effect' THEN
+        pg_try_advisory_xact_lock(
+          hashtextextended('circus-effect-project:' || j.project_id::text, 0)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM builds active
+          JOIN evaluations active_e ON active_e.id = active.evaluation_id
+          JOIN jobsets active_j ON active_j.id = active_e.jobset_id
+            WHERE active_j.project_id = j.project_id
+              AND active.kind = 'effect'
+              AND (
+                active.status = 'running'
+                OR (
+                  active.status = 'cancelled'
+                  AND active.effect_execution_active
+                )
+              )
+              AND active.evaluation_id != b.evaluation_id
+        )
+      ELSE true
+    END
   FOR UPDATE SKIP LOCKED
 )
 UPDATE builds
-SET status = 'running', started_at = NOW()
+SET status = 'running',
+    started_at = NOW(),
+    agent_machine_id = COALESCE(
+      NULLIF(:agent_machine_id::uuid, '00000000-0000-0000-0000-000000000000'),
+      builds.agent_machine_id
+    ),
+    effect_execution_active = (
+      builds.kind = 'effect'
+      AND NULLIF(
+        :agent_machine_id::uuid,
+        '00000000-0000-0000-0000-000000000000'
+      ) IS NOT NULL
+    )
 FROM candidate
 WHERE builds.id = candidate.id
 RETURNING builds.*;
@@ -119,7 +158,9 @@ WITH bumped AS (
   SET status = 'pending',
       started_at = NULL,
       completed_at = NULL,
-      effective_features = NULL
+      effective_features = NULL,
+      agent_machine_id = NULL,
+      effect_execution_active = FALSE
   WHERE id = :id AND status = 'running'
   RETURNING *
 )
@@ -130,6 +171,20 @@ UPDATE builds SET agent_losses = agent_losses + 1
 WHERE id = :id AND status = 'running'
 RETURNING agent_losses;
 
+--! quarantine_effect
+UPDATE builds
+SET status = 'running',
+    completed_at = NULL,
+    error_message = :error_message,
+    effect_execution_active = TRUE
+WHERE id = :id
+  AND kind = 'effect'
+  AND status IN ('running', 'cancelled')
+  AND effect_execution_active
+  AND agent_machine_id = :machine_id
+  AND retry_count = :attempt
+RETURNING id;
+
 --! retry
 UPDATE builds
 SET status = 'pending',
@@ -137,13 +192,25 @@ SET status = 'pending',
     retry_count = retry_count + 1,
     completed_at = NULL,
     effective_features = NULL
-WHERE id = :id AND status = 'running';
+WHERE id = :id AND status = 'running'
+  AND kind = 'build';
 
 --! complete (log_path?, build_output_path?, error_message?) : BuildRow
 UPDATE builds
 SET status = :status, completed_at = NOW(), log_path = :log_path,
     build_output_path = :build_output_path, error_message = :error_message
 WHERE id = :id AND status IN ('pending', 'running')
+  AND kind = 'build'
+RETURNING *;
+
+--! complete_pending (log_path?, build_output_path?, error_message?) : BuildRow
+UPDATE builds
+SET status = :status,
+    completed_at = NOW(),
+    log_path = :log_path,
+    build_output_path = :build_output_path,
+    error_message = :error_message
+WHERE id = :id AND status = 'pending'
 RETURNING *;
 
 --! complete_dependency_failed (error_message?) : BuildRow
@@ -165,6 +232,7 @@ RETURNING *;
 SELECT *
 FROM builds
 WHERE status = 'pending'
+  AND kind = 'build'
   AND (:system::text IS NULL OR system = :system)
   AND (:job_name::text IS NULL OR job_name ILIKE '%' || :job_name || '%')
 ORDER BY
@@ -176,7 +244,7 @@ LIMIT :limit OFFSET :offset;
 
 --! list_pending_for_systems : BuildRow
 SELECT * FROM builds
-WHERE status = 'pending' AND system = ANY(:systems)
+WHERE status = 'pending' AND kind = 'build' AND system = ANY(:systems)
 ORDER BY priority DESC, created_at ASC
 LIMIT 512;
 
@@ -215,7 +283,8 @@ SELECT
 FROM builds b
 JOIN evaluations e ON b.evaluation_id = e.id
 JOIN jobsets j ON e.jobset_id = j.id
-WHERE j.project_id = :project_id;
+WHERE j.project_id = :project_id
+  AND b.kind = 'build';
 
 --! get_stats : (total_builds?, completed_builds?, failed_builds?, running_builds?, pending_builds?, avg_duration_seconds?)
 SELECT * FROM build_stats;
@@ -224,6 +293,7 @@ SELECT * FROM build_stats;
 UPDATE builds
 SET status = 'pending', started_at = NULL, effective_features = NULL
 WHERE status = 'running'
+  AND kind != 'effect'
   AND started_at < NOW() - make_interval(secs => :older_than_secs::bigint)
   AND NOT (id = ANY(:excluded_ids));
 
@@ -235,21 +305,23 @@ JOIN builds dep ON dep.id = bd.dependency_build_id
 WHERE b.status = 'pending'
   AND dep.status NOT IN ('pending', 'running', 'succeeded');
 
---! list_filtered (evaluation_id?, status?, system?, job_name?) : BuildRow
+--! list_filtered (evaluation_id?, status?, system?, job_name?, kind?) : BuildRow
 SELECT * FROM builds
 WHERE (:evaluation_id::uuid IS NULL OR evaluation_id = :evaluation_id)
   AND (:status::text IS NULL OR status = :status)
   AND (:system::text IS NULL OR system = :system)
   AND (:job_name::text IS NULL OR job_name ILIKE '%' || :job_name || '%')
+  AND (:kind::text IS NULL OR kind = :kind)
 ORDER BY created_at DESC
 LIMIT :limit OFFSET :offset;
 
---! count_filtered (evaluation_id?, status?, system?, job_name?)
+--! count_filtered (evaluation_id?, status?, system?, job_name?, kind?)
 SELECT COUNT(*) FROM builds
 WHERE (:evaluation_id::uuid IS NULL OR evaluation_id = :evaluation_id)
   AND (:status::text IS NULL OR status = :status)
   AND (:system::text IS NULL OR system = :system)
-  AND (:job_name::text IS NULL OR job_name ILIKE '%' || :job_name || '%');
+  AND (:job_name::text IS NULL OR job_name ILIKE '%' || :job_name || '%')
+  AND (:kind::text IS NULL OR kind = :kind);
 
 --! get_cancelled_among
 SELECT id FROM builds
@@ -269,10 +341,12 @@ UPDATE builds
 SET status = 'pending', started_at = NULL, completed_at = NULL,
     log_path = NULL, build_output_path = NULL, error_message = NULL,
     started_notified_at = NULL, effective_features = NULL,
-    retry_count = 0, agent_losses = 0
+    retry_count = CASE WHEN kind = 'effect' THEN retry_count + 1 ELSE 0 END,
+    agent_losses = 0, agent_machine_id = NULL,
+    effect_execution_active = FALSE
 WHERE id = :id
-  AND status IN ('failed', 'succeeded', 'cancelled', 'cached_failure',
-                 'dependency_failed')
+  AND status NOT IN ('pending', 'running')
+  AND NOT (kind = 'effect' AND effect_execution_active)
 RETURNING *;
 
 --! reset_dependency_failed_dependents : BuildRow
@@ -303,7 +377,9 @@ UPDATE builds SET signed = true WHERE id = :id;
 --! get_completed_by_drv_paths : BuildRow
 SELECT DISTINCT ON (drv_path) *
 FROM builds
-WHERE drv_path = ANY(:drv_paths) AND status = 'succeeded'
+WHERE drv_path = ANY(:drv_paths)
+  AND status = 'succeeded'
+  AND kind = 'build'
 ORDER BY drv_path, completed_at DESC;
 
 --! list_pinned_ids
@@ -319,7 +395,103 @@ UPDATE builds SET keep = :keep WHERE id = :id RETURNING *;
 UPDATE builds SET builder_id = :builder_id WHERE id = :id;
 
 --! set_agent
-UPDATE builds SET agent_machine_id = :machine_id WHERE id = :id;
+UPDATE builds
+SET agent_machine_id = :machine_id,
+    effect_execution_active = (
+      kind = 'effect'
+      AND :machine_id::uuid != '00000000-0000-0000-0000-000000000000'
+    )
+WHERE id = :id AND status = 'running';
+
+--! acknowledge_effect_stopped
+UPDATE builds
+SET agent_machine_id = NULL,
+    effect_execution_active = FALSE
+WHERE id = :id
+  AND kind = 'effect'
+  AND status = 'cancelled'
+  AND effect_execution_active
+  AND agent_machine_id = :machine_id
+  AND retry_count = :attempt
+RETURNING id;
+
+--! release_unhanded_effect
+UPDATE builds
+SET agent_machine_id = NULL,
+    effect_execution_active = FALSE
+WHERE id = :id
+  AND kind = 'effect'
+  AND status = 'cancelled'
+  AND effect_execution_active
+  AND agent_machine_id IS NOT NULL
+RETURNING id;
+
+--! record_assigned_effect_outcome (error_message?)
+UPDATE builds
+SET status = :status,
+    completed_at = NOW(),
+    error_message = :error_message
+WHERE id = :id
+  AND kind = 'effect'
+  AND status IN ('running', 'cancelled')
+  AND effect_execution_active
+  AND agent_machine_id = :machine_id
+  AND retry_count = :attempt
+RETURNING id;
+
+--! finalize_assigned_effect_attempt (log_path?, build_output_path?)
+UPDATE builds
+SET log_path = :log_path,
+    build_output_path = :build_output_path,
+    effect_execution_active = FALSE
+WHERE id = :id
+  AND kind = 'effect'
+  AND status = :status
+  AND effect_execution_active
+  AND agent_machine_id = :machine_id
+  AND retry_count = :attempt
+RETURNING id;
+
+--! release_terminal_effect_attempt
+UPDATE builds
+SET effect_execution_active = FALSE
+WHERE id = :id
+  AND kind = 'effect'
+  AND status NOT IN ('pending', 'running', 'cancelled')
+  AND effect_execution_active
+  AND retry_count = :attempt
+RETURNING id;
+
+--! force_release_effect : BuildRow
+UPDATE builds
+SET status = 'cancelled',
+    completed_at = NOW(),
+    agent_machine_id = NULL,
+    effect_execution_active = FALSE
+WHERE id = :id
+  AND kind = 'effect'
+  AND status IN ('running', 'cancelled')
+  AND effect_execution_active
+  AND agent_machine_id IS NOT NULL
+  AND error_message = :outcome_unknown_error
+RETURNING *;
+
+--! quarantine_orphaned_effects
+UPDATE builds
+SET error_message = :outcome_unknown_error
+WHERE kind = 'effect'
+  AND status IN ('running', 'cancelled')
+  AND effect_execution_active
+  AND agent_machine_id IS NOT NULL
+  AND NOT (id = ANY(:active_build_ids))
+  AND error_message IS DISTINCT FROM :outcome_unknown_error;
+
+--! release_orphaned_terminal_effects
+UPDATE builds
+SET effect_execution_active = FALSE
+WHERE kind = 'effect'
+  AND status NOT IN ('pending', 'running', 'cancelled')
+  AND effect_execution_active;
 
 --! list_constituents : BuildRow
 SELECT b.*
@@ -428,3 +600,28 @@ CROSS JOIN LATERAL (
 ) past
 WHERE cur.id = ANY(:ids)
 GROUP BY cur.id;
+
+--! project_has_running_effect
+SELECT EXISTS (
+  SELECT 1 FROM builds b
+  JOIN evaluations e ON e.id = b.evaluation_id
+  JOIN jobsets j ON j.id = e.jobset_id
+  WHERE j.project_id = :project_id
+    AND b.kind = 'effect'
+    AND (
+      b.status = 'running'
+      OR (b.status = 'cancelled' AND b.effect_execution_active)
+    )
+    AND b.evaluation_id != :evaluation_id
+) AS running;
+
+--! project_has_active_effect_among
+SELECT EXISTS (
+  SELECT 1 FROM builds b
+  JOIN evaluations e ON e.id = b.evaluation_id
+  JOIN jobsets j ON j.id = e.jobset_id
+  WHERE b.id = ANY(:active_build_ids)
+    AND j.project_id = :project_id
+    AND b.kind = 'effect'
+    AND b.evaluation_id != :evaluation_id
+) AS active;

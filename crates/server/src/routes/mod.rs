@@ -5,6 +5,7 @@ pub mod builds;
 pub mod cache;
 pub mod channel_manifests;
 pub mod channels;
+pub mod current_task;
 pub mod dashboard;
 pub(crate) mod declarative;
 pub mod evaluations;
@@ -327,6 +328,7 @@ pub fn public_router(config: &Config) -> Router<AppState> {
     .merge(badges::router())
     .merge(cache::router())
     .merge(channel_manifests::router())
+    .merge(current_task::router())
     .merge(metrics::router())
     // Webhooks use their own HMAC auth, outside the API key gate.
     .merge(webhooks::router())

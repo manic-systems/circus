@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{
+  collections::{BTreeMap, HashMap},
+  path::Path,
+  time::Duration,
+};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
@@ -8,11 +12,13 @@ use tokio_util::sync::CancellationToken;
 mod eval_command;
 mod flake_lock;
 mod flake_ref;
+mod hercules;
 mod tack;
 
 use eval_command::NixEvalPolicy;
 pub use eval_command::error_chain;
 use flake_ref::SourceFlakeRef;
+pub use hercules::GitRef;
 
 fn evix_item_timeout_seconds(timeout: Duration) -> u64 {
   timeout.as_secs().max(1)
@@ -172,6 +178,8 @@ pub struct EvalResult {
   /// A bounded sample of attribute failures, retained so an evaluation that
   /// produced no jobs can report the cause to its operator.
   pub errors:      Vec<String>,
+  /// `herculesCI.onSchedule.<name>.when` from a `herculesCI` push evaluation.
+  pub schedules:   Option<BTreeMap<String, serde_json::Value>>,
 }
 
 /// Attributes evaluated so far out of those discovered so far. The total keeps
@@ -192,6 +200,7 @@ pub struct EvalProgress {
 /// `git+<scheme>` ref), so produced derivations hash-match `nix build
 /// <ref>` instead of baking in the local checkout (including its `.git`). Both
 /// are ignored in legacy mode, which imports a path from `repo_path`.
+/// `git_ref` is only read by `herculesCI` jobsets.
 ///
 /// # Errors
 ///
@@ -201,6 +210,7 @@ pub async fn evaluate(
   repo_path: &Path,
   repository_url: &str,
   commit_hash: &str,
+  git_ref: GitRef<'_>,
   nix_expression: &str,
   flake_mode: bool,
   timeout: Duration,
@@ -226,6 +236,54 @@ pub async fn evaluate(
       flake_ref = %source.flake_ref,
       "Resolved canonical flake source"
     );
+    if nix_expression == hercules::EXPRESSION {
+      let context = hercules::context_json(
+        &source.flake_ref,
+        repository_url,
+        commit_hash,
+        git_ref,
+      )
+      .map_err(|e| CiError::NixEval(format!("herculesCI context: {e}")))?;
+      let deadline = Instant::now() + timeout;
+      let mut evix_config = flake_evix_config(
+        repo_path,
+        &source,
+        evix::Input::Expr(hercules::NIX.to_owned()),
+        vec![(hercules::ARGUMENT.to_owned(), evix::AutoArg::Str(context))],
+        deadline,
+        config,
+        inputs,
+        cancel,
+        worker_exe,
+      )
+      .await?;
+      // builtins.getFlake requires flakes enabled, which evix only sets for
+      // flake inputs.
+      evix_config
+        .nix_options
+        .push(("extra-experimental-features".into(), "flakes".into()));
+      let mut result = eval_command::run_eval(
+        evix_config,
+        deadline.saturating_duration_since(Instant::now()),
+        "herculesCI",
+        cancel,
+        progress,
+      )
+      .await?;
+      if let Some(index) = result
+        .jobs
+        .iter()
+        .position(|job| job.name == hercules::SCHEDULE_MARKER)
+      {
+        let marker = result.jobs.swap_remove(index);
+        let schedules = marker.meta.description.as_deref().unwrap_or("{}");
+        result.schedules =
+          Some(serde_json::from_str(schedules).map_err(|e| {
+            CiError::NixEval(format!("herculesCI.onSchedule: {e}"))
+          })?);
+      }
+      return Ok(result);
+    }
     evaluate_flake(
       repo_path,
       &source,
@@ -389,7 +447,40 @@ async fn evaluate_flake(
   };
 
   tracing::debug!(flake_ref = %flake_ref, "Running evix evaluation");
+  let deadline = Instant::now() + timeout;
+  let evix_config = flake_evix_config(
+    repo_path,
+    source,
+    evix::Input::Flake(flake_ref),
+    Vec::new(),
+    deadline,
+    config,
+    inputs,
+    cancel,
+    worker_exe,
+  )
+  .await?;
+  let remaining = deadline.saturating_duration_since(Instant::now());
+  eval_command::run_eval(evix_config, remaining, "flake", cancel, progress)
+    .await
+}
 
+/// Evix settings shared by every flake evaluation of `source`.
+#[expect(
+  clippy::too_many_arguments,
+  reason = "each argument is an independent evaluation input"
+)]
+async fn flake_evix_config(
+  repo_path: &Path,
+  source: &SourceFlakeRef,
+  input: evix::Input,
+  auto_args: Vec<(String, evix::AutoArg)>,
+  deadline: Instant,
+  config: &EvaluatorConfig,
+  inputs: &[JobsetInput],
+  cancel: &CancellationToken,
+  worker_exe: Option<&Path>,
+) -> Result<evix::Config> {
   let mut override_inputs = Vec::new();
   for input in inputs {
     if input.input_type == InputType::Git {
@@ -404,16 +495,15 @@ async fn evaluate_flake(
     }
   }
 
-  let deadline = Instant::now() + timeout;
   let derived_uris =
     eval_allowed_uris(repo_path, source, config, deadline, cancel).await?;
   let remaining = deadline.saturating_duration_since(Instant::now());
   let policy =
     NixEvalPolicy::from(config).with_extra_allowed_uris(derived_uris);
 
-  let evix_config = evix::Config {
-    input: evix::Input::Flake(flake_ref),
-    auto_args: Vec::new(),
+  Ok(evix::Config {
+    input,
+    auto_args,
     force_recurse: true,
     gc_roots_dir: None,
     workers: config.eval_workers,
@@ -429,10 +519,7 @@ async fn evaluate_flake(
     nix_options: policy.nix_options(),
     worker_exe: worker_exe.map(Path::to_path_buf),
     ..evix::Config::default()
-  };
-
-  eval_command::run_eval(evix_config, remaining, "flake", cancel, progress)
-    .await
+  })
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -539,6 +626,7 @@ async fn evaluate_all_nixos_configs(
     jobs,
     error_count: 0,
     errors: Vec::new(),
+    schedules: None,
   })
 }
 

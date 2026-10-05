@@ -172,6 +172,25 @@ pub async fn create_interval(
   .await
 }
 
+/// Queue a scheduled run.
+///
+/// # Errors
+///
+/// Returns error if database insert fails.
+pub async fn create_scheduled(
+  pool: &PgPool,
+  input: CreateEvaluation,
+) -> Result<Evaluation> {
+  create_with_kind(
+    pool,
+    input,
+    EvaluationTriggerKind::Schedule,
+    EvaluationStatus::Pending,
+    None,
+  )
+  .await
+}
+
 async fn create_with_kind(
   pool: &PgPool,
   input: CreateEvaluation,

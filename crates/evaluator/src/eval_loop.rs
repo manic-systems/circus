@@ -1,5 +1,5 @@
 use std::{
-  collections::HashMap,
+  collections::{BTreeMap, HashMap},
   sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -36,6 +36,7 @@ use crate::{
   builds::{compute_inputs_hash, create_builds_from_eval},
   evaluation_state::{ExistingEvaluationClaim, claim_existing},
   nix::EvalProgress,
+  schedule::When,
 };
 
 /// Main evaluator loop. Polls jobsets and runs nix evaluations.
@@ -120,6 +121,8 @@ async fn run_cycle(
     active.iter().cloned().map(|j| (j.id, j)).collect();
 
   let max_concurrent = config.max_concurrent_evals;
+
+  fire_due_schedules(pool, &active_by_id).await;
 
   // First drain push-driven work. Webhooks and /evaluations/trigger
   // insert pending eval rows with a specific commit_hash (push commit,
@@ -282,12 +285,162 @@ fn group_by_project<T>(
   groups.into_values().collect()
 }
 
-fn accepts_pending_evaluation(
+const fn accepts_pending_evaluation(
   trigger_mode: JobsetTriggerMode,
   trigger_kind: EvaluationTriggerKind,
 ) -> bool {
   trigger_mode.accepts_source_triggers()
-    || trigger_kind == EvaluationTriggerKind::Interval
+    || matches!(
+      trigger_kind,
+      EvaluationTriggerKind::Interval | EvaluationTriggerKind::Schedule
+    )
+}
+
+/// Queue a pending `Schedule` evaluation for every due schedule of an active
+/// jobset. The pending drain right after picks them up.
+async fn fire_due_schedules(
+  pool: &PgPool,
+  active_by_id: &HashMap<Uuid, ActiveJobset>,
+) {
+  let due = match repo::jobset_schedules::list_due(pool).await {
+    Ok(due) => due,
+    Err(e) => {
+      tracing::warn!("Failed to list due schedules: {e}");
+      return;
+    },
+  };
+  for schedule in due {
+    let Some(jobset) = active_by_id.get(&schedule.jobset_id) else {
+      continue;
+    };
+    let next = When::parse(
+      &schedule.when_spec,
+      &schedule_seed(schedule.jobset_id, &schedule.name),
+    )
+    .and_then(|when| when.next_after(Utc::now()));
+    let next = match next {
+      Ok(next) => next,
+      Err(e) => {
+        tracing::warn!(
+          jobset = %jobset.name,
+          schedule = %schedule.name,
+          "Skipping schedule: {e}"
+        );
+        continue;
+      },
+    };
+    match repo::jobset_schedules::mark_fired(pool, &schedule, next).await {
+      Ok(true) => {},
+      Ok(false) => continue,
+      Err(e) => {
+        tracing::warn!(schedule = %schedule.name, "Failed to fire schedule: {e}");
+        continue;
+      },
+    }
+    let created = repo::evaluations::create_scheduled(pool, CreateEvaluation {
+      jobset_id:      jobset.id,
+      commit_hash:    schedule.commit_hash.clone(),
+      pr_number:      None,
+      pr_head_branch: jobset.branch.clone(),
+      pr_base_branch: jobset.branch.clone(),
+      pr_action:      Some(format!("schedule:{}", schedule.name)),
+    })
+    .await;
+    if let Err(e) = created {
+      tracing::warn!(
+        jobset = %jobset.name,
+        schedule = %schedule.name,
+        "Failed to queue scheduled evaluation: {e}"
+      );
+    }
+  }
+}
+
+fn schedule_seed(jobset_id: Uuid, name: &str) -> String {
+  format!("{jobset_id}/{name}")
+}
+
+/// Replace a jobset's schedules with the ones its default branch declares,
+/// keeping the due time of every schedule whose `when` did not change.
+async fn sync_schedules(
+  pool: &PgPool,
+  jobset: &ActiveJobset,
+  commit_hash: &str,
+  schedules: &BTreeMap<String, serde_json::Value>,
+) -> circus_common::error::Result<()> {
+  let existing = repo::jobset_schedules::list_for_jobset(pool, jobset.id)
+    .await?
+    .into_iter()
+    .map(|schedule| (schedule.name.clone(), schedule))
+    .collect::<HashMap<_, _>>();
+  let now = Utc::now();
+  let mut kept = Vec::new();
+  for (name, when_spec) in schedules {
+    let next_due_at = match existing.get(name) {
+      Some(schedule) if schedule.when_spec == *when_spec => {
+        schedule.next_due_at
+      },
+      _ => {
+        match When::parse(when_spec, &schedule_seed(jobset.id, name))
+          .and_then(|when| when.next_after(now))
+        {
+          Ok(next) => next,
+          Err(e) => {
+            tracing::warn!(
+              jobset = %jobset.name,
+              schedule = %name,
+              "Ignoring herculesCI.onSchedule job: {e}"
+            );
+            continue;
+          },
+        }
+      },
+    };
+    repo::jobset_schedules::upsert(
+      pool,
+      jobset.id,
+      name,
+      when_spec,
+      commit_hash,
+      next_due_at,
+    )
+    .await?;
+    kept.push(name.as_str());
+  }
+  repo::jobset_schedules::delete_except(pool, jobset.id, &kept).await
+}
+
+fn normalize_attested_branch(branch: &str) -> &str {
+  branch.strip_prefix("refs/heads/").unwrap_or(branch).trim()
+}
+
+fn evaluation_allows_declarative_sync(evaluation: &Evaluation) -> bool {
+  if evaluation.pr_number.is_some()
+    || evaluation.pr_action.is_some()
+    || !matches!(
+      evaluation.trigger_kind,
+      EvaluationTriggerKind::SourceChange | EvaluationTriggerKind::Interval
+    )
+  {
+    return false;
+  }
+
+  let Some(head) = evaluation
+    .pr_head_branch
+    .as_deref()
+    .map(normalize_attested_branch)
+  else {
+    return false;
+  };
+  let Some(default_branch) = evaluation
+    .pr_base_branch
+    .as_deref()
+    .map(normalize_attested_branch)
+  else {
+    return false;
+  };
+
+  !head.is_empty() && head == default_branch
 }
 
 fn warn_on_disk_pressure(msg: &str) {
@@ -387,10 +540,13 @@ async fn evaluate_pending_eval(
     tracing::warn!(eval_id = %claimed.id, "Failed to set inputs hash: {e}");
   }
 
-  // PR authors must not rewrite jobsets.
-  if !claimed.is_pull_request() {
-    sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
-  }
+  sync_repo_declarative_config_for_evaluation(
+    pool,
+    &repo_path,
+    jobset.project_id,
+    &claimed,
+  )
+  .await;
 
   let evaluated = run_path_filtered_evaluation(
     pool,
@@ -567,6 +723,22 @@ async fn run_nix_and_record_builds(
     eval.id,
     cancel.clone(),
   ));
+  let tag = eval
+    .pr_action
+    .as_deref()
+    .and_then(|action| action.strip_prefix("tag:"));
+  let git_ref = crate::nix::GitRef {
+    branch: eval
+      .pr_head_branch
+      .as_deref()
+      .filter(|_| tag.is_none())
+      .map(normalize_attested_branch),
+    tag,
+    schedule: eval
+      .pr_action
+      .as_deref()
+      .and_then(|action| action.strip_prefix("schedule:")),
+  };
   let (progress_tx, progress_rx) = watch::channel(EvalProgress::default());
   let (result, (), ()) = tokio::join!(
     async {
@@ -574,6 +746,7 @@ async fn run_nix_and_record_builds(
         repo_path,
         &jobset.repository_url,
         &eval.commit_hash,
+        git_ref,
         &jobset.nix_expression,
         jobset.flake_mode,
         nix_timeout,
@@ -608,17 +781,45 @@ async fn run_nix_and_record_builds(
         circus_common::systems::resolve_allowed_systems(pool, config).await,
         jobset.systems.as_deref(),
       );
-      if !create_builds_from_eval(
+      let builds_created = match create_builds_from_eval(
         pool,
         eval.id,
         &eval_result,
         crate::memory::MemoryLimit::from(config),
         allowed_systems.as_ref(),
       )
-      .await?
+      .await
       {
+        Ok(created) => created,
+        Err(error) => {
+          let msg =
+            format!("Failed to classify derivations or create builds: {error}");
+          tracing::error!(
+            jobset = %jobset.name,
+            eval_id = %eval.id,
+            "Evaluation failed: {msg}"
+          );
+          repo::evaluations::finish_running(
+            pool,
+            eval.id,
+            EvaluationStatus::Failed,
+            Some(&msg),
+          )
+          .await?;
+          return Ok(());
+        },
+      };
+      if !builds_created {
         tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
         return Ok(());
+      }
+
+      if let Some(schedules) = &eval_result.schedules
+        && evaluation_allows_declarative_sync(eval)
+        && let Err(e) =
+          sync_schedules(pool, jobset, &eval.commit_hash, schedules).await
+      {
+        tracing::warn!(jobset = %jobset.name, "Failed to sync schedules: {e}");
       }
 
       if notifications_config.enable_retry_queue {
@@ -959,7 +1160,7 @@ async fn evaluate_matching_refs(
         crate::git::RefKind::Branch => Some(git_ref.name.clone()),
         crate::git::RefKind::Tag => None,
       },
-      pr_base_branch: None,
+      pr_base_branch: jobset.branch.clone(),
       pr_action:      match git_ref.kind {
         crate::git::RefKind::Branch => None,
         crate::git::RefKind::Tag => Some(format!("tag:{}", git_ref.name)),
@@ -1185,8 +1386,8 @@ async fn evaluate_single_ref(
       jobset_id:      jobset.id,
       commit_hash:    commit_hash.clone(),
       pr_number:      None,
-      pr_head_branch: None,
-      pr_base_branch: None,
+      pr_head_branch: jobset.branch.clone(),
+      pr_base_branch: jobset.branch.clone(),
       pr_action:      None,
     })
     .await?
@@ -1200,7 +1401,13 @@ async fn evaluate_single_ref(
     tracing::warn!(eval_id = %eval.id, "Failed to set evaluation inputs hash: {e}");
   }
 
-  sync_repo_declarative_config(pool, &repo_path, jobset.project_id).await;
+  sync_repo_declarative_config_for_evaluation(
+    pool,
+    &repo_path,
+    jobset.project_id,
+    &eval,
+  )
+  .await;
   let evaluated = run_path_filtered_evaluation(
     pool,
     jobset,
@@ -1414,6 +1621,23 @@ async fn project_allows_repo_config(pool: &PgPool, project_id: Uuid) -> bool {
   }
 }
 
+async fn sync_repo_declarative_config_for_evaluation(
+  pool: &PgPool,
+  repo_path: &std::path::Path,
+  project_id: Uuid,
+  evaluation: &Evaluation,
+) {
+  if !evaluation_allows_declarative_sync(evaluation) {
+    tracing::info!(
+      evaluation_id = %evaluation.id,
+      trigger_kind = ?evaluation.trigger_kind,
+      pr_number = ?evaluation.pr_number,
+      "Skipping in-repository config from an unattested evaluation"
+    );
+    return;
+  }
+  sync_repo_declarative_config(pool, repo_path, project_id).await;
+}
 /// Clone each project that has no active jobsets and look for a `.circus.toml`.
 ///
 /// This handles the bootstrap case where a project is declared in the server
@@ -1477,10 +1701,43 @@ async fn discover_projects_without_jobsets(
 
 #[cfg(test)]
 mod tests {
-  use circus_common::models::{EvaluationTriggerKind, JobsetTriggerMode};
+  use chrono::Utc;
+  use circus_common::models::{
+    Evaluation,
+    EvaluationStatus,
+    EvaluationTriggerKind,
+    JobsetTriggerMode,
+  };
+  use uuid::Uuid;
 
-  use super::accepts_pending_evaluation;
+  use super::{accepts_pending_evaluation, evaluation_allows_declarative_sync};
   use crate::git::{DiscoveredRef, RefKind, retain_newest_tag};
+
+  fn evaluation(trigger_kind: EvaluationTriggerKind) -> Evaluation {
+    Evaluation {
+      id: Uuid::new_v4(),
+      jobset_id: Uuid::new_v4(),
+      commit_hash: "a".repeat(40),
+      evaluation_time: Utc::now(),
+      status: EvaluationStatus::Running,
+      error_message: None,
+      inputs_hash: None,
+      trigger_kind,
+      hidden: false,
+      pr_number: None,
+      pr_head_branch: None,
+      pr_base_branch: None,
+      pr_action: None,
+      source_scope: None,
+      source_base_commit: None,
+      superseded_by: None,
+      started_at: None,
+      finished_at: None,
+      commit_subject: None,
+      attrs_done: None,
+      attrs_total: None,
+    }
+  }
 
   #[test]
   fn interval_restarts_are_accepted_by_pending_queue() {
@@ -1522,5 +1779,37 @@ mod tests {
     assert_eq!(refs.len(), 2);
     assert!(refs.iter().any(|git_ref| git_ref.name == "main"));
     assert!(refs.iter().any(|git_ref| git_ref.name == "v2"));
+  }
+
+  #[test]
+  fn manual_and_pr_checkouts_cannot_mutate_declarative_ref_policy() {
+    let mut manual = evaluation(EvaluationTriggerKind::Manual);
+    manual.pr_head_branch = Some("main".into());
+    manual.pr_base_branch = Some("main".into());
+    assert!(!evaluation_allows_declarative_sync(&manual));
+
+    let mut pr = evaluation(EvaluationTriggerKind::SourceChange);
+    pr.pr_number = Some(42);
+    pr.pr_head_branch = Some("attacker-controlled".into());
+    pr.pr_base_branch = Some("main".into());
+    assert!(!evaluation_allows_declarative_sync(&pr));
+
+    let mut trusted_branch = evaluation(EvaluationTriggerKind::SourceChange);
+    trusted_branch.pr_head_branch = Some("refs/heads/main".into());
+    trusted_branch.pr_base_branch = Some("main".into());
+    assert!(evaluation_allows_declarative_sync(&trusted_branch));
+
+    let mut matched_branch = evaluation(EvaluationTriggerKind::SourceChange);
+    matched_branch.pr_head_branch = Some("release-2026".into());
+    matched_branch.pr_base_branch = Some("main".into());
+    assert!(!evaluation_allows_declarative_sync(&matched_branch));
+
+    let mut trusted_tag = evaluation(EvaluationTriggerKind::Interval);
+    trusted_tag.pr_action = Some("tag:v1.2.3".into());
+    assert!(!evaluation_allows_declarative_sync(&trusted_tag));
+
+    assert!(!evaluation_allows_declarative_sync(&evaluation(
+      EvaluationTriggerKind::SourceChange,
+    )));
   }
 }

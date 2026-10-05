@@ -9,9 +9,13 @@ use std::{
 };
 
 use circus_proto::{log_sink, nix_log};
+use nix::{
+  sys::signal::{Signal, killpg},
+  unistd::{Pid, getpgid},
+};
 use tokio::{
   io::{AsyncBufReadExt, BufReader},
-  process::Command,
+  process::{Child, Command},
   time::timeout,
 };
 use tokio_util::sync::CancellationToken;
@@ -53,6 +57,9 @@ pub struct BuildOptions<'a> {
   pub cache_substituter: String,
   pub cache_public_key:  String,
   pub rootless:          bool,
+  pub collect_outputs:   bool,
+  pub nix_internal_json: bool,
+  pub redactions:        Vec<String>,
 }
 
 /// Everything needed to pull the assigned derivation from the runner. Kept
@@ -267,7 +274,7 @@ fn observe_exit(
   reason = "one supervision loop with !Send capnp futures on a \
             single-threaded runtime"
 )]
-async fn run_command(
+pub(crate) async fn run_command(
   mut cmd: Command,
   opts: &BuildOptions<'_>,
   tun: Tunables,
@@ -277,6 +284,11 @@ async fn run_command(
   let started = Instant::now();
   let oom_kills_before = kernel_oom_kills();
   let mut child = cmd.spawn()?;
+  let group = child
+    .id()
+    .and_then(|pid| i32::try_from(pid).ok())
+    .map(Pid::from_raw)
+    .filter(|pid| getpgid(Some(*pid)) == Ok(*pid));
   let stdout = child
     .stdout
     .take()
@@ -396,7 +408,7 @@ async fn run_command(
           continue;
         }
         error_message = "max-silent-time exceeded".into();
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
         break;
       },
@@ -414,7 +426,7 @@ async fn run_command(
         if child_status.is_none() {
           timed_out = true;
           error_message = "build-timeout exceeded".into();
-          let _ = child.start_kill();
+          kill_child(&mut child, group);
           killed = true;
         } else {
           log_truncated = true;
@@ -433,7 +445,7 @@ async fn run_command(
         }
         aborted = true;
         error_message = "aborted by runner".into();
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
         break;
       },
@@ -451,9 +463,16 @@ async fn run_command(
     let mut pending_read_err = Option::<String>::None;
     let mut next = Some(first);
     while let Some(line) = next.take() {
-      if let Some(nix_log::LogLine::Message { text, .. }) =
-        nix_log::parse_line(&line)
-      {
+      let line = redact_line(&line, &opts.redactions);
+      let recent = if opts.nix_internal_json {
+        match nix_log::parse_line(&line) {
+          Some(nix_log::LogLine::Message { text, .. }) => Some(text),
+          _ => None,
+        }
+      } else {
+        Some(line.clone())
+      };
+      if let Some(text) = recent {
         if recent_msgs.len() == 32 {
           recent_msgs.pop_front();
         }
@@ -470,7 +489,7 @@ async fn run_command(
           if child_status.is_none() {
             log_size_exceeded = true;
             error_message = "max-log-size exceeded".into();
-            let _ = child.start_kill();
+            kill_child(&mut child, group);
             killed = true;
           } else {
             log_truncated = true;
@@ -527,7 +546,7 @@ async fn run_command(
           }
           aborted = true;
           error_message = "aborted by runner".into();
-          let _ = child.start_kill();
+          kill_child(&mut child, group);
           killed = true;
           break;
         }
@@ -544,7 +563,7 @@ async fn run_command(
         }
         tracing::warn!(error = %e, "log sink write failed; killing child");
         sink_failed = true;
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
       }
     }
@@ -576,7 +595,7 @@ async fn run_command(
       if child_status.is_none() {
         timed_out = true;
         error_message = "build-timeout exceeded".into();
-        let _ = child.start_kill();
+        kill_child(&mut child, group);
         killed = true;
       } else {
         log_truncated = true;
@@ -591,6 +610,7 @@ async fn run_command(
       if let Ok(s) = timeout(tun.reap_timeout, child.wait()).await {
         Some(s?)
       } else {
+        kill_group(group);
         let _ = child.kill().await;
         None
       }
@@ -609,6 +629,7 @@ async fn run_command(
           } else {
             timed_out = true;
             error_message = "build-timeout exceeded".into();
+            kill_group(group);
             let _ = child.kill().await;
             None
           }
@@ -631,6 +652,7 @@ async fn run_command(
       .push_str("log drain timed out after child exit; log truncated");
   }
   let _ = timeout(tun.write_timeout, close_log(&log_sink)).await;
+  kill_group(group);
 
   let Some(status) = status else {
     return Ok(LocalResult {
@@ -679,7 +701,7 @@ async fn run_command(
     circus_proto::BuildOutcome::BuildFailure
   };
 
-  let outputs = if success {
+  let outputs = if success && opts.collect_outputs {
     query_outputs(opts.drv_path, opts.rootless).await
   } else {
     Vec::new()
@@ -692,6 +714,16 @@ async fn run_command(
     upload_time_ms: 0,
     outputs,
     error_message,
+  })
+}
+
+fn redact_line(line: &str, secrets: &[String]) -> String {
+  secrets.iter().fold(line.to_owned(), |redacted, secret| {
+    if secret.is_empty() || !redacted.contains(secret) {
+      redacted
+    } else {
+      redacted.replace(secret, "[REDACTED]")
+    }
   })
 }
 
@@ -844,6 +876,18 @@ async fn close_log(sink: &log_sink::Client) -> Result<(), capnp::Error> {
   Ok(())
 }
 
+/// Send SIGKILL to the process group when present.
+fn kill_group(group: Option<Pid>) {
+  if let Some(group) = group {
+    let _ = killpg(group, Signal::SIGKILL);
+  }
+}
+
+fn kill_child(child: &mut Child, group: Option<Pid>) {
+  kill_group(group);
+  let _ = child.start_kill();
+}
+
 #[cfg(test)]
 mod tests {
   use std::{cell::RefCell, future::Future, rc::Rc};
@@ -924,6 +968,9 @@ mod tests {
       cache_substituter: String::new(),
       cache_public_key: String::new(),
       rootless: false,
+      collect_outputs: false,
+      nix_internal_json: false,
+      redactions: Vec::new(),
     }
   }
 
@@ -1038,6 +1085,34 @@ mod tests {
 
       assert_eq!(result.outcome, circus_proto::BuildOutcome::BuildFailure);
       assert!(result.error_message.contains("max-log-size exceeded"));
+    });
+  }
+
+  #[test]
+  fn secret_values_are_redacted_from_logs() {
+    run_local(async {
+      let h = harness(None);
+      let mut options = opts(u64::MAX, Duration::from_mins(1));
+      options.redactions = vec!["top-secret-value".into()];
+      let result = run_command(
+        sh("printf 'safe-1\\ntoken=top-secret-value\\nsafe-3\\n'"),
+        &options,
+        fast_tunables(),
+        h.sink,
+        CancellationToken::new(),
+      )
+      .await
+      .expect("run_command");
+
+      assert_eq!(result.outcome, circus_proto::BuildOutcome::Success);
+      let chunks = h.chunks.borrow();
+      let joined = chunks
+        .iter()
+        .map(|chunk| String::from_utf8_lossy(chunk))
+        .collect::<Vec<_>>()
+        .join("\n");
+      assert!(joined.contains("token=[REDACTED]"));
+      assert!(!joined.contains("top-secret-value"));
     });
   }
 }
