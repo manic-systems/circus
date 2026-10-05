@@ -1338,7 +1338,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
             upload_failed_paths.join(", "),
           );
           tracing::error!(build_id = %build.id, "{msg}");
-          repo::builds::complete(
+          let Some(updated_build) = repo::builds::complete(
             pool,
             build.id,
             BuildStatus::Failed,
@@ -1346,8 +1346,10 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
             None,
             Some(&msg),
           )
-          .await?;
-          let updated_build = repo::builds::get(pool, build.id).await?;
+          .await?
+          else {
+            return Ok(());
+          };
           dispatch_build_finished_notification(
             pool,
             &updated_build,
@@ -1361,7 +1363,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         let primary_output =
           build_result.output_paths.first().map(String::as_str);
 
-        repo::builds::complete(
+        if repo::builds::complete(
           pool,
           build.id,
           BuildStatus::Succeeded,
@@ -1369,7 +1371,11 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           primary_output,
           None,
         )
-        .await?;
+        .await?
+        .is_none()
+        {
+          return Ok(());
+        }
 
         collect_metrics_and_alert(
           pool,
@@ -1389,7 +1395,9 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
               max = build.max_retries,
               "Build failed on the machine, scheduling retry"
           );
-          repo::builds::retry(pool, build.id).await?;
+          if !repo::builds::retry(pool, build.id).await? {
+            return Ok(());
+          }
           if let Err(e) = fs::remove_file(&live_log_path).await {
             tracing::debug!(build_id = %build.id, "Failed to remove retry live log: {e}");
           }
@@ -1399,7 +1407,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         let failure_status = build_result
           .exit_code
           .map_or(BuildStatus::Failed, BuildStatus::from_exit_code);
-        repo::builds::complete(
+        if repo::builds::complete(
           pool,
           build.id,
           failure_status,
@@ -1407,7 +1415,11 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
           None,
           Some(&build_result.stderr),
         )
-        .await?;
+        .await?
+        .is_none()
+        {
+          return Ok(());
+        }
 
         if !build_result.transient
           && let Err(e) = repo::failed_paths_cache::insert(
@@ -1437,7 +1449,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         tracing::debug!(build_id = %build.id, "Failed to remove failed live log: {e}");
       }
 
-      repo::builds::complete(
+      if repo::builds::complete(
         pool,
         build.id,
         BuildStatus::Failed,
@@ -1445,7 +1457,11 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         None,
         Some(&msg),
       )
-      .await?;
+      .await?
+      .is_none()
+      {
+        return Ok(());
+      }
       tracing::error!(build_id = %build.id, "Build error: {msg}");
     },
   }

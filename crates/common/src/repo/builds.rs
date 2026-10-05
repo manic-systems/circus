@@ -326,20 +326,29 @@ pub async fn requeue(pool: &PgPool, id: Uuid) -> Result<Option<Build>> {
 /// Return a failed build to the pending queue, counting a retry and clearing
 /// dispatch-time effective features so they are recomputed on redispatch.
 ///
+/// # Returns
+///
+/// Returns `false` if the build is no longer running, e.g. it was cancelled
+/// mid-dispatch.
+///
 /// # Errors
 ///
 /// Returns an error if the database update fails.
-pub async fn retry(pool: &PgPool, id: Uuid) -> Result<()> {
+pub async fn retry(pool: &PgPool, id: Uuid) -> Result<bool> {
   let client = pool.get().await?;
-  q::retry().bind(&client, &id).await?;
-  Ok(())
+  Ok(q::retry().bind(&client, &id).await? == 1)
 }
 
 /// Mark a build as completed with final status and outputs.
 ///
+/// # Returns
+///
+/// Returns `None` if the build is no longer pending or running, e.g. it was
+/// cancelled mid-dispatch.
+///
 /// # Errors
 ///
-/// Returns an error if the database update fails or the build was not found.
+/// Returns an error if the database update fails.
 pub async fn complete(
   pool: &PgPool,
   id: Uuid,
@@ -347,7 +356,7 @@ pub async fn complete(
   log_path: Option<&str>,
   build_output_path: Option<&str>,
   error_message: Option<&str>,
-) -> Result<Build> {
+) -> Result<Option<Build>> {
   let client = pool.get().await?;
   q::complete()
     .bind(
@@ -361,8 +370,7 @@ pub async fn complete(
     .opt()
     .await?
     .map(Build::try_from)
-    .transpose()?
-    .ok_or_else(|| CiError::NotFound(format!("Build {id} not found")))
+    .transpose()
 }
 
 /// List pending builds in scheduler order: highest priority first, then
