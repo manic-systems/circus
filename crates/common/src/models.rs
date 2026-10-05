@@ -78,15 +78,6 @@ pub struct Evaluation {
   pub attrs_total:        Option<i32>,
 }
 
-impl Evaluation {
-  #[must_use]
-  pub const fn is_pull_request(&self) -> bool {
-    self.pr_number.is_some()
-      || self.pr_head_branch.is_some()
-      || self.pr_base_branch.is_some()
-  }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvaluationStatus {
@@ -158,6 +149,8 @@ pub enum EvaluationTriggerKind {
   SourceChange,
   Manual,
   Interval,
+  /// A `herculesCI.onSchedule` job firing.
+  Schedule,
 }
 
 impl EvaluationTriggerKind {
@@ -167,6 +160,7 @@ impl EvaluationTriggerKind {
       Self::SourceChange => "source_change",
       Self::Manual => "manual",
       Self::Interval => "interval",
+      Self::Schedule => "schedule",
     }
   }
 }
@@ -179,6 +173,7 @@ impl std::str::FromStr for EvaluationTriggerKind {
       "source_change" => Ok(Self::SourceChange),
       "manual" => Ok(Self::Manual),
       "interval" => Ok(Self::Interval),
+      "schedule" => Ok(Self::Schedule),
       _ => Err(format!("invalid evaluation trigger kind '{s}'")),
     }
   }
@@ -375,6 +370,9 @@ pub struct Build {
   #[serde(default)]
   pub effective_features:         Option<Vec<String>>,
   pub closure_size:               Option<i64>,
+  /// Whether this row is a regular build or a post-build effect.
+  #[serde(default)]
+  pub kind:                       BuildKind,
 }
 
 impl Build {
@@ -393,6 +391,48 @@ impl Build {
   #[must_use]
   pub fn is_dependency(&self) -> bool {
     self.job_name.starts_with(DEPENDENCY_JOB_PREFIX)
+  }
+}
+
+/// Distinguishes regular builds from post-build effects.
+pub const EFFECT_OUTCOME_UNKNOWN_ERROR: &str =
+  "Agent disconnected during effect; outcome unknown; explicit force-release \
+   required before restart";
+
+#[derive(
+  Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildKind {
+  #[default]
+  Build,
+  Effect,
+}
+
+impl BuildKind {
+  #[must_use]
+  pub const fn as_db_str(self) -> &'static str {
+    match self {
+      Self::Build => "build",
+      Self::Effect => "effect",
+    }
+  }
+
+  #[must_use]
+  pub const fn is_effect(self) -> bool {
+    matches!(self, Self::Effect)
+  }
+}
+
+impl std::str::FromStr for BuildKind {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "build" => Ok(Self::Build),
+      "effect" => Ok(Self::Effect),
+      _ => Err(format!("invalid build kind '{s}'")),
+    }
   }
 }
 
@@ -1103,6 +1143,8 @@ pub struct CreateBuild {
   /// `requiredSystemFeatures` from the derivation. Empty = no constraint.
   #[serde(default)]
   pub required_features: Vec<String>,
+  #[serde(default)]
+  pub kind:              BuildKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

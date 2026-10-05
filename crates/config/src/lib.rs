@@ -512,6 +512,38 @@ mod tests {
   }
 
   #[test]
+  fn effect_api_base_url_loads_and_validates() {
+    let defaults: RpcConfig =
+      toml::from_str(r#"bind = "127.0.0.1:8443""#).unwrap();
+    assert!(defaults.api_base_url.is_none());
+
+    let rpc: RpcConfig = toml::from_str(
+      r#"
+        bind = "127.0.0.1:8443"
+        api_base_url = "https://ci.example.org"
+      "#,
+    )
+    .unwrap();
+    assert_eq!(rpc.api_base_url.as_deref(), Some("https://ci.example.org"));
+
+    let mut config = Config::default();
+    config.queue_runner.rpc = Some(rpc.clone());
+    assert!(config.validate().is_ok());
+
+    let mut invalid = rpc;
+    invalid.api_base_url = Some("file:///tmp/circus".into());
+    config.queue_runner.rpc = Some(invalid);
+    assert!(config.validate().is_err());
+
+    let mut empty_cache: RpcConfig =
+      toml::from_str(r#"bind = "127.0.0.1:8443""#).unwrap();
+    empty_cache.cache_substituter = Some("  ".into());
+    empty_cache.cache_public_key = Some(String::new());
+    config.queue_runner.rpc = Some(empty_cache);
+    assert!(config.validate().is_err());
+  }
+
+  #[test]
   fn load_requires_explicit_config_path() {
     let old = env::var_os("CIRCUS_CONFIG_FILE");
     // SAFETY: tests in this module run single-threaded with respect to this

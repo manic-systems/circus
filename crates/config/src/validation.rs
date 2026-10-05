@@ -248,6 +248,31 @@ impl Config {
       if rpc.presign_expiry_secs == 0 {
         bail!("queue_runner.rpc.presign_expiry_secs must be greater than 0");
       }
+      if let Some(api_base_url) = rpc.api_base_url.as_deref()
+        && (api_base_url.len() > 2048
+          || !url::Url::parse(api_base_url).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https") && url.host().is_some()
+          }))
+      {
+        bail!(
+          "queue_runner.rpc.api_base_url must be a non-empty http or https URL"
+        );
+      }
+      if rpc
+        .cache_substituter
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+      {
+        bail!("queue_runner.rpc.cache_substituter cannot be empty");
+      }
+      if rpc
+        .cache_public_key
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+      {
+        bail!("queue_runner.rpc.cache_public_key cannot be empty");
+      }
+
       let mut machine_ids = HashSet::new();
       let mut names = HashSet::new();
       let mut token_hashes = HashSet::new();

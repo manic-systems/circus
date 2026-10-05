@@ -94,7 +94,8 @@ SELECT
 FROM
   builds
 WHERE
-  evaluation_id =:evaluation_id;
+  evaluation_id =:evaluation_id
+  AND kind = 'build';
 
 --! auto_promote_channels : ChannelRow
 SELECT

@@ -125,7 +125,7 @@ async fn store_paths(
 
   let mut paths: Vec<String> = Vec::with_capacity(builds.len() * 2);
   for build in &builds {
-    if !build.status.is_success() {
+    if build.kind.is_effect() || !build.status.is_success() {
       continue;
     }
     if let Some(p) = &build.build_output_path {

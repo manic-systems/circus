@@ -221,11 +221,17 @@ where
   // !Send; the rest of the queue-runner stays on the multi-threaded
   // runtime. The AgentPool (constructed above and shared with the
   // worker pool) bridges the boundary via per-agent channels.
+  let github_app = qr_config
+    .github_app
+    .as_ref()
+    .map(|app| crate::github_app::GithubApp::new(app).map(Arc::new))
+    .transpose()?;
   let rpc_failure = if let Some(rpc_cfg) = qr_config.rpc.clone() {
     Some(spawn_rpc_thread(
       rpc_cfg,
       cache_upload_for_rpc,
       signing_config_for_rpc,
+      github_app,
       Arc::clone(&agent_pool),
       db.pool().clone(),
     )?)
@@ -408,6 +414,7 @@ fn spawn_rpc_thread(
   cfg: RpcConfig,
   cache_cfg: CacheUploadConfig,
   signing_cfg: SigningConfig,
+  github_app: Option<Arc<crate::github_app::GithubApp>>,
   pool: Arc<AgentPool>,
   db_pool: circus_common::PgPool,
 ) -> color_eyre::Result<oneshot::Receiver<color_eyre::Report>> {
@@ -415,11 +422,17 @@ fn spawn_rpc_thread(
   Builder::new()
     .name("circus-rpc".into())
     .spawn(move || {
-      let error =
-        match run_rpc_thread(&cfg, &cache_cfg, signing_cfg, pool, db_pool) {
-          Ok(()) => eyre!("agent RPC listener stopped accepting connections"),
-          Err(error) => error,
-        };
+      let error = match run_rpc_thread(
+        &cfg,
+        &cache_cfg,
+        signing_cfg,
+        github_app,
+        pool,
+        db_pool,
+      ) {
+        Ok(()) => eyre!("agent RPC listener stopped accepting connections"),
+        Err(error) => error,
+      };
       let _ = failed_tx.send(error);
     })
     .wrap_err("spawn agent RPC thread")?;
@@ -430,6 +443,7 @@ fn run_rpc_thread(
   cfg: &RpcConfig,
   cache_cfg: &CacheUploadConfig,
   signing_cfg: SigningConfig,
+  github_app: Option<Arc<crate::github_app::GithubApp>>,
   pool: Arc<AgentPool>,
   db_pool: circus_common::PgPool,
 ) -> color_eyre::Result<()> {
@@ -445,7 +459,8 @@ fn run_rpc_thread(
         .enabled
         .then_some(signing_cfg.key_file)
         .flatten(),
-    );
+    )
+    .with_github_app(github_app);
   let local = tokio::task::LocalSet::new();
   rt.block_on(local.run_until(rpc::serve(server_cfg, pool, db_pool)))
 }
