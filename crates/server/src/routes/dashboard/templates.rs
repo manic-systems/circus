@@ -496,6 +496,8 @@ pub struct LoginTemplate {
   pub(super) auth_name:      String,
   pub(super) providers:      Vec<LoginProvider>,
   pub(super) password_login: bool,
+  /// Where to send the user once signed in.
+  pub(super) next:           Option<String>,
 }
 
 pub(super) struct LoginProvider {
@@ -535,7 +537,26 @@ impl LoginTemplate {
       auth_name: String::new(),
       providers,
       password_login: config.server.password_login,
+      next: None,
     }
+  }
+
+  /// Carries `next` through every way of signing in on the page.
+  #[must_use]
+  pub fn with_next(mut self, next: Option<&str>) -> Self {
+    let Some(next) = crate::routes::return_to(next) else {
+      return self;
+    };
+
+    let query: String =
+      oauth2::url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("next", next)
+        .finish();
+    for provider in &mut self.providers {
+      provider.href = format!("{}?{query}", provider.href);
+    }
+    self.next = Some(next.to_owned());
+    self
   }
 }
 

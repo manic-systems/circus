@@ -9,7 +9,7 @@ use askama::Template;
 use axum::{
   Extension,
   Form,
-  extract::{Path, State},
+  extract::{Path, Query, State},
   http::StatusCode,
   response::{Html, IntoResponse, Redirect, Response},
 };
@@ -43,8 +43,17 @@ use crate::{
   state::AppState,
 };
 
-pub(super) async fn login_page(State(state): State<AppState>) -> Html<String> {
-  let tmpl = LoginTemplate::new(&state.config, None);
+#[derive(serde::Deserialize)]
+pub(super) struct LoginQuery {
+  next: Option<String>,
+}
+
+pub(super) async fn login_page(
+  State(state): State<AppState>,
+  Query(query): Query<LoginQuery>,
+) -> Html<String> {
+  let tmpl =
+    LoginTemplate::new(&state.config, None).with_next(query.next.as_deref());
   Html(
     tmpl
       .render()
@@ -57,12 +66,16 @@ pub(super) struct LoginForm {
   username: Option<String>,
   api_key:  Option<String>,
   password: Option<String>,
+  next:     Option<String>,
 }
 
 pub(super) async fn login_action(
   State(state): State<AppState>,
   Form(form): Form<LoginForm>,
 ) -> Response {
+  let next = crate::routes::return_to(form.next.as_deref())
+    .unwrap_or("/")
+    .to_owned();
   // Try username/password authentication first
   if let (Some(username), Some(password)) =
     (form.username.as_ref(), form.password.as_ref())
@@ -71,7 +84,8 @@ pub(super) async fn login_action(
       let tmpl = LoginTemplate::new(
         &state.config,
         Some("Password sign-in is disabled".into()),
-      );
+      )
+      .with_next(form.next.as_deref());
       return (
         StatusCode::FORBIDDEN,
         Html(
@@ -118,7 +132,7 @@ pub(super) async fn login_action(
       let cookie = user_session_cookie(&session.0, &state.config.server);
       return (
         [(axum::http::header::SET_COOKIE, cookie)],
-        Redirect::to("/"),
+        Redirect::to(&next),
       )
         .into_response();
     }
@@ -136,7 +150,8 @@ pub(super) async fn login_action(
     let tmpl = LoginTemplate::new(
       &state.config,
       Some("Invalid username or password".into()),
-    );
+    )
+    .with_next(form.next.as_deref());
     return (
       StatusCode::UNAUTHORIZED,
       Html(
@@ -153,7 +168,8 @@ pub(super) async fn login_action(
     let token = token.trim();
     if token.is_empty() {
       let tmpl =
-        LoginTemplate::new(&state.config, Some("API key is required".into()));
+        LoginTemplate::new(&state.config, Some("API key is required".into()))
+          .with_next(form.next.as_deref());
       return Html(
         tmpl
           .render()
@@ -192,7 +208,7 @@ pub(super) async fn login_action(
       let cookie = api_key_session_cookie(&session_id, &state.config.server);
       (
         [(axum::http::header::SET_COOKIE, cookie)],
-        Redirect::to("/"),
+        Redirect::to(&next),
       )
         .into_response()
     } else {
@@ -208,7 +224,8 @@ pub(super) async fn login_action(
       .await;
 
       let tmpl =
-        LoginTemplate::new(&state.config, Some("Invalid API key".into()));
+        LoginTemplate::new(&state.config, Some("Invalid API key".into()))
+          .with_next(form.next.as_deref());
       Html(
         tmpl
           .render()
@@ -220,7 +237,8 @@ pub(super) async fn login_action(
     let tmpl = LoginTemplate::new(
       &state.config,
       Some("Please provide either username/password or API key".into()),
-    );
+    )
+    .with_next(form.next.as_deref());
     Html(
       tmpl
         .render()
@@ -275,7 +293,7 @@ pub(super) async fn account_page(
   user: Option<Extension<User>>,
 ) -> Response {
   let Some(Extension(user)) = user else {
-    return Redirect::to("/login").into_response();
+    return Redirect::to("/login?next=/account").into_response();
   };
 
   let linked = match circus_common::repo::users::linked_providers(

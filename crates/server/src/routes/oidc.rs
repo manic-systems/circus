@@ -276,6 +276,7 @@ struct LoginFlow {
   nonce:         String,
   pkce_verifier: PkceCodeVerifier,
   link:          Option<LinkGrant>,
+  next:          Option<String>,
 }
 
 /// The account a flow links to. The flow cookie is unsigned, so `mac` is what
@@ -561,6 +562,7 @@ async fn start_login(
   state: &AppState,
   provider: &str,
   link: Option<Uuid>,
+  next: Option<&str>,
 ) -> Result<Response, LoginError> {
   let config = state
     .config
@@ -589,6 +591,7 @@ async fn start_login(
   let flow = LoginFlow {
     provider: provider.to_owned(),
     link: link.map(|user| LinkGrant::new(state, provider, user, &csrf)),
+    next: crate::routes::return_to(next).map(str::to_owned),
     state: csrf,
     nonce,
     pkce_verifier,
@@ -752,6 +755,7 @@ async fn complete_login(
       user,
       clear_flow,
       &config.redirect_uri,
+      flow.next.as_deref(),
     )
     .await;
   }
@@ -786,7 +790,15 @@ async fn complete_login(
     result => result,
   }?;
 
-  start_session(state, provider, user, clear_flow, &config.redirect_uri).await
+  start_session(
+    state,
+    provider,
+    user,
+    clear_flow,
+    &config.redirect_uri,
+    flow.next.as_deref(),
+  )
+  .await
 }
 
 async fn start_session(
@@ -795,6 +807,7 @@ async fn start_session(
   user: User,
   clear_flow: String,
   redirect_uri: &str,
+  next: Option<&str>,
 ) -> Result<Response, LoginError> {
   if !user.enabled {
     return Err(LoginError::Disabled);
@@ -823,17 +836,25 @@ async fn start_session(
     (
       StatusCode::FOUND,
       AppendHeaders(cookies.map(|cookie| (SET_COOKIE, cookie))),
-      Redirect::to("/"),
+      Redirect::to(
+        crate::routes::return_to(next).unwrap_or("/"),
+      ),
     )
       .into_response(),
   )
 }
 
+#[derive(Deserialize)]
+struct LoginParams {
+  next: Option<String>,
+}
+
 async fn oidc_login(
   State(state): State<AppState>,
   Path(provider): Path<String>,
+  Query(params): Query<LoginParams>,
 ) -> Response {
-  match start_login(&state, &provider, None).await {
+  match start_login(&state, &provider, None, params.next.as_deref()).await {
     Ok(response) => response,
     Err(error) => login_failure(&state, &provider, error).await,
   }
@@ -846,7 +867,7 @@ pub async fn start_link(
   provider: &str,
   user: Uuid,
 ) -> Response {
-  match start_login(state, provider, Some(user)).await {
+  match start_login(state, provider, Some(user), None).await {
     Ok(response) => response,
     Err(error) => login_failure(state, provider, error).await,
   }
