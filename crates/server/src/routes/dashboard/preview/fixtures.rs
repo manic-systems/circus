@@ -301,6 +301,16 @@ pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
     time_iso:       "2026-06-18T11:42:00+00:00".into(),
     started:        "2026-06-18 11:42 UTC".into(),
     started_iso:    "2026-06-18T11:42:00+00:00".into(),
+    finished:       if status == "Running" {
+      "-".into()
+    } else {
+      "2026-06-18 11:44 UTC".into()
+    },
+    finished_iso:   if status == "Running" {
+      String::new()
+    } else {
+      "2026-06-18T11:44:00+00:00".into()
+    },
     duration:       if status == "Running" {
       String::new()
     } else {

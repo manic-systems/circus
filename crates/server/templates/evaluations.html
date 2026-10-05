@@ -54,13 +54,14 @@
         <div class="table-wrap">
             <table>
                 <colgroup>
-                    <col style="width:26%">
-                    <col style="width:13%">
-                    <col style="width:13%">
-                    <col style="width:12%">
-                    <col style="width:16%">
+                    <col style="width:22%">
                     <col style="width:10%">
-                    {% if is_admin %}<col style="width:10%">{% endif %}
+                    <col style="width:10%">
+                    <col style="width:10%">
+                    <col style="width:12%">
+                    <col style="width:12%">
+                    <col style="width:15%">
+                    {% if is_admin %}<col style="width:9%">{% endif %}
                 </colgroup>
                 <thead>
                     <tr>
@@ -69,6 +70,7 @@
                         <th>Jobset</th>
                         <th>Status</th>
                         <th>Started</th>
+                        <th>Finished</th>
                         <th>Duration</th>
                         {% if is_admin %}<th>Actions</th>{% endif %}
                     </tr>
@@ -103,6 +105,13 @@
                                     -
                                 {% else %}
                                     <time datetime="{{ e.started_iso }}">{{ e.started }}</time>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if e.finished_iso.is_empty() %}
+                                    -
+                                {% else %}
+                                    <time datetime="{{ e.finished_iso }}">{{ e.finished }}</time>
                                 {% endif %}
                             </td>
                             {% if let Some(ts) = e.running_since %}
