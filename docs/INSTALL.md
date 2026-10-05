@@ -706,6 +706,7 @@ groups_claim = "groups"
 default_role = "read-only"
 allowed_groups = ["circus-users", "circus-admins"]
 session_max_age = 43200
+post_logout_redirect_uri = "https://ci.example.org/"
 
 [[oauth.oidc.pocketid.role_mappings]]
 group = "circus-admins"
@@ -724,19 +725,20 @@ only when that name is taken. To sign in to an existing account through a
 provider instead, log in as that account and link the provider from the account
 page at `/account`. Linked accounts keep their own role.
 
-Set `server.password_login = false` to sign in only through providers. The
-login form disappears and password logins are refused, while API keys keep
-working. Circus refuses to start this way unless GitHub, an OIDC provider, or
-LDAP is configured. With a single provider, `/login` goes straight to it, and
+Set `server.password_login = false` to sign in only through providers. The login
+form disappears and password logins are refused, while API keys keep working.
+Circus refuses to start this way unless GitHub, an OIDC provider, or LDAP is
+configured. With a single provider, `/login` goes straight to it, and
 `/login?local=1` shows the page anyway for API key sign-in.
 
 Groups come from `groups_claim` in the ID token, or from userinfo when the ID
 token lacks it. Role mappings are checked in order and the first match wins.
 With any mappings configured, the provider owns the role and Circus rewrites it
-on every login, so dashboard role edits for these users do not stick.
-Because roles only change at sign-in, `session_max_age` (seconds, seven days by
-default) bounds how long a removed group or a disabled provider account keeps
-working.
+on every login, so dashboard role edits for these users do not stick. Because
+roles only change at sign-in, `session_max_age` (seconds, seven days by default)
+bounds how long a removed group or a disabled provider account keeps working.
+With `post_logout_redirect_uri` set and registered with the provider, logging
+out of Circus also ends the provider session, then returns to that URI.
 
 LDAP bind login is enabled through `[server.ldap]` and exposed at `/auth/ldap`:
 

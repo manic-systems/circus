@@ -7,6 +7,9 @@ pub const USER_SESSION_COOKIE: &str = "circus_user_session";
 pub const API_KEY_SESSION_COOKIE: &str = "circus_session";
 pub const OAUTH_STATE_COOKIE: &str = "circus_oauth_state";
 pub const OIDC_FLOW_COOKIE: &str = "circus_oidc_flow";
+/// Names the provider a session signed in with, so logout knows where to end
+/// the provider session.
+pub const OIDC_PROVIDER_COOKIE: &str = "circus_oidc_provider";
 
 pub const USER_SESSION_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 pub const API_KEY_SESSION_MAX_AGE_SECS: i64 = 24 * 60 * 60;
@@ -123,6 +126,22 @@ pub fn clear_oidc_flow_cookie(
     .max_age(CookieDuration::ZERO)
     .build()
     .to_string()
+}
+
+#[must_use]
+pub fn oidc_provider_cookie(
+  provider: &str,
+  config: &ServerConfig,
+  redirect_uri: &str,
+  max_age_secs: i64,
+) -> String {
+  persistent_cookie(
+    OIDC_PROVIDER_COOKIE,
+    provider,
+    max_age_secs,
+    SameSite::Lax,
+    oauth_cookie_secure(config, redirect_uri),
+  )
 }
 
 fn persistent_cookie(

@@ -59,18 +59,19 @@ redact_debug!(GitHubOAuthConfig {
 });
 
 redact_debug!(OidcProviderConfig {
-  display_name:       visible,
-  issuer_url:         visible,
-  client_id:          visible,
-  client_secret:      optional_secret,
-  client_secret_file: visible,
-  redirect_uri:       visible,
-  scopes:             visible,
-  groups_claim:       visible,
-  default_role:       visible,
-  allowed_groups:     visible,
-  role_mappings:      visible,
-  session_max_age:    visible,
+  display_name:             visible,
+  issuer_url:               visible,
+  client_id:                visible,
+  client_secret:            optional_secret,
+  client_secret_file:       visible,
+  redirect_uri:             visible,
+  scopes:                   visible,
+  groups_claim:             visible,
+  default_role:             visible,
+  allowed_groups:           visible,
+  role_mappings:            visible,
+  session_max_age:          visible,
+  post_logout_redirect_uri: visible,
 });
 
 redact_debug!(NotificationsConfig {
