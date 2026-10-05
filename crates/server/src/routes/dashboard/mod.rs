@@ -18,8 +18,10 @@ use axum::{
 use crate::state::AppState;
 
 mod admin;
+pub mod assets;
 mod auth;
 mod build_log;
+pub mod live;
 mod pages;
 mod preview;
 mod shared;
@@ -61,7 +63,6 @@ pub fn router() -> Router<AppState> {
     .route("/builds", get(pages::builds_page))
     .route("/build/{id}", get(pages::build_page))
     .route("/build/{id}/log", get(pages::build_log))
-    .route("/queue", get(pages::queue_page))
     .route("/build/{id}/bump", post(admin::queue_bump))
     .route("/channels", get(pages::channels_page))
     .route("/channel/{id}", get(pages::channel_page))

@@ -43,7 +43,6 @@ use super::{
       ProjectSetupTemplate,
       ProjectTemplate,
       ProjectsTemplate,
-      QueueTemplate,
       SortHeaderView,
       StarredTemplate,
       UsersTemplate,
@@ -61,10 +60,8 @@ use super::{
     job_rows,
     jobset_fixture,
     news_items,
-    permissions,
     project_fixture,
     project_summaries,
-    queue_build,
     ui,
   },
   render,
@@ -360,35 +357,6 @@ pub(super) async fn build() -> Response {
     project_name:      "circus".into(),
     is_admin:          true,
     auth_name:         "operator".into(),
-  })
-}
-
-pub(super) async fn queue() -> Response {
-  render(QueueTemplate {
-    ui:             ui(),
-    pending_builds: vec![queue_build(
-      7,
-      "packages.aarch64-linux.agent",
-      None,
-      1,
-    )],
-    running_builds: vec![queue_build(
-      8,
-      "checks.x86_64-linux.integration",
-      Some("agent-fast-01"),
-      0,
-    )],
-    pending_count:  1,
-    running_count:  1,
-    show_running:   true,
-    show_pending:   true,
-    filter_status:  String::new(),
-    filter_system:  String::new(),
-    filter_job:     String::new(),
-    permissions:    permissions(),
-    csrf_token:     csrf(),
-    is_admin:       true,
-    auth_name:      "operator".into(),
   })
 }
 

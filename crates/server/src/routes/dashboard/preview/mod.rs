@@ -96,7 +96,6 @@ pub fn router() -> Router {
     .route("/build/{id}", get(pages::build))
     .route("/build/{id}/log", get(build_log))
     .route("/build/{id}/bump", post(preview_queue_action))
-    .route("/queue", get(pages::queue))
     .route("/channels", get(pages::channels))
     .route("/channel/{id}", get(pages::channel))
     .route("/news", get(pages::news).post(preview_news_action))

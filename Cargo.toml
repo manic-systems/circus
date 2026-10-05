@@ -7,7 +7,7 @@ resolver = "3"
 edition      = "2024"
 license      = "MPL-2.0"
 repository   = "https://github.com/manic-systems/circus"
-rust-version = "1.95.0"
+rust-version = "1.98.0"
 version      = "0.14.0"
 
 [workspace.dependencies]
@@ -122,6 +122,14 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = [ "rin
 tokio-test = "0.4.6"
 tokio-util = { version = "0.7.19", features = [ "io", "compat" ] }
 toml = "1.1.6"
+topcoat = { version = "0.10.0", default-features = false, features = [
+  "asset",
+  "router",
+  "runtime",
+  "serve",
+  "tower",
+  "view",
+] }
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
 tracing = "0.1.44"

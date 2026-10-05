@@ -72,7 +72,7 @@ mod caches;
 mod queue;
 mod secondary;
 pub(super) use caches::{cache_detail_page, cache_nars_page, caches_page};
-pub(super) use queue::queue_page;
+pub(super) use queue::{Queue, QueueFilter, load as load_queue};
 pub(super) use secondary::{
   channel_page,
   channels_page,

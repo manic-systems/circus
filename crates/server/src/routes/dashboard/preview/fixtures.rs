@@ -23,12 +23,10 @@ use super::super::{
     JobStatusColumn,
     JobStatusRow,
     ProjectSummaryView,
-    QueueBuildView,
     short_uuid,
   },
   templates::{BuildLogTemplate, UiTemplateConfig},
 };
-use crate::permissions::UiPermissions;
 
 pub(super) const fn id(n: u128) -> Uuid {
   Uuid::from_u128(n)
@@ -45,17 +43,6 @@ pub(super) fn ui() -> UiTemplateConfig {
 
 pub(super) fn csrf() -> String {
   "preview-csrf-token".into()
-}
-
-pub(super) const fn permissions() -> UiPermissions {
-  UiPermissions {
-    admin:           true,
-    bump_to_front:   true,
-    cancel_build:    true,
-    restart_jobs:    true,
-    create_projects: true,
-    eval_jobset:     true,
-  }
 }
 
 pub(super) fn project_fixture() -> Project {
@@ -258,34 +245,6 @@ const PREVIEW_FAILED_BUILD_LOG: &str =
   include_str!("fixtures/build-00000005.internal-json");
 const PREVIEW_RUNNING_BUILD_LOG: &str =
   include_str!("fixtures/build-00000006.internal-json");
-
-pub(super) fn queue_build(
-  n: u128,
-  job: &str,
-  builder: Option<&str>,
-  pos: i64,
-) -> QueueBuildView {
-  QueueBuildView {
-    id:            id(n),
-    job_name:      job.into(),
-    project_id:    Some(id(1)),
-    project_name:  "circus".into(),
-    jobset_id:     Some(id(2)),
-    jobset_name:   "packages".into(),
-    system:        "x86_64-linux".into(),
-    created_at:    "2026-06-18 11:55".into(),
-    started_at:    if builder.is_some() {
-      "2026-06-18 11:56".into()
-    } else {
-      String::new()
-    },
-    elapsed:       "1m 30s".into(),
-    started_epoch: builder.map(|_| Timestamp::now().as_second() - 90),
-    priority:      100,
-    builder_name:  builder.map(str::to_string),
-    queue_pos:     pos,
-  }
-}
 
 pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
   EvalView {
