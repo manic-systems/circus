@@ -718,7 +718,9 @@ Omit both secret options for a public client. Login starts at
 `/api/v1/auth/oidc/<name>`. Accounts are keyed on the issuer and subject, and
 are never merged with an existing account by email. The username is the
 `preferred_username` claim, or the email's local part, with `_<name>` appended
-only when that name is taken.
+only when that name is taken. To sign in to an existing account through a
+provider instead, log in as that account and link the provider from the account
+page at `/account`. Linked accounts keep their own role.
 
 Groups come from `groups_claim` in the ID token, or from userinfo when the ID
 token lacks it. Role mappings are checked in order and the first match wins.

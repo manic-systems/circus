@@ -7,16 +7,31 @@
 
 use askama::Template;
 use axum::{
+  Extension,
   Form,
-  extract::State,
+  extract::{Path, State},
   http::StatusCode,
   response::{Html, IntoResponse, Redirect, Response},
 };
+use circus_common::models::User;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-  routes::dashboard::templates::LoginTemplate,
+  routes::{
+    dashboard::{
+      admin::CsrfOnlyForm,
+      shared::{DashboardContext, RenderExt, UiTemplateConfig},
+      templates::{
+        AccountLinkTemplate,
+        AccountProvider,
+        AccountTemplate,
+        LinkStatus,
+        LoginTemplate,
+      },
+    },
+    oidc,
+  },
   session_cookie::{
     API_KEY_SESSION_COOKIE,
     USER_SESSION_COOKIE,
@@ -236,4 +251,230 @@ pub(super) async fn logout_action(
     Redirect::to("/"),
   )
     .into_response()
+}
+
+pub(super) async fn account_page(
+  State(state): State<AppState>,
+  ctx: DashboardContext,
+  user: Option<Extension<User>>,
+) -> Response {
+  let Some(Extension(user)) = user else {
+    return Redirect::to("/login").into_response();
+  };
+
+  let linked = match circus_common::repo::users::linked_providers(
+    &state.pool,
+    user.id,
+  )
+  .await
+  {
+    Ok(linked) => linked,
+    Err(e) => {
+      tracing::error!(user_id = %user.id, "failed to list linked identities: {e}");
+      return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    },
+  };
+  let native_issuer = match circus_common::repo::users::native_external_id(
+    &state.pool,
+    user.id,
+  )
+  .await
+  {
+    Ok(external_id) => {
+      external_id
+        .and_then(|id| id.rsplit_once('#').map(|(issuer, _)| issuer.to_owned()))
+    },
+    Err(e) => {
+      tracing::error!(user_id = %user.id, "failed to read account identity: {e}");
+      return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    },
+  };
+  let providers = state
+    .config
+    .oauth
+    .oidc
+    .iter()
+    .map(|(name, provider)| {
+      let native = native_issuer.as_deref().is_some_and(|issuer| {
+        issuer.trim_end_matches('/')
+          == provider.issuer_url.trim_end_matches('/')
+      });
+
+      AccountProvider {
+        name:   name.clone(),
+        label:  provider.display_name.clone(),
+        status: if native {
+          LinkStatus::Native
+        } else if linked.contains(name) {
+          LinkStatus::Linked
+        } else {
+          LinkStatus::Unlinked
+        },
+      }
+    })
+    .collect();
+
+  AccountTemplate {
+    ui: UiTemplateConfig::from_config(&state.config.ui),
+    is_admin: ctx.is_admin,
+    auth_name: ctx.auth_name.clone(),
+    csrf_token: ctx.csrf_token.clone(),
+    role: user.role.to_string(),
+    has_password: user.password_hash.is_some(),
+    username: user.username,
+    providers,
+  }
+  .render_html_or_500()
+  .into_response()
+}
+
+pub(super) async fn account_link_page(
+  State(state): State<AppState>,
+  Path(provider): Path<String>,
+  ctx: DashboardContext,
+  user: Option<Extension<User>>,
+) -> Response {
+  let Some(Extension(user)) = user else {
+    return Redirect::to("/login").into_response();
+  };
+
+  render_link_page(&state, &ctx, &user, &provider, None)
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct LinkForm {
+  csrf_token: String,
+  password:   Option<String>,
+}
+
+/// Re-checks the password first, so a stolen session alone cannot attach a
+/// lasting way in.
+pub(super) async fn account_link(
+  State(state): State<AppState>,
+  Path(provider): Path<String>,
+  ctx: DashboardContext,
+  user: Option<Extension<User>>,
+  Form(form): Form<LinkForm>,
+) -> Response {
+  let Some(Extension(user)) = user else {
+    return Redirect::to("/login").into_response();
+  };
+
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+
+  if let Some(hash) = &user.password_hash {
+    let password = form.password.as_deref().unwrap_or_default();
+
+    match circus_common::repo::users::verify_password(password, hash) {
+      Ok(true) => {},
+      Ok(false) => {
+        crate::audit::record_with_actor(
+          &state.pool,
+          &circus_common::audit::Actor::user(user.id, user.username.clone()),
+          None,
+          "OIDC_LINK_FAILURE",
+          Some("oidc"),
+          Some(&provider),
+          serde_json::json!({ "reason": "incorrect password" }),
+        )
+        .await;
+
+        return render_link_page(
+          &state,
+          &ctx,
+          &user,
+          &provider,
+          Some("Incorrect password"),
+        );
+      },
+      Err(e) => {
+        tracing::error!(user_id = %user.id, "failed to verify password: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+      },
+    }
+  }
+
+  oidc::start_link(&state, &provider, user.id).await
+}
+
+fn render_link_page(
+  state: &AppState,
+  ctx: &DashboardContext,
+  user: &User,
+  provider: &str,
+  error: Option<&str>,
+) -> Response {
+  let Some(config) = state.config.oauth.oidc.get(provider) else {
+    return StatusCode::NOT_FOUND.into_response();
+  };
+
+  let page = AccountLinkTemplate {
+    ui:           UiTemplateConfig::from_config(&state.config.ui),
+    is_admin:     ctx.is_admin,
+    auth_name:    ctx.auth_name.clone(),
+    csrf_token:   ctx.csrf_token.clone(),
+    username:     user.username.clone(),
+    name:         provider.to_owned(),
+    label:        config.display_name.clone(),
+    has_password: user.password_hash.is_some(),
+    error:        error.map(str::to_owned),
+  }
+  .render_html_or_500();
+  let status = if error.is_some() {
+    StatusCode::UNAUTHORIZED
+  } else {
+    StatusCode::OK
+  };
+
+  (status, page).into_response()
+}
+
+pub(super) async fn account_unlink(
+  State(state): State<AppState>,
+  Path(provider): Path<String>,
+  ctx: DashboardContext,
+  user: Option<Extension<User>>,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  let Some(Extension(user)) = user else {
+    return Redirect::to("/login").into_response();
+  };
+
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+
+  if !state.config.oauth.oidc.contains_key(&provider) {
+    return StatusCode::NOT_FOUND.into_response();
+  }
+
+  match circus_common::repo::users::unlink_identity(
+    &state.pool,
+    user.id,
+    &provider,
+  )
+  .await
+  {
+    Ok(true) => {},
+    Ok(false) => return Redirect::to("/account").into_response(),
+    Err(e) => {
+      tracing::error!(user_id = %user.id, %provider, "failed to unlink identity: {e}");
+      return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    },
+  }
+
+  crate::audit::record_with_actor(
+    &state.pool,
+    &circus_common::audit::Actor::user(user.id, user.username),
+    None,
+    "OIDC_UNLINK",
+    Some("oidc"),
+    Some(&provider),
+    serde_json::json!({ "provider": provider }),
+  )
+  .await;
+
+  Redirect::to("/account").into_response()
 }

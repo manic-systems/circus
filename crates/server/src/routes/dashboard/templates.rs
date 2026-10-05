@@ -555,6 +555,47 @@ pub(super) struct UsersTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "account.html")]
+pub(super) struct AccountTemplate {
+  pub(super) ui:           UiTemplateConfig,
+  pub(super) is_admin:     bool,
+  pub(super) auth_name:    String,
+  pub(super) csrf_token:   String,
+  pub(super) username:     String,
+  pub(super) role:         String,
+  pub(super) has_password: bool,
+  pub(super) providers:    Vec<AccountProvider>,
+}
+
+#[derive(Template)]
+#[template(path = "account_link.html")]
+pub(super) struct AccountLinkTemplate {
+  pub(super) ui:           UiTemplateConfig,
+  pub(super) is_admin:     bool,
+  pub(super) auth_name:    String,
+  pub(super) csrf_token:   String,
+  pub(super) username:     String,
+  pub(super) name:         String,
+  pub(super) label:        String,
+  pub(super) has_password: bool,
+  pub(super) error:        Option<String>,
+}
+
+pub(super) struct AccountProvider {
+  pub(super) name:   String,
+  pub(super) label:  String,
+  pub(super) status: LinkStatus,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LinkStatus {
+  /// The account was created by signing in with this provider.
+  Native,
+  Linked,
+  Unlinked,
+}
+
+#[derive(Template)]
 #[template(path = "starred.html")]
 pub(super) struct StarredTemplate {
   pub(super) ui:           UiTemplateConfig,

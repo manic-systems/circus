@@ -14,7 +14,7 @@
         </div>
         <div class="operator-header-actions">
             {% if !auth_name.is_empty() %}
-                <span class="auth-user">{{ auth_name }}</span>
+                <a class="auth-user" href="/account">{{ auth_name }}</a>
                 <form method="POST" action="/logout">
                     <button class="btn-ghost" type="submit">Logout</button>
                 </form>

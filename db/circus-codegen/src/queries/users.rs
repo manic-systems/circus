@@ -88,6 +88,17 @@ pub struct UpsertOidcUserParams<
     pub managed_role: Option<T6>,
 }
 #[derive(Debug)]
+pub struct LinkIdentityParams<T1: crate::StringSql, T2: crate::StringSql> {
+    pub external_id: T1,
+    pub user_id: uuid::Uuid,
+    pub provider: T2,
+}
+#[derive(Debug)]
+pub struct UnlinkIdentityParams<T1: crate::StringSql> {
+    pub user_id: uuid::Uuid,
+    pub provider: T1,
+}
+#[derive(Debug)]
 pub struct CreateSessionParams<T1: crate::StringSql> {
     pub user_id: uuid::Uuid,
     pub session_token_hash: T1,
@@ -243,6 +254,70 @@ where
 {
     pub fn map<R>(self, mapper: fn(i64) -> R) -> I64Query<'c, 'a, 's, C, R, N> {
         I64Query {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct StringQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<&str, tokio_postgres::Error>,
+    mapper: fn(&str) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> StringQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(&str) -> R) -> StringQuery<'c, 'a, 's, C, R, N> {
+        StringQuery {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -1387,6 +1462,214 @@ impl<
             &params.default_role,
             &params.managed_role,
         )
+    }
+}
+pub struct LoginLinkedIdentityStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn login_linked_identity() -> LoginLinkedIdentityStmt {
+    LoginLinkedIdentityStmt(
+        "UPDATE users SET last_login_at = NOW(), updated_at = NOW() FROM user_identities i WHERE i.external_id = $1 AND users.id = i.user_id RETURNING users.*",
+        None,
+    )
+}
+impl LoginLinkedIdentityStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        external_id: &'a T1,
+    ) -> UserRowQuery<'c, 'a, 's, C, UserRow, 1> {
+        UserRowQuery {
+            client,
+            params: [external_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<UserRowBorrowed, tokio_postgres::Error> {
+                    Ok(UserRowBorrowed {
+                        id: row.try_get(0)?,
+                        username: row.try_get(1)?,
+                        email: row.try_get(2)?,
+                        full_name: row.try_get(3)?,
+                        password_hash: row.try_get(4)?,
+                        user_type: row.try_get(5)?,
+                        role: row.try_get(6)?,
+                        enabled: row.try_get(7)?,
+                        email_verified: row.try_get(8)?,
+                        public_dashboard: row.try_get(9)?,
+                        created_at: row.try_get(10)?,
+                        updated_at: row.try_get(11)?,
+                        last_login_at: row.try_get(12)?,
+                        external_id: row.try_get(13)?,
+                    })
+                },
+            mapper: |it| UserRow::from(it),
+        }
+    }
+}
+pub struct LinkIdentityStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn link_identity() -> LinkIdentityStmt {
+    LinkIdentityStmt(
+        "INSERT INTO user_identities (external_id, user_id, provider) VALUES ($1, $2, $3)",
+        None,
+    )
+}
+impl LinkIdentityStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        external_id: &'a T1,
+        user_id: &'a uuid::Uuid,
+        provider: &'a T2,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(self.0, &[external_id, user_id, provider])
+            .await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        LinkIdentityParams<T1, T2>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for LinkIdentityStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a LinkIdentityParams<T1, T2>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.external_id,
+            &params.user_id,
+            &params.provider,
+        ))
+    }
+}
+pub struct UnlinkIdentityStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn unlink_identity() -> UnlinkIdentityStmt {
+    UnlinkIdentityStmt(
+        "DELETE FROM user_identities WHERE user_id = $1 AND provider = $2",
+        None,
+    )
+}
+impl UnlinkIdentityStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        user_id: &'a uuid::Uuid,
+        provider: &'a T1,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[user_id, provider]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        UnlinkIdentityParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for UnlinkIdentityStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a UnlinkIdentityParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.user_id, &params.provider))
+    }
+}
+pub struct NativeExternalIdStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn native_external_id() -> NativeExternalIdStmt {
+    NativeExternalIdStmt(
+        "SELECT external_id FROM users WHERE id = $1 AND user_type = 'oidc' AND external_id IS NOT NULL",
+        None,
+    )
+}
+impl NativeExternalIdStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        user_id: &'a uuid::Uuid,
+    ) -> StringQuery<'c, 'a, 's, C, String, 1> {
+        StringQuery {
+            client,
+            params: [user_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it.into(),
+        }
+    }
+}
+pub struct LinkedProvidersStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn linked_providers() -> LinkedProvidersStmt {
+    LinkedProvidersStmt(
+        "SELECT provider FROM user_identities WHERE user_id = $1 ORDER BY provider",
+        None,
+    )
+}
+impl LinkedProvidersStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        user_id: &'a uuid::Uuid,
+    ) -> StringQuery<'c, 'a, 's, C, String, 1> {
+        StringQuery {
+            client,
+            params: [user_id],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it.into(),
+        }
     }
 }
 pub struct CreateSessionStmt(&'static str, Option<tokio_postgres::Statement>);

@@ -29,6 +29,12 @@ pub fn router() -> Router<AppState> {
   Router::new()
     .route("/login", get(auth::login_page).post(auth::login_action))
     .route("/logout", post(auth::logout_action))
+    .route("/account", get(auth::account_page))
+    .route(
+      "/account/link/{provider}",
+      get(auth::account_link_page).post(auth::account_link),
+    )
+    .route("/account/unlink/{provider}", post(auth::account_unlink))
     .route("/", get(pages::home))
     .route("/projects", get(pages::projects_page))
     .route("/projects/new", get(pages::project_setup_page))

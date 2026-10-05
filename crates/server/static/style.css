@@ -440,6 +440,15 @@ textarea::placeholder {
   display: inline;
 }
 
+.nav-auth .auth-user {
+  color: inherit;
+  text-decoration: none;
+}
+
+.nav-auth .auth-user:hover {
+  color: var(--text);
+}
+
 .page-main {
   flex: 1;
   min-width: 0;
@@ -2228,6 +2237,64 @@ button:disabled {
   width: 16px;
   height: 16px;
   flex: none;
+}
+
+.account-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.account-role,
+.account-method-status {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.account-panel {
+  max-width: 520px;
+}
+
+.account-card {
+  padding: 20px;
+}
+
+.account-hint {
+  margin: 8px 0 16px;
+  color: var(--text-muted);
+}
+
+.account-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.account-methods {
+  margin: 0;
+  padding: 0 12px;
+  list-style: none;
+}
+
+.account-method {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.account-method + .account-method {
+  border-top: 1px solid var(--border);
+}
+
+.account-method-name {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.account-method-status.linked {
+  color: var(--status-success);
 }
 
 .login-api-key summary {

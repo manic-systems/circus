@@ -530,6 +530,96 @@ pub async fn upsert_oidc_user(
   User::try_from(row)
 }
 
+/// Signs in the account an external identity was linked to, if any.
+///
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn login_linked_identity(
+  pool: &PgPool,
+  external_id: &str,
+) -> Result<Option<User>> {
+  let client = pool.get().await?;
+  q::login_linked_identity()
+    .bind(&client, &external_id)
+    .opt()
+    .await?
+    .map(User::try_from)
+    .transpose()
+}
+
+/// Links an external identity to an existing account.
+///
+/// # Errors
+///
+/// Returns [`CiError::Conflict`] if the identity is linked to any account, or
+/// the account already has one from `provider`.
+pub async fn link_identity(
+  pool: &PgPool,
+  user_id: Uuid,
+  provider: &str,
+  external_id: &str,
+) -> Result<()> {
+  let client = pool.get().await?;
+  q::link_identity()
+    .bind(&client, &external_id, &user_id, &provider)
+    .await
+    .map_err(|error| {
+      if is_unique_violation(&error) {
+        CiError::Conflict("Identity is already linked".to_string())
+      } else {
+        CiError::Database(error)
+      }
+    })?;
+  Ok(())
+}
+
+/// Returns whether a linked identity was removed.
+///
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn unlink_identity(
+  pool: &PgPool,
+  user_id: Uuid,
+  provider: &str,
+) -> Result<bool> {
+  let client = pool.get().await?;
+  let removed = q::unlink_identity()
+    .bind(&client, &user_id, &provider)
+    .await?;
+  Ok(removed > 0)
+}
+
+/// The identity an OIDC-created account was created with.
+///
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn native_external_id(
+  pool: &PgPool,
+  user_id: Uuid,
+) -> Result<Option<String>> {
+  let client = pool.get().await?;
+  Ok(
+    q::native_external_id()
+      .bind(&client, &user_id)
+      .opt()
+      .await?,
+  )
+}
+
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn linked_providers(
+  pool: &PgPool,
+  user_id: Uuid,
+) -> Result<Vec<String>> {
+  let client = pool.get().await?;
+  Ok(q::linked_providers().bind(&client, &user_id).all().await?)
+}
+
 /// Create a new session for a user. Returns (`session_token`, `session_id`).
 ///
 /// # Errors

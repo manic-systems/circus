@@ -10,7 +10,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use circus_common::{CiError, audit::Actor, repo};
+use circus_common::{CiError, audit::Actor, models::User, repo};
 use circus_config::OidcProviderConfig;
 use jsonwebtoken::{
   DecodingKey,
@@ -55,6 +55,7 @@ use serde::{
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use uuid::Uuid;
 
 use crate::{
   audit::record_with_actor,
@@ -218,6 +219,8 @@ enum LoginError {
   NotAllowed,
   #[error("username or email belongs to another account")]
   Conflict(#[source] CiError),
+  #[error("identity is already linked to an account")]
+  AlreadyLinked(#[source] CiError),
   #[error("user is disabled")]
   Disabled,
   #[error("identity provider unavailable")]
@@ -247,6 +250,10 @@ impl LoginError {
         "Sign-in is temporarily unavailable. Please try again."
       },
       Self::Conflict(_) => "An account already uses this username or email.",
+      Self::AlreadyLinked(_) => {
+        "This sign-in is already linked to an account, or yours already has \
+         one from this provider."
+      },
       _ => "Unable to sign in. Please try again or contact an administrator.",
     }
   }
@@ -268,6 +275,54 @@ struct LoginFlow {
   state:         CsrfToken,
   nonce:         String,
   pkce_verifier: PkceCodeVerifier,
+  link:          Option<LinkGrant>,
+}
+
+/// The account a flow links to. The flow cookie is unsigned, so `mac` is what
+/// stops a browser from naming someone else's account or provider.
+#[derive(Deserialize, Serialize)]
+struct LinkGrant {
+  user: Uuid,
+  mac:  String,
+}
+
+impl LinkGrant {
+  fn new(
+    state: &AppState,
+    provider: &str,
+    user: Uuid,
+    csrf: &CsrfToken,
+  ) -> Self {
+    Self {
+      user,
+      mac: Self::mac(state, provider, user, csrf),
+    }
+  }
+
+  fn mac(
+    state: &AppState,
+    provider: &str,
+    user: Uuid,
+    csrf: &CsrfToken,
+  ) -> String {
+    state
+      .csrf_token_for(&format!("oidc-link:{provider}:{user}:{}", csrf.secret()))
+  }
+
+  fn verify(
+    &self,
+    state: &AppState,
+    provider: &str,
+    csrf: &CsrfToken,
+  ) -> Result<Uuid, LoginError> {
+    let expected = Self::mac(state, provider, self.user, csrf);
+
+    if bool::from(expected.as_bytes().ct_eq(self.mac.as_bytes())) {
+      Ok(self.user)
+    } else {
+      Err(LoginError::InvalidState)
+    }
+  }
 }
 
 impl LoginFlow {
@@ -505,6 +560,7 @@ async fn login_failure(
 async fn start_login(
   state: &AppState,
   provider: &str,
+  link: Option<Uuid>,
 ) -> Result<Response, LoginError> {
   let config = state
     .config
@@ -532,6 +588,7 @@ async fn start_login(
     .url();
   let flow = LoginFlow {
     provider: provider.to_owned(),
+    link: link.map(|user| LinkGrant::new(state, provider, user, &csrf)),
     state: csrf,
     nonce,
     pkce_verifier,
@@ -638,13 +695,73 @@ async fn complete_login(
     return Err(LoginError::NotAllowed);
   }
 
+  let external_id = format!("{}#{}", idp.issuer, claims.sub);
+  let clear_flow =
+    clear_oidc_flow_cookie(&state.config.server, &config.redirect_uri);
+
+  if let Some(grant) = &flow.link {
+    let user = repo::users::get(
+      &state.pool,
+      grant.verify(state, provider, &flow.state)?,
+    )
+    .await?;
+
+    if repo::users::native_external_id(&state.pool, user.id)
+      .await?
+      .as_ref()
+      == Some(&external_id)
+    {
+      return Err(LoginError::AlreadyLinked(CiError::Conflict(
+        "account was created with this identity".into(),
+      )));
+    }
+
+    repo::users::link_identity(&state.pool, user.id, provider, &external_id)
+      .await
+      .map_err(|error| {
+        match error {
+          CiError::Conflict(_) => LoginError::AlreadyLinked(error),
+          _ => error.into(),
+        }
+      })?;
+    audit_login(
+      state,
+      provider,
+      &Actor::user(user.id, user.username),
+      "OIDC_LINK",
+      None,
+    )
+    .await;
+
+    return Ok(
+      (
+        StatusCode::FOUND,
+        [(SET_COOKIE, clear_flow)],
+        Redirect::to("/account"),
+      )
+        .into_response(),
+    );
+  }
+
+  if let Some(user) =
+    repo::users::login_linked_identity(&state.pool, &external_id).await?
+  {
+    return start_session(
+      state,
+      provider,
+      user,
+      clear_flow,
+      &config.redirect_uri,
+    )
+    .await;
+  }
+
   let role = config
     .role_mappings
     .iter()
     .find(|mapping| groups.contains(&mapping.group))
     .map_or(config.default_role, |mapping| mapping.role);
   let managed_role = (!config.role_mappings.is_empty()).then_some(role);
-  let external_id = format!("{}#{}", idp.issuer, claims.sub);
   let email = claims.email.as_deref().filter(|_| claims.email_verified);
   let upsert = async |username: &str| {
     repo::users::upsert_oidc_user(
@@ -669,6 +786,16 @@ async fn complete_login(
     result => result,
   }?;
 
+  start_session(state, provider, user, clear_flow, &config.redirect_uri).await
+}
+
+async fn start_session(
+  state: &AppState,
+  provider: &str,
+  user: User,
+  clear_flow: String,
+  redirect_uri: &str,
+) -> Result<Response, LoginError> {
   if !user.enabled {
     return Err(LoginError::Disabled);
   }
@@ -684,11 +811,11 @@ async fn complete_login(
   )
   .await;
   let cookies = [
-    clear_oidc_flow_cookie(&state.config.server, &config.redirect_uri),
+    clear_flow,
     oauth_user_session_cookie(
       &session_token,
       &state.config.server,
-      &config.redirect_uri,
+      redirect_uri,
     ),
   ];
 
@@ -706,9 +833,22 @@ async fn oidc_login(
   State(state): State<AppState>,
   Path(provider): Path<String>,
 ) -> Response {
-  match start_login(&state, &provider).await {
+  match start_login(&state, &provider, None).await {
     Ok(response) => response,
     Err(error) => login_failure(&state, &provider, error).await,
+  }
+}
+
+/// Starts a flow that links the identity the provider returns to `user`,
+/// rather than signing in with it.
+pub async fn start_link(
+  state: &AppState,
+  provider: &str,
+  user: Uuid,
+) -> Response {
+  match start_login(state, provider, Some(user)).await {
+    Ok(response) => response,
+    Err(error) => login_failure(state, provider, error).await,
   }
 }
 

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Link {{ label }} - circus{% endblock %}
+{% block breadcrumbs %}
+    <nav class="breadcrumbs">
+        <a href="/">Home</a>
+        <span class="sep">/</span>
+        <a href="/account">Account</a>
+        <span class="sep">/</span>
+        <span class="current">Link {{ label }}</span>
+    </nav>
+{% endblock %}
+{% block content %}
+    <div class="form-card account-card">
+        <h1>Link {{ label }}</h1>
+        <p class="account-hint">
+            You will sign in with {{ label }}, and that identity will then sign you in as <strong>{{ username }}</strong>.
+        </p>
+        {% match error %}
+            {% when Some with (msg) %}
+                <div class="flash-message flash-error">{{ msg }}</div>
+            {% when None %}
+        {% endmatch %}
+        <form method="POST" action="/account/link/{{ name }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% if has_password %}
+                <div class="form-group">
+                    <label for="password">Confirm your password</label>
+                    <input type="password"
+                           id="password"
+                           name="password"
+                           autocomplete="current-password"
+                           required
+                           autofocus>
+                </div>
+            {% endif %}
+            <div class="account-actions">
+                <button class="btn" type="submit">Continue to {{ label }}</button>
+                <a class="btn btn-secondary" href="/account">Cancel</a>
+            </div>
+        </form>
+    </div>
+{% endblock %}
