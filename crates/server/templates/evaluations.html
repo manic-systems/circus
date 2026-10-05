@@ -79,9 +79,17 @@
                             <td class="commit-cell">
                                 <a href="/evaluation/{{ e.id }}">{{ e.commit_short }}</a>
                                 {% if !e.commit_subject.is_empty() %}
-                                    <span class="commit-subject" title="{{ e.commit_subject }}">
-                                        {{ e.commit_subject }}
-                                    </span>
+                                    {% match e.commit_url %}
+                                        {% when Some with (url) %}
+                                            <a class="commit-subject"
+                                               href="{{ url }}"
+                                               rel="noopener noreferrer"
+                                               title="{{ e.commit_subject }}">{{ e.commit_subject }}</a>
+                                        {% when None %}
+                                            <span class="commit-subject" title="{{ e.commit_subject }}">
+                                                {{ e.commit_subject }}
+                                            </span>
+                                    {% endmatch %}
                                 {% endif %}
                             </td>
                             <td>{{ e.project_name }}</td>

@@ -287,6 +287,10 @@ pub(super) fn queue_build(
 
 pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
   EvalView {
+    commit_url:     Some(
+      "https://github.com/manic-systems/circus/commit/9f2c7a113badf00d7e57c0ffee1234567890abcd"
+        .into(),
+    ),
     id:             id(n),
     commit_hash:    "9f2c7a113badf00d7e57c0ffee1234567890abcd".into(),
     commit_short:   "9f2c7a113bad".into(),
