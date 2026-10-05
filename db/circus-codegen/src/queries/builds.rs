@@ -1411,7 +1411,7 @@ impl RequeueStmt {
 pub struct RetryStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn retry() -> RetryStmt {
     RetryStmt(
-        "UPDATE builds SET status = 'pending', started_at = NULL, retry_count = retry_count + 1, completed_at = NULL, effective_features = NULL WHERE id = $1",
+        "UPDATE builds SET status = 'pending', started_at = NULL, retry_count = retry_count + 1, completed_at = NULL, effective_features = NULL WHERE id = $1 AND status = 'running'",
         None,
     )
 }
@@ -1434,7 +1434,7 @@ impl RetryStmt {
 pub struct CompleteStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn complete() -> CompleteStmt {
     CompleteStmt(
-        "UPDATE builds SET status = $1, completed_at = NOW(), log_path = $2, build_output_path = $3, error_message = $4 WHERE id = $5 RETURNING *",
+        "UPDATE builds SET status = $1, completed_at = NOW(), log_path = $2, build_output_path = $3, error_message = $4 WHERE id = $5 AND status IN ('pending', 'running') RETURNING *",
         None,
     )
 }

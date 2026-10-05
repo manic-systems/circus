@@ -363,7 +363,8 @@ async fn runtime_enum_values_are_accepted_by_database_constraints() {
     Some("out of memory"),
   )
   .await
-  .expect("persist OOM status");
+  .expect("persist OOM status")
+  .expect("build is pending or running");
   assert_eq!(build.status, BuildStatus::OomKilled);
 
   for notification_type in
@@ -977,7 +978,8 @@ async fn test_evaluation_and_build_lifecycle() {
     None,
   )
   .await
-  .expect("complete build");
+  .expect("complete build")
+  .expect("build is pending or running");
   assert!(matches!(completed.status, BuildStatus::Succeeded));
 
   // Create build product

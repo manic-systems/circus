@@ -132,13 +132,13 @@ SET status = 'pending',
     retry_count = retry_count + 1,
     completed_at = NULL,
     effective_features = NULL
-WHERE id = :id;
+WHERE id = :id AND status = 'running';
 
 --! complete (log_path?, build_output_path?, error_message?) : BuildRow
 UPDATE builds
 SET status = :status, completed_at = NOW(), log_path = :log_path,
     build_output_path = :build_output_path, error_message = :error_message
-WHERE id = :id
+WHERE id = :id AND status IN ('pending', 'running')
 RETURNING *;
 
 --! complete_dependency_failed (error_message?) : BuildRow
