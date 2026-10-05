@@ -29,6 +29,7 @@ use super::{
     ApiKeyView,
     DashboardContext,
     DashboardPage,
+    LinkedIdentityView,
     PageError,
     Pagination,
     RenderExt,
@@ -598,9 +599,32 @@ pub(super) async fn users_page(
     .await
     .unwrap_or(0);
 
+  let ids: Vec<Uuid> = users_list.iter().map(|user| user.id).collect();
+  let mut linked =
+    circus_common::repo::users::identities_for_users(&state.pool, &ids)
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!("failed to list linked identities: {error}");
+        std::collections::HashMap::new()
+      });
+
   let users: Vec<UserView> = users_list
     .into_iter()
     .map(|u| {
+      let linked = linked
+        .remove(&u.id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|provider| {
+          let label = state
+            .config
+            .oauth
+            .oidc
+            .get(&provider)
+            .map_or_else(|| provider.clone(), |p| p.display_name.clone());
+          LinkedIdentityView { provider, label }
+        })
+        .collect();
       let user_type = match u.user_type {
         UserType::Local => "Local",
         UserType::Github => "GitHub",
@@ -609,16 +633,17 @@ pub(super) async fn users_page(
         UserType::Oidc => "OIDC",
       };
       UserView {
-        id:            u.id,
-        username:      u.username,
-        email:         u.email,
-        role:          u.role.to_string(),
-        user_type:     user_type.to_string(),
-        enabled:       u.enabled,
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        role: u.role.to_string(),
+        user_type: user_type.to_string(),
+        enabled: u.enabled,
         last_login_at: u.last_login_at.map_or_else(
           || "Never".to_string(),
           |t| t.format("%Y-%m-%d %H:%M").to_string(),
         ),
+        linked,
       }
     })
     .collect();
@@ -640,6 +665,46 @@ pub(super) async fn users_page(
     csrf_token: ctx.csrf_token.clone(),
   };
   tmpl.render_html_or_500()
+}
+
+/// Removes a provider linked to someone else's account, for cleaning up after
+/// a mistaken link or a departed provider.
+pub(super) async fn user_unlink(
+  State(state): State<AppState>,
+  Path((id, provider)): Path<(Uuid, String)>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+
+  match circus_common::repo::users::unlink_identity(&state.pool, id, &provider)
+    .await
+  {
+    Ok(true) => {
+      crate::audit::record_action(
+        &state.pool,
+        &extensions,
+        "OIDC_UNLINK",
+        Some("user"),
+        Some(&id.to_string()),
+        serde_json::json!({ "provider": provider }),
+      )
+      .await;
+    },
+    Ok(false) => {},
+    Err(e) => {
+      tracing::error!(user_id = %id, %provider, "failed to unlink identity: {e}");
+      return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    },
+  }
+
+  Redirect::to("/users").into_response()
 }
 
 /// Render the news page at `/news`: list of recent announcements plus,

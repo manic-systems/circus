@@ -78,7 +78,22 @@
                             <td>
                                 <span class="badge badge-pending">{{ u.role }}</span>
                             </td>
-                            <td>{{ u.user_type }}</td>
+                            <td>
+                                <div>{{ u.user_type }}</div>
+                                {% for identity in u.linked %}
+                                    <div class="linked-identity">
+                                        <span>{{ identity.label }}</span>
+                                        {% if is_admin %}
+                                            <form class="inline-form"
+                                                  method="POST"
+                                                  action="/users/{{ u.id }}/unlink/{{ identity.provider }}">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                <button class="btn-ghost" type="submit" title="Unlink {{ identity.label }}">Unlink</button>
+                                            </form>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            </td>
                             <td>
                                 {% if u.enabled %}
                                     Yes

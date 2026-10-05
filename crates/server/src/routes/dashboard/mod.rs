@@ -70,6 +70,7 @@ pub fn router() -> Router<AppState> {
     .route("/admin", get(admin::admin_page))
     .route("/admin/store-gc", post(admin::store_gc))
     .route("/users", get(admin::users_page))
+    .route("/users/{id}/unlink/{provider}", post(admin::user_unlink))
     .route("/starred", get(pages::starred_page))
     .route("/metrics", get(pages::metrics_page))
     .route("/caches", get(pages::caches_page))

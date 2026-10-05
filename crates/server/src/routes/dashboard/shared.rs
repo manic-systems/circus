@@ -592,6 +592,12 @@ pub(super) struct UserView {
   pub(super) user_type:     String,
   pub(super) enabled:       bool,
   pub(super) last_login_at: String,
+  pub(super) linked:        Vec<LinkedIdentityView>,
+}
+
+pub(super) struct LinkedIdentityView {
+  pub(super) provider: String,
+  pub(super) label:    String,
 }
 
 pub(super) struct StarredJobView {

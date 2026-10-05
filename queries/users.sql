@@ -89,6 +89,11 @@ DELETE FROM user_identities WHERE user_id = :user_id AND provider = :provider;
 SELECT external_id FROM users
 WHERE id = :user_id AND user_type = 'oidc' AND external_id IS NOT NULL;
 
+--! identities_for_users
+SELECT user_id, provider FROM user_identities
+WHERE user_id = ANY(:user_ids)
+ORDER BY provider;
+
 --! linked_providers
 SELECT provider FROM user_identities WHERE user_id = :user_id ORDER BY provider;
 

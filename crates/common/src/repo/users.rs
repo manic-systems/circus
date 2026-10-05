@@ -609,6 +609,29 @@ pub async fn native_external_id(
   )
 }
 
+/// The providers linked to each of `user_ids`, for listing many accounts.
+///
+/// # Errors
+///
+/// Returns error if the database query fails.
+pub async fn identities_for_users(
+  pool: &PgPool,
+  user_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, Vec<String>>> {
+  let client = pool.get().await?;
+  let rows = q::identities_for_users()
+    .bind(&client, &user_ids)
+    .all()
+    .await?;
+  let mut linked = std::collections::HashMap::<Uuid, Vec<String>>::new();
+
+  for row in rows {
+    linked.entry(row.user_id).or_default().push(row.provider);
+  }
+
+  Ok(linked)
+}
+
 /// # Errors
 ///
 /// Returns error if the database query fails.
