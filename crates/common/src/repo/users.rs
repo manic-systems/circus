@@ -629,14 +629,26 @@ pub async fn create_session(
   pool: &PgPool,
   user_id: Uuid,
 ) -> Result<(String, Uuid)> {
+  create_session_for(pool, user_id, chrono::Duration::days(7)).await
+}
+
+/// [`create_session`] with a lifetime other than seven days.
+///
+/// # Errors
+///
+/// Returns error if database insert fails.
+pub async fn create_session_for(
+  pool: &PgPool,
+  user_id: Uuid,
+  lifetime: chrono::Duration,
+) -> Result<(String, Uuid)> {
   use sha2::{Digest, Sha256};
 
   // Generate random session token
   let token = Uuid::new_v4().to_string();
   let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-  // Session expires in 7 days
-  let expires_at = chrono::Utc::now() + chrono::Duration::days(7);
+  let expires_at = chrono::Utc::now() + lifetime;
 
   let client = pool.get().await?;
   let session_id = q::create_session()

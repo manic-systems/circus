@@ -64,11 +64,12 @@ pub fn oauth_user_session_cookie(
   token: &str,
   config: &ServerConfig,
   redirect_uri: &str,
+  max_age_secs: i64,
 ) -> String {
   persistent_cookie(
     USER_SESSION_COOKIE,
     token,
-    USER_SESSION_MAX_AGE_SECS,
+    max_age_secs,
     SameSite::Lax,
     oauth_cookie_secure(config, redirect_uri),
   )

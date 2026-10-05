@@ -62,6 +62,7 @@ use crate::{
   routes::dashboard::templates::LoginTemplate,
   session_cookie::{
     OIDC_FLOW_COOKIE,
+    USER_SESSION_MAX_AGE_SECS,
     clear_oidc_flow_cookie,
     oauth_user_session_cookie,
     oidc_flow_cookie,
@@ -754,7 +755,7 @@ async fn complete_login(
       provider,
       user,
       clear_flow,
-      &config.redirect_uri,
+      config,
       flow.next.as_deref(),
     )
     .await;
@@ -795,7 +796,7 @@ async fn complete_login(
     provider,
     user,
     clear_flow,
-    &config.redirect_uri,
+    config,
     flow.next.as_deref(),
   )
   .await
@@ -806,15 +807,23 @@ async fn start_session(
   provider: &str,
   user: User,
   clear_flow: String,
-  redirect_uri: &str,
+  config: &OidcProviderConfig,
   next: Option<&str>,
 ) -> Result<Response, LoginError> {
   if !user.enabled {
     return Err(LoginError::Disabled);
   }
 
-  let (session_token, _) =
-    repo::users::create_session(&state.pool, user.id).await?;
+  let max_age = config
+    .session_max_age
+    .and_then(|secs| i64::try_from(secs).ok())
+    .unwrap_or(USER_SESSION_MAX_AGE_SECS);
+  let (session_token, _) = repo::users::create_session_for(
+    &state.pool,
+    user.id,
+    chrono::Duration::seconds(max_age),
+  )
+  .await?;
   audit_login(
     state,
     provider,
@@ -828,7 +837,8 @@ async fn start_session(
     oauth_user_session_cookie(
       &session_token,
       &state.config.server,
-      redirect_uri,
+      &config.redirect_uri,
+      max_age,
     ),
   ];
 
@@ -836,9 +846,7 @@ async fn start_session(
     (
       StatusCode::FOUND,
       AppendHeaders(cookies.map(|cookie| (SET_COOKIE, cookie))),
-      Redirect::to(
-        crate::routes::return_to(next).unwrap_or("/"),
-      ),
+      Redirect::to(crate::routes::return_to(next).unwrap_or("/")),
     )
       .into_response(),
   )

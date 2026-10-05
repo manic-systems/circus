@@ -705,6 +705,7 @@ scopes = ["profile", "email", "groups"]
 groups_claim = "groups"
 default_role = "read-only"
 allowed_groups = ["circus-users", "circus-admins"]
+session_max_age = 43200
 
 [[oauth.oidc.pocketid.role_mappings]]
 group = "circus-admins"
@@ -733,6 +734,9 @@ Groups come from `groups_claim` in the ID token, or from userinfo when the ID
 token lacks it. Role mappings are checked in order and the first match wins.
 With any mappings configured, the provider owns the role and Circus rewrites it
 on every login, so dashboard role edits for these users do not stick.
+Because roles only change at sign-in, `session_max_age` (seconds, seven days by
+default) bounds how long a removed group or a disabled provider account keeps
+working.
 
 LDAP bind login is enabled through `[server.ldap]` and exposed at `/auth/ldap`:
 

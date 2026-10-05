@@ -329,6 +329,9 @@ pub struct OidcProviderConfig {
   pub allowed_groups:     Vec<String>,
   #[serde(default)]
   pub role_mappings:      Vec<OidcRoleMapping>,
+  /// Seconds a session from this provider lasts, so role or group changes at
+  /// the provider apply by the next sign-in. Defaults to seven days.
+  pub session_max_age:    Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
