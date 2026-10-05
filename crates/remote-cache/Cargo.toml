@@ -1,0 +1,39 @@
+[package]
+name                 = "circus-remote-cache"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description          = "REAPI remote cache for Circus"
+
+[[bin]]
+name = "circus-remote-cache"
+path = "src/main.rs"
+
+[dependencies]
+async-stream.workspace     = true
+blake3.workspace           = true
+bytes.workspace            = true
+clap.workspace             = true
+color-eyre.workspace       = true
+futures.workspace          = true
+hex.workspace              = true
+http.workspace             = true
+http-body-util.workspace   = true
+hyper.workspace            = true
+hyper-util.workspace       = true
+percent-encoding.workspace = true
+prost.workspace            = true
+rustls.workspace           = true
+sha2.workspace             = true
+tokio.workspace            = true
+tokio-rustls.workspace     = true
+tracing.workspace          = true
+uuid.workspace             = true
+zstd.workspace             = true
+
+circus-common.workspace = true
+circus-config.workspace = true
+
+[lints]
+workspace = true

@@ -12,11 +12,62 @@ use crate::{
   Config,
   DatabaseConfig,
   EvaluatorSystems,
+  RemoteCacheConfig,
 };
 
 /// Leaves at least 15 characters of the 32-character username limit for the
 /// part derived from OIDC claims.
 const MAX_OIDC_PROVIDER_NAME_LEN: usize = 16;
+
+impl RemoteCacheConfig {
+  /// Checked only by `circus-remote-cache`, so a mistake here never stops
+  /// the other services sharing the file.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error when an instance or listener is unusable.
+  pub fn validate(&self) -> eyre::Result<()> {
+    if self.listeners.is_empty() {
+      bail!("remote_cache.listeners is empty, nothing to serve");
+    }
+    if self.instances.is_empty() {
+      bail!("remote_cache.instances needs at least one instance");
+    }
+    let mut names = std::collections::HashSet::new();
+    for instance in &self.instances {
+      if matches!(instance.name.as_str(), "" | "." | "..")
+        || instance.name.contains(['/', '\\', '\0'])
+      {
+        bail!(
+          "remote_cache instance name {:?} must be a single path component",
+          instance.name
+        );
+      }
+      if !names.insert(instance.name.as_str()) {
+        bail!("remote_cache instance {:?} is listed twice", instance.name);
+      }
+      if instance.cas_max_bytes == 0 || instance.ac_max_bytes == 0 {
+        bail!(
+          "remote_cache instance {:?} needs non-zero byte budgets",
+          instance.name
+        );
+      }
+    }
+    for listener in &self.listeners {
+      if let Some(unknown) = listener
+        .instances
+        .iter()
+        .find(|name| !names.contains(name.as_str()))
+      {
+        bail!(
+          "remote_cache listener {} names unknown instance {unknown:?}",
+          listener.bind
+        );
+      }
+    }
+    Ok(())
+  }
+}
 
 impl CacheGcConfig {
   fn validate(&self, upload: &CacheUploadConfig) -> eyre::Result<()> {
