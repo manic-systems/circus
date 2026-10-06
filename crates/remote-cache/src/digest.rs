@@ -4,6 +4,7 @@
 
 use std::{fmt, str::FromStr};
 
+use data_encoding::{HEXLOWER, HEXLOWER_PERMISSIVE};
 use sha2::{Digest as _, Sha256};
 
 use crate::grpc::Status;
@@ -90,13 +91,13 @@ pub struct Hash([u8; 32]);
 impl Hash {
   /// The directory an object lives under, its first byte in hex.
   pub fn shard(&self) -> String {
-    hex::encode(&self.0[..1])
+    HEXLOWER.encode(&self.0[..1])
   }
 }
 
 impl fmt::Display for Hash {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str(&hex::encode(self.0))
+    formatter.write_str(&HEXLOWER.encode(&self.0))
   }
 }
 
@@ -105,11 +106,19 @@ impl FromStr for Hash {
 
   fn from_str(hex: &str) -> Result<Self, Status> {
     let mut bytes = [0; 32];
-    hex::decode_to_slice(hex, &mut bytes).map_err(|_| {
+    let invalid = || {
       Status::invalid_argument(format!(
         "digest hash {hex:?} is not 64 hex digits"
       ))
-    })?;
+    };
+
+    if hex.len() != 64 {
+      return Err(invalid());
+    }
+
+    HEXLOWER_PERMISSIVE
+      .decode_mut(hex.as_bytes(), &mut bytes)
+      .map_err(|_| invalid())?;
 
     Ok(Self(bytes))
   }

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::builds as q;
+use jiff::Timestamp;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -718,9 +718,9 @@ pub struct JobHistoryEntry {
   pub build_id:        Uuid,
   pub status:          BuildStatus,
   pub commit_hash:     String,
-  pub evaluation_time: DateTime<Utc>,
-  pub started_at:      Option<DateTime<Utc>>,
-  pub completed_at:    Option<DateTime<Utc>>,
+  pub evaluation_time: Timestamp,
+  pub started_at:      Option<Timestamp>,
+  pub completed_at:    Option<Timestamp>,
   pub closure_size:    Option<i64>,
 }
 

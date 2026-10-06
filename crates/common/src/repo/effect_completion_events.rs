@@ -1,7 +1,7 @@
 //! Durable completion events for Effect notification delivery.
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::effect_completion_events as q;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use crate::{
@@ -16,7 +16,7 @@ pub struct EffectCompletionEvent {
   pub build:      Build,
   pub attempt:    i32,
   pub revision:   i64,
-  pub created_at: DateTime<Utc>,
+  pub created_at: Timestamp,
 }
 
 impl TryFrom<q::EffectCompletionEventRow> for EffectCompletionEvent {

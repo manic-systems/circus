@@ -459,18 +459,18 @@ pub struct JobHistory {
     pub build_id: uuid::Uuid,
     pub status: String,
     pub commit_hash: String,
-    pub evaluation_time: chrono::DateTime<chrono::Utc>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub evaluation_time: jiff::Timestamp,
+    pub started_at: Option<jiff::Timestamp>,
+    pub completed_at: Option<jiff::Timestamp>,
     pub closure_size: Option<i64>,
 }
 pub struct JobHistoryBorrowed<'a> {
     pub build_id: uuid::Uuid,
     pub status: &'a str,
     pub commit_hash: &'a str,
-    pub evaluation_time: chrono::DateTime<chrono::Utc>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub evaluation_time: jiff::Timestamp,
+    pub started_at: Option<jiff::Timestamp>,
+    pub completed_at: Option<jiff::Timestamp>,
     pub closure_size: Option<i64>,
 }
 impl<'a> From<JobHistoryBorrowed<'a>> for JobHistory {

@@ -317,7 +317,7 @@ async fn fire_due_schedules(
       &schedule.when_spec,
       &schedule_seed(schedule.jobset_id, &schedule.name),
     )
-    .and_then(|when| when.next_after(Utc::now()));
+    .and_then(|when| when.next_after(Timestamp::now()));
     let next = match next {
       Ok(next) => next,
       Err(e) => {
@@ -373,7 +373,7 @@ async fn sync_schedules(
     .into_iter()
     .map(|schedule| (schedule.name.clone(), schedule))
     .collect::<HashMap<_, _>>();
-  let now = Utc::now();
+  let now = Timestamp::now();
   let mut kept = Vec::new();
   for (name, when_spec) in schedules {
     let next_due_at = match existing.get(name) {
@@ -1701,13 +1701,13 @@ async fn discover_projects_without_jobsets(
 
 #[cfg(test)]
 mod tests {
-  use chrono::Utc;
   use circus_common::models::{
     Evaluation,
     EvaluationStatus,
     EvaluationTriggerKind,
     JobsetTriggerMode,
   };
+  use jiff::Timestamp;
   use uuid::Uuid;
 
   use super::{accepts_pending_evaluation, evaluation_allows_declarative_sync};
@@ -1718,7 +1718,7 @@ mod tests {
       id: Uuid::new_v4(),
       jobset_id: Uuid::new_v4(),
       commit_hash: "a".repeat(40),
-      evaluation_time: Utc::now(),
+      evaluation_time: Timestamp::now(),
       status: EvaluationStatus::Running,
       error_message: None,
       inputs_hash: None,
