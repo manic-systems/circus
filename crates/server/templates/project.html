@@ -34,7 +34,7 @@
         {% endmatch %}
     </p>
     <p>
-        <strong>Created:</strong> {{ project.created_at.format("%Y-%m-%d %H:%M") }}
+        <strong>Created:</strong> {{ project.created_at.strftime("%Y-%m-%d %H:%M") }}
     </p>
     {% if project.managed_declaratively && !project_mutable %}
         <p class="flash-message">Managed by declarative configuration. Runtime changes are disabled.</p>

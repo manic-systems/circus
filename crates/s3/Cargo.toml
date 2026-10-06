@@ -7,10 +7,10 @@ repository.workspace = true
 description          = "S3 signing helpers for Circus"
 
 [dependencies]
-chrono.workspace           = true
 circus-config.workspace    = true
 data-encoding.workspace    = true
 hmac.workspace             = true
+jiff.workspace             = true
 percent-encoding.workspace = true
 sha2.workspace             = true
 url.workspace              = true

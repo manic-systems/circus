@@ -34,9 +34,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "android_system_properties"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
+checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
 dependencies = [
  "libc",
 ]
@@ -709,9 +709,9 @@ dependencies = [
 name = "circus-codegen"
 version = "0.14.0"
 dependencies = [
- "chrono",
  "deadpool-postgres",
  "futures",
+ "jiff",
  "postgres-protocol",
  "postgres-types",
  "serde",
@@ -725,7 +725,6 @@ name = "circus-common"
 version = "0.14.0"
 dependencies = [
  "argon2",
- "chrono",
  "circus-binary-cache",
  "circus-codegen",
  "circus-config",
@@ -739,6 +738,7 @@ dependencies = [
  "deadpool-postgres",
  "futures",
  "gix",
+ "jiff",
  "jsonwebtoken",
  "nix",
  "num_enum",
@@ -767,7 +767,7 @@ dependencies = [
  "color-eyre",
  "config",
  "data-encoding",
- "humantime-serde",
+ "jiff",
  "serde",
  "serde_json",
  "toml",
@@ -779,7 +779,6 @@ dependencies = [
 name = "circus-evaluator"
 version = "0.14.0"
 dependencies = [
- "chrono",
  "circus-common",
  "circus-config",
  "circus-nix",
@@ -790,6 +789,7 @@ dependencies = [
  "evix",
  "futures",
  "gix",
+ "jiff",
  "libc",
  "serde",
  "serde_json",
@@ -877,7 +877,6 @@ dependencies = [
  "async-compression",
  "capnp",
  "capnp-rpc",
- "chrono",
  "circus-binary-cache",
  "circus-common",
  "circus-config",
@@ -891,6 +890,7 @@ dependencies = [
  "dashmap",
  "data-encoding",
  "futures",
+ "jiff",
  "jsonwebtoken",
  "parking_lot",
  "reqwest 0.13.5",
@@ -913,10 +913,10 @@ dependencies = [
 name = "circus-s3"
 version = "0.14.0"
 dependencies = [
- "chrono",
  "circus-config",
  "data-encoding",
  "hmac",
+ "jiff",
  "percent-encoding",
  "sha2 0.11.0",
  "url",
@@ -930,7 +930,6 @@ dependencies = [
  "async-compression",
  "axum",
  "axum-extra",
- "chrono",
  "circus-binary-cache",
  "circus-common",
  "circus-config",
@@ -945,6 +944,7 @@ dependencies = [
  "data-encoding",
  "futures",
  "hmac",
+ "jiff",
  "jsonwebtoken",
  "ldap3",
  "moka",
@@ -2982,22 +2982,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
-name = "humantime"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
-
-[[package]]
-name = "humantime-serde"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
-dependencies = [
- "humantime",
- "serde",
-]
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4092,8 +4076,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "851ca9db4932932d69f3ea811b1abe63087a0f740a47692619dd40d4899b68be"
 dependencies = [
  "bytes",
- "chrono",
  "fallible-iterator 0.2.0",
+ "jiff",
  "postgres-derive",
  "postgres-protocol",
  "serde_core",

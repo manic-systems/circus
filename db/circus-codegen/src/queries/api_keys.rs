@@ -19,8 +19,8 @@ pub struct ApiKeyRow {
     pub key_hash: String,
     pub role: String,
     pub user_id: Option<uuid::Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub last_used_at: Option<jiff::Timestamp>,
 }
 pub struct ApiKeyRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -28,8 +28,8 @@ pub struct ApiKeyRowBorrowed<'a> {
     pub key_hash: &'a str,
     pub role: &'a str,
     pub user_id: Option<uuid::Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub last_used_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<ApiKeyRowBorrowed<'a>> for ApiKeyRow {
     fn from(

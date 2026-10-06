@@ -875,8 +875,8 @@ async fn collect_metrics_and_alert(
   if let (Some(started), Some(completed)) =
     (build.started_at, build.completed_at)
   {
-    let duration = completed.signed_duration_since(started);
-    let duration_secs = duration.num_seconds() as f64;
+    let duration = completed.duration_since(started);
+    let duration_secs = duration.as_secs_f64();
 
     if let Err(e) = repo::build_metrics::upsert(
       pool,
@@ -1776,8 +1776,8 @@ mod tests {
       }]),
       managed_declaratively:  false,
       allow_runtime_mutation: None,
-      created_at:             chrono::Utc::now(),
-      updated_at:             chrono::Utc::now(),
+      created_at:             jiff::Timestamp::now(),
+      updated_at:             jiff::Timestamp::now(),
     };
 
     let args = cache_args_for_build(&cache_config, Some(&project));
@@ -1812,8 +1812,8 @@ mod tests {
       cache_upstreams:        BinaryCacheUpstreams::default(),
       managed_declaratively:  false,
       allow_runtime_mutation: None,
-      created_at:             chrono::Utc::now(),
-      updated_at:             chrono::Utc::now(),
+      created_at:             jiff::Timestamp::now(),
+      updated_at:             jiff::Timestamp::now(),
     };
 
     let args = cache_args_for_build(&cache_config, Some(&project));
@@ -1851,8 +1851,8 @@ mod tests {
       }]),
       managed_declaratively:  false,
       allow_runtime_mutation: None,
-      created_at:             chrono::Utc::now(),
-      updated_at:             chrono::Utc::now(),
+      created_at:             jiff::Timestamp::now(),
+      updated_at:             jiff::Timestamp::now(),
     };
 
     let args = cache_args_for_build(&cache_config, Some(&project));

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use chrono::Utc;
 use circus_common::models::{Build, BuildStatus, Evaluation};
+use jiff::Timestamp;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -79,18 +79,18 @@ impl OperatorBuild {
       status_text: text.to_string(),
       status_class: class.to_string(),
       system: b.system.clone().unwrap_or_else(|| "-".to_string()),
-      created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+      created_at: b.created_at.strftime("%Y-%m-%d %H:%M").to_string(),
       started_at: b
         .started_at
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|t| t.strftime("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default(),
       completed_at: b
         .completed_at
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|t| t.strftime("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default(),
       duration: format_duration(b.started_at.as_ref(), b.completed_at.as_ref()),
       started_epoch: if b.completed_at.is_none() {
-        b.started_at.map(|t| t.timestamp())
+        b.started_at.map(jiff::Timestamp::as_second)
       } else {
         None
       },
@@ -163,7 +163,7 @@ impl OperatorProject {
             (
               text.to_string(),
               class.to_string(),
-              e.evaluation_time.format("%Y-%m-%d %H:%M").to_string(),
+              e.evaluation_time.strftime("%Y-%m-%d %H:%M").to_string(),
             )
           },
         );
@@ -191,7 +191,7 @@ impl OperatorProject {
         } else {
           systems.join(", ")
         },
-        updated_at: p.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+        updated_at: p.updated_at.strftime("%Y-%m-%d %H:%M").to_string(),
       });
     }
     Ok(project_summaries)
@@ -366,7 +366,7 @@ pub async fn overview(
     workers,
     worker_online,
     worker_total,
-    refreshed_at: Utc::now().format("%H:%M UTC").to_string(),
+    refreshed_at: Timestamp::now().strftime("%H:%M UTC").to_string(),
   })
 }
 
@@ -501,12 +501,12 @@ async fn context_for_builds<'a>(
 }
 
 fn format_duration(
-  started: Option<&chrono::DateTime<chrono::Utc>>,
-  completed: Option<&chrono::DateTime<chrono::Utc>>,
+  started: Option<&jiff::Timestamp>,
+  completed: Option<&jiff::Timestamp>,
 ) -> String {
   match (started, completed) {
     (Some(s), Some(c)) => {
-      let secs = (*c - *s).num_seconds();
+      let secs = c.duration_since(*s).as_secs();
       if secs < 0 {
         return String::new();
       }

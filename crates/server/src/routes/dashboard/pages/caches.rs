@@ -38,10 +38,10 @@ fn cache_db_err(error: circus_common::CiError) -> Response {
   crate::error::ApiError(error).into_response()
 }
 
-fn fmt_opt_ts(ts: Option<chrono::DateTime<chrono::Utc>>) -> String {
+fn fmt_opt_ts(ts: Option<jiff::Timestamp>) -> String {
   ts.map_or_else(
     || "-".to_owned(),
-    |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+    |t| t.strftime("%Y-%m-%d %H:%M UTC").to_string(),
   )
 }
 
@@ -360,16 +360,16 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
           .unwrap_or_default(),
         created_at:       it
           .created_at
-          .format("%Y-%m-%d %H:%M UTC")
+          .strftime("%Y-%m-%d %H:%M UTC")
           .to_string(),
-        created_iso:      it.created_at.to_rfc3339(),
+        created_iso:      it.created_at.to_string(),
         last_fetched:     it.last_fetched_at.map_or_else(
           || "Never".to_owned(),
-          |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+          |t| t.strftime("%Y-%m-%d %H:%M UTC").to_string(),
         ),
         last_fetched_iso: it
           .last_fetched_at
-          .map(|t| t.to_rfc3339())
+          .map(|t| t.to_string())
           .unwrap_or_default(),
         store_path:       it.store_path,
       }
@@ -403,12 +403,10 @@ pub(in crate::routes::dashboard) async fn cache_nars_page(
     nar_size: format_bytes(summary.uncompressed_bytes),
     file_size: format_bytes(summary.compressed_bytes),
     last_uploaded: fmt_opt_ts(last_uploaded),
-    last_uploaded_iso: last_uploaded
-      .map(|t| t.to_rfc3339())
-      .unwrap_or_default(),
+    last_uploaded_iso: last_uploaded.map(|t| t.to_string()).unwrap_or_default(),
     oldest_fetched: fmt_opt_ts(oldest_fetched),
     oldest_fetched_iso: oldest_fetched
-      .map(|t| t.to_rfc3339())
+      .map(|t| t.to_string())
       .unwrap_or_default(),
     nars,
     page: pagination.page,

@@ -7,8 +7,8 @@
 //!
 //! See `crates/migrations/migrations/0012_builder_sessions.sql`.
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::builder_sessions as q;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -30,7 +30,7 @@ pub struct BuilderSession {
   pub cpu_count:            i32,
   pub max_jobs:             i32,
   pub proto_version:        String,
-  pub last_seen:            Option<DateTime<Utc>>,
+  pub last_seen:            Option<Timestamp>,
   pub current_jobs:         i32,
   pub load1:                Option<f32>,
   pub load5:                Option<f32>,
@@ -46,14 +46,14 @@ pub struct BuilderSession {
   pub builds_succeeded:     i64,
   pub builds_failed:        i64,
   pub consecutive_failures: i32,
-  pub disabled_until:       Option<DateTime<Utc>>,
+  pub disabled_until:       Option<Timestamp>,
   /// Single-session CI runner that never reconnects (see
   /// `prune_stale_ephemeral`).
   pub ephemeral:            bool,
   /// How the agent authenticated on register: `"token"` or `"oidc"`.
   pub auth_kind:            String,
-  pub created_at:           DateTime<Utc>,
-  pub updated_at:           DateTime<Utc>,
+  pub created_at:           Timestamp,
+  pub updated_at:           Timestamp,
 }
 
 impl From<q::BuilderSessionRow> for BuilderSession {

@@ -519,7 +519,7 @@ async fn cache_storage_timeseries(
   )
   .await?;
   Ok(Json(StorageSeries {
-    timestamps:     series.iter().map(|p| p.bucket_time.to_rfc3339()).collect(),
+    timestamps:     series.iter().map(|p| p.bucket_time.to_string()).collect(),
     packages_added: series.iter().map(|p| p.packages_added).collect(),
     bytes_added:    series.iter().map(|p| p.bytes_added).collect(),
   }))
@@ -551,7 +551,7 @@ async fn cache_traffic_timeseries(
   )
   .await?;
   Ok(Json(TrafficSeries {
-    timestamps: series.iter().map(|p| p.bucket_time.to_rfc3339()).collect(),
+    timestamps: series.iter().map(|p| p.bucket_time.to_string()).collect(),
     requests:   series.iter().map(|p| p.requests).collect(),
     bytes:      series.iter().map(|p| p.bytes).collect(),
   }))
@@ -571,8 +571,8 @@ struct NarsQuery {
 
 #[derive(Debug, Serialize)]
 struct NarExtremes {
-  last_uploaded:  Option<chrono::DateTime<chrono::Utc>>,
-  oldest_fetched: Option<chrono::DateTime<chrono::Utc>>,
+  last_uploaded:  Option<jiff::Timestamp>,
+  oldest_fetched: Option<jiff::Timestamp>,
 }
 
 #[derive(Debug, Serialize)]

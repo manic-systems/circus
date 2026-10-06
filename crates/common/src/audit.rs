@@ -1,7 +1,7 @@
 //! Append-only audit log for security-relevant actions.
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::audit as q;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ impl Actor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
   pub id:          Uuid,
-  pub occurred_at: DateTime<Utc>,
+  pub occurred_at: Timestamp,
   pub actor_kind:  String,
   pub actor_id:    Option<Uuid>,
   pub actor_name:  Option<String>,

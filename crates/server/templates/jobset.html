@@ -101,7 +101,7 @@
         <dt>Last checked</dt>
         <dd>
             {% if let Some(t) = jobset.last_checked_at %}
-                {{ t.format("%Y-%m-%d %H:%M:%S") }}
+                {{ t.strftime("%Y-%m-%d %H:%M:%S") }}
             {% else %}
                 Never
             {% endif %}

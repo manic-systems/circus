@@ -1,6 +1,6 @@
 use axum::{extract::Query, response::Response};
-use chrono::{Duration, Utc};
 use circus_common::models::{BuildProduct, SystemStatus};
+use jiff::{SignedDuration, Timestamp};
 
 use super::{
   super::{
@@ -336,7 +336,7 @@ pub(super) async fn build() -> Response {
       content_type: Some("application/x-nix-archive".into()),
       is_directory: true,
       gc_root_path: Some("/nix/var/nix/gcroots/circus/preview".into()),
-      created_at: Utc::now() - Duration::minutes(1),
+      created_at: Timestamp::now() - SignedDuration::from_mins(1),
     }],
     dependencies:      vec![fixtures::build_view(
       6,

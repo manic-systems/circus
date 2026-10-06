@@ -825,7 +825,7 @@ async fn start_session(
   let (session_token, _) = repo::users::create_session_for(
     &state.pool,
     user.id,
-    chrono::Duration::seconds(max_age),
+    jiff::SignedDuration::from_secs(max_age),
   )
   .await?;
   audit_login(

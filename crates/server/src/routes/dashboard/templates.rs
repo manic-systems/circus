@@ -327,9 +327,9 @@ pub(super) struct PinnedOutputView {
 
 #[cfg(test)]
 mod tests {
-  use chrono::Utc;
   use circus_common::models::BinaryCacheUpstreams;
   use circus_config::UiConfig;
+  use jiff::Timestamp;
 
   use super::*;
 
@@ -432,8 +432,8 @@ mod tests {
         cache_upstreams:        BinaryCacheUpstreams::default(),
         managed_declaratively:  true,
         allow_runtime_mutation: Some(false),
-        created_at:             Utc::now(),
-        updated_at:             Utc::now(),
+        created_at:             Timestamp::now(),
+        updated_at:             Timestamp::now(),
       },
       jobsets:         Vec::new(),
       recent_evals:    Vec::new(),

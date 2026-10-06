@@ -92,8 +92,8 @@ pub struct BuildSearchFilters {
   pub project_id:     Option<Uuid>,
   pub jobset_id:      Option<Uuid>,
   pub evaluation_id:  Option<Uuid>,
-  pub created_after:  Option<chrono::DateTime<chrono::Utc>>,
-  pub created_before: Option<chrono::DateTime<chrono::Utc>>,
+  pub created_after:  Option<jiff::Timestamp>,
+  pub created_before: Option<jiff::Timestamp>,
   pub min_priority:   Option<i32>,
   pub max_priority:   Option<i32>,
 }
@@ -101,8 +101,8 @@ pub struct BuildSearchFilters {
 /// Search filters for projects
 #[derive(Debug, Clone, Default)]
 pub struct ProjectSearchFilters {
-  pub created_after:  Option<chrono::DateTime<chrono::Utc>>,
-  pub created_before: Option<chrono::DateTime<chrono::Utc>>,
+  pub created_after:  Option<jiff::Timestamp>,
+  pub created_before: Option<jiff::Timestamp>,
   pub has_jobsets:    Option<bool>,
 }
 
@@ -120,8 +120,8 @@ pub struct EvaluationSearchFilters {
   pub project_id:      Option<Uuid>,
   pub jobset_id:       Option<Uuid>,
   pub has_builds:      Option<bool>,
-  pub finished_after:  Option<chrono::DateTime<chrono::Utc>>,
-  pub finished_before: Option<chrono::DateTime<chrono::Utc>>,
+  pub finished_after:  Option<jiff::Timestamp>,
+  pub finished_before: Option<jiff::Timestamp>,
 }
 
 /// Search parameters

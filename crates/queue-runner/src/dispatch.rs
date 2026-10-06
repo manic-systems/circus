@@ -646,13 +646,13 @@ pub(crate) async fn try_read_drv_outputs(
 mod tests {
   use std::collections::HashSet;
 
-  use chrono::Utc;
   use circus_common::models::{
     AuthKind,
     EvaluationStatus,
     JobsetState,
     JobsetTriggerMode,
   };
+  use jiff::Timestamp;
   use uuid::Uuid;
 
   use super::{
@@ -673,7 +673,7 @@ mod tests {
   }
 
   fn jobset(branch: Option<&str>) -> circus_common::models::Jobset {
-    let now = Utc::now();
+    let now = Timestamp::now();
     circus_common::models::Jobset {
       id:                Uuid::new_v4(),
       project_id:        Uuid::new_v4(),
@@ -706,7 +706,7 @@ mod tests {
       id: Uuid::new_v4(),
       jobset_id: Uuid::new_v4(),
       commit_hash: "0123456789012345678901234567890123456789".into(),
-      evaluation_time: Utc::now(),
+      evaluation_time: Timestamp::now(),
       status: EvaluationStatus::Completed,
       error_message: None,
       inputs_hash: None,

@@ -46,7 +46,6 @@ bytes = "1.12.1"
 capnp = "0.27.2"
 capnp-rpc = "0.27.0"
 capnpc = "0.27.0"
-chrono = { version = "0.4.45", features = [ "serde" ] }
 clap = { version = "4.6.7", features = [ "derive" ] }
 color-eyre = "0.6.5"
 comfy-table = "8.0.0"
@@ -71,7 +70,7 @@ gix = { version = "0.88.0", default-features = false, features = [
 ] }
 hex-literal = "1.1.0"
 hmac = "0.13.0"
-humantime-serde = "1.1.1"
+jiff = { version = "0.2.37", features = [ "serde" ] }
 ldap3 = { version = "0.12.1", default-features = false, features = [ "tls-rustls", "tls-rustls-ring" ] }
 lettre = { version = "0.11.23", default-features = false, features = [
   "tokio1-rustls-tls",
@@ -117,7 +116,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.20"
 time = "0.3.55"
 tokio = { version = "1.53.1", features = [ "full" ] }
-tokio-postgres = { version = "0.7.18", features = [ "with-chrono-0_4", "with-uuid-1", "with-serde_json-1" ] }
+tokio-postgres = { version = "0.7.18", features = [ "with-jiff-0_2", "with-uuid-1", "with-serde_json-1" ] }
 tokio-postgres-rustls = "0.14"
 tokio-rusqlite = "0.8.0"
 tokio-rustls = { version = "0.26.5", default-features = false, features = [ "ring", "tls12" ] }

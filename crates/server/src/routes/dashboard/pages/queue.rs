@@ -130,8 +130,7 @@ pub(in crate::routes::dashboard) async fn queue_page(
     .iter()
     .map(|b| {
       let elapsed = b.started_at.map_or_else(String::new, |started| {
-        let dur = chrono::Utc::now() - started;
-        format_elapsed(dur.num_seconds())
+        format_elapsed(jiff::Timestamp::now().duration_since(started).as_secs())
       });
       let builder_name = b
         .agent_machine_id
@@ -145,13 +144,13 @@ pub(in crate::routes::dashboard) async fn queue_page(
         jobset_id,
         jobset_name,
         system: b.system.clone().unwrap_or_else(|| "unknown".to_string()),
-        created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        created_at: b.created_at.strftime("%Y-%m-%d %H:%M").to_string(),
         started_at: b
           .started_at
-          .map(|t| t.format("%H:%M:%S").to_string())
+          .map(|t| t.strftime("%H:%M:%S").to_string())
           .unwrap_or_default(),
         elapsed,
-        started_epoch: b.started_at.map(|t| t.timestamp()),
+        started_epoch: b.started_at.map(jiff::Timestamp::as_second),
         priority: b.priority,
         builder_name,
         queue_pos: 0,
@@ -172,7 +171,7 @@ pub(in crate::routes::dashboard) async fn queue_page(
         jobset_id,
         jobset_name,
         system: b.system.clone().unwrap_or_else(|| "unknown".to_string()),
-        created_at: b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        created_at: b.created_at.strftime("%Y-%m-%d %H:%M").to_string(),
         started_at: String::new(),
         elapsed: String::new(),
         started_epoch: None,

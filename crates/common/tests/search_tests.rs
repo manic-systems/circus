@@ -309,10 +309,10 @@ async fn test_build_search_with_filters() {
       jobset_id:       Some(jobset.id),
       has_builds:      Some(true),
       finished_after:  Some(
-        evaluation.evaluation_time - chrono::Duration::minutes(1),
+        evaluation.evaluation_time - jiff::SignedDuration::from_mins(1),
       ),
       finished_before: Some(
-        evaluation.evaluation_time + chrono::Duration::minutes(1),
+        evaluation.evaluation_time + jiff::SignedDuration::from_mins(1),
       ),
     }),
     ..Default::default()

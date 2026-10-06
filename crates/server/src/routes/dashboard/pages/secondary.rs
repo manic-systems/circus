@@ -50,7 +50,7 @@ pub(in crate::routes::dashboard) async fn channels_page(
         current_evaluation_id: channel.current_evaluation_id,
         updated_at:            channel
           .updated_at
-          .format("%Y-%m-%d %H:%M UTC")
+          .strftime("%Y-%m-%d %H:%M UTC")
           .to_string(),
         status_text:           if has_eval {
           "Active".into()

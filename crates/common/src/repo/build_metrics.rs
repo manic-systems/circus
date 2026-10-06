@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::build_metrics as q;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use crate::{db::PgPool, error::Result, models::BuildMetric};
@@ -7,14 +7,14 @@ use crate::{db::PgPool, error::Result, models::BuildMetric};
 /// Time-series data point for metrics visualization.
 #[derive(Debug, Clone)]
 pub struct TimeseriesPoint {
-  pub timestamp: DateTime<Utc>,
+  pub timestamp: Timestamp,
   pub value:     f64,
 }
 
 /// Build statistics for a time bucket.
 #[derive(Debug, Clone)]
 pub struct BuildStatsBucket {
-  pub bucket_time:   DateTime<Utc>,
+  pub bucket_time:   Timestamp,
   pub total_builds:  i64,
   pub failed_builds: i64,
   pub avg_duration:  Option<f64>,
@@ -23,7 +23,7 @@ pub struct BuildStatsBucket {
 /// Duration percentile data for a time bucket.
 #[derive(Debug, Clone)]
 pub struct DurationPercentiles {
-  pub bucket_time: DateTime<Utc>,
+  pub bucket_time: Timestamp,
   pub p50:         Option<f64>,
   pub p95:         Option<f64>,
   pub p99:         Option<f64>,

@@ -17,14 +17,14 @@ pub struct NewsRow {
     pub title: String,
     pub content: String,
     pub created_by: Option<uuid::Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct NewsRowBorrowed<'a> {
     pub id: uuid::Uuid,
     pub title: &'a str,
     pub content: &'a str,
     pub created_by: Option<uuid::Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<NewsRowBorrowed<'a>> for NewsRow {
     fn from(

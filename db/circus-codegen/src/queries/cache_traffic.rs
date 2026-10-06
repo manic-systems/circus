@@ -25,13 +25,13 @@ pub struct StorageTimeseriesParams {
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct TrafficTimeseries {
-    pub bucket_time: chrono::DateTime<chrono::Utc>,
+    pub bucket_time: jiff::Timestamp,
     pub requests: i64,
     pub bytes: i64,
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct StorageTimeseries {
-    pub bucket_time: chrono::DateTime<chrono::Utc>,
+    pub bucket_time: jiff::Timestamp,
     pub packages_added: i64,
     pub bytes_added: i64,
 }

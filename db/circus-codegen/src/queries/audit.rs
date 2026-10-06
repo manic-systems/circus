@@ -27,7 +27,7 @@ pub struct ListParams {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuditLogRow {
     pub id: uuid::Uuid,
-    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub occurred_at: jiff::Timestamp,
     pub actor_kind: String,
     pub actor_id: Option<uuid::Uuid>,
     pub actor_name: Option<String>,
@@ -39,7 +39,7 @@ pub struct AuditLogRow {
 }
 pub struct AuditLogRowBorrowed<'a> {
     pub id: uuid::Uuid,
-    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub occurred_at: jiff::Timestamp,
     pub actor_kind: &'a str,
     pub actor_id: Option<uuid::Uuid>,
     pub actor_name: Option<&'a str>,

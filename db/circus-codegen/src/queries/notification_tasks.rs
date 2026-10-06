@@ -19,10 +19,10 @@ pub struct NotificationTaskRow {
     pub status: String,
     pub attempts: i32,
     pub max_attempts: i32,
-    pub next_retry_at: chrono::DateTime<chrono::Utc>,
+    pub next_retry_at: jiff::Timestamp,
     pub last_error: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub completed_at: Option<jiff::Timestamp>,
 }
 pub struct NotificationTaskRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -31,10 +31,10 @@ pub struct NotificationTaskRowBorrowed<'a> {
     pub status: &'a str,
     pub attempts: i32,
     pub max_attempts: i32,
-    pub next_retry_at: chrono::DateTime<chrono::Utc>,
+    pub next_retry_at: jiff::Timestamp,
     pub last_error: Option<&'a str>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub completed_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<NotificationTaskRowBorrowed<'a>> for NotificationTaskRow {
     fn from(

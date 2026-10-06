@@ -13,7 +13,6 @@ use axum::{
   extract::{Query, State},
   routing::get,
 };
-use chrono::{DateTime, Utc};
 use circus_common::{
   models::{Build, Evaluation, Jobset, Project},
   repo::search::{
@@ -31,6 +30,7 @@ use circus_common::{
     search as advanced_search,
   },
 };
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -76,11 +76,11 @@ struct SearchRequest {
 
   /// Filter builds created after this date (ISO 8601)
   #[serde(rename = "build_after")]
-  build_after: Option<DateTime<Utc>>,
+  build_after: Option<Timestamp>,
 
   /// Filter builds created before this date (ISO 8601)
   #[serde(rename = "build_before")]
-  build_before: Option<DateTime<Utc>>,
+  build_before: Option<Timestamp>,
 
   /// Minimum build priority
   #[serde(rename = "build_min_priority")]
@@ -93,11 +93,11 @@ struct SearchRequest {
   // Project filters
   /// Filter projects created after this date (ISO 8601)
   #[serde(rename = "project_after")]
-  project_after: Option<DateTime<Utc>>,
+  project_after: Option<Timestamp>,
 
   /// Filter projects created before this date (ISO 8601)
   #[serde(rename = "project_before")]
-  project_before: Option<DateTime<Utc>>,
+  project_before: Option<Timestamp>,
 
   // Jobset filters
   /// Filter jobsets by project ID
@@ -123,11 +123,11 @@ struct SearchRequest {
 
   /// Filter evaluations finished after this date (ISO 8601)
   #[serde(rename = "eval_after")]
-  eval_after: Option<DateTime<Utc>>,
+  eval_after: Option<Timestamp>,
 
   /// Filter evaluations finished before this date (ISO 8601)
   #[serde(rename = "eval_before")]
-  eval_before: Option<DateTime<Utc>>,
+  eval_before: Option<Timestamp>,
 
   // Sorting
   /// Sort builds by: `created_at`, `job_name`, status, priority (default:

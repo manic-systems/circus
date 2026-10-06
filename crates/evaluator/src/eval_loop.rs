@@ -7,7 +7,6 @@ use std::{
   time::Duration,
 };
 
-use chrono::Utc;
 use circus_common::{
   PgPool,
   error::{CiError, check_disk_space},
@@ -27,6 +26,7 @@ use circus_common::{
 use circus_config::{DeclarativeJobset, EvaluatorConfig, NotificationsConfig};
 use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
+use jiff::Timestamp;
 use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -215,7 +215,7 @@ async fn run_cycle(
 
   // Then, git polling for jobsets due by check_interval, excluding any
   // we just handled via the push path (their work is already current).
-  let now = Utc::now();
+  let now = Timestamp::now();
   let ready: Vec<_> = active
     .into_iter()
     .filter(|js| {
@@ -223,7 +223,7 @@ async fn run_cycle(
         return false;
       }
       js.last_checked_at.is_none_or(|last| {
-        let elapsed = (now - last).num_seconds();
+        let elapsed = now.duration_since(last).as_secs();
         elapsed >= i64::from(js.check_interval)
       })
     })
@@ -545,9 +545,9 @@ async fn run_nix_and_record_builds(
 ) -> color_eyre::Result<()> {
   let max_eval_time = config.max_eval_time.map(Duration::from_secs);
   let nix_timeout = max_eval_time.map_or(nix_timeout, |limit| {
-    let elapsed = (Utc::now() - eval.evaluation_time)
-      .to_std()
-      .unwrap_or_default();
+    let elapsed =
+      Duration::try_from(Timestamp::now().duration_since(eval.evaluation_time))
+        .unwrap_or_default();
     limit.saturating_sub(elapsed).min(nix_timeout)
   });
   if max_eval_time.is_some_and(|_| nix_timeout.is_zero()) {
@@ -658,9 +658,10 @@ async fn run_nix_and_record_builds(
       let msg = e.to_string();
       tracing::error!(jobset = %jobset.name, "Evaluation failed: {msg}");
       let status = if max_eval_time.is_some_and(|limit| {
-        (Utc::now() - eval.evaluation_time)
-          .to_std()
-          .is_ok_and(|elapsed| elapsed >= limit)
+        Duration::try_from(
+          Timestamp::now().duration_since(eval.evaluation_time),
+        )
+        .is_ok_and(|elapsed| elapsed >= limit)
       }) {
         EvaluationStatus::TimedOut
       } else {

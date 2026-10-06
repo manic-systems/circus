@@ -39,7 +39,7 @@ pub struct StarredJobRow {
     pub project_id: uuid::Uuid,
     pub jobset_id: Option<uuid::Uuid>,
     pub job_name: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct StarredJobRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -47,7 +47,7 @@ pub struct StarredJobRowBorrowed<'a> {
     pub project_id: uuid::Uuid,
     pub jobset_id: Option<uuid::Uuid>,
     pub job_name: &'a str,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<StarredJobRowBorrowed<'a>> for StarredJobRow {
     fn from(
