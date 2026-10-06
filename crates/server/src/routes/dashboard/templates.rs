@@ -86,6 +86,7 @@ pub(super) struct ProjectsTemplate {
 pub(super) struct ProjectTemplate {
   pub(super) ui:              UiTemplateConfig,
   pub(super) project:         Project,
+  pub(super) repository_page: Option<url::Url>,
   pub(super) jobsets:         Vec<Jobset>,
   pub(super) recent_evals:    Vec<EvalView>,
   pub(super) project_mutable: bool,
@@ -420,6 +421,7 @@ mod tests {
   fn declarative_project_hides_mutation_controls() {
     let html = ProjectTemplate {
       ui:              UiTemplateConfig::from_config(&UiConfig::default()),
+      repository_page: None,
       project:         Project {
         id:                     Uuid::nil(),
         name:                   "declarative".into(),

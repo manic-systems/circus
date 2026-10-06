@@ -25,7 +25,13 @@
         {% when None %}
     {% endmatch %}
     <p>
-        <strong>Repository:</strong> {{ project.repository_url }}
+        <strong>Repository:</strong>
+        {% match repository_page %}
+            {% when Some with (href) %}
+                <a href="{{ href }}">{{ project.repository_url }}</a>
+            {% when None %}
+                {{ project.repository_url }}
+        {% endmatch %}
     </p>
     <p>
         <strong>Created:</strong> {{ project.created_at.format("%Y-%m-%d %H:%M") }}

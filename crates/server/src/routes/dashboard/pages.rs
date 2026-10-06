@@ -49,6 +49,7 @@ use super::{
     eval_view_with_context,
     format_duration,
     not_found,
+    repository_page_url,
     status_badge,
   },
   templates::{
@@ -354,6 +355,7 @@ pub(super) async fn project_page(
     project_mutable: crate::routes::declarative::project_is_mutable(
       &state, &project,
     ),
+    repository_page: repository_page_url(&project.repository_url),
     project,
     jobsets,
     recent_evals: evals.iter().map(eval_view).collect(),
