@@ -29,6 +29,7 @@ use circus_proto::{
   runner,
 };
 use color_eyre::eyre::{Context as _, bail};
+use data_encoding::HEXLOWER_PERMISSIVE;
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use tokio::{
@@ -1365,9 +1366,11 @@ fn validate_upload_compression(compression: &str) -> Result<(), capnp::Error> {
 
 fn validate_token_hashes(hashes: &[String]) -> color_eyre::Result<()> {
   for (idx, hash) in hashes.iter().enumerate() {
-    let decoded = hex::decode(hash.trim()).with_context(|| {
-      format!("queue_runner.rpc.auth_tokens[{idx}] is not hex")
-    })?;
+    let decoded = HEXLOWER_PERMISSIVE
+      .decode(hash.trim().as_bytes())
+      .with_context(|| {
+        format!("queue_runner.rpc.auth_tokens[{idx}] is not hex")
+      })?;
     if decoded.len() != 32 {
       bail!(
         "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got {}",
@@ -1387,7 +1390,8 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
   let digest = hasher.finalize();
   let mut matched = 0_u8;
   for allowed_hash in allowed {
-    if let Ok(decoded) = hex::decode(allowed_hash.trim())
+    if let Ok(decoded) =
+      HEXLOWER_PERMISSIVE.decode(allowed_hash.trim().as_bytes())
       && decoded.len() == digest.len()
     {
       matched |= decoded.as_slice().ct_eq(&digest[..]).unwrap_u8();
@@ -1398,18 +1402,20 @@ fn verify_token(allowed: &[String], token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+  use data_encoding::HEXLOWER;
+
   use super::*;
 
   #[test]
   fn verify_token_accepts_configured_sha256_digest() {
     let token = "correct horse battery staple";
-    let digest = hex::encode(Sha256::digest(token.as_bytes()));
+    let digest = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
     assert!(verify_token(&[digest], token));
   }
 
   #[test]
   fn verify_token_rejects_invalid_or_different_digest() {
-    let digest = hex::encode(Sha256::digest(b"other"));
+    let digest = HEXLOWER.encode(&Sha256::digest(b"other"));
     assert!(!verify_token(&["not-hex".into(), digest], "token"));
   }
 

@@ -33,6 +33,7 @@ use circus_config::{
   SigningConfig,
 };
 use dashmap::{DashMap, mapref::entry::Entry};
+use data_encoding::HEXLOWER_PERMISSIVE;
 use tokio::{
   fs,
   process::Command,
@@ -440,8 +441,8 @@ fn canonical_nix_sha256_hash(text: &str) -> Option<String> {
       padded.push('=');
     }
     let bytes = {
-      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-      B64.decode(padded).ok()?
+      use data_encoding::BASE64;
+      BASE64.decode(padded.as_bytes()).ok()?
     };
     return canonical_sha256_bytes(&bytes);
   }
@@ -451,7 +452,7 @@ fn canonical_nix_sha256_hash(text: &str) -> Option<String> {
     return Some(text.to_owned());
   }
   if rest.len() == 64 && rest.bytes().all(|b| b.is_ascii_hexdigit()) {
-    let bytes = hex::decode(rest).ok()?;
+    let bytes = HEXLOWER_PERMISSIVE.decode(rest.as_bytes()).ok()?;
     return canonical_sha256_bytes(&bytes);
   }
   None
@@ -1495,6 +1496,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
 mod tests {
   use circus_common::models::{BinaryCacheUpstream, BinaryCacheUpstreams};
   use circus_config::{CacheUploadConfig, S3CacheConfig};
+  use data_encoding::HEXLOWER;
 
   use super::*;
 
@@ -1509,14 +1511,14 @@ mod tests {
       Some(expected.as_str())
     );
     assert_eq!(
-      canonical_nix_sha256_hash(&format!("sha256:{}", hex::encode(bytes)))
+      canonical_nix_sha256_hash(&format!("sha256:{}", HEXLOWER.encode(&bytes)))
         .as_deref(),
       Some(expected.as_str())
     );
     assert_eq!(
       canonical_nix_sha256_hash(&format!("sha256-{}", {
-        use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-        B64.encode(bytes)
+        use data_encoding::BASE64;
+        BASE64.encode(&bytes)
       }))
       .as_deref(),
       Some(expected.as_str())
@@ -1527,8 +1529,8 @@ mod tests {
   fn test_parse_recursive_path_infos_canonicalizes_sri_nar_hashes() {
     let bytes = [11u8; 32];
     let sri_hash = {
-      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-      format!("sha256-{}", B64.encode(bytes))
+      use data_encoding::BASE64;
+      format!("sha256-{}", BASE64.encode(&bytes))
     };
     let expected_hash =
       format!("sha256:{}", circus_nix::base32::encode_sha256(&bytes));
@@ -1651,12 +1653,12 @@ mod tests {
     let output_nar_bytes = [21u8; 32];
     let dep_nar_bytes = [22u8; 32];
     let output_sri = {
-      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-      format!("sha256-{}", B64.encode(output_nar_bytes))
+      use data_encoding::BASE64;
+      format!("sha256-{}", BASE64.encode(&output_nar_bytes))
     };
     let dep_sri = {
-      use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-      format!("sha256-{}", B64.encode(dep_nar_bytes))
+      use data_encoding::BASE64;
+      format!("sha256-{}", BASE64.encode(&dep_nar_bytes))
     };
     let output_nar_hash = format!(
       "sha256:{}",

@@ -1,7 +1,7 @@
 //! Process-wide rustls and jsonwebtoken crypto provider setup and small
 //! crypto helpers.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use data_encoding::BASE64;
 use jsonwebtoken::{
   Algorithm,
   DecodingKey,
@@ -161,8 +161,8 @@ pub fn encrypt_secret(secret: &str, key: Option<&str>) -> Result<String> {
 
   Ok(format!(
     "{WEBHOOK_SECRET_PREFIX}:{}:{}",
-    STANDARD.encode(nonce_bytes),
-    STANDARD.encode(ciphertext)
+    BASE64.encode(&nonce_bytes),
+    BASE64.encode(&ciphertext)
   ))
 }
 
@@ -184,13 +184,13 @@ pub fn decrypt_secret(value: &str, key: Option<&str>) -> Result<String> {
     .ok_or_else(|| CiError::Config("Invalid encrypted secret format".into()))?;
 
   let key = secret_aead_key(key)?;
-  let nonce_bytes = STANDARD
-    .decode(nonce)
+  let nonce_bytes = BASE64
+    .decode(nonce.as_bytes())
     .map_err(|_| CiError::Config("Invalid secret nonce".into()))?;
   let nonce = aead::Nonce::try_assume_unique_for_key(&nonce_bytes)
     .map_err(|_| CiError::Config("Invalid secret nonce".into()))?;
-  let mut plaintext = STANDARD
-    .decode(ciphertext)
+  let mut plaintext = BASE64
+    .decode(ciphertext.as_bytes())
     .map_err(|_| CiError::Config("Invalid secret ciphertext".into()))?;
 
   let plaintext = key
@@ -262,7 +262,7 @@ fn secret_aead_key(key: Option<&str>) -> Result<aead::LessSafeKey> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "fine in tests")]
 mod tests {
-  use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+  use data_encoding::BASE64URL_NOPAD;
   use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
   use ring::{
     rand::SystemRandom,
@@ -293,21 +293,21 @@ mod tests {
     .unwrap();
     let (x, y) = pair.public_key().as_ref()[1..].split_at(32);
     let key = DecodingKey::from_ec_components(
-      &URL_SAFE_NO_PAD.encode(x),
-      &URL_SAFE_NO_PAD.encode(y),
+      &BASE64URL_NOPAD.encode(x),
+      &BASE64URL_NOPAD.encode(y),
     )
     .unwrap();
     let sign = |header: &str| {
       let message = format!(
         "{}.{}",
-        URL_SAFE_NO_PAD.encode(header),
-        URL_SAFE_NO_PAD.encode(r#"{"sub":"agent"}"#)
+        BASE64URL_NOPAD.encode(header.as_bytes()),
+        BASE64URL_NOPAD.encode(br#"{"sub":"agent"}"#)
       );
       let signature = pair.sign(&rng, message.as_bytes()).unwrap();
       (message, signature.as_ref().to_vec())
     };
     let token = |message: &str, signature: &[u8]| {
-      format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature))
+      format!("{message}.{}", BASE64URL_NOPAD.encode(signature))
     };
 
     let (message, mut signature) = sign(r#"{"alg":"ES256"}"#);

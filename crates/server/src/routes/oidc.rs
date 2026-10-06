@@ -9,9 +9,9 @@ use axum::{
   routing::get,
 };
 use axum_extra::extract::cookie::CookieJar;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use circus_common::{CiError, audit::Actor, models::User, repo};
 use circus_config::OidcProviderConfig;
+use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use jsonwebtoken::{
   DecodingKey,
   Validation,
@@ -184,7 +184,7 @@ fn usernames(claims: &IdTokenClaims, provider: &str) -> [String; 3] {
     .collect();
 
   let digest = Sha256::digest(claims.sub.as_bytes());
-  let hashed = format!("-{}_{provider}", hex::encode(&digest[..2]));
+  let hashed = format!("-{}_{provider}", HEXLOWER.encode(&digest[..2]));
   let suffixed = format!("_{provider}");
 
   [String::new(), suffixed, hashed].map(|suffix| {
@@ -333,14 +333,14 @@ impl LinkGrant {
 impl LoginFlow {
   fn from_cookie(jar: &CookieJar) -> Result<Self, LoginError> {
     let cookie = jar.get(OIDC_FLOW_COOKIE).ok_or(LoginError::InvalidState)?;
-    let json = URL_SAFE_NO_PAD
-      .decode(cookie.value())
+    let json = BASE64URL_NOPAD
+      .decode(cookie.value().as_bytes())
       .map_err(|_| LoginError::InvalidState)?;
     serde_json::from_slice(&json).map_err(|_| LoginError::InvalidState)
   }
 
   fn to_cookie_value(&self) -> serde_json::Result<String> {
-    Ok(URL_SAFE_NO_PAD.encode(serde_json::to_vec(self)?))
+    Ok(BASE64URL_NOPAD.encode(&serde_json::to_vec(self)?))
   }
 }
 

@@ -7,8 +7,8 @@
 //! public key for `trusted-public-keys`. We recover it by slicing the already
 //! base64-decoded bytes, so no signing crate is required.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use circus_config::Config;
+use data_encoding::BASE64;
 
 /// Length of a full Nix secret key payload: 32-byte seed + 32-byte public key.
 const SECRET_KEY_BYTES: usize = 64;
@@ -37,11 +37,11 @@ fn public_key_from_secret(secret: &str) -> Option<String> {
   if name.is_empty() {
     return None;
   }
-  let bytes = STANDARD.decode(b64.trim()).ok()?;
+  let bytes = BASE64.decode(b64.trim().as_bytes()).ok()?;
   if bytes.len() != SECRET_KEY_BYTES {
     return None;
   }
-  let public = STANDARD.encode(&bytes[32..SECRET_KEY_BYTES]);
+  let public = BASE64.encode(&bytes[32..SECRET_KEY_BYTES]);
   Some(format!("{name}:{public}"))
 }
 
@@ -55,10 +55,10 @@ mod tests {
     // (0x01..). The derived key must echo the second half only.
     let mut raw = vec![0u8; 32];
     raw.extend(std::iter::repeat_n(1u8, 32));
-    let secret = format!("ci.example.org-1:{}", STANDARD.encode(&raw));
+    let secret = format!("ci.example.org-1:{}", BASE64.encode(&raw));
 
     let public = public_key_from_secret(&secret).expect("valid secret key");
-    let expected_b64 = STANDARD.encode([1u8; 32]);
+    let expected_b64 = BASE64.encode(&[1u8; 32]);
     assert_eq!(public, format!("ci.example.org-1:{expected_b64}"));
   }
 
@@ -68,7 +68,7 @@ mod tests {
     assert!(public_key_from_secret(":onlybase64").is_none());
     assert!(public_key_from_secret("name:not-base64!!").is_none());
     // Wrong length (32 bytes, not 64).
-    let short = format!("name:{}", STANDARD.encode([0u8; 32]));
+    let short = format!("name:{}", BASE64.encode(&[0u8; 32]));
     assert!(public_key_from_secret(&short).is_none());
   }
 }

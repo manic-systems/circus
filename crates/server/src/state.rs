@@ -15,6 +15,7 @@ use circus_common::{
 };
 use circus_config::Config;
 use dashmap::DashMap;
+use data_encoding::HEXLOWER;
 use hmac::KeyInit;
 use moka::sync::Cache;
 use regex::Regex;
@@ -233,7 +234,7 @@ impl AppState {
     let mut mac = Hmac::<Sha256>::new_from_slice(self.csrf_secret.as_ref())
       .expect("HMAC-SHA256 accepts any key length");
     mac.update(session_id.as_bytes());
-    hex::encode(mac.finalize().into_bytes())
+    HEXLOWER.encode(&mac.finalize().into_bytes())
   }
 
   /// Record one served cache response against the named cache's in-memory

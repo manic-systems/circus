@@ -17,15 +17,14 @@ circus-proto.workspace        = true
 circus-s3.workspace           = true
 
 async-compression.workspace = true
-base64.workspace            = true
 capnp.workspace             = true
 capnp-rpc.workspace         = true
 chrono.workspace            = true
 clap.workspace              = true
 color-eyre.workspace        = true
 dashmap.workspace           = true
+data-encoding.workspace     = true
 futures.workspace           = true
-hex.workspace               = true
 jsonwebtoken.workspace      = true
 parking_lot.workspace       = true
 reqwest.workspace           = true

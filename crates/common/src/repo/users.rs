@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use circus_codegen::queries::users as q;
+use data_encoding::HEXLOWER;
 use regex::Regex;
 use uuid::Uuid;
 
@@ -669,7 +670,7 @@ pub async fn create_session_for(
 
   // Generate random session token
   let token = Uuid::new_v4().to_string();
-  let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+  let token_hash = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
 
   let expires_at = chrono::Utc::now() + lifetime;
 
@@ -693,7 +694,7 @@ pub async fn validate_session(
 ) -> Result<Option<User>> {
   use sha2::{Digest, Sha256};
 
-  let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+  let token_hash = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
 
   let client = pool.get().await?;
   let result = q::validate_session_fetch()
@@ -721,7 +722,7 @@ pub async fn validate_session(
 pub async fn delete_session(pool: &PgPool, token: &str) -> Result<bool> {
   use sha2::{Digest, Sha256};
 
-  let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+  let token_hash = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
   let client = pool.get().await?;
   let deleted = q::delete_session().bind(&client, &token_hash).await?;
 

@@ -13,6 +13,7 @@ use circus_config::{
   DeclarativeUser,
   DeclarativeWebhook,
 };
+use data_encoding::HEXLOWER;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -267,7 +268,7 @@ async fn sync_api_keys(
 
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
-    let key_hash = hex::encode(hasher.finalize());
+    let key_hash = HEXLOWER.encode(&hasher.finalize());
     let api_key = repo::api_keys::upsert(
       pool,
       &declaration.name,

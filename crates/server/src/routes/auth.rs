@@ -1,6 +1,6 @@
 use axum::{Json, Router, extract::State, routing::get};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use circus_common::{repo, roles::GlobalRole};
+use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -34,7 +34,7 @@ pub struct ApiKeyInfo {
 pub fn hash_api_key(key: &str) -> String {
   let mut hasher = Sha256::new();
   hasher.update(key.as_bytes());
-  hex::encode(hasher.finalize())
+  HEXLOWER.encode(&hasher.finalize())
 }
 
 async fn create_api_key(
@@ -51,7 +51,7 @@ async fn create_api_key(
         "Failed to generate random API key".into(),
       ))
     })?;
-  let key = format!("circus_{}", URL_SAFE_NO_PAD.encode(bytes));
+  let key = format!("circus_{}", BASE64URL_NOPAD.encode(&bytes));
   let key_hash = hash_api_key(&key);
 
   let api_key =

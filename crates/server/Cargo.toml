@@ -11,13 +11,12 @@ askama.workspace              = true
 async-compression.workspace   = true
 axum.workspace                = true
 axum-extra                    = { workspace = true, features = [ "cookie" ] }
-base64.workspace              = true
 chrono.workspace              = true
 clap.workspace                = true
 color-eyre.workspace          = true
 dashmap.workspace             = true
+data-encoding.workspace       = true
 futures.workspace             = true
-hex.workspace                 = true
 hmac.workspace                = true
 jsonwebtoken.workspace        = true
 ldap3.workspace               = true

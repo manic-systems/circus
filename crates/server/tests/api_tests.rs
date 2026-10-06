@@ -7,6 +7,7 @@ use axum::{
   http::{Request, StatusCode},
 };
 use circus_common::models::BinaryCacheUpstreams;
+use data_encoding::HEXLOWER;
 use tower::ServiceExt;
 
 const ADMIN_TOKEN: &str = "circus_test_admin";
@@ -127,7 +128,7 @@ async fn ensure_api_key(
 
   let mut hasher = sha2::Sha256::new();
   hasher.update(token.as_bytes());
-  let key_hash = hex::encode(hasher.finalize());
+  let key_hash = HEXLOWER.encode(&hasher.finalize());
   let _ =
     circus_common::repo::api_keys::upsert(pool, token, &key_hash, role).await;
 }
@@ -1732,7 +1733,7 @@ async fn test_project_create_with_auth() {
   // Create an admin API key
   let mut hasher = sha2::Sha256::new();
   hasher.update(b"circus_test_project_auth");
-  let key_hash = hex::encode(hasher.finalize());
+  let key_hash = HEXLOWER.encode(&hasher.finalize());
   let _ = circus_common::repo::api_keys::upsert(
     &pool,
     "test-auth",
@@ -2171,7 +2172,7 @@ async fn test_setup_endpoint_creates_project_and_jobsets() {
   // Create an admin API key
   let mut hasher = sha2::Sha256::new();
   hasher.update(b"circus_test_setup_key");
-  let key_hash = hex::encode(hasher.finalize());
+  let key_hash = HEXLOWER.encode(&hasher.finalize());
   let _ = circus_common::repo::api_keys::upsert(
     &pool,
     "test-setup",

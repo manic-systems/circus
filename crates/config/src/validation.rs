@@ -3,6 +3,7 @@ use circus_types::validation::{
   validate_cache_url,
 };
 use color_eyre::eyre::{self, WrapErr, bail};
+use data_encoding::HEXLOWER_PERMISSIVE;
 use url::{Host, Url};
 
 use crate::{
@@ -247,9 +248,11 @@ impl Config {
         bail!("queue_runner.rpc.presign_expiry_secs must be greater than 0");
       }
       for (idx, token_hash) in rpc.auth_tokens.iter().enumerate() {
-        let decoded = hex::decode(token_hash).wrap_err_with(|| {
-          format!("queue_runner.rpc.auth_tokens[{idx}] must be SHA-256 hex")
-        })?;
+        let decoded = HEXLOWER_PERMISSIVE
+          .decode(token_hash.as_bytes())
+          .wrap_err_with(|| {
+            format!("queue_runner.rpc.auth_tokens[{idx}] must be SHA-256 hex")
+          })?;
         if decoded.len() != 32 {
           bail!(
             "queue_runner.rpc.auth_tokens[{idx}] must decode to 32 bytes, got \

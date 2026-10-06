@@ -1,6 +1,7 @@
 #![expect(clippy::unwrap_used, reason = "Fine in tests")]
 
 use axum::http::{HeaderMap, HeaderValue};
+use data_encoding::HEXLOWER;
 
 use super::{
   rate_limit::{
@@ -18,7 +19,7 @@ fn signed_header_value(secret: &str, body: &[u8]) -> HeaderValue {
   let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
   mac.update(body);
   let signature =
-    format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+    format!("sha256={}", HEXLOWER.encode(&mac.finalize().into_bytes()));
 
   HeaderValue::from_str(&signature).unwrap()
 }
@@ -33,7 +34,7 @@ fn test_verify_signature_valid() {
 
   let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
   mac.update(body);
-  let expected = hex::encode(mac.finalize().into_bytes());
+  let expected = HEXLOWER.encode(&mac.finalize().into_bytes());
 
   assert!(verify_signature(
     secret,
@@ -57,7 +58,7 @@ fn test_verify_signature_wrong_secret() {
   let body = b"test-body";
   let mut mac = Hmac::<Sha256>::new_from_slice(b"secret1").unwrap();
   mac.update(body);
-  let sig = hex::encode(mac.finalize().into_bytes());
+  let sig = HEXLOWER.encode(&mac.finalize().into_bytes());
 
   assert!(!verify_signature("secret2", body, &format!("sha256={sig}")));
 }
