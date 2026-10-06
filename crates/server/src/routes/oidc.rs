@@ -20,33 +20,7 @@ use jsonwebtoken::{
   jwk::{JwkSet, PublicKeyUse},
 };
 use moka::sync::Cache;
-use oauth2::{
-  AuthType,
-  AuthUrl,
-  AuthorizationCode,
-  ClientId,
-  ClientSecret,
-  CsrfToken,
-  EndpointNotSet,
-  EndpointSet,
-  ExtraTokenFields,
-  PkceCodeChallenge,
-  PkceCodeVerifier,
-  RedirectUrl,
-  RequestTokenError,
-  Scope,
-  StandardRevocableToken,
-  StandardTokenResponse,
-  TokenResponse,
-  TokenUrl,
-  basic::{
-    BasicErrorResponse,
-    BasicRevocationErrorResponse,
-    BasicTokenIntrospectionResponse,
-    BasicTokenType,
-  },
-  reqwest::{Client as HttpClient, header::ACCEPT, redirect::Policy},
-};
+use reqwest::{Client as HttpClient, header::ACCEPT, redirect::Policy};
 use serde::{
   Deserialize,
   Serialize,
@@ -55,10 +29,12 @@ use serde::{
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
   audit::record_with_actor,
+  oauth_client::{AuthCodeClient, ClientAuth, Secret, TokenError},
   routes::dashboard::templates::LoginTemplate,
   session_cookie::{
     OIDC_FLOW_COOKIE,
@@ -77,31 +53,17 @@ const MAX_USERNAME_LEN: usize = 32;
 
 const DISCOVERY_TTL: Duration = Duration::from_mins(10);
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct IdTokenField {
-  id_token: String,
+#[derive(Deserialize)]
+struct TokenResponse {
+  access_token: String,
+  id_token:     String,
 }
-
-impl ExtraTokenFields for IdTokenField {}
-
-type OidcClient = oauth2::Client<
-  BasicErrorResponse,
-  StandardTokenResponse<IdTokenField, BasicTokenType>,
-  BasicTokenIntrospectionResponse,
-  StandardRevocableToken,
-  BasicRevocationErrorResponse,
-  EndpointSet,
-  EndpointNotSet,
-  EndpointNotSet,
-  EndpointNotSet,
-  EndpointSet,
->;
 
 #[derive(Deserialize)]
 struct ProviderMetadata {
   issuer:                                String,
-  authorization_endpoint:                AuthUrl,
-  token_endpoint:                        TokenUrl,
+  authorization_endpoint:                String,
+  token_endpoint:                        String,
   jwks_uri:                              String,
   userinfo_endpoint:                     Option<String>,
   end_session_endpoint:                  Option<String>,
@@ -111,7 +73,7 @@ struct ProviderMetadata {
 
 struct Provider {
   http:                 HttpClient,
-  client:               OidcClient,
+  client:               AuthCodeClient,
   issuer:               String,
   jwks_uri:             String,
   userinfo_endpoint:    Option<String>,
@@ -276,9 +238,9 @@ impl From<CiError> for LoginError {
 #[derive(Deserialize, Serialize)]
 struct LoginFlow {
   provider:      String,
-  state:         CsrfToken,
-  nonce:         String,
-  pkce_verifier: PkceCodeVerifier,
+  state:         Secret,
+  nonce:         Secret,
+  pkce_verifier: Secret,
   link:          Option<LinkGrant>,
   next:          Option<String>,
 }
@@ -292,12 +254,7 @@ struct LinkGrant {
 }
 
 impl LinkGrant {
-  fn new(
-    state: &AppState,
-    provider: &str,
-    user: Uuid,
-    csrf: &CsrfToken,
-  ) -> Self {
+  fn new(state: &AppState, provider: &str, user: Uuid, csrf: &Secret) -> Self {
     Self {
       user,
       mac: Self::mac(state, provider, user, csrf),
@@ -308,17 +265,17 @@ impl LinkGrant {
     state: &AppState,
     provider: &str,
     user: Uuid,
-    csrf: &CsrfToken,
+    csrf: &Secret,
   ) -> String {
     state
-      .csrf_token_for(&format!("oidc-link:{provider}:{user}:{}", csrf.secret()))
+      .csrf_token_for(&format!("oidc-link:{provider}:{user}:{}", csrf.as_str()))
   }
 
   fn verify(
     &self,
     state: &AppState,
     provider: &str,
-    csrf: &CsrfToken,
+    csrf: &Secret,
   ) -> Result<Uuid, LoginError> {
     let expected = Self::mac(state, provider, self.user, csrf);
 
@@ -346,7 +303,7 @@ impl LoginFlow {
 
 #[derive(Deserialize)]
 struct CallbackParams {
-  state:   CsrfToken,
+  state:   Secret,
   #[serde(flatten)]
   outcome: CallbackOutcome,
 }
@@ -355,7 +312,7 @@ struct CallbackParams {
 #[serde(untagged)]
 enum CallbackOutcome {
   Granted {
-    code: AuthorizationCode,
+    code: String,
   },
   Denied {
     error:             String,
@@ -376,7 +333,7 @@ async fn get_json<T: DeserializeOwned>(
   let body = request
     .send()
     .await
-    .and_then(oauth2::reqwest::Response::error_for_status)
+    .and_then(reqwest::Response::error_for_status)
     .map_err(LoginError::unavailable)?
     .bytes()
     .await
@@ -403,25 +360,24 @@ async fn discover(config: &OidcProviderConfig) -> Result<Provider, LoginError> {
     )));
   }
 
-  let redirect = RedirectUrl::new(config.redirect_uri.clone())
-    .map_err(LoginError::unavailable)?;
   let methods = &metadata.token_endpoint_auth_methods_supported;
   let post_only = !methods.is_empty()
     && !methods.iter().any(|method| method == "client_secret_basic")
     && methods.iter().any(|method| method == "client_secret_post");
-  let mut client: OidcClient =
-    oauth2::Client::new(ClientId::new(config.client_id.clone()))
-      .set_auth_uri(metadata.authorization_endpoint)
-      .set_token_uri(metadata.token_endpoint)
-      .set_redirect_uri(redirect);
-
-  if let Some(secret) = &config.client_secret {
-    client = client.set_client_secret(ClientSecret::new(secret.clone()));
-  }
-
-  if post_only {
-    client = client.set_auth_type(AuthType::RequestBody);
-  }
+  let client = AuthCodeClient {
+    client_id:     config.client_id.clone(),
+    client_secret: config.client_secret.clone(),
+    auth_url:      Url::parse(&metadata.authorization_endpoint)
+      .map_err(LoginError::unavailable)?,
+    token_url:     Url::parse(&metadata.token_endpoint)
+      .map_err(LoginError::unavailable)?,
+    redirect_uri:  config.redirect_uri.clone(),
+    auth:          if post_only {
+      ClientAuth::RequestBody
+    } else {
+      ClientAuth::Basic
+    },
+  };
 
   Ok(Provider {
     http,
@@ -576,23 +532,24 @@ async fn start_login(
     .get(provider)
     .ok_or(LoginError::UnknownProvider)?;
   let idp = cached_provider(state, provider, config).await?;
-  let (challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-  let nonce = CsrfToken::new_random().into_secret();
-  let (url, csrf) = idp
-    .client
-    .authorize_url(CsrfToken::new_random)
-    .add_scope(Scope::new("openid".into()))
-    .add_scopes(
+  let csrf = Secret::random().map_err(LoginError::unavailable)?;
+  let nonce = Secret::random().map_err(LoginError::unavailable)?;
+  let pkce_verifier = Secret::random().map_err(LoginError::unavailable)?;
+  let url = idp.client.authorize_url(
+    &csrf,
+    std::iter::once("openid").chain(
       config
         .scopes
         .iter()
-        .filter(|scope| *scope != "openid")
-        .cloned()
-        .map(Scope::new),
-    )
-    .add_extra_param("nonce", &nonce)
-    .set_pkce_challenge(challenge)
-    .url();
+        .map(String::as_str)
+        .filter(|scope| *scope != "openid"),
+    ),
+    &[
+      ("nonce", nonce.as_str()),
+      ("code_challenge", &pkce_verifier.pkce_challenge()),
+      ("code_challenge_method", "S256"),
+    ],
+  );
   let flow = LoginFlow {
     provider: provider.to_owned(),
     link: link.map(|user| LinkGrant::new(state, provider, user, &csrf)),
@@ -631,8 +588,8 @@ async fn complete_login(
     .ok_or(LoginError::UnknownProvider)?;
   let Query(params) = params.map_err(|_| LoginError::InvalidState)?;
   let flow = LoginFlow::from_cookie(jar)?;
-  let expected = flow.state.secret().as_bytes();
-  let received = params.state.secret().as_bytes();
+  let expected = flow.state.as_str().as_bytes();
+  let received = params.state.as_str().as_bytes();
 
   if flow.provider != provider
     || expected.len() != received.len()
@@ -653,23 +610,21 @@ async fn complete_login(
   };
 
   let idp = cached_provider(state, provider, config).await?;
-  let token = idp
+  let token: TokenResponse = idp
     .client
-    .exchange_code(code)
-    .set_pkce_verifier(flow.pkce_verifier)
-    .request_async(&idp.http)
+    .exchange(&idp.http, &code, Some(&flow.pkce_verifier))
     .await
     .map_err(|error| {
       match error {
-        RequestTokenError::ServerResponse(_) => LoginError::invalid(error),
+        TokenError::Rejected { .. } => LoginError::invalid(error),
         _ => LoginError::unavailable(error),
       }
     })?;
   let claims = verify_id_token(
     &idp,
     &config.client_id,
-    &token.extra_fields().id_token,
-    &flow.nonce,
+    &token.id_token,
+    flow.nonce.as_str(),
   )
   .await?;
 
@@ -679,8 +634,7 @@ async fn complete_login(
       match &idp.userinfo_endpoint {
         Some(endpoint) => {
           let userinfo: UserInfo =
-            get_json(&idp.http, endpoint, Some(token.access_token().secret()))
-              .await?;
+            get_json(&idp.http, endpoint, Some(&token.access_token)).await?;
 
           if userinfo.sub != claims.sub {
             return Err(LoginError::invalid("userinfo subject does not match"));
@@ -893,8 +847,7 @@ pub async fn end_session_url(
       return None;
     },
   };
-  let mut url =
-    oauth2::url::Url::parse(idp.end_session_endpoint.as_deref()?).ok()?;
+  let mut url = Url::parse(idp.end_session_endpoint.as_deref()?).ok()?;
 
   url
     .query_pairs_mut()

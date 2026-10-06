@@ -550,10 +550,9 @@ impl LoginTemplate {
       return self;
     };
 
-    let query: String =
-      oauth2::url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("next", next)
-        .finish();
+    let query: String = url::form_urlencoded::Serializer::new(String::new())
+      .append_pair("next", next)
+      .finish();
     for provider in &mut self.providers {
       provider.href = format!("{}?{query}", provider.href);
     }
