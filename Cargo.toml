@@ -32,7 +32,7 @@ circus-types        = { path = "./crates/types", version = "0.14.0" }
 # Other dependencies
 askama = "0.16.1"
 askama_fmt = "0.4.0"
-async-compression = { version = "0.4.47", default-features = false, features = [
+async-compression = { version = "0.4.50", default-features = false, features = [
   "tokio",
   "zstd",
   "xz",
@@ -48,7 +48,7 @@ capnp-rpc = "0.27.0"
 capnpc = "0.27.0"
 clap = { version = "4.6.7", features = [ "derive" ] }
 color-eyre = "0.6.5"
-comfy-table = "8.0.0"
+comfy-table = "8.0.1"
 config = { version = "0.15.27", default-features = false, features = [ "toml" ] }
 crc = "3.4.0"
 dashmap = "6.2.1"
@@ -59,7 +59,7 @@ ed25519-dalek = "3.0.0"
 futures = "0.3.34"
 futures-core = "0.3.34"
 futures-sink = "0.3.34"
-futures-util = { version = "0.3", features = [ "sink" ] }
+futures-util = { version = "0.3.34", features = [ "sink" ] }
 getrandom = "0.4.3"
 gix = { version = "0.88.0", default-features = false, features = [
   "blob-diff",
@@ -77,7 +77,7 @@ lettre = { version = "0.11.23", default-features = false, features = [
   "smtp-transport",
   "builder",
 ] }
-libc = "0.2.189"
+libc = "0.2.190"
 md5 = "0.8.1"
 moka = { version = "0.12.16", features = [ "sync" ] }
 nix = { version = "0.31.3", default-features = false, features = [
@@ -91,7 +91,7 @@ num_enum = "0.7.6"
 oauth2 = "5.0.0"
 parking_lot = "0.12.5"
 percent-encoding = "2.3.2"
-pin-project-lite = "0.2"
+pin-project-lite = "0.2.17"
 proptest = "1.11.0"
 proptest-derive = "0.8.0"
 regex = "1.13.1"
@@ -113,14 +113,14 @@ subtle = "2.6.1"
 sysinfo = { version = "0.39.6", default-features = false, features = [ "system" ] }
 tar = "0.4.46"
 tempfile = "3.27.0"
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 time = "0.3.55"
-tokio = { version = "1.53.1", features = [ "full" ] }
+tokio = { version = "1.53.2", features = [ "full" ] }
 tokio-postgres = { version = "0.7.18", features = [ "with-jiff-0_2", "with-uuid-1", "with-serde_json-1" ] }
-tokio-postgres-rustls = "0.14"
+tokio-postgres-rustls = "0.14.0"
 tokio-rusqlite = "0.8.0"
-tokio-rustls = { version = "0.26.5", default-features = false, features = [ "ring", "tls12" ] }
-tokio-test = "0.4.5"
+tokio-rustls = { version = "0.26.6", default-features = false, features = [ "ring", "tls12" ] }
+tokio-test = "0.4.6"
 tokio-util = { version = "0.7.19", features = [ "io", "compat" ] }
 toml = "1.1.6"
 tower = "0.5.3"
@@ -129,12 +129,12 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter", "json" ] }
 url = "2.5.8"
 urlencoding = "2.1.3"
-utoipa = "5.5.0"
-uuid = { version = "1.26.1", features = [ "v4", "serde" ] }
+utoipa = "6.0.0"
+uuid = { version = "1.27.0", features = [ "v4", "serde" ] }
 walkdir = "2.5.0"
-webpki-roots = "1"
+webpki-roots = "1.0.9"
 x509-parser = "0.18.1"
-zerocopy = { version = "0.8.57", features = [ "derive" ] }
+zerocopy = { version = "0.8.60", features = [ "derive" ] }
 zeroize = "1.9.0"
 
 argon2 = "0.6.0"
