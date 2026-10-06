@@ -27,6 +27,8 @@ jobs:
       # While the workspace version is `*-dev`, releases are intentionally
       # published as GitHub prereleases.
       stage: prepare
+      # The reusable workflow expands this unquoted, so shell quotes would reach fq literally.
+      version-command: nix run nixpkgs#fq -- -r .workspace.package.version Cargo.toml
 
   build-amd64:
     name: Build ${{ matrix.binary }} (${{ matrix.suffix }})
