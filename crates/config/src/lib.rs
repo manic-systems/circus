@@ -589,7 +589,7 @@ mod tests {
   }
 
   #[test]
-  fn test_humantime_serde_parsing() {
+  fn test_friendly_duration_parsing() {
     let toml = r#"
 workers = 4
 poll_interval = 5
@@ -608,11 +608,11 @@ unsupported_timeout = "2h 30m"
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Fine in tests")]
-mod humantime_option_test {
+mod friendly_duration_option_test {
   use super::*;
 
   #[test]
-  fn test_option_humantime_missing() {
+  fn test_option_friendly_duration_missing() {
     let toml = r#"
 workers = 4
 poll_interval = 5

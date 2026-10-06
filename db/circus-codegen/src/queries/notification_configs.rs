@@ -30,7 +30,7 @@ pub struct NotificationConfigRow {
     pub notification_type: String,
     pub config: serde_json::Value,
     pub enabled: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct NotificationConfigRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -38,7 +38,7 @@ pub struct NotificationConfigRowBorrowed<'a> {
     pub notification_type: &'a str,
     pub config: postgres_types::Json<&'a serde_json::value::RawValue>,
     pub enabled: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<NotificationConfigRowBorrowed<'a>> for NotificationConfigRow {
     fn from(

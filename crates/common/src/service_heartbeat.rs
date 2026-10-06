@@ -17,7 +17,7 @@ pub const SERVICE_QUEUE_RUNNER: &str = "queue-runner";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Heartbeat {
   pub service:               String,
-  pub last_heartbeat_at:     chrono::DateTime<chrono::Utc>,
+  pub last_heartbeat_at:     jiff::Timestamp,
   pub poll_interval_seconds: i32,
   pub version:               Option<String>,
   pub extra:                 serde_json::Value,
@@ -54,7 +54,7 @@ pub async fn record(
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceStatus {
   pub service:           String,
-  pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
+  pub last_heartbeat_at: Option<jiff::Timestamp>,
   /// Seconds since the last heartbeat, computed by the database to avoid
   /// client-clock skew. `None` if the service has never reported.
   pub seconds_since:     Option<f64>,

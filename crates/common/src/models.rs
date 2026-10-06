@@ -1,6 +1,5 @@
 //! Data models for CI
 
-use chrono::{DateTime, Utc};
 pub use circus_types::{
   AuthKind,
   BinaryCacheUpstream,
@@ -9,6 +8,7 @@ pub use circus_types::{
   InputType,
   NotificationType,
 };
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -25,8 +25,8 @@ pub struct Project {
   pub cache_upstreams:        BinaryCacheUpstreams,
   pub managed_declaratively:  bool,
   pub allow_runtime_mutation: Option<bool>,
-  pub created_at:             DateTime<Utc>,
-  pub updated_at:             DateTime<Utc>,
+  pub created_at:             Timestamp,
+  pub updated_at:             Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,10 +43,10 @@ pub struct Jobset {
   pub branch_pattern:    Option<String>,
   pub tag_pattern:       Option<String>,
   pub scheduling_shares: i32,
-  pub created_at:        DateTime<Utc>,
-  pub updated_at:        DateTime<Utc>,
+  pub created_at:        Timestamp,
+  pub updated_at:        Timestamp,
   pub state:             JobsetState,
-  pub last_checked_at:   Option<DateTime<Utc>>,
+  pub last_checked_at:   Option<Timestamp>,
   pub keep_nr:           i32,
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: bool,
@@ -58,7 +58,7 @@ pub struct Evaluation {
   pub id:                 Uuid,
   pub jobset_id:          Uuid,
   pub commit_hash:        String,
-  pub evaluation_time:    DateTime<Utc>,
+  pub evaluation_time:    Timestamp,
   pub status:             EvaluationStatus,
   pub error_message:      Option<String>,
   pub inputs_hash:        Option<String>,
@@ -71,8 +71,8 @@ pub struct Evaluation {
   pub source_scope:       Option<String>,
   pub superseded_by:      Option<Uuid>,
   pub source_base_commit: Option<String>,
-  pub started_at:         Option<DateTime<Utc>>,
-  pub finished_at:        Option<DateTime<Utc>>,
+  pub started_at:         Option<Timestamp>,
+  pub finished_at:        Option<Timestamp>,
   pub commit_subject:     Option<String>,
   pub attrs_done:         Option<i32>,
   pub attrs_total:        Option<i32>,
@@ -340,8 +340,8 @@ pub struct Build {
   pub job_name:                   String,
   pub drv_path:                   String,
   pub status:                     BuildStatus,
-  pub started_at:                 Option<DateTime<Utc>>,
-  pub completed_at:               Option<DateTime<Utc>>,
+  pub started_at:                 Option<Timestamp>,
+  pub completed_at:               Option<Timestamp>,
   pub log_path:                   Option<String>,
   pub build_output_path:          Option<String>,
   pub error_message:              Option<String>,
@@ -349,8 +349,8 @@ pub struct Build {
   pub priority:                   i32,
   pub retry_count:                i32,
   pub max_retries:                i32,
-  pub notification_pending_since: Option<DateTime<Utc>>,
-  pub created_at:                 DateTime<Utc>,
+  pub notification_pending_since: Option<Timestamp>,
+  pub created_at:                 Timestamp,
   pub outputs:                    Option<serde_json::Value>,
   pub is_aggregate:               bool,
   pub constituents:               Option<serde_json::Value>,
@@ -653,7 +653,7 @@ pub struct BuildProduct {
   pub content_type: Option<String>,
   pub is_directory: bool,
   pub gc_root_path: Option<String>,
-  pub created_at:   DateTime<Utc>,
+  pub created_at:   Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -670,7 +670,7 @@ pub struct BuildMetric {
   pub metric_name:  String,
   pub metric_value: f64,
   pub unit:         String,
-  pub collected_at: DateTime<Utc>,
+  pub collected_at: Timestamp,
 }
 
 pub mod metric_names {
@@ -698,10 +698,10 @@ pub struct ActiveJobset {
   pub branch_pattern:    Option<String>,
   pub tag_pattern:       Option<String>,
   pub scheduling_shares: i32,
-  pub created_at:        DateTime<Utc>,
-  pub updated_at:        DateTime<Utc>,
+  pub created_at:        Timestamp,
+  pub updated_at:        Timestamp,
   pub state:             JobsetState,
-  pub last_checked_at:   Option<DateTime<Utc>>,
+  pub last_checked_at:   Option<Timestamp>,
   pub keep_nr:           i32,
   pub project_name:      String,
   pub repository_url:    String,
@@ -729,8 +729,8 @@ pub struct ApiKey {
   pub key_hash:     String,
   pub role:         GlobalRole,
   pub user_id:      Option<Uuid>,
-  pub created_at:   DateTime<Utc>,
-  pub last_used_at: Option<DateTime<Utc>>,
+  pub created_at:   Timestamp,
+  pub last_used_at: Option<Timestamp>,
 }
 
 /// Webhook configuration for a project.
@@ -747,7 +747,7 @@ pub struct WebhookConfig {
   #[serde(skip_serializing)]
   pub secret_hash: Option<String>,
   pub enabled:     bool,
-  pub created_at:  DateTime<Utc>,
+  pub created_at:  Timestamp,
 }
 
 /// Notification configuration for a project.
@@ -758,7 +758,7 @@ pub struct NotificationConfig {
   pub notification_type: NotificationType,
   pub config:            serde_json::Value,
   pub enabled:           bool,
-  pub created_at:        DateTime<Utc>,
+  pub created_at:        Timestamp,
 }
 
 /// Jobset input definition.
@@ -770,7 +770,7 @@ pub struct JobsetInput {
   pub input_type: InputType,
   pub value:      String,
   pub revision:   Option<String>,
-  pub created_at: DateTime<Utc>,
+  pub created_at: Timestamp,
 }
 
 /// Tracks the latest "good" evaluation for a jobset.
@@ -781,8 +781,8 @@ pub struct Channel {
   pub name:                  String,
   pub jobset_id:             Uuid,
   pub current_evaluation_id: Option<Uuid>,
-  pub created_at:            DateTime<Utc>,
-  pub updated_at:            DateTime<Utc>,
+  pub created_at:            Timestamp,
+  pub updated_at:            Timestamp,
 }
 
 /// User account for authentication and personalization
@@ -799,9 +799,9 @@ pub struct User {
   pub enabled:          bool,
   pub email_verified:   bool,
   pub public_dashboard: bool,
-  pub created_at:       DateTime<Utc>,
-  pub updated_at:       DateTime<Utc>,
-  pub last_login_at:    Option<DateTime<Utc>>,
+  pub created_at:       Timestamp,
+  pub updated_at:       Timestamp,
+  pub last_login_at:    Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -849,7 +849,7 @@ pub struct StarredJob {
   pub project_id: Uuid,
   pub jobset_id:  Option<Uuid>,
   pub job_name:   String,
-  pub created_at: DateTime<Utc>,
+  pub created_at: Timestamp,
 }
 
 /// Normalized build output (Hydra-compatible)
@@ -867,7 +867,7 @@ pub struct ProjectMember {
   pub project_id: Uuid,
   pub user_id:    Uuid,
   pub role:       ProjectRole,
-  pub created_at: DateTime<Utc>,
+  pub created_at: Timestamp,
 }
 
 /// User session for persistent authentication
@@ -876,9 +876,9 @@ pub struct UserSession {
   pub id:                 Uuid,
   pub user_id:            Uuid,
   pub session_token_hash: String,
-  pub expires_at:         DateTime<Utc>,
-  pub created_at:         DateTime<Utc>,
-  pub last_used_at:       Option<DateTime<Utc>>,
+  pub expires_at:         Timestamp,
+  pub created_at:         Timestamp,
+  pub last_used_at:       Option<Timestamp>,
 }
 
 /// Notification task for reliable delivery with retry
@@ -890,10 +890,10 @@ pub struct NotificationTask {
   pub status:            NotificationTaskStatus,
   pub attempts:          i32,
   pub max_attempts:      i32,
-  pub next_retry_at:     DateTime<Utc>,
+  pub next_retry_at:     Timestamp,
   pub last_error:        Option<String>,
-  pub created_at:        DateTime<Utc>,
-  pub completed_at:      Option<DateTime<Utc>>,
+  pub created_at:        Timestamp,
+  pub completed_at:      Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1172,7 +1172,7 @@ pub struct NewsItem {
   pub title:      String,
   pub content:    String,
   pub created_by: Option<Uuid>,
-  pub created_at: DateTime<Utc>,
+  pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

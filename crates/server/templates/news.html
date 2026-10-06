@@ -48,7 +48,7 @@
                     <div class="panel-header">
                         <h2 class="news-title">{{ item.title }}</h2>
                         <span class="panel-actions">
-                            <span class="news-date">{{ item.created_at.format("%Y-%m-%d %H:%M UTC") }}</span>
+                            <span class="news-date">{{ item.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</span>
                             {% if is_admin %}
                                 <form method="POST" action="/news/{{ item.id }}/delete" class="inline-form">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

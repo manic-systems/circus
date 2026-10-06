@@ -1,7 +1,7 @@
 destination = "db/circus-codegen"
 
 [types.mapping."pg_catalog.timestamptz"]
-rust-type = "chrono::DateTime<chrono::Utc>"
+rust-type = "jiff::Timestamp"
 
 [manifest.package]
 description  = "Generated PostgreSQL bindings for Circus"
@@ -13,12 +13,12 @@ rust-version = "1.85"
 version      = "0.14.0"
 
 [manifest.dependencies]
-chrono = { version = "0.4", features = [ "serde" ] }
+jiff = { version = "0.2", features = [ "serde" ] }
 postgres = { version = "0.19", features = [
-  "with-chrono-0_4",
+  "with-jiff-0_2",
   "with-serde_json-1",
   "with-uuid-1",
 ], optional = true }
 serde_json = { version = "1", features = [ "raw_value" ] }
-tokio-postgres = { version = "0.7", features = [ "with-chrono-0_4", "with-serde_json-1", "with-uuid-1" ] }
+tokio-postgres = { version = "0.7", features = [ "with-jiff-0_2", "with-serde_json-1", "with-uuid-1" ] }
 uuid = { version = "1", features = [ "serde" ] }

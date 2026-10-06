@@ -304,7 +304,7 @@ async fn build_stats_timeseries(
       let response = BuildStatsResponse {
         timestamps:   buckets
           .iter()
-          .map(|b| b.bucket_time.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+          .map(|b| b.bucket_time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
           .collect(),
         total:        buckets.iter().map(|b| b.total_builds).collect(),
         failed:       buckets.iter().map(|b| b.failed_builds).collect(),
@@ -340,7 +340,7 @@ async fn duration_percentiles_timeseries(
       let response = DurationPercentilesResponse {
         timestamps: buckets
           .iter()
-          .map(|b| b.bucket_time.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+          .map(|b| b.bucket_time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
           .collect(),
         p50:        buckets.iter().map(|b| b.p50).collect(),
         p95:        buckets.iter().map(|b| b.p95).collect(),

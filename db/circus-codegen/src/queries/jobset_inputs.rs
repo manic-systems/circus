@@ -44,7 +44,7 @@ pub struct JobsetInputRow {
     pub input_type: String,
     pub value: String,
     pub revision: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct JobsetInputRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -53,7 +53,7 @@ pub struct JobsetInputRowBorrowed<'a> {
     pub input_type: &'a str,
     pub value: &'a str,
     pub revision: Option<&'a str>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<JobsetInputRowBorrowed<'a>> for JobsetInputRow {
     fn from(

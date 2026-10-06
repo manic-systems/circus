@@ -6,8 +6,8 @@
 //! here when answering `<hash>.narinfo` queries, so a path uploaded by
 //! any agent in the cluster is immediately visible to substituters.
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::narinfo_cache as q;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -32,9 +32,9 @@ pub struct NarInfo {
   pub ca:              Option<String>,
   pub build_id:        Option<Uuid>,
   pub project_id:      Option<Uuid>,
-  pub created_at:      DateTime<Utc>,
-  pub updated_at:      DateTime<Utc>,
-  pub last_fetched_at: Option<DateTime<Utc>>,
+  pub created_at:      Timestamp,
+  pub updated_at:      Timestamp,
+  pub last_fetched_at: Option<Timestamp>,
 }
 
 impl From<q::NarinfoCacheRow> for NarInfo {
@@ -235,7 +235,7 @@ pub async fn storage_summary(
 pub async fn storage_extremes(
   pool: &PgPool,
   project_id: Option<Uuid>,
-) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+) -> Result<(Option<Timestamp>, Option<Timestamp>)> {
   let client = pool.get().await?;
   let row = q::storage_extremes()
     .bind(&client, &project_id)
@@ -253,8 +253,8 @@ pub struct NarListItem {
   pub nar_size:        i64,
   pub file_size:       Option<i64>,
   pub compression:     String,
-  pub created_at:      DateTime<Utc>,
-  pub last_fetched_at: Option<DateTime<Utc>>,
+  pub created_at:      Timestamp,
+  pub last_fetched_at: Option<Timestamp>,
 }
 
 impl From<NarInfo> for NarListItem {
@@ -477,7 +477,7 @@ impl From<q::DeletedNarRow> for DeletedNar {
 pub async fn delete_stale(
   pool: &PgPool,
   project_id: Option<Uuid>,
-  cutoff: Option<DateTime<Utc>>,
+  cutoff: Option<Timestamp>,
 ) -> Result<Vec<DeletedNar>> {
   let mut client = pool.get().await?;
   let tx = client.transaction().await?;
@@ -505,7 +505,7 @@ pub async fn delete_stale(
 /// Returns the underlying database error.
 pub async fn list_gc_candidates(
   pool: &PgPool,
-  cutoff: Option<DateTime<Utc>>,
+  cutoff: Option<Timestamp>,
   max_size_bytes: Option<i64>,
   target_size_bytes: Option<i64>,
 ) -> Result<Vec<CacheGcCandidate>> {

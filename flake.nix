@@ -13,6 +13,11 @@
     inherit (nixpkgs) lib;
     forAllSystems = lib.genAttrs (lib.systems.doubles.linux ++ ["aarch64-darwin"]);
     pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs {inherit system;});
+    # Upstream adds a crate for every column type, even ones mapped to another Rust type.
+    cornucopiaFor = pkgs:
+      pkgs.cornucopia.overrideAttrs (old: {
+        patches = (old.patches or []) ++ [./nix/patches/cornucopia-mapped-type-deps.patch];
+      });
     src = let
       fs = lib.fileset;
       s = ./.;
@@ -290,7 +295,7 @@
         # Keep checked-in bindings synchronized with queries and migrations.
         codegen-up-to-date =
           pkgs.runCommand "circus-codegen-up-to-date" {
-            nativeBuildInputs = [pkgs.postgresql_18 pkgs.cornucopia pkgs.rustfmt];
+            nativeBuildInputs = [pkgs.postgresql_18 (cornucopiaFor pkgs) pkgs.rustfmt];
           } ''
             export PGDATA="$TMPDIR/pgdata"
             export PGHOST="$TMPDIR/sock"
@@ -330,7 +335,7 @@
             pkg-config
             postgresql_18
             # DB query codegen: `scripts/codegen.sh` runs `cornucopia live`.
-            cornucopia
+            (cornucopiaFor pkgs)
 
             # circus-evaluator builds evix's Nix C bindings.
             nixVersions.nix_2_34.dev

@@ -39,9 +39,9 @@ pub struct UserResponse {
   pub enabled:          bool,
   pub email_verified:   bool,
   pub public_dashboard: bool,
-  pub created_at:       chrono::DateTime<chrono::Utc>,
-  pub updated_at:       chrono::DateTime<chrono::Utc>,
-  pub last_login_at:    Option<chrono::DateTime<chrono::Utc>>,
+  pub created_at:       jiff::Timestamp,
+  pub updated_at:       jiff::Timestamp,
+  pub last_login_at:    Option<jiff::Timestamp>,
 }
 
 impl From<User> for UserResponse {
@@ -90,7 +90,7 @@ pub struct StarredJobResponse {
   pub project_id: Uuid,
   pub jobset_id:  Option<Uuid>,
   pub job_name:   String,
-  pub created_at: chrono::DateTime<chrono::Utc>,
+  pub created_at: jiff::Timestamp,
 }
 
 // Admin user management handlers

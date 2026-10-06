@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use circus_config::AlertConfig;
+use jiff::Timestamp;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
@@ -10,13 +10,13 @@ use crate::{db::PgPool, repo::build_metrics};
 
 #[derive(Debug, Clone)]
 pub struct AlertState {
-  pub last_alert_at: chrono::DateTime<Utc>,
+  pub last_alert_at: Timestamp,
 }
 
 impl Default for AlertState {
   fn default() -> Self {
     Self {
-      last_alert_at: chrono::DateTime::<Utc>::MIN_UTC,
+      last_alert_at: Timestamp::MIN,
     }
   }
 }
@@ -78,10 +78,12 @@ impl AlertManager {
 
     if failure_rate > self.config.error_threshold {
       let mut state = self.state.write().await;
-      let time_since_last = (Utc::now() - state.last_alert_at).num_minutes();
+      let time_since_last = Timestamp::now()
+        .duration_since(state.last_alert_at)
+        .as_mins();
 
       if time_since_last >= self.config.time_window_minutes {
-        state.last_alert_at = Utc::now();
+        state.last_alert_at = Timestamp::now();
         drop(state);
         info!(
           "Alert: failure rate {:.1}% exceeds threshold {:.1}%",

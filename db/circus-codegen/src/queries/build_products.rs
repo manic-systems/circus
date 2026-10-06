@@ -36,7 +36,7 @@ pub struct BuildProductRow {
     pub content_type: Option<String>,
     pub is_directory: bool,
     pub gc_root_path: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct BuildProductRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -48,7 +48,7 @@ pub struct BuildProductRowBorrowed<'a> {
     pub content_type: Option<&'a str>,
     pub is_directory: bool,
     pub gc_root_path: Option<&'a str>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<BuildProductRowBorrowed<'a>> for BuildProductRow {
     fn from(
@@ -85,24 +85,24 @@ pub struct ListPinned {
     pub job_name: String,
     pub system: Option<String>,
     pub status: Option<String>,
-    pub build_created_at: chrono::DateTime<chrono::Utc>,
+    pub build_created_at: jiff::Timestamp,
     pub product_id: uuid::Uuid,
     pub product_name: String,
     pub path: String,
     pub gc_root_path: Option<String>,
-    pub product_created_at: chrono::DateTime<chrono::Utc>,
+    pub product_created_at: jiff::Timestamp,
 }
 pub struct ListPinnedBorrowed<'a> {
     pub build_id: uuid::Uuid,
     pub job_name: &'a str,
     pub system: Option<&'a str>,
     pub status: Option<&'a str>,
-    pub build_created_at: chrono::DateTime<chrono::Utc>,
+    pub build_created_at: jiff::Timestamp,
     pub product_id: uuid::Uuid,
     pub product_name: &'a str,
     pub path: &'a str,
     pub gc_root_path: Option<&'a str>,
-    pub product_created_at: chrono::DateTime<chrono::Utc>,
+    pub product_created_at: jiff::Timestamp,
 }
 impl<'a> From<ListPinnedBorrowed<'a>> for ListPinned {
     fn from(
@@ -139,24 +139,24 @@ pub struct ListPinnedForGc {
     pub job_name: String,
     pub system: Option<String>,
     pub status: Option<String>,
-    pub build_created_at: chrono::DateTime<chrono::Utc>,
+    pub build_created_at: jiff::Timestamp,
     pub product_id: uuid::Uuid,
     pub product_name: String,
     pub path: String,
     pub gc_root_path: Option<String>,
-    pub product_created_at: chrono::DateTime<chrono::Utc>,
+    pub product_created_at: jiff::Timestamp,
 }
 pub struct ListPinnedForGcBorrowed<'a> {
     pub build_id: uuid::Uuid,
     pub job_name: &'a str,
     pub system: Option<&'a str>,
     pub status: Option<&'a str>,
-    pub build_created_at: chrono::DateTime<chrono::Utc>,
+    pub build_created_at: jiff::Timestamp,
     pub product_id: uuid::Uuid,
     pub product_name: &'a str,
     pub path: &'a str,
     pub gc_root_path: Option<&'a str>,
-    pub product_created_at: chrono::DateTime<chrono::Utc>,
+    pub product_created_at: jiff::Timestamp,
 }
 impl<'a> From<ListPinnedForGcBorrowed<'a>> for ListPinnedForGc {
     fn from(

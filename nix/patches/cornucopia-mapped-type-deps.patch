@@ -1,0 +1,19 @@
+--- a/src/type_registrar.rs
++++ b/src/type_registrar.rs
+@@ -492,8 +492,6 @@
+         query_name: &Span<String>,
+         module_info: &ModuleInfo,
+     ) -> Result<&Rc<CornucopiaType>, Error> {
+-        self.dependency_analysis.analyse(ty);
+-
+         if let Some(idx) = self.types.get_index_of(&SchemaKey::from(ty)) {
+             return Ok(&self.types[idx]);
+         }
+@@ -522,6 +520,7 @@
+             }));
+         }
+ 
++        self.dependency_analysis.analyse(ty);
+         self.resolve_type(ty, name, query_name, module_info, true, true)
+     }
+ 

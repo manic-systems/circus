@@ -2143,7 +2143,8 @@ async fn test_cache_gc_combines_age_and_size_rules_without_over_deleting() {
       .expect("age uploaded NAR");
   }
 
-  let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+  let cutoff =
+    jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24 * 30);
   let age_candidates =
     repo::narinfo_cache::list_gc_candidates(&pool, Some(cutoff), None, None)
       .await

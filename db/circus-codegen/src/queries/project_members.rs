@@ -38,14 +38,14 @@ pub struct ProjectMemberRow {
     pub project_id: uuid::Uuid,
     pub user_id: uuid::Uuid,
     pub role: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct ProjectMemberRowBorrowed<'a> {
     pub id: uuid::Uuid,
     pub project_id: uuid::Uuid,
     pub user_id: uuid::Uuid,
     pub role: &'a str,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<ProjectMemberRowBorrowed<'a>> for ProjectMemberRow {
     fn from(

@@ -283,9 +283,9 @@ pub(super) async fn admin_page(
       let last_seen = s.last_seen;
       let last_seen_display = last_seen.as_ref().map_or_else(
         || "Never".to_string(),
-        |t| t.format("%Y-%m-%d %H:%M").to_string(),
+        |t| t.strftime("%Y-%m-%d %H:%M").to_string(),
       );
-      let last_seen_sort = last_seen.map_or(0, |t| t.timestamp());
+      let last_seen_sort = last_seen.map_or(0, jiff::Timestamp::as_second);
       AgentView {
         machine_id: s.machine_id,
         name: s.name,
@@ -315,10 +315,10 @@ pub(super) async fn admin_page(
         id:           k.id,
         name:         k.name,
         role:         k.role.to_string(),
-        created_at:   k.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        created_at:   k.created_at.strftime("%Y-%m-%d %H:%M").to_string(),
         last_used_at: k.last_used_at.map_or_else(
           || "Never".to_string(),
-          |t| t.format("%Y-%m-%d %H:%M").to_string(),
+          |t| t.strftime("%Y-%m-%d %H:%M").to_string(),
         ),
       }
     })
@@ -337,12 +337,12 @@ pub(super) async fn admin_page(
           max_attempts:      task.max_attempts,
           next_retry_at:     task
             .next_retry_at
-            .format("%Y-%m-%d %H:%M")
+            .strftime("%Y-%m-%d %H:%M")
             .to_string(),
           last_error:        task.last_error.unwrap_or_default(),
           created_at:        task
             .created_at
-            .format("%Y-%m-%d %H:%M")
+            .strftime("%Y-%m-%d %H:%M")
             .to_string(),
         }
       })
@@ -364,7 +364,7 @@ pub(super) async fn admin_page(
           gc_root_path:       product.gc_root_path.unwrap_or_default(),
           product_created_at: product
             .product_created_at
-            .format("%Y-%m-%d %H:%M")
+            .strftime("%Y-%m-%d %H:%M")
             .to_string(),
         }
       })
@@ -489,7 +489,7 @@ pub(super) async fn cache_gc(
     None
   } else {
     let days = form.days.unwrap_or(30).clamp(1, 3650);
-    Some(chrono::Utc::now() - chrono::Duration::days(days))
+    Some(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24 * days))
   };
 
   let deleted = match circus_common::repo::narinfo_cache::delete_stale(
@@ -527,7 +527,7 @@ pub(super) async fn cache_gc(
             "DELETE",
             &nar.url,
             std::time::Duration::from_mins(5),
-            std::time::SystemTime::now(),
+            jiff::Timestamp::now(),
           ),
         )
       })
@@ -641,7 +641,7 @@ pub(super) async fn users_page(
         enabled: u.enabled,
         last_login_at: u.last_login_at.map_or_else(
           || "Never".to_string(),
-          |t| t.format("%Y-%m-%d %H:%M").to_string(),
+          |t| t.strftime("%Y-%m-%d %H:%M").to_string(),
         ),
         linked,
       }

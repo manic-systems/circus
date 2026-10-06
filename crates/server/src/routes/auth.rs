@@ -26,8 +26,8 @@ pub struct ApiKeyInfo {
   pub id:           Uuid,
   pub name:         String,
   pub role:         String,
-  pub created_at:   chrono::DateTime<chrono::Utc>,
-  pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+  pub created_at:   jiff::Timestamp,
+  pub last_used_at: Option<jiff::Timestamp>,
 }
 
 #[must_use]

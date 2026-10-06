@@ -8,7 +8,6 @@ description          = "Shared models and utilities for Circus"
 
 [dependencies]
 argon2.workspace              = true
-chrono.workspace              = true
 circus-binary-cache.workspace = true
 circus-codegen.workspace      = true
 circus-config.workspace       = true
@@ -22,6 +21,7 @@ data-encoding.workspace       = true
 deadpool-postgres.workspace   = true
 futures.workspace             = true
 gix.workspace                 = true
+jiff.workspace                = true
 jsonwebtoken.workspace        = true
 nix.workspace                 = true
 num_enum.workspace            = true

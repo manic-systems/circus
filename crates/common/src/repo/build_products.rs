@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::build_products as q;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,12 +15,12 @@ pub struct PinnedBuildProduct {
   pub job_name:           String,
   pub system:             String,
   pub status:             BuildStatus,
-  pub build_created_at:   DateTime<Utc>,
+  pub build_created_at:   Timestamp,
   pub product_id:         Uuid,
   pub product_name:       String,
   pub path:               String,
   pub gc_root_path:       Option<String>,
-  pub product_created_at: DateTime<Utc>,
+  pub product_created_at: Timestamp,
 }
 
 impl From<q::BuildProductRow> for BuildProduct {

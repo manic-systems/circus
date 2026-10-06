@@ -889,12 +889,12 @@ pub(super) fn parse_build_error(raw: &str) -> Vec<BuildErrorLine> {
 }
 
 pub(super) fn format_duration(
-  started: Option<&chrono::DateTime<chrono::Utc>>,
-  completed: Option<&chrono::DateTime<chrono::Utc>>,
+  started: Option<&jiff::Timestamp>,
+  completed: Option<&jiff::Timestamp>,
 ) -> String {
   match (started, completed) {
     (Some(s), Some(c)) => {
-      let secs = (*c - *s).num_seconds();
+      let secs = c.duration_since(*s).as_secs();
       if secs < 0 {
         return String::new();
       }
@@ -924,14 +924,14 @@ impl From<&Build> for BuildView {
       status_text:   text.to_string(),
       status_class:  class.to_string(),
       system:        b.system.clone().unwrap_or_else(|| "-".to_string()),
-      created_at:    b.created_at.format("%Y-%m-%d %H:%M").to_string(),
+      created_at:    b.created_at.strftime("%Y-%m-%d %H:%M").to_string(),
       started_at:    b
         .started_at
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|t| t.strftime("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default(),
       completed_at:  b
         .completed_at
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|t| t.strftime("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default(),
       duration:      format_duration(
         b.started_at.as_ref(),
@@ -940,7 +940,7 @@ impl From<&Build> for BuildView {
       // Only expose epoch while running so the client-side ticker stops
       // updating once the build completes.
       started_epoch: if b.completed_at.is_none() {
-        b.started_at.map(|t| t.timestamp())
+        b.started_at.map(jiff::Timestamp::as_second)
       } else {
         None
       },
@@ -1001,19 +1001,19 @@ impl From<&Evaluation> for EvalView {
       status_class:   class.to_string(),
       time:           e
         .evaluation_time
-        .format("%Y-%m-%d %H:%M UTC")
+        .strftime("%Y-%m-%d %H:%M UTC")
         .to_string(),
-      time_iso:       e.evaluation_time.to_rfc3339(),
+      time_iso:       e.evaluation_time.to_string(),
       started:        e.started_at.map_or_else(
         || "-".to_owned(),
-        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+        |t| t.strftime("%Y-%m-%d %H:%M UTC").to_string(),
       ),
-      started_iso:    e.started_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+      started_iso:    e.started_at.map(|t| t.to_string()).unwrap_or_default(),
       finished:       e.finished_at.map_or_else(
         || "-".to_owned(),
-        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+        |t| t.strftime("%Y-%m-%d %H:%M UTC").to_string(),
       ),
-      finished_iso:   e.finished_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+      finished_iso:   e.finished_at.map(|t| t.to_string()).unwrap_or_default(),
       duration:       format_duration(
         e.started_at.as_ref(),
         e.finished_at.as_ref(),
@@ -1036,7 +1036,7 @@ impl From<&Evaluation> for EvalView {
 
 pub(super) fn eval_running_since(e: &Evaluation) -> Option<i64> {
   if e.status == EvaluationStatus::Running {
-    e.started_at.map(|t| t.timestamp())
+    e.started_at.map(jiff::Timestamp::as_second)
   } else {
     None
   }

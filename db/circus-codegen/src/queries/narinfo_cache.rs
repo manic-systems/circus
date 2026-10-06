@@ -60,19 +60,19 @@ pub struct CountFilteredParams<T1: crate::StringSql, T2: crate::StringSql> {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ListGcCandidatesParams {
-    pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
+    pub cutoff: Option<jiff::Timestamp>,
     pub max_size_bytes: Option<i64>,
     pub target_size_bytes: Option<i64>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct DeleteStaleProjectOwnersParams {
     pub project_id: uuid::Uuid,
-    pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
+    pub cutoff: Option<jiff::Timestamp>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct DeleteStaleForProjectParams {
     pub project_id: uuid::Uuid,
-    pub cutoff: Option<chrono::DateTime<chrono::Utc>>,
+    pub cutoff: Option<jiff::Timestamp>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct NarinfoCacheRow {
@@ -87,11 +87,11 @@ pub struct NarinfoCacheRow {
     pub references: Vec<String>,
     pub sig: Option<String>,
     pub ca: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
     pub build_id: Option<uuid::Uuid>,
     pub project_id: Option<uuid::Uuid>,
-    pub last_fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_fetched_at: Option<jiff::Timestamp>,
 }
 pub struct NarinfoCacheRowBorrowed<'a> {
     pub store_path: &'a str,
@@ -105,11 +105,11 @@ pub struct NarinfoCacheRowBorrowed<'a> {
     pub references: crate::ArrayIterator<'a, &'a str>,
     pub sig: Option<&'a str>,
     pub ca: Option<&'a str>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
     pub build_id: Option<uuid::Uuid>,
     pub project_id: Option<uuid::Uuid>,
-    pub last_fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_fetched_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<NarinfoCacheRowBorrowed<'a>> for NarinfoCacheRow {
     fn from(
@@ -160,8 +160,8 @@ pub struct StorageSummary {
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct StorageExtremes {
-    pub last_uploaded: Option<chrono::DateTime<chrono::Utc>>,
-    pub oldest_fetched: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_uploaded: Option<jiff::Timestamp>,
+    pub oldest_fetched: Option<jiff::Timestamp>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListFiltered {
@@ -170,8 +170,8 @@ pub struct ListFiltered {
     pub nar_size: i64,
     pub file_size: Option<i64>,
     pub compression: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub last_fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub last_fetched_at: Option<jiff::Timestamp>,
 }
 pub struct ListFilteredBorrowed<'a> {
     pub store_path: &'a str,
@@ -179,8 +179,8 @@ pub struct ListFilteredBorrowed<'a> {
     pub nar_size: i64,
     pub file_size: Option<i64>,
     pub compression: &'a str,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub last_fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub last_fetched_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<ListFilteredBorrowed<'a>> for ListFiltered {
     fn from(
@@ -1362,7 +1362,7 @@ impl ListGcCandidatesStmt {
     pub fn bind<'c, 'a, 's, C: GenericClient>(
         &'s self,
         client: &'c C,
-        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+        cutoff: &'a Option<jiff::Timestamp>,
         max_size_bytes: &'a Option<i64>,
         target_size_bytes: &'a Option<i64>,
     ) -> CacheGcCandidateRowQuery<'c, 'a, 's, C, CacheGcCandidateRow, 3> {
@@ -1456,7 +1456,7 @@ impl DeleteStaleProjectOwnersStmt {
         &'s self,
         client: &'c C,
         project_id: &'a uuid::Uuid,
-        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+        cutoff: &'a Option<jiff::Timestamp>,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[project_id, cutoff]).await
     }
@@ -1502,7 +1502,7 @@ impl DeleteStaleForProjectStmt {
         &'s self,
         client: &'c C,
         project_id: &'a uuid::Uuid,
-        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+        cutoff: &'a Option<jiff::Timestamp>,
     ) -> DeletedNarRowQuery<'c, 'a, 's, C, DeletedNarRow, 2> {
         DeletedNarRowQuery {
             client,
@@ -1557,7 +1557,7 @@ impl DeleteStaleGlobalStmt {
     pub fn bind<'c, 'a, 's, C: GenericClient>(
         &'s self,
         client: &'c C,
-        cutoff: &'a Option<chrono::DateTime<chrono::Utc>>,
+        cutoff: &'a Option<jiff::Timestamp>,
     ) -> DeletedNarRowQuery<'c, 'a, 's, C, DeletedNarRow, 1> {
         DeletedNarRowQuery {
             client,

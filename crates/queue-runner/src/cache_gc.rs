@@ -1,9 +1,9 @@
 use std::{future::pending, sync::Arc, time::Duration};
 
-use chrono::{TimeDelta, Utc};
 use circus_common::{PgPool, repo::narinfo_cache};
 use circus_config::{CacheGcConfig, CacheUploadConfig};
 use futures::{StreamExt as _, stream};
+use jiff::{SignedDuration, Timestamp};
 
 const DELETE_CONCURRENCY: usize = 8;
 const DELETE_URL_LIFETIME: Duration = Duration::from_mins(5);
@@ -57,9 +57,9 @@ async fn run_cycle(
   client: &reqwest::Client,
   pool: &PgPool,
 ) -> circus_common::Result<()> {
-  let cutoff = config
-    .max_age_days
-    .map(|days| Utc::now() - TimeDelta::days(i64::from(days)));
+  let cutoff = config.max_age_days.map(|days| {
+    Timestamp::now() - SignedDuration::from_hours(24 * i64::from(days))
+  });
   let candidates = narinfo_cache::list_gc_candidates(
     pool,
     cutoff,
@@ -114,7 +114,7 @@ async fn delete_object(
     "DELETE",
     &candidate.url,
     DELETE_URL_LIFETIME,
-    std::time::SystemTime::now(),
+    jiff::Timestamp::now(),
   );
   match client.delete(url).send().await {
     Ok(response)

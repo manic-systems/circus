@@ -996,13 +996,13 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-  use chrono::Utc;
   use circus_common::repo::narinfo_cache::NarInfo;
+  use jiff::Timestamp;
 
   use super::*;
 
   fn test_narinfo_row() -> circus_common::repo::narinfo_cache::NarInfo {
-    let now = Utc::now();
+    let now = Timestamp::now();
     circus_common::repo::narinfo_cache::NarInfo {
       store_path:      "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-cache-test"
         .to_owned(),

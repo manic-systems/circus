@@ -9,14 +9,14 @@ pub struct RecordParams<T1: crate::StringSql, T2: crate::StringSql> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListStatus {
     pub service: String,
-    pub last_heartbeat_at: chrono::DateTime<chrono::Utc>,
+    pub last_heartbeat_at: jiff::Timestamp,
     pub seconds_since: f64,
     pub poll_interval_seconds: i32,
     pub version: Option<String>,
 }
 pub struct ListStatusBorrowed<'a> {
     pub service: &'a str,
-    pub last_heartbeat_at: chrono::DateTime<chrono::Utc>,
+    pub last_heartbeat_at: jiff::Timestamp,
     pub seconds_since: f64,
     pub poll_interval_seconds: i32,
     pub version: Option<&'a str>,

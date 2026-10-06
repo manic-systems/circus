@@ -119,21 +119,19 @@ pub fn create_migration(
 ) -> color_eyre::Result<PathBuf> {
   use std::{fs, io::Write as _};
 
-  use chrono::Utc;
+  use jiff::Timestamp;
 
   validate_name(name)?;
 
   fs::create_dir_all(output_dir)?;
 
-  let now = Utc::now();
-  let timestamp = now.format("%Y%m%d%H%M%S");
+  let now = Timestamp::now();
+  let timestamp = now.strftime("%Y%m%d%H%M%S");
   let filename = format!("{timestamp}_{name}.sql");
   let filepath = output_dir.join(&filename);
 
   let content = format!(
-    "-- Migration: {}\n-- Created: {}\n\n-- Write migration SQL here.\n",
-    name,
-    now.to_rfc3339()
+    "-- Migration: {name}\n-- Created: {now}\n\n-- Write migration SQL here.\n"
   );
 
   fs::OpenOptions::new()

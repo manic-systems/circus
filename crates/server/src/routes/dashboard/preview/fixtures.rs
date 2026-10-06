@@ -1,4 +1,3 @@
-use chrono::{Duration, Utc};
 use circus_common::models::{
   BinaryCacheUpstreams,
   Channel,
@@ -9,6 +8,7 @@ use circus_common::models::{
   Project,
 };
 use circus_config::UiConfig;
+use jiff::{SignedDuration, Timestamp};
 use uuid::Uuid;
 
 use super::super::{
@@ -69,8 +69,9 @@ pub(super) fn project_fixture() -> Project {
     cache_upstreams:        BinaryCacheUpstreams::default(),
     managed_declaratively:  false,
     allow_runtime_mutation: None,
-    created_at:             Utc::now() - Duration::days(30),
-    updated_at:             Utc::now() - Duration::minutes(5),
+    created_at:             Timestamp::now()
+      - SignedDuration::from_hours(24 * 30),
+    updated_at:             Timestamp::now() - SignedDuration::from_mins(5),
   }
 }
 
@@ -88,10 +89,10 @@ pub(super) fn jobset_fixture() -> Jobset {
     branch_pattern:    None,
     tag_pattern:       None,
     scheduling_shares: 100,
-    created_at:        Utc::now() - Duration::days(20),
-    updated_at:        Utc::now() - Duration::minutes(5),
+    created_at:        Timestamp::now() - SignedDuration::from_hours(24 * 20),
+    updated_at:        Timestamp::now() - SignedDuration::from_mins(5),
     state:             JobsetState::Enabled,
-    last_checked_at:   Some(Utc::now() - Duration::minutes(10)),
+    last_checked_at:   Some(Timestamp::now() - SignedDuration::from_mins(10)),
     keep_nr:           3,
     systems:           None,
     only_build_latest: false,
@@ -106,8 +107,9 @@ pub(super) fn channel_fixture() -> Channel {
     name:                  "latest".into(),
     jobset_id:             id(2),
     current_evaluation_id: Some(id(3)),
-    created_at:            Utc::now() - Duration::days(7),
-    updated_at:            Utc::now() - Duration::minutes(2),
+    created_at:            Timestamp::now()
+      - SignedDuration::from_hours(24 * 7),
+    updated_at:            Timestamp::now() - SignedDuration::from_mins(2),
   }
 }
 
@@ -117,7 +119,7 @@ pub(super) fn news_items() -> Vec<NewsItem> {
     title:      "Preview fixtures updated".into(),
     content:    "Frontend previews are served from xtask without a VM.".into(),
     created_by: Some(id(51)),
-    created_at: Utc::now() - Duration::hours(2),
+    created_at: Timestamp::now() - SignedDuration::from_hours(2),
   }]
 }
 
@@ -149,7 +151,7 @@ pub(super) fn build_view(
     },
     duration:      "3m 12s".into(),
     started_epoch: if class == "running" {
-      Some(Utc::now().timestamp() - 90)
+      Some(Timestamp::now().as_second() - 90)
     } else {
       None
     },
@@ -278,7 +280,7 @@ pub(super) fn queue_build(
       String::new()
     },
     elapsed:       "1m 30s".into(),
-    started_epoch: builder.map(|_| Utc::now().timestamp() - 90),
+    started_epoch: builder.map(|_| Timestamp::now().as_second() - 90),
     priority:      100,
     builder_name:  builder.map(str::to_string),
     queue_pos:     pos,
@@ -316,7 +318,7 @@ pub(super) fn eval_view(n: u128, status: &str, class: &str) -> EvalView {
     } else {
       "1m 12s".into()
     },
-    running_since:  (status == "Running").then(|| Utc::now().timestamp() - 40),
+    running_since:  (status == "Running").then(|| Timestamp::now().as_second() - 40),
     progress:       (status == "Running").then(|| {
       EvalProgressView {
         id:      id(n),

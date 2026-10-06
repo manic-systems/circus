@@ -102,7 +102,7 @@ pub struct UnlinkIdentityParams<T1: crate::StringSql> {
 pub struct CreateSessionParams<T1: crate::StringSql> {
     pub user_id: uuid::Uuid,
     pub session_token_hash: T1,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: jiff::Timestamp,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserRow {
@@ -116,9 +116,9 @@ pub struct UserRow {
     pub enabled: bool,
     pub email_verified: bool,
     pub public_dashboard: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
+    pub last_login_at: Option<jiff::Timestamp>,
     pub external_id: Option<String>,
 }
 pub struct UserRowBorrowed<'a> {
@@ -132,9 +132,9 @@ pub struct UserRowBorrowed<'a> {
     pub enabled: bool,
     pub email_verified: bool,
     pub public_dashboard: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
+    pub last_login_at: Option<jiff::Timestamp>,
     pub external_id: Option<&'a str>,
 }
 impl<'a> From<UserRowBorrowed<'a>> for UserRow {
@@ -1816,7 +1816,7 @@ impl CreateSessionStmt {
         client: &'c C,
         user_id: &'a uuid::Uuid,
         session_token_hash: &'a T1,
-        expires_at: &'a chrono::DateTime<chrono::Utc>,
+        expires_at: &'a jiff::Timestamp,
     ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 3> {
         UuidUuidQuery {
             client,

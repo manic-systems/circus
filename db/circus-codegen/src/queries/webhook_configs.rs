@@ -30,7 +30,7 @@ pub struct WebhookConfigRow {
     pub forge_type: String,
     pub secret_hash: Option<String>,
     pub enabled: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 pub struct WebhookConfigRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -38,7 +38,7 @@ pub struct WebhookConfigRowBorrowed<'a> {
     pub forge_type: &'a str,
     pub secret_hash: Option<&'a str>,
     pub enabled: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 impl<'a> From<WebhookConfigRowBorrowed<'a>> for WebhookConfigRow {
     fn from(

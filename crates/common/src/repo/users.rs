@@ -653,7 +653,8 @@ pub async fn create_session(
   pool: &PgPool,
   user_id: Uuid,
 ) -> Result<(String, Uuid)> {
-  create_session_for(pool, user_id, chrono::Duration::days(7)).await
+  create_session_for(pool, user_id, jiff::SignedDuration::from_hours(24 * 7))
+    .await
 }
 
 /// [`create_session`] with a lifetime other than seven days.
@@ -664,7 +665,7 @@ pub async fn create_session(
 pub async fn create_session_for(
   pool: &PgPool,
   user_id: Uuid,
-  lifetime: chrono::Duration,
+  lifetime: jiff::SignedDuration,
 ) -> Result<(String, Uuid)> {
   use sha2::{Digest, Sha256};
 
@@ -672,7 +673,7 @@ pub async fn create_session_for(
   let token = Uuid::new_v4().to_string();
   let token_hash = HEXLOWER.encode(&Sha256::digest(token.as_bytes()));
 
-  let expires_at = chrono::Utc::now() + lifetime;
+  let expires_at = jiff::Timestamp::now() + lifetime;
 
   let client = pool.get().await?;
   let session_id = q::create_session()

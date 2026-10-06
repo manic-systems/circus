@@ -9,12 +9,12 @@
 //! Keeping both flows here guarantees they agree on bucket parsing, optional
 //! prefixes, endpoint style, and canonical signing.
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use circus_config::S3CacheConfig;
 use data_encoding::HEXLOWER;
 use hmac::{Hmac, KeyInit as _, Mac};
+use jiff::Timestamp;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest as _, Sha256};
 use url::Url;
@@ -90,12 +90,12 @@ impl Presigner {
 
   #[must_use]
   pub fn presign_put(&self, key: &str, expiry: Duration) -> String {
-    self.presign_at("PUT", key, expiry, SystemTime::now())
+    self.presign_at("PUT", key, expiry, Timestamp::now())
   }
 
   #[must_use]
   pub fn presign_get(&self, key: &str, expiry: Duration) -> String {
-    self.presign_at("GET", key, expiry, SystemTime::now())
+    self.presign_at("GET", key, expiry, Timestamp::now())
   }
 
   #[must_use]
@@ -113,7 +113,7 @@ impl Presigner {
     method: &str,
     key: &str,
     expiry: Duration,
-    now: SystemTime,
+    now: Timestamp,
   ) -> String {
     let object_key = self.object_key(key);
     let (host, base_url) = self.host_and_base(&object_key);
@@ -279,9 +279,8 @@ fn normalize_prefix(prefix: Option<&str>) -> Option<String> {
     .map(ToOwned::to_owned)
 }
 
-fn format_iso8601(t: SystemTime) -> String {
-  let ts: DateTime<Utc> = DateTime::<Utc>::from(t);
-  ts.format("%Y%m%dT%H%M%SZ").to_string()
+fn format_iso8601(t: Timestamp) -> String {
+  t.strftime("%Y%m%dT%H%M%SZ").to_string()
 }
 
 fn canonical_path(key: &str, path_style_bucket: Option<&String>) -> String {
@@ -344,7 +343,7 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-  use std::time::{Duration, UNIX_EPOCH};
+  use std::time::Duration;
 
   use super::*;
 
@@ -389,11 +388,8 @@ mod tests {
       endpoint_url:   Some("https://s3.amazonaws.com".into()),
       use_path_style: false,
     };
-    #[expect(
-      clippy::duration_suboptimal_units,
-      reason = "pinned timestamp for AWS reference vector"
-    )]
-    let pinned = UNIX_EPOCH + Duration::from_secs(1_369_353_600);
+    let pinned =
+      Timestamp::from_second(1_369_353_600).expect("valid timestamp");
     let url = presigner.presign_at(
       "GET",
       "test.txt",
@@ -428,7 +424,7 @@ mod tests {
       "GET",
       "nar/example.nar.zst",
       Duration::from_mins(1),
-      UNIX_EPOCH,
+      Timestamp::UNIX_EPOCH,
     );
 
     assert!(url.starts_with(

@@ -30,7 +30,9 @@ pub struct QueueRunnerConfig {
   /// Timeout after which builds for unsupported systems are aborted.
   /// None or 0 = disabled (Hydra maxUnsupportedTime compatibility).
   #[serde(default)]
-  #[serde(with = "humantime_serde")]
+  #[serde(
+    with = "jiff::fmt::serde::unsigned_duration::friendly::compact::optional"
+  )]
   pub unsupported_timeout: Option<Duration>,
 
   /// Builder selection strategy (default: `speed_factor_only`).

@@ -7,13 +7,13 @@ repository.workspace = true
 description          = "Nix evaluation support for Circus"
 
 [dependencies]
-chrono.workspace        = true
 clap.workspace          = true
 color-eyre.workspace    = true
 data-encoding.workspace = true
 evix.workspace          = true
 futures.workspace       = true
 gix.workspace           = true
+jiff.workspace          = true
 libc.workspace          = true
 serde.workspace         = true
 serde_json.workspace    = true

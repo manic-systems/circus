@@ -29,8 +29,8 @@ pub struct ChannelRow {
     pub name: String,
     pub jobset_id: uuid::Uuid,
     pub current_evaluation_id: Option<uuid::Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
 }
 pub struct ChannelRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -38,8 +38,8 @@ pub struct ChannelRowBorrowed<'a> {
     pub name: &'a str,
     pub jobset_id: uuid::Uuid,
     pub current_evaluation_id: Option<uuid::Uuid>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
 }
 impl<'a> From<ChannelRowBorrowed<'a>> for ChannelRow {
     fn from(

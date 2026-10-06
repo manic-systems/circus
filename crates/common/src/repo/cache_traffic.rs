@@ -8,8 +8,8 @@
 //! by name (`global` or a project name), matching how narinfo rows are scoped
 //! by `project_id`.
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::cache_traffic as q;
+use jiff::Timestamp;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -51,7 +51,7 @@ impl Granularity {
 /// One point in a serving-traffic series.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrafficPoint {
-  pub bucket_time: DateTime<Utc>,
+  pub bucket_time: Timestamp,
   pub requests:    i64,
   pub bytes:       i64,
 }
@@ -69,7 +69,7 @@ impl From<q::TrafficTimeseries> for TrafficPoint {
 /// One point in a storage-added series (derived from upload timestamps).
 #[derive(Debug, Clone, Serialize)]
 pub struct StoragePoint {
-  pub bucket_time:    DateTime<Utc>,
+  pub bucket_time:    Timestamp,
   pub packages_added: i64,
   pub bytes_added:    i64,
 }

@@ -627,7 +627,7 @@ pub async fn run(
               .supports(build.system.as_deref(), build.scheduling_features());
             if !has_agent && !has_runner {
               let timeout_at = build.created_at + timeout;
-              if chrono::Utc::now() > timeout_at {
+              if jiff::Timestamp::now() > timeout_at {
                 tracing::info!(
                   build_id = %build.id,
                   system = ?build.system,

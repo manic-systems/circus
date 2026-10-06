@@ -44,7 +44,7 @@ pub struct BuildMetricRow {
     pub metric_name: String,
     pub metric_value: f64,
     pub unit: String,
-    pub collected_at: chrono::DateTime<chrono::Utc>,
+    pub collected_at: jiff::Timestamp,
 }
 pub struct BuildMetricRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -52,7 +52,7 @@ pub struct BuildMetricRowBorrowed<'a> {
     pub metric_name: &'a str,
     pub metric_value: f64,
     pub unit: &'a str,
-    pub collected_at: chrono::DateTime<chrono::Utc>,
+    pub collected_at: jiff::Timestamp,
 }
 impl<'a> From<BuildMetricRowBorrowed<'a>> for BuildMetricRow {
     fn from(
@@ -94,21 +94,21 @@ impl<'a> From<CalculateFailureRateBorrowed<'a>> for CalculateFailureRate {
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct GetBuildStatsTimeseries {
-    pub bucket_time: chrono::DateTime<chrono::Utc>,
+    pub bucket_time: jiff::Timestamp,
     pub total_builds: i64,
     pub failed_builds: i64,
     pub avg_duration: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct GetDurationPercentilesTimeseries {
-    pub bucket_time: chrono::DateTime<chrono::Utc>,
+    pub bucket_time: jiff::Timestamp,
     pub p50: Option<f64>,
     pub p95: Option<f64>,
     pub p99: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct GetQueueDepthTimeseries {
-    pub bucket_time: chrono::DateTime<chrono::Utc>,
+    pub bucket_time: jiff::Timestamp,
     pub pending_count: i64,
 }
 #[derive(Debug, Clone, PartialEq)]

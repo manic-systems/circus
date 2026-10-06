@@ -5,7 +5,6 @@ use axum::{
   http::Extensions,
   routing::{delete, get, post},
 };
-use chrono::{DateTime, Utc};
 use circus_common::{
   CreateJobset,
   CreateProject,
@@ -19,6 +18,7 @@ use circus_common::{
   models::{BinaryCacheUpstreams, CreateWebhookConfig, ForgeType},
 };
 use circus_nix as nix;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ struct WebhookConfigResponse {
   project_id: Uuid,
   forge_type: String,
   enabled:    bool,
-  created_at: DateTime<Utc>,
+  created_at: Timestamp,
 }
 
 impl From<WebhookConfig> for WebhookConfigResponse {

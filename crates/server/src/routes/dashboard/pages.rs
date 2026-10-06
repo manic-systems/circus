@@ -450,8 +450,8 @@ pub(super) async fn jobset_page(
       commit_subject: e.commit_subject.clone().unwrap_or_default(),
       status_text: text,
       status_class: class,
-      time: e.evaluation_time.format("%Y-%m-%d %H:%M UTC").to_string(),
-      time_iso: e.evaluation_time.to_rfc3339(),
+      time: e.evaluation_time.strftime("%Y-%m-%d %H:%M UTC").to_string(),
+      time_iso: e.evaluation_time.to_string(),
       duration: format_duration(e.started_at.as_ref(), e.finished_at.as_ref()),
       running_since: eval_running_since(e),
       progress: eval_progress(e),
@@ -526,7 +526,7 @@ pub(super) async fn jobset_jobs_page(
       let hidden_suffix = if e.hidden { " (hidden)" } else { "" };
       JobStatusColumn {
         eval_id: e.id,
-        label:   e.evaluation_time.format("%m-%d %H:%M").to_string(),
+        label:   e.evaluation_time.strftime("%m-%d %H:%M").to_string(),
         title:   format!("{commit_short}{hidden_suffix}"),
       }
     })
