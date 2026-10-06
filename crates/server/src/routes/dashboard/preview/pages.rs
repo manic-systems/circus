@@ -186,6 +186,8 @@ pub(super) async fn project() -> Response {
   render(ProjectTemplate {
     ui:              ui(),
     project:         project_fixture(),
+    repository_page: url::Url::parse("https://github.com/manic-systems/circus")
+      .ok(),
     jobsets:         vec![jobset_fixture()],
     recent_evals:    evals_fixture(),
     project_mutable: true,

@@ -1044,18 +1044,15 @@ pub(super) fn eval_view_with_context(
   v
 }
 
-/// The web page of `commit` in the repository at `repository_url`. GitLab
-/// nests commit pages under `/-/`, and an ssh or git port says nothing about
-/// where the web UI listens.
-pub(super) fn commit_url(repository_url: &str, commit: &str) -> Option<String> {
+/// The web page of the repository at `repository_url`. An ssh or git port
+/// says nothing about where the web UI listens.
+pub(super) fn repository_page_url(repository_url: &str) -> Option<url::Url> {
   let url = url::Url::parse(repository_url).ok()?;
 
   if !matches!(
     url.scheme(),
     "http" | "https" | "ssh" | "git" | "git+https" | "git+ssh"
-  ) || commit.is_empty()
-    || !commit.chars().all(|c| c.is_ascii_hexdigit())
-  {
+  ) {
     return None;
   }
 
@@ -1066,19 +1063,30 @@ pub(super) fn commit_url(repository_url: &str, commit: &str) -> Option<String> {
     return None;
   }
 
-  let origin = match (url.scheme(), url.port()) {
+  let page = match (url.scheme(), url.port()) {
     ("http" | "https", Some(port)) => {
-      format!("{}://{host}:{port}", url.scheme())
+      format!("{}://{host}:{port}/{path}", url.scheme())
     },
-    ("http" | "https", None) => format!("{}://{host}", url.scheme()),
-    _ => format!("https://{host}"),
+    ("http" | "https", None) => format!("{}://{host}/{path}", url.scheme()),
+    _ => format!("https://{host}/{path}"),
   };
-  let commits = if host.contains("gitlab") {
+  url::Url::parse(&page).ok()
+}
+
+/// The web page of `commit` in the repository at `repository_url`. GitLab
+/// nests commit pages under `/-/`.
+pub(super) fn commit_url(repository_url: &str, commit: &str) -> Option<String> {
+  if commit.is_empty() || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+    return None;
+  }
+
+  let page = repository_page_url(repository_url)?;
+  let commits = if page.host_str()?.contains("gitlab") {
     "-/commit"
   } else {
     "commit"
   };
-  Some(format!("{origin}/{path}/{commits}/{commit}"))
+  Some(format!("{page}/{commits}/{commit}"))
 }
 
 pub(super) fn status_badge(s: BuildStatus) -> (String, String) {
