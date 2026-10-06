@@ -10,58 +10,31 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use circus_common::{models::UserType, repo};
 use circus_config::GitHubOAuthConfig;
-use oauth2::{
-  AuthUrl,
-  AuthorizationCode,
-  ClientId,
-  ClientSecret,
-  CsrfToken,
-  EndpointNotSet,
-  EndpointSet,
-  RedirectUrl,
-  Scope,
-  StandardErrorResponse,
-  StandardRevocableToken,
-  StandardTokenIntrospectionResponse,
-  StandardTokenResponse,
-  TokenResponse,
-  TokenUrl,
-  basic::{BasicClient, BasicErrorResponseType, BasicTokenType},
-};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
+use url::Url;
 
 use super::super::{error::ApiError, state::AppState};
-use crate::session_cookie::{
-  OAUTH_STATE_COOKIE,
-  USER_SESSION_MAX_AGE_SECS,
-  clear_oauth_state_cookie,
-  oauth_state_cookie,
-  oauth_user_session_cookie,
+use crate::{
+  oauth_client::{AuthCodeClient, ClientAuth, Secret},
+  session_cookie::{
+    OAUTH_STATE_COOKIE,
+    USER_SESSION_MAX_AGE_SECS,
+    clear_oauth_state_cookie,
+    oauth_state_cookie,
+    oauth_user_session_cookie,
+  },
 };
-
-/// Type alias for the fully-configured GitHub OAuth client (oauth2 v5.0
-/// type-state)
-type GitHubOAuthClient = oauth2::Client<
-  StandardErrorResponse<BasicErrorResponseType>,
-  StandardTokenResponse<oauth2::EmptyExtraTokenFields, BasicTokenType>,
-  StandardTokenIntrospectionResponse<
-    oauth2::EmptyExtraTokenFields,
-    BasicTokenType,
-  >,
-  StandardRevocableToken,
-  StandardErrorResponse<oauth2::RevocationErrorResponseType>,
-  EndpointSet,
-  EndpointNotSet,
-  EndpointNotSet,
-  EndpointNotSet,
-  EndpointSet,
->;
 
 #[derive(Debug, Deserialize)]
 pub struct OAuthCallbackParams {
   code:  String,
   state: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubTokenResponse {
+  access_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,25 +53,19 @@ struct GitHubEmailResponse {
 
 #[expect(
   clippy::expect_used,
-  reason = "hard-coded URLs and validated redirect URI are infallible"
+  reason = "hard-coded GitHub endpoints are valid URLs"
 )]
-fn build_github_client(config: &GitHubOAuthConfig) -> GitHubOAuthClient {
-  let auth_url =
-    AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
-      .expect("valid auth url");
-  let token_url =
-    TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
-      .expect("valid token url");
-
-  // oauth2 v5.0 uses builder pattern with type-state
-  BasicClient::new(ClientId::new(config.client_id.clone()))
-    .set_client_secret(ClientSecret::new(config.client_secret.clone()))
-    .set_auth_uri(auth_url)
-    .set_token_uri(token_url)
-    .set_redirect_uri(
-      RedirectUrl::new(config.redirect_uri.clone())
-        .expect("valid redirect url"),
-    )
+fn build_github_client(config: &GitHubOAuthConfig) -> AuthCodeClient {
+  AuthCodeClient {
+    client_id:     config.client_id.clone(),
+    client_secret: Some(config.client_secret.clone()),
+    auth_url:      Url::parse("https://github.com/login/oauth/authorize")
+      .expect("valid auth url"),
+    token_url:     Url::parse("https://github.com/login/oauth/access_token")
+      .expect("valid token url"),
+    redirect_uri:  config.redirect_uri.clone(),
+    auth:          ClientAuth::Basic,
+  }
 }
 
 async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
@@ -107,15 +74,18 @@ async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
       .into_response();
   };
 
-  let client = build_github_client(config);
-  let (auth_url, csrf_token) = client
-    .authorize_url(CsrfToken::new_random)
-    .add_scope(Scope::new("read:user".to_string()))
-    .add_scope(Scope::new("user:email".to_string()))
-    .url();
+  let Ok(csrf_token) = Secret::random() else {
+    return (StatusCode::INTERNAL_SERVER_ERROR, "No randomness available")
+      .into_response();
+  };
+  let auth_url = build_github_client(config).authorize_url(
+    &csrf_token,
+    ["read:user", "user:email"],
+    &[],
+  );
 
   let cookie = oauth_state_cookie(
-    csrf_token.secret(),
+    csrf_token.as_str(),
     &state.config.server,
     &config.redirect_uri,
   );
@@ -163,30 +133,23 @@ async fn github_callback(
     )));
   }
 
-  let client = build_github_client(config);
-
-  // Create HTTP client for oauth2 v5.0 token exchange
-  let http_client = oauth2::reqwest::ClientBuilder::new()
-    .redirect(oauth2::reqwest::redirect::Policy::none())
+  let http_client = reqwest::Client::builder()
+    .redirect(reqwest::redirect::Policy::none())
     .build()
     .map_err(|e| {
       ApiError(circus_common::CiError::Internal(format!(
         "Failed to create HTTP client: {e}"
       )))
     })?;
-
-  // Exchange code for access token
-  let token_result = client
-    .exchange_code(AuthorizationCode::new(params.code))
-    .request_async(&http_client)
+  let token: GitHubTokenResponse = build_github_client(config)
+    .exchange(&http_client, &params.code, None)
     .await
     .map_err(|e| {
       ApiError(circus_common::CiError::Internal(format!(
         "Token exchange failed: {e}"
       )))
     })?;
-
-  let access_token = token_result.access_token().secret();
+  let access_token = token.access_token;
 
   // Fetch user info from GitHub using shared HTTP client
   let user_response = state
@@ -347,17 +310,18 @@ mod tests {
         .to_string(),
     };
 
-    let client = build_github_client(&config);
-    let (auth_url, csrf_token) = client
-      .authorize_url(CsrfToken::new_random)
-      .add_scope(Scope::new("read:user".to_string()))
-      .url();
+    let csrf_token = Secret::random().expect("randomness");
+    let auth_url = build_github_client(&config).authorize_url(
+      &csrf_token,
+      ["read:user"],
+      &[],
+    );
 
     let url_str = auth_url.as_str();
     assert!(url_str.starts_with("https://github.com/login/oauth/authorize"));
     assert!(url_str.contains("client_id=test_client_id"));
     assert!(url_str.contains("scope=read%3Auser"));
-    assert!(!csrf_token.secret().is_empty());
+    assert!(url_str.contains(&format!("state={}", csrf_token.as_str())));
   }
 
   #[test]

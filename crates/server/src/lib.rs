@@ -5,6 +5,7 @@ pub mod auth_middleware;
 pub mod cache_overview;
 pub mod cli;
 pub mod error;
+mod oauth_client;
 pub mod operator;
 pub mod permissions;
 pub mod routes;
