@@ -622,9 +622,51 @@ pub(super) struct BuildErrorLine {
 }
 
 pub(super) fn strip_ansi(s: &str) -> String {
-  let stripped =
-    String::from_utf8_lossy(&strip_ansi_escapes::strip(s)).into_owned();
-  strip_bare_csi_fragments(&stripped)
+  strip_bare_csi_fragments(&strip_escapes(s))
+}
+
+/// Drops escape sequences and control characters other than newlines and
+/// tabs. OSC and other string sequences end at BEL or `ESC \`.
+fn strip_escapes(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  let mut chars = s.chars().peekable();
+
+  while let Some(ch) = chars.next() {
+    if ch != '\x1b' {
+      if !ch.is_control() || ch == '\n' || ch == '\t' {
+        out.push(ch);
+      }
+      continue;
+    }
+
+    match chars.next() {
+      Some('[') => {
+        for next in chars.by_ref() {
+          if ('\x40'..='\x7e').contains(&next) {
+            break;
+          }
+        }
+      },
+      Some(']' | 'P' | 'X' | '^' | '_') => {
+        while let Some(next) = chars.next() {
+          if next == '\x07' {
+            break;
+          }
+          if next == '\x1b' && chars.peek() == Some(&'\\') {
+            chars.next();
+            break;
+          }
+        }
+      },
+      Some(next) if ('\x20'..='\x2f').contains(&next) => {
+        while chars.next_if(|c| ('\x20'..='\x2f').contains(c)).is_some() {}
+        chars.next();
+      },
+      Some(_) | None => {},
+    }
+  }
+
+  out
 }
 
 /// Preserve Nix's ANSI colours as CSS classes. Some errors cross the evix FFI
@@ -636,9 +678,7 @@ fn parse_diagnostic_ansi(s: &str) -> Vec<DiagnosticSegment> {
 
   while let Some((start, prefix_len, end)) = next_sgr(rest) {
     if start > 0 {
-      let text =
-        String::from_utf8_lossy(&strip_ansi_escapes::strip(&rest[..start]))
-          .into_owned();
+      let text = strip_escapes(&rest[..start]);
       if !text.is_empty() {
         segments.push(DiagnosticSegment {
           text,
@@ -650,8 +690,7 @@ fn parse_diagnostic_ansi(s: &str) -> Vec<DiagnosticSegment> {
     rest = &rest[end + 1..];
   }
   if !rest.is_empty() {
-    let text =
-      String::from_utf8_lossy(&strip_ansi_escapes::strip(rest)).into_owned();
+    let text = strip_escapes(rest);
     if !text.is_empty() {
       segments.push(DiagnosticSegment { text, class });
     }

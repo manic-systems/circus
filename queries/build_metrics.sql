@@ -52,7 +52,7 @@ SELECT
       FROM
         (b.completed_at - b.started_at)
     )
-  ) AS avg_duration
+  )::float8 AS avg_duration
 FROM
   builds b
   JOIN evaluations e ON b.evaluation_id = e.id

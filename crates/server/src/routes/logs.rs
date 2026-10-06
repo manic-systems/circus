@@ -1,3 +1,5 @@
+use std::{path::PathBuf, time::Duration};
+
 use axum::{
   Router,
   extract::{Path, State},
@@ -9,6 +11,12 @@ use axum::{
     sse::{Event, KeepAlive},
   },
   routing::get,
+};
+use circus_common::{PgPool, models::BuildStatus};
+use futures::StreamExt;
+use tokio::{
+  io::{AsyncBufReadExt, BufReader},
+  sync::mpsc::{Sender, error::SendError},
 };
 use uuid::Uuid;
 
@@ -87,77 +95,96 @@ async fn stream_build_log(
 
   let active_path = log_storage.log_path_for_active(&id);
   let final_path = log_storage.log_path(&id);
-  let log_dir = state.config.logs.log_dir.clone();
-  let pool = state.pool.clone();
-  let build_id = build.id;
-
-  let stream = async_stream::stream! {
-      use tokio::io::{AsyncBufReadExt, BufReader};
-
-      // Determine which file to read
-      let path = if active_path.exists() {
-          active_path.clone()
-      } else if final_path.exists() {
-          final_path.clone()
-      } else {
-          // Wait for the file to appear
-          let mut found = false;
-          for _ in 0..30 {
-              tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-              if active_path.exists() || final_path.exists() {
-                  found = true;
-                  break;
-              }
-          }
-          if !found {
-              yield Ok(Event::default().data("No log file available"));
-              return;
-          }
-          if active_path.exists() { active_path.clone() } else { final_path.clone() }
-      };
-
-      let Some(path) = crate::routes::canonical_log_file(&log_dir, &path).await else {
-        yield Ok(Event::default().data("Log file is unavailable"));
-        return;
-      };
-
-      let Ok(file) = tokio::fs::File::open(&path).await else {
-        yield Ok(Event::default().data("Failed to open log file"));
-        return;
-      };
-
-      let mut reader = BufReader::new(file);
-      let mut line = String::new();
-      let mut consecutive_empty = 0u32;
-
-      loop {
-          line.clear();
-          match reader.read_line(&mut line).await {
-              Ok(0) => {
-                  // EOF - check if build is still running
-                  consecutive_empty += 1;
-                  if consecutive_empty > 5 {
-                      // Check build status
-                      if let Ok(b) = circus_common::repo::builds::get(&pool, build_id).await
-                          && b.status != circus_common::models::BuildStatus::Running
-                              && b.status != circus_common::models::BuildStatus::Pending {
-                              yield Ok(Event::default().event("done").data("Build completed"));
-                              return;
-                          }
-                      consecutive_empty = 0;
-                  }
-                  tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-              }
-              Ok(_) => {
-                  consecutive_empty = 0;
-                  yield Ok(Event::default().data(line.trim_end()));
-              }
-              Err(_) => return,
-          }
-      }
-  };
+  let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+  tokio::spawn(follow_log(
+    tx,
+    active_path,
+    final_path,
+    state.config.logs.log_dir.clone(),
+    state.pool.clone(),
+    build.id,
+  ));
+  let stream = futures::stream::poll_fn(move |cx| rx.poll_recv(cx)).map(Ok);
 
   Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Sends end once the client disconnects, the build finishes, or the log
+/// cannot be read.
+async fn follow_log(
+  tx: Sender<Event>,
+  active_path: PathBuf,
+  final_path: PathBuf,
+  log_dir: PathBuf,
+  pool: PgPool,
+  build_id: Uuid,
+) -> Result<(), SendError<Event>> {
+  if !active_path.exists() && !final_path.exists() {
+    let mut found = false;
+    for _ in 0..30 {
+      tokio::time::sleep(Duration::from_secs(1)).await;
+      if active_path.exists() || final_path.exists() {
+        found = true;
+        break;
+      }
+    }
+    if !found {
+      return tx
+        .send(Event::default().data("No log file available"))
+        .await;
+    }
+  }
+
+  let path = if active_path.exists() {
+    active_path
+  } else {
+    final_path
+  };
+  let Some(path) = crate::routes::canonical_log_file(&log_dir, &path).await
+  else {
+    return tx
+      .send(Event::default().data("Log file is unavailable"))
+      .await;
+  };
+  let Ok(file) = tokio::fs::File::open(&path).await else {
+    return tx
+      .send(Event::default().data("Failed to open log file"))
+      .await;
+  };
+
+  let mut reader = BufReader::new(file);
+  let mut line = String::new();
+  let mut consecutive_empty = 0u32;
+
+  loop {
+    line.clear();
+    match reader.read_line(&mut line).await {
+      Ok(0) => {
+        consecutive_empty += 1;
+        if consecutive_empty > 5 {
+          if let Ok(build) =
+            circus_common::repo::builds::get(&pool, build_id).await
+            && build.status != BuildStatus::Running
+            && build.status != BuildStatus::Pending
+          {
+            return tx
+              .send(Event::default().event("done").data("Build completed"))
+              .await;
+          }
+          consecutive_empty = 0;
+        }
+        if tx.is_closed() {
+          return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+      },
+      Ok(_) => {
+        consecutive_empty = 0;
+        tx.send(Event::default().data(line.trim_end())).await?;
+      },
+      Err(_) => return Ok(()),
+    }
+  }
 }
 
 pub fn router() -> Router<AppState> {

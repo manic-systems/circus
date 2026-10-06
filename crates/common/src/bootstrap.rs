@@ -31,12 +31,10 @@ fn resolve_secret(
     inline.to_string()
   } else {
     let file = file?;
-    let expanded = shellexpand::full(file)
-      .map_or_else(|_| file.to_string(), std::borrow::Cow::into_owned);
-    match std::fs::read_to_string(&expanded) {
+    match std::fs::read_to_string(file) {
       Ok(value) => value.trim().to_string(),
       Err(error) => {
-        on_file_error(&expanded, &error);
+        on_file_error(file, &error);
         return None;
       },
     }

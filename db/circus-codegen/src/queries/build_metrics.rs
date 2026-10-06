@@ -97,7 +97,7 @@ pub struct GetBuildStatsTimeseries {
     pub bucket_time: chrono::DateTime<chrono::Utc>,
     pub total_builds: i64,
     pub failed_builds: i64,
-    pub avg_duration: Option<rust_decimal::Decimal>,
+    pub avg_duration: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct GetDurationPercentilesTimeseries {
@@ -1065,7 +1065,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct GetBuildStatsTimeseriesStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_build_stats_timeseries() -> GetBuildStatsTimeseriesStmt {
     GetBuildStatsTimeseriesStmt(
-        "SELECT date_trunc('minute', b.completed_at) + ( EXTRACT( MINUTE FROM b.completed_at )::int /$1 ) * INTERVAL '1 minute' *$1 AS bucket_time, COUNT(*) AS total_builds, COUNT(*) FILTER ( WHERE b.status = 'failed' ) AS failed_builds, AVG( EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS avg_duration FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE b.completed_at IS NOT NULL AND b.completed_at > NOW() - (INTERVAL '1 hour' *$2) AND ( $3::uuid IS NULL OR j.project_id =$3 ) AND ( $4::uuid IS NULL OR j.id =$4 ) GROUP BY bucket_time ORDER BY bucket_time ASC",
+        "SELECT date_trunc('minute', b.completed_at) + ( EXTRACT( MINUTE FROM b.completed_at )::int /$1 ) * INTERVAL '1 minute' *$1 AS bucket_time, COUNT(*) AS total_builds, COUNT(*) FILTER ( WHERE b.status = 'failed' ) AS failed_builds, AVG( EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) )::float8 AS avg_duration FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE b.completed_at IS NOT NULL AND b.completed_at > NOW() - (INTERVAL '1 hour' *$2) AND ( $3::uuid IS NULL OR j.project_id =$3 ) AND ( $4::uuid IS NULL OR j.id =$4 ) GROUP BY bucket_time ORDER BY bucket_time ASC",
         None,
     )
 }
