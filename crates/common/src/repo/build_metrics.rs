@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use circus_codegen::queries::build_metrics as q;
-use rust_decimal::prelude::ToPrimitive;
 use uuid::Uuid;
 
 use crate::{db::PgPool, error::Result, models::BuildMetric};
@@ -149,7 +148,7 @@ pub async fn get_build_stats_timeseries(
           bucket_time:   r.bucket_time,
           total_builds:  r.total_builds,
           failed_builds: r.failed_builds,
-          avg_duration:  r.avg_duration.and_then(|d| d.to_f64()),
+          avg_duration:  r.avg_duration,
         }
       })
       .collect(),
