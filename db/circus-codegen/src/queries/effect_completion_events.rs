@@ -12,18 +12,18 @@ pub struct EffectCompletionEventRow {
     pub retry_count: i32,
     pub revision: i64,
     pub build_snapshot: serde_json::Value,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub acknowledged_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
+    pub acknowledged_at: Option<jiff::Timestamp>,
 }
 pub struct EffectCompletionEventRowBorrowed<'a> {
     pub build_id: uuid::Uuid,
     pub retry_count: i32,
     pub revision: i64,
     pub build_snapshot: postgres_types::Json<&'a serde_json::value::RawValue>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub acknowledged_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: jiff::Timestamp,
+    pub updated_at: jiff::Timestamp,
+    pub acknowledged_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<EffectCompletionEventRowBorrowed<'a>> for EffectCompletionEventRow {
     fn from(

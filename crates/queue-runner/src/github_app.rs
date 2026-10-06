@@ -2,12 +2,9 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::{
-  Engine as _,
-  engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-};
 use circus_config::GithubAppConfig;
 use color_eyre::eyre::{Context as _, Result, bail, eyre};
+use data_encoding::{BASE64, BASE64URL_NOPAD};
 use ring::{
   rand::SystemRandom,
   signature::{RSA_PKCS1_SHA256, RsaKeyPair},
@@ -41,12 +38,13 @@ impl GithubApp {
     let pem = cfg.private_key.as_deref().ok_or_else(|| {
       eyre!("github_app needs private_key or private_key_file")
     })?;
-    let der = STANDARD
+    let der = BASE64
       .decode(
         pem
           .lines()
           .filter(|line| !line.starts_with("-----"))
-          .collect::<String>(),
+          .collect::<String>()
+          .as_bytes(),
       )
       .wrap_err("github_app private key is not PEM")?;
     // GitHub hands out PKCS#1 keys, `openssl pkcs8` converts them to PKCS#8.
@@ -67,14 +65,15 @@ impl GithubApp {
   fn jwt(&self) -> Result<String> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     // GitHub rejects tokens issued in its future, so backdate for clock skew.
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
-    let claims = URL_SAFE_NO_PAD.encode(
+    let header = BASE64URL_NOPAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+    let claims = BASE64URL_NOPAD.encode(
       serde_json::json!({
         "iat": now - 60,
         "exp": now + 540,
         "iss": self.app_id.to_string(),
       })
-      .to_string(),
+      .to_string()
+      .as_bytes(),
     );
     let message = format!("{header}.{claims}");
     let mut signature = vec![0; self.key.public().modulus_len()];
@@ -87,7 +86,7 @@ impl GithubApp {
         &mut signature,
       )
       .map_err(|e| eyre!("sign GitHub App JWT: {e}"))?;
-    Ok(format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature)))
+    Ok(format!("{message}.{}", BASE64URL_NOPAD.encode(&signature)))
   }
 
   /// Mint an installation token with write access to owner and repo.

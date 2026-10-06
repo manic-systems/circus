@@ -223,7 +223,7 @@ fn github_webhook_signature(secret: &str, body: &[u8]) -> String {
   let mut mac =
     Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key");
   mac.update(body);
-  format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+  format!("sha256={}", HEXLOWER.encode(&mac.finalize().into_bytes()))
 }
 
 // API endpoint tests

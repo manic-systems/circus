@@ -6,7 +6,7 @@ pub struct UpsertParams<T1: crate::StringSql, T2: crate::JsonSql, T3: crate::Str
     pub name: T1,
     pub when_spec: T2,
     pub commit_hash: T3,
-    pub next_due_at: chrono::DateTime<chrono::Utc>,
+    pub next_due_at: jiff::Timestamp,
 }
 #[derive(Debug)]
 pub struct DeleteExceptParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T1>> {
@@ -15,10 +15,10 @@ pub struct DeleteExceptParams<T1: crate::StringSql, T2: crate::ArraySql<Item = T
 }
 #[derive(Debug)]
 pub struct MarkFiredParams<T1: crate::StringSql> {
-    pub next_due_at: chrono::DateTime<chrono::Utc>,
+    pub next_due_at: jiff::Timestamp,
     pub jobset_id: uuid::Uuid,
     pub name: T1,
-    pub previous_due_at: chrono::DateTime<chrono::Utc>,
+    pub previous_due_at: jiff::Timestamp,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobsetScheduleRow {
@@ -26,16 +26,16 @@ pub struct JobsetScheduleRow {
     pub name: String,
     pub when_spec: serde_json::Value,
     pub commit_hash: String,
-    pub next_due_at: chrono::DateTime<chrono::Utc>,
-    pub last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub next_due_at: jiff::Timestamp,
+    pub last_fired_at: Option<jiff::Timestamp>,
 }
 pub struct JobsetScheduleRowBorrowed<'a> {
     pub jobset_id: uuid::Uuid,
     pub name: &'a str,
     pub when_spec: postgres_types::Json<&'a serde_json::value::RawValue>,
     pub commit_hash: &'a str,
-    pub next_due_at: chrono::DateTime<chrono::Utc>,
-    pub last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub next_due_at: jiff::Timestamp,
+    pub last_fired_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<JobsetScheduleRowBorrowed<'a>> for JobsetScheduleRow {
     fn from(
@@ -262,7 +262,7 @@ impl UpsertStmt {
         name: &'a T1,
         when_spec: &'a T2,
         commit_hash: &'a T3,
-        next_due_at: &'a chrono::DateTime<chrono::Utc>,
+        next_due_at: &'a jiff::Timestamp,
     ) -> Result<u64, tokio_postgres::Error> {
         client
             .execute(
@@ -418,10 +418,10 @@ impl MarkFiredStmt {
     pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
         &'s self,
         client: &'c C,
-        next_due_at: &'a chrono::DateTime<chrono::Utc>,
+        next_due_at: &'a jiff::Timestamp,
         jobset_id: &'a uuid::Uuid,
         name: &'a T1,
-        previous_due_at: &'a chrono::DateTime<chrono::Utc>,
+        previous_due_at: &'a jiff::Timestamp,
     ) -> StringQuery<'c, 'a, 's, C, String, 4> {
         StringQuery {
             client,

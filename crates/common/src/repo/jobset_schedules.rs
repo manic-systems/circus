@@ -1,7 +1,7 @@
 //! `herculesCI.onSchedule` jobs discovered on a jobset's default branch.
 
-use chrono::{DateTime, Utc};
 use circus_codegen::queries::jobset_schedules as q;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use crate::{db::PgPool, error::Result};
@@ -12,8 +12,8 @@ pub struct JobsetSchedule {
   pub name:          String,
   pub when_spec:     serde_json::Value,
   pub commit_hash:   String,
-  pub next_due_at:   DateTime<Utc>,
-  pub last_fired_at: Option<DateTime<Utc>>,
+  pub next_due_at:   Timestamp,
+  pub last_fired_at: Option<Timestamp>,
 }
 
 impl From<q::JobsetScheduleRow> for JobsetSchedule {
@@ -61,7 +61,7 @@ pub async fn upsert(
   name: &str,
   when_spec: &serde_json::Value,
   commit_hash: &str,
-  next_due_at: DateTime<Utc>,
+  next_due_at: Timestamp,
 ) -> Result<()> {
   let client = pool.get().await?;
   q::upsert()
@@ -118,7 +118,7 @@ pub async fn list_due(pool: &PgPool) -> Result<Vec<JobsetSchedule>> {
 pub async fn mark_fired(
   pool: &PgPool,
   schedule: &JobsetSchedule,
-  next_due_at: DateTime<Utc>,
+  next_due_at: Timestamp,
 ) -> Result<bool> {
   let client = pool.get().await?;
   Ok(

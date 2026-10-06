@@ -1,7 +1,7 @@
 //! Per-attempt bearer tokens that let a running Effect call back into the API.
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use circus_codegen::queries::effect_task_tokens as q;
+use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
@@ -19,7 +19,7 @@ pub struct EffectTask {
 }
 
 fn hash_token(token: &str) -> String {
-  hex::encode(Sha256::digest(token.as_bytes()))
+  HEXLOWER.encode(&Sha256::digest(token.as_bytes()))
 }
 
 /// Issue a fresh token for `attempt` of `build_id`, replacing any token from
@@ -37,7 +37,7 @@ pub async fn issue(
   SystemRandom::new().fill(&mut bytes).map_err(|_| {
     CiError::Internal("Failed to generate an Effect task token".into())
   })?;
-  let token = format!("circus_task_{}", URL_SAFE_NO_PAD.encode(bytes));
+  let token = format!("circus_task_{}", BASE64URL_NOPAD.encode(&bytes));
   let client = pool.get().await?;
   q::upsert()
     .bind(&client, &build_id, &attempt, &hash_token(&token))
