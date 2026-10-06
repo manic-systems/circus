@@ -1,5 +1,6 @@
 //! Parse committed lockfiles into Nix `allowed-uris` prefixes.
 
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 /// A supported committed lockfile.
@@ -67,6 +68,14 @@ pub(super) fn allowed_uris_from_nodes(
   uris
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PathLock {
+  path:          String,
+  last_modified: Option<u64>,
+  nar_hash:      Option<String>,
+}
+
 /// A source entry from any supported lockfile.
 struct LockedSource<'a> {
   value: &'a Value,
@@ -87,6 +96,31 @@ impl<'a> LockedSource<'a> {
 
   fn url(&self) -> Option<&str> {
     self.value.get("url").and_then(Value::as_str)
+  }
+
+  /// Nix matches the full URI including its query, so no prefix works.
+  fn store_path_uri(&self) -> Option<String> {
+    let lock = PathLock::deserialize(self.value).ok()?;
+
+    if !lock.path.starts_with("/nix/store/") {
+      return None;
+    }
+
+    let mut query = Vec::new();
+
+    if let Some(last_modified) = lock.last_modified {
+      query.push(format!("lastModified={last_modified}"));
+    }
+
+    if let Some(nar_hash) = &lock.nar_hash {
+      query.push(format!("narHash={}", query_encode(nar_hash)));
+    }
+
+    if query.is_empty() {
+      Some(format!("path:{}", lock.path))
+    } else {
+      Some(format!("path:{}?{}", lock.path, query.join("&")))
+    }
   }
 
   fn allowed_uris(self) -> Vec<String> {
@@ -120,8 +154,10 @@ impl<'a> LockedSource<'a> {
           .unwrap_or_default()
       },
 
-      // `path` inputs are local. `indirect` is resolved to a concrete node.
-      "path" | "indirect" => Vec::new(),
+      "path" => self.store_path_uri().into_iter().collect(),
+
+      // `indirect` is resolved to a concrete node.
+      "indirect" => Vec::new(),
 
       other => {
         let uris = self
@@ -138,6 +174,21 @@ impl<'a> LockedSource<'a> {
       },
     }
   }
+}
+
+/// Percent-encodes like Nix's `encodeQuery`, which keeps RFC 3986 unreserved
+/// characters plus `:@/?`.
+fn query_encode(value: &str) -> String {
+  value
+    .bytes()
+    .map(|byte| {
+      if byte.is_ascii_alphanumeric() || b"-._~:@/?".contains(&byte) {
+        char::from(byte).to_string()
+      } else {
+        format!("%{byte:02X}")
+      }
+    })
+    .collect()
 }
 
 /// URI prefixes that satisfy Nix's exact-or-slash-delimited matcher.
