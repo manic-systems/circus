@@ -9,6 +9,7 @@ use circus_common::{
   repo,
   systems::system_allowed,
 };
+use data_encoding::HEXLOWER;
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -448,7 +449,7 @@ pub(crate) fn compute_inputs_hash(
     }
   }
 
-  hex::encode(hasher.finalize())
+  HEXLOWER.encode(&hasher.finalize())
 }
 
 #[cfg(test)]

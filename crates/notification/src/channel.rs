@@ -22,6 +22,7 @@ use circus_common::{
   validate::validate_https_webhook_url,
 };
 use circus_config::EmailConfig;
+use data_encoding::HEXLOWER;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::BuildEvent;
@@ -448,7 +449,7 @@ fn sign_body(secret: &str, body: &[u8]) -> Result<String, String> {
   mac.update(body);
   Ok(format!(
     "sha256={}",
-    hex::encode(mac.finalize().into_bytes())
+    HEXLOWER.encode(&mac.finalize().into_bytes())
   ))
 }
 

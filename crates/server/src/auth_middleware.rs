@@ -9,6 +9,7 @@ use circus_common::{
   repo,
   roles::GlobalRole,
 };
+use data_encoding::HEXLOWER;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -252,7 +253,7 @@ async fn resolve_bearer_api_key(
   let token = token?;
   let mut hasher = Sha256::new();
   hasher.update(token.as_bytes());
-  let key_hash = hex::encode(hasher.finalize());
+  let key_hash = HEXLOWER.encode(&hasher.finalize());
 
   match circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await
   {

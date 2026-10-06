@@ -14,6 +14,7 @@ use axum::{
   response::{Html, IntoResponse, Redirect, Response},
 };
 use circus_common::models::User;
+use data_encoding::HEXLOWER;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -193,7 +194,7 @@ pub(super) async fn login_action(
 
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    let key_hash = hex::encode(hasher.finalize());
+    let key_hash = HEXLOWER.encode(&hasher.finalize());
 
     if let Ok(Some(api_key)) =
       circus_common::repo::api_keys::get_by_hash(&state.pool, &key_hash).await

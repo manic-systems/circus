@@ -10,9 +10,9 @@ use std::{
 };
 
 use async_compression::tokio::bufread::{GzipDecoder, XzDecoder, ZstdDecoder};
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use circus_binary_cache::{archive::NarEvent, parse_nar};
 use color_eyre::eyre::{Context as _, bail, eyre};
+use data_encoding::{BASE64, HEXLOWER, HEXLOWER_PERMISSIVE};
 use futures::{StreamExt as _, TryStreamExt as _};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
@@ -127,7 +127,7 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
     hasher.finalize()
   };
   let file_size = file_counter.load(Ordering::Acquire);
-  let file_hash = format!("sha256:{}", hex::encode(computed_file));
+  let file_hash = format!("sha256:{}", HEXLOWER.encode(&computed_file));
   if let Some(expected_file_hash) = req.file_hash.as_deref()
     && !hash_matches(expected_file_hash, computed_file.as_slice())?
   {
@@ -154,7 +154,7 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
     bail!(
       "uploaded NAR hash mismatch: reported {}, computed sha256:{}",
       req.nar_hash,
-      hex::encode(computed_nar)
+      HEXLOWER.encode(&computed_nar)
     );
   }
 
@@ -332,8 +332,8 @@ fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
     while padded.len() % 4 != 0 {
       padded.push('=');
     }
-    let bytes = B64
-      .decode(padded)
+    let bytes = BASE64
+      .decode(padded.as_bytes())
       .with_context(|| format!("decode SRI sha256 hash {text}"))?;
     if bytes.len() != 32 {
       bail!(
@@ -347,7 +347,9 @@ fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
     && hex.len() == 64
     && hex.bytes().all(|b| b.is_ascii_hexdigit())
   {
-    return hex::decode(hex).context("decode sha256 hex hash");
+    return HEXLOWER_PERMISSIVE
+      .decode(hex.as_bytes())
+      .context("decode sha256 hex hash");
   }
   if let Some(nix32) = text.strip_prefix("sha256:") {
     return circus_nix::base32::decode_sha256(nix32)
@@ -359,14 +361,14 @@ fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-  use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+  use data_encoding::{BASE64, HEXLOWER};
 
   use super::hash_matches;
 
   #[test]
   fn hash_matches_sha256_hex() {
     let bytes = [7u8; 32];
-    let text = format!("sha256:{}", hex::encode(bytes));
+    let text = format!("sha256:{}", HEXLOWER.encode(&bytes));
     assert!(hash_matches(&text, &bytes).expect("hex hash should parse"));
     assert!(!hash_matches(&text, &[8u8; 32]).expect("hex hash should parse"));
   }
@@ -374,7 +376,7 @@ mod tests {
   #[test]
   fn hash_matches_sri_base64() {
     let bytes = [0u8; 32];
-    let text = format!("sha256-{}", B64.encode(bytes));
+    let text = format!("sha256-{}", BASE64.encode(&bytes));
     assert!(hash_matches(&text, &bytes).expect("SRI hash should parse"));
   }
 }

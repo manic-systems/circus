@@ -9,7 +9,7 @@ description          = "Notification delivery for Circus"
 [dependencies]
 circus-common.workspace = true
 circus-config.workspace = true
-hex.workspace           = true
+data-encoding.workspace = true
 hmac.workspace          = true
 lettre.workspace        = true
 reqwest.workspace       = true

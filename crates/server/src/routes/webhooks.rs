@@ -13,6 +13,7 @@ use circus_common::{
   models::{CreateEvaluation, Jobset, JobsetTriggerMode},
   repo,
 };
+use data_encoding::HEXLOWER_PERMISSIVE;
 use hmac::KeyInit;
 use serde::Serialize;
 use uuid::Uuid;
@@ -290,7 +291,7 @@ fn verify_signature(secret: &str, body: &[u8], signature: &str) -> bool {
     .or_else(|| signature.strip_prefix("sha1="))
     .unwrap_or(signature);
 
-  let Ok(sig_bytes) = hex::decode(hex_sig) else {
+  let Ok(sig_bytes) = HEXLOWER_PERMISSIVE.decode(hex_sig.as_bytes()) else {
     return false;
   };
 

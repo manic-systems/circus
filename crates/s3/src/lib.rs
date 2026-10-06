@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Utc};
 use circus_config::S3CacheConfig;
+use data_encoding::HEXLOWER;
 use hmac::{Hmac, KeyInit as _, Mac};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest as _, Sha256};
@@ -157,7 +158,7 @@ impl Presigner {
     ]
     .join("\n");
     let canonical_hash =
-      hex::encode(Sha256::digest(canonical_request.as_bytes()));
+      HEXLOWER.encode(&Sha256::digest(canonical_request.as_bytes()));
 
     let string_to_sign = format!(
       "AWS4-HMAC-SHA256\n{datetime}\n{credential_scope}\n{canonical_hash}"
@@ -170,7 +171,7 @@ impl Presigner {
       "s3",
     );
     let signature =
-      hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+      HEXLOWER.encode(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
 
     format!("{base_url}?{canonical_query}&X-Amz-Signature={signature}")
   }

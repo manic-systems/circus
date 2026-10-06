@@ -34,6 +34,7 @@ use async_compression::{
 };
 use circus_proto::{nar_info, runner};
 use color_eyre::eyre::{Context as _, bail, eyre};
+use data_encoding::HEXLOWER;
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, BufReader, ReadBuf};
@@ -293,7 +294,7 @@ async fn upload_one(
     inner.finalize()
   };
   Ok(UploadedBytes {
-    file_hash: format!("sha256:{}", hex::encode(final_hash)),
+    file_hash: format!("sha256:{}", HEXLOWER.encode(&final_hash)),
     file_size: counter.load(Ordering::Acquire),
   })
 }

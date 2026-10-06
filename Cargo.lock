@@ -632,7 +632,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "config",
- "hex",
+ "data-encoding",
  "libc",
  "nix",
  "parking_lot",
@@ -725,7 +725,6 @@ name = "circus-common"
 version = "0.14.0"
 dependencies = [
  "argon2",
- "base64 0.23.1",
  "chrono",
  "circus-binary-cache",
  "circus-codegen",
@@ -736,10 +735,10 @@ dependencies = [
  "circus-types",
  "clap",
  "color-eyre",
+ "data-encoding",
  "deadpool-postgres",
  "futures",
  "gix",
- "hex",
  "jsonwebtoken",
  "nix",
  "num_enum",
@@ -767,7 +766,7 @@ dependencies = [
  "circus-types",
  "color-eyre",
  "config",
- "hex",
+ "data-encoding",
  "humantime-serde",
  "serde",
  "serde_json",
@@ -787,10 +786,10 @@ dependencies = [
  "circus-notification",
  "clap",
  "color-eyre",
+ "data-encoding",
  "evix",
  "futures",
  "gix",
- "hex",
  "libc",
  "serde",
  "serde_json",
@@ -849,7 +848,7 @@ version = "0.14.0"
 dependencies = [
  "circus-common",
  "circus-config",
- "hex",
+ "data-encoding",
  "hmac",
  "lettre",
  "reqwest 0.13.5",
@@ -876,7 +875,6 @@ name = "circus-queue-runner"
 version = "0.14.0"
 dependencies = [
  "async-compression",
- "base64 0.23.1",
  "capnp",
  "capnp-rpc",
  "chrono",
@@ -891,8 +889,8 @@ dependencies = [
  "clap",
  "color-eyre",
  "dashmap",
+ "data-encoding",
  "futures",
- "hex",
  "jsonwebtoken",
  "parking_lot",
  "reqwest 0.13.5",
@@ -917,7 +915,7 @@ version = "0.14.0"
 dependencies = [
  "chrono",
  "circus-config",
- "hex",
+ "data-encoding",
  "hmac",
  "percent-encoding",
  "sha2 0.11.0",
@@ -932,7 +930,6 @@ dependencies = [
  "async-compression",
  "axum",
  "axum-extra",
- "base64 0.23.1",
  "chrono",
  "circus-binary-cache",
  "circus-common",
@@ -945,8 +942,8 @@ dependencies = [
  "cognos",
  "color-eyre",
  "dashmap",
+ "data-encoding",
  "futures",
- "hex",
  "hmac",
  "jsonwebtoken",
  "ldap3",
@@ -2917,12 +2914,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hex-literal"
