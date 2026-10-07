@@ -2211,6 +2211,24 @@ button:disabled {
   padding: 20px;
 }
 
+.private-notice {
+  max-width: 320px;
+  text-align: center;
+}
+
+.private-title {
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.private-hint {
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .login-card {
   width: 100%;
   max-width: 360px;

@@ -21,6 +21,7 @@ mod admin;
 pub mod assets;
 mod auth;
 mod build_log;
+mod layout;
 pub mod live;
 mod pages;
 mod preview;
