@@ -9,7 +9,7 @@ use std::{cmp::Ordering, env};
 
 use axum::{
   Form,
-  extract::{Path, State},
+  extract::{Path, RawForm, State},
   http::StatusCode,
   response::{IntoResponse, Redirect, Response},
 };
@@ -37,7 +37,10 @@ use uuid::Uuid;
 use super::{
   shared::{ApiKeyView, DashboardContext, PageError},
   templates::SortHeaderView,
-  views::users::{UserDone, UserError},
+  views::{
+    projects::CreateError,
+    users::{UserDone, UserError},
+  },
 };
 use crate::{permissions::Permission, state::AppState};
 
@@ -1380,4 +1383,127 @@ pub(super) async fn project_delete(
   )
   .await;
   Ok(Redirect::to("/projects"))
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct ProjectCreateForm {
+  name:           String,
+  repository_url: String,
+  #[serde(default)]
+  description:    String,
+  #[serde(default)]
+  csrf_token:     String,
+}
+
+pub(super) async fn project_create(
+  State(state): State<AppState>,
+  ctx: DashboardContext,
+  Form(form): Form<ProjectCreateForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(denied) = ctx.check_csrf(&form.csrf_token) {
+    return denied.into_response();
+  }
+
+  let description = form.description.trim();
+  let input = circus_common::CreateProject {
+    name:            form.name.trim().to_owned(),
+    repository_url:  form.repository_url.trim().to_owned(),
+    description:     (!description.is_empty()).then(|| description.to_owned()),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: circus_common::models::BinaryCacheUpstreams::default(),
+  };
+  match crate::routes::projects::create(&state, input).await {
+    Ok(project) => {
+      Redirect::to(&format!("/project/{}", project.id)).into_response()
+    },
+    Err(error) => {
+      tracing::warn!("Failed to create project: {error}");
+      let code = CreateError::from(&error).code();
+      Redirect::to(&format!("/projects?error={code}")).into_response()
+    },
+  }
+}
+
+/// Builds the setup request from the wizard form, whose jobset fields are
+/// suffixed with the suggestion index and repeat for each chosen system.
+fn setup_request(
+  fields: &[(String, String)],
+) -> Option<crate::routes::projects::SetupProjectRequest> {
+  let value = |key: &str| {
+    fields
+      .iter()
+      .find(|(name, _)| name == key)
+      .map(|(_, value)| value.trim().to_owned())
+  };
+  let values = |key: &str| {
+    fields
+      .iter()
+      .filter(|(name, _)| name == key)
+      .map(|(_, value)| value.clone())
+      .collect::<Vec<_>>()
+  };
+
+  let mut jobsets = Vec::new();
+  for index in values("jobset") {
+    let index: usize = index.parse().ok()?;
+    let detected = values(&format!("detected_{index}"));
+    let picked = values(&format!("systems_{index}"));
+    jobsets.push(crate::routes::projects::SetupJobsetInput {
+      name:           value(&format!("name_{index}"))?,
+      nix_expression: value(&format!("expr_{index}"))?,
+      systems:        (picked.len() != detected.len()).then_some(picked),
+    });
+  }
+
+  let description = value("description").filter(|text| !text.is_empty());
+  Some(crate::routes::projects::SetupProjectRequest {
+    repository_url: value("repository_url")?,
+    name: value("name")?,
+    description,
+    jobsets,
+  })
+}
+
+pub(super) async fn project_setup(
+  State(state): State<AppState>,
+  ctx: DashboardContext,
+  RawForm(body): RawForm,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+
+  let fields: Vec<(String, String)> =
+    url::form_urlencoded::parse(&body).into_owned().collect();
+  let csrf_token = fields
+    .iter()
+    .find(|(name, _)| name == "csrf_token")
+    .map_or("", |(_, value)| value.as_str());
+  if let Err(denied) = ctx.check_csrf(csrf_token) {
+    return denied.into_response();
+  }
+
+  let Some(request) = setup_request(&fields) else {
+    return (StatusCode::BAD_REQUEST, "Incomplete project setup form")
+      .into_response();
+  };
+
+  let url: String =
+    url::form_urlencoded::byte_serialize(request.repository_url.as_bytes())
+      .collect();
+  match crate::routes::projects::setup(&state, request).await {
+    Ok((project, _)) => {
+      Redirect::to(&format!("/project/{}", project.id)).into_response()
+    },
+    Err(error) => {
+      tracing::warn!("Failed to set up project: {error}");
+      let code = CreateError::from(&error).code();
+      Redirect::to(&format!("/projects/new?url={url}&error={code}"))
+        .into_response()
+    },
+  }
 }
