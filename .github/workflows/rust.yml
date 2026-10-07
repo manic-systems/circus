@@ -86,8 +86,16 @@ jobs:
       - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Run Test Suite
         run: nix develop --command cargo nextest run ${{ matrix.scope }}
+
+  agent-macos:
+    name: Build Agent Package (macOS)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
       - name: Build Agent Package
-        if: runner.os == 'macOS'
         run: nix build .#packages.aarch64-darwin.circus-agent -L --no-link
 
   nix-eval-test:
