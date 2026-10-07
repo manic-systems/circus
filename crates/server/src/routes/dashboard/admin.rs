@@ -28,18 +28,15 @@ use super::{
   shared::{
     ApiKeyView,
     DashboardContext,
-    DashboardPage,
     LinkedIdentityView,
     PageError,
     Pagination,
     RenderExt,
     UserView,
-    enforce_page_access,
   },
   templates::{
     AdminTemplate,
     AgentView,
-    NewsTemplate,
     NotificationTaskView,
     NotificationsTemplate,
     PinnedOutputView,
@@ -707,26 +704,6 @@ pub(super) async fn user_unlink(
   Redirect::to("/users").into_response()
 }
 
-/// Render the news page at `/news`: list of recent announcements plus,
-/// for admins, the form to publish a new one.
-pub(super) async fn news_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::News)?;
-  let items = circus_common::repo::news::list(&state.pool, 50, 0)
-    .await
-    .unwrap_or_default();
-  let tmpl = NewsTemplate {
-    ui: ui_config(&state),
-    items,
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
 #[derive(serde::Deserialize)]
 pub(super) struct NewsCreateForm {
   title:      String,
@@ -780,6 +757,28 @@ pub(super) async fn news_delete(
     tracing::warn!(id = %id, "Failed to delete news item: {e}");
   }
   Redirect::to("/news").into_response()
+}
+
+/// `POST /starred/{id}/delete` removes a job from the viewer's own stars.
+pub(super) async fn starred_delete(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  ctx: DashboardContext,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  let Some(user_id) = ctx.viewer_user_id else {
+    return StatusCode::UNAUTHORIZED.into_response();
+  };
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+  if let Err(e) =
+    circus_common::repo::starred_jobs::delete_for_user(&state.pool, user_id, id)
+      .await
+  {
+    tracing::warn!(id = %id, "Failed to unstar job: {e}");
+  }
+  Redirect::to("/starred").into_response()
 }
 
 /// Form payload for `POST /project/{id}/notifications`: the kind of

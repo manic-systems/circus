@@ -225,7 +225,6 @@ pub(super) struct EvalView {
 }
 
 pub(super) struct EvalProgressView {
-  pub(super) id:      Uuid,
   pub(super) count:   String,
   pub(super) percent: i64,
 }
@@ -1059,11 +1058,7 @@ pub(super) fn eval_progress(e: &Evaluation) -> Option<EvalProgressView> {
     },
     _ => ("-".to_owned(), 0),
   };
-  Some(EvalProgressView {
-    id: e.id,
-    count,
-    percent,
-  })
+  Some(EvalProgressView { count, percent })
 }
 
 pub(super) fn eval_view(e: &Evaluation) -> EvalView {

@@ -60,7 +60,7 @@ fn build_app(pool: circus_common::PgPool) -> axum::Router {
     cache_public_key: None,
     oidc_providers: circus_server::routes::oidc::OidcProviders::default(),
   };
-  circus_server::routes::router(state, &config)
+  circus_server::routes::router(state, &config).unwrap()
 }
 
 #[tokio::test]
@@ -87,7 +87,7 @@ async fn test_router_no_duplicate_routes() {
     oidc_providers: circus_server::routes::oidc::OidcProviders::default(),
   };
 
-  let _app = circus_server::routes::router(state, &config);
+  let _app = circus_server::routes::router(state, &config).unwrap();
 }
 
 fn build_app_with_config(
@@ -110,7 +110,7 @@ fn build_app_with_config(
     cache_public_key: None,
     oidc_providers: circus_server::routes::oidc::OidcProviders::default(),
   };
-  circus_server::routes::router(state, config)
+  circus_server::routes::router(state, config).unwrap()
 }
 
 fn build_app_public_reads(pool: circus_common::PgPool) -> axum::Router {

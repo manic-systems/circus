@@ -5,13 +5,12 @@
 //! `Secure` flag policy. Logout drops both legacy cookie names so users
 //! coming off an older session are fully cleaned up.
 
-use askama::Template;
 use axum::{
   Extension,
   Form,
-  extract::{Path, Query, State},
+  extract::{Path, State},
   http::StatusCode,
-  response::{Html, IntoResponse, Redirect, Response},
+  response::{IntoResponse, Redirect, Response},
 };
 use circus_common::models::User;
 use data_encoding::HEXLOWER;
@@ -22,14 +21,8 @@ use crate::{
   routes::{
     dashboard::{
       admin::CsrfOnlyForm,
-      shared::{DashboardContext, RenderExt, UiTemplateConfig},
-      templates::{
-        AccountLinkTemplate,
-        AccountProvider,
-        AccountTemplate,
-        LinkStatus,
-        LoginTemplate,
-      },
+      shared::DashboardContext,
+      views::account::SignInError,
     },
     oidc,
   },
@@ -44,36 +37,6 @@ use crate::{
   },
   state::AppState,
 };
-
-#[derive(serde::Deserialize)]
-pub(super) struct LoginQuery {
-  next:  Option<String>,
-  /// Show the page even when it would hand straight off to a provider, so an
-  /// API key can still be entered.
-  local: Option<String>,
-}
-
-pub(super) async fn login_page(
-  State(state): State<AppState>,
-  Query(query): Query<LoginQuery>,
-) -> Response {
-  let tmpl =
-    LoginTemplate::new(&state.config, None).with_next(query.next.as_deref());
-
-  if let [provider] = tmpl.providers.as_slice()
-    && !state.config.server.password_login
-    && query.local.is_none()
-  {
-    return Redirect::to(&provider.href).into_response();
-  }
-
-  Html(
-    tmpl
-      .render()
-      .unwrap_or_else(|e| format!("Template error: {e}")),
-  )
-  .into_response()
-}
 
 #[derive(serde::Deserialize)]
 pub(super) struct LoginForm {
@@ -95,20 +58,7 @@ pub(super) async fn login_action(
     (form.username.as_ref(), form.password.as_ref())
   {
     if !state.config.server.password_login {
-      let tmpl = LoginTemplate::new(
-        &state.config,
-        Some("Password sign-in is disabled".into()),
-      )
-      .with_next(form.next.as_deref());
-      return (
-        StatusCode::FORBIDDEN,
-        Html(
-          tmpl
-            .render()
-            .unwrap_or_else(|e| format!("Template error: {e}")),
-        ),
-      )
-        .into_response();
+      return failed(SignInError::PasswordDisabled, &form);
     }
 
     let creds = circus_common::models::LoginCredentials {
@@ -161,35 +111,14 @@ pub(super) async fn login_action(
     )
     .await;
 
-    let tmpl = LoginTemplate::new(
-      &state.config,
-      Some("Invalid username or password".into()),
-    )
-    .with_next(form.next.as_deref());
-    return (
-      StatusCode::UNAUTHORIZED,
-      Html(
-        tmpl
-          .render()
-          .unwrap_or_else(|e| format!("Template error: {e}")),
-      ),
-    )
-      .into_response();
+    return failed(SignInError::InvalidPassword, &form);
   }
 
   // Fall back to API key authentication
   if let Some(token) = form.api_key.as_ref() {
     let token = token.trim();
     if token.is_empty() {
-      let tmpl =
-        LoginTemplate::new(&state.config, Some("API key is required".into()))
-          .with_next(form.next.as_deref());
-      return Html(
-        tmpl
-          .render()
-          .unwrap_or_else(|e| format!("Template error: {e}")),
-      )
-      .into_response();
+      return failed(SignInError::MissingKey, &form);
     }
 
     let mut hasher = Sha256::new();
@@ -237,29 +166,15 @@ pub(super) async fn login_action(
       )
       .await;
 
-      let tmpl =
-        LoginTemplate::new(&state.config, Some("Invalid API key".into()))
-          .with_next(form.next.as_deref());
-      Html(
-        tmpl
-          .render()
-          .unwrap_or_else(|e| format!("Template error: {e}")),
-      )
-      .into_response()
+      failed(SignInError::InvalidKey, &form)
     }
   } else {
-    let tmpl = LoginTemplate::new(
-      &state.config,
-      Some("Please provide either username/password or API key".into()),
-    )
-    .with_next(form.next.as_deref());
-    Html(
-      tmpl
-        .render()
-        .unwrap_or_else(|e| format!("Template error: {e}")),
-    )
-    .into_response()
+    failed(SignInError::MissingCredentials, &form)
   }
+}
+
+fn failed(error: SignInError, form: &LoginForm) -> Response {
+  Redirect::to(&error.login_href(form.next.as_deref())).into_response()
 }
 
 pub(super) async fn logout_action(
@@ -307,95 +222,6 @@ pub(super) async fn logout_action(
     .into_response()
 }
 
-pub(super) async fn account_page(
-  State(state): State<AppState>,
-  ctx: DashboardContext,
-  user: Option<Extension<User>>,
-) -> Response {
-  let Some(Extension(user)) = user else {
-    return Redirect::to("/login?next=/account").into_response();
-  };
-
-  let linked = match circus_common::repo::users::linked_providers(
-    &state.pool,
-    user.id,
-  )
-  .await
-  {
-    Ok(linked) => linked,
-    Err(e) => {
-      tracing::error!(user_id = %user.id, "failed to list linked identities: {e}");
-      return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    },
-  };
-  let native_issuer = match circus_common::repo::users::native_external_id(
-    &state.pool,
-    user.id,
-  )
-  .await
-  {
-    Ok(external_id) => {
-      external_id
-        .and_then(|id| id.rsplit_once('#').map(|(issuer, _)| issuer.to_owned()))
-    },
-    Err(e) => {
-      tracing::error!(user_id = %user.id, "failed to read account identity: {e}");
-      return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    },
-  };
-  let providers = state
-    .config
-    .oauth
-    .oidc
-    .iter()
-    .map(|(name, provider)| {
-      let native = native_issuer.as_deref().is_some_and(|issuer| {
-        issuer.trim_end_matches('/')
-          == provider.issuer_url.trim_end_matches('/')
-      });
-
-      AccountProvider {
-        name:   name.clone(),
-        label:  provider.display_name.clone(),
-        status: if native {
-          LinkStatus::Native
-        } else if linked.contains(name) {
-          LinkStatus::Linked
-        } else {
-          LinkStatus::Unlinked
-        },
-      }
-    })
-    .collect();
-
-  AccountTemplate {
-    ui: UiTemplateConfig::from_config(&state.config.ui),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-    role: user.role.to_string(),
-    has_password: state.config.server.password_login
-      && user.password_hash.is_some(),
-    username: user.username,
-    providers,
-  }
-  .render_html_or_500()
-  .into_response()
-}
-
-pub(super) async fn account_link_page(
-  State(state): State<AppState>,
-  Path(provider): Path<String>,
-  ctx: DashboardContext,
-  user: Option<Extension<User>>,
-) -> Response {
-  let Some(Extension(user)) = user else {
-    return Redirect::to("/login").into_response();
-  };
-
-  render_link_page(&state, &ctx, &user, &provider, None)
-}
-
 #[derive(serde::Deserialize)]
 pub(super) struct LinkForm {
   csrf_token: String,
@@ -419,6 +245,10 @@ pub(super) async fn account_link(
     return e.into_response();
   }
 
+  if !state.config.oauth.oidc.contains_key(&provider) {
+    return StatusCode::NOT_FOUND.into_response();
+  }
+
   if let Some(hash) = &user.password_hash {
     let password = form.password.as_deref().unwrap_or_default();
 
@@ -436,13 +266,10 @@ pub(super) async fn account_link(
         )
         .await;
 
-        return render_link_page(
-          &state,
-          &ctx,
-          &user,
-          &provider,
-          Some("Incorrect password"),
-        );
+        return Redirect::to(&format!(
+          "/account/link/{provider}?error=incorrect-password"
+        ))
+        .into_response();
       },
       Err(e) => {
         tracing::error!(user_id = %user.id, "failed to verify password: {e}");
@@ -452,38 +279,6 @@ pub(super) async fn account_link(
   }
 
   oidc::start_link(&state, &provider, user.id).await
-}
-
-fn render_link_page(
-  state: &AppState,
-  ctx: &DashboardContext,
-  user: &User,
-  provider: &str,
-  error: Option<&str>,
-) -> Response {
-  let Some(config) = state.config.oauth.oidc.get(provider) else {
-    return StatusCode::NOT_FOUND.into_response();
-  };
-
-  let page = AccountLinkTemplate {
-    ui:           UiTemplateConfig::from_config(&state.config.ui),
-    is_admin:     ctx.is_admin,
-    auth_name:    ctx.auth_name.clone(),
-    csrf_token:   ctx.csrf_token.clone(),
-    username:     user.username.clone(),
-    name:         provider.to_owned(),
-    label:        config.display_name.clone(),
-    has_password: user.password_hash.is_some(),
-    error:        error.map(str::to_owned),
-  }
-  .render_html_or_500();
-  let status = if error.is_some() {
-    StatusCode::UNAUTHORIZED
-  } else {
-    StatusCode::OK
-  };
-
-  (status, page).into_response()
 }
 
 pub(super) async fn account_unlink(

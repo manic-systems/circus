@@ -574,7 +574,7 @@ testers.runNixOSTest {
 
     with subtest("Login with invalid API key shows error"):
         body = machine.succeed(
-            "curl -sf -X POST http://127.0.0.1:3000/login "
+            "curl -sfL http://127.0.0.1:3000/login "
             "-d 'api_key=circus_invalid_key'"
         )
         assert "Invalid" in body or "invalid" in body or "error" in body.lower(), \
@@ -582,7 +582,7 @@ testers.runNixOSTest {
 
     with subtest("Login with empty API key shows error"):
         body = machine.succeed(
-            "curl -sf -X POST http://127.0.0.1:3000/login "
+            "curl -sfL http://127.0.0.1:3000/login "
             "-d 'api_key='"
         )
         assert "required" in body.lower() or "error" in body.lower() or "Invalid" in body, \

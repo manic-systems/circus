@@ -8,14 +8,20 @@ use topcoat::{
   Result,
   asset::{AssetBundle, RouterBuilderAssetExt},
   context::{Cx, app_context},
-  router::{Router, page, query_params, tower::TowerService},
+  router::{
+    Router,
+    RouterBuilderDiscoverExt,
+    page,
+    query_params,
+    tower::TowerService,
+  },
   runtime::{RouterBuilderRuntimeExt, connected, shard},
   view::{Child, View, component, emit, live, view},
 };
 use uuid::Uuid;
 
 use super::{
-  layout::{document, root, shard_viewer, viewer},
+  layout::{document, shard_viewer, viewer},
   pages::{Queue, QueueFilter, elapsed_since, load_queue},
   shared::{DashboardContext, DashboardPage},
 };
@@ -100,9 +106,7 @@ pub fn service(state: AppState, assets: AssetBundle) -> TowerService {
   let router = Router::builder()
     .app_context(state)
     .app_context(BuildsChanged(receiver))
-    .layout(root)
-    .page(queue)
-    .route(queue_tables)
+    .discover()
     .assets(assets)
     .runtime()
     .build();

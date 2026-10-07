@@ -200,55 +200,30 @@ in
           assert result.strip().startswith("$argon2"), f"Expected argon2 hash, got '{result.strip()[:20]}...'"
 
       # DECLARATIVE USER WEB LOGIN
-      with subtest("Web login with declarative admin user succeeds"):
-          result = machine.succeed(
-              "curl -s -w '\\n%{http_code}' "
+      # Sign-in answers 303 either way, and a failure lands on /login?error=.
+      def web_login(username, password):
+          return machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "
               "-X POST http://127.0.0.1:3000/login "
-              "-d 'username=decl-admin&password=SecretAdmin123!'"
+              f"-d 'username={username}&password={password}'"
           )
-          lines = result.strip().split('\n')
-          code = lines[-1]
-          assert code in ("200", "302", "303"), f"Expected redirect on login, got {code}"
 
-      with subtest("Web login with declarative user (password_file) succeeds"):
-          result = machine.succeed(
-              "curl -s -w '\\n%{http_code}' "
-              "-X POST http://127.0.0.1:3000/login "
-              "-d 'username=decl-user&password=SecretUser123!'"
-          )
-          lines = result.strip().split('\n')
-          code = lines[-1]
-          assert code in ("200", "302", "303"), f"Expected redirect on login, got {code}"
-
-      with subtest("Web login with declarative user2 (password_file) succeeds"):
-          result = machine.succeed(
-              "curl -s -w '\\n%{http_code}' "
-              "-X POST http://127.0.0.1:3000/login "
-              "-d 'username=decl-user2&password=SecretUser123!'"
-          )
-          lines = result.strip().split('\n')
-          code = lines[-1]
-          assert code in ("200", "302", "303"), f"Expected redirect on login, got {code}"
+      for username, password in [
+          ("decl-admin", "SecretAdmin123!"),
+          ("decl-user", "SecretUser123!"),
+          ("decl-user2", "SecretUser123!"),
+      ]:
+          with subtest(f"Web login with declarative user {username} succeeds"):
+              result = web_login(username, password)
+              assert result.startswith("303 ") and "error=" not in result, f"Expected login redirect, got {result}"
 
       with subtest("Web login with wrong password fails"):
-          result = machine.succeed(
-              "curl -s -w '\\n%{http_code}' "
-              "-X POST http://127.0.0.1:3000/login "
-              "-d 'username=decl-admin&password=wrongpassword'"
-          )
-          lines = result.strip().split('\n')
-          code = lines[-1]
-          assert code in ("401",), f"Expected 401 for wrong password, got {code}"
+          result = web_login("decl-admin", "wrongpassword")
+          assert "error=invalid-password" in result, f"Expected invalid-password redirect, got {result}"
 
       with subtest("Web login with disabled user fails"):
-          result = machine.succeed(
-              "curl -s -w '\\n%{http_code}' "
-              "-X POST http://127.0.0.1:3000/login "
-              "-d 'username=decl-disabled&password=DisabledPass123!'"
-          )
-          lines = result.strip().split('\n')
-          code = lines[-1]
-          assert code in ("401", "403"), f"Expected login failure for disabled user, got {code}"
+          result = web_login("decl-disabled", "DisabledPass123!")
+          assert "error=" in result, f"Expected login failure for disabled user, got {result}"
 
       # DECLARATIVE API KEYS
       with subtest("Declarative API keys are created"):

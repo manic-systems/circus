@@ -4,6 +4,7 @@ use std::{ffi::OsString, net::SocketAddr, path::PathBuf, sync::Arc};
 use circus_common::Database;
 use circus_config::Config;
 use clap::Parser;
+use color_eyre::eyre::WrapErr;
 use tokio::net::TcpListener;
 
 use crate::{
@@ -207,7 +208,10 @@ where
   // Drain in-memory cache-serving counters into the cache_traffic table.
   state.spawn_cache_traffic_flush();
 
-  let app = routes::router(state, &config);
+  let app = routes::router(state, &config).wrap_err(
+    "loading dashboard assets, bundle them with --bundle-assets or set \
+     ui.dashboard = false",
+  )?;
 
   let bind_addr = format!("{host}:{port}");
   tracing::info!(

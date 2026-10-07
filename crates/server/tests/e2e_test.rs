@@ -300,7 +300,7 @@ async fn test_e2e_project_eval_build_flow() {
     cache_public_key: None,
     oidc_providers:   circus_server::routes::oidc::OidcProviders::default(),
   };
-  let app = circus_server::routes::router(state, &config);
+  let app = circus_server::routes::router(state, &config).expect("router");
 
   // GET /health
   for service in [

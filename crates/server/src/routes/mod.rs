@@ -42,6 +42,7 @@ use axum::{
 };
 use circus_config::Config;
 use dashmap::DashMap;
+use topcoat::asset::AssetBundle;
 use tower_http::{
   cors::{AllowOrigin, Any, CorsLayer},
   limit::RequestBodyLimitLayer,
@@ -321,7 +322,7 @@ pub fn return_to(raw: Option<&str>) -> Option<&str> {
   })
 }
 
-pub fn public_router(config: &Config) -> Router<AppState> {
+pub fn public_router(config: &Config, login_page: bool) -> Router<AppState> {
   let mut router = Router::new()
     .merge(health::router())
     .merge(badges::router())
@@ -332,7 +333,7 @@ pub fn public_router(config: &Config) -> Router<AppState> {
     .merge(webhooks::router())
     // OAuth and LDAP routes use their own auth mechanisms.
     .merge(oauth::router())
-    .merge(oidc::router())
+    .merge(oidc::router(login_page))
     .merge(ldap::router());
 
   if config.server.openapi_enabled {
@@ -342,7 +343,11 @@ pub fn public_router(config: &Config) -> Router<AppState> {
   router
 }
 
-pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
+pub fn ui_router(
+  state: AppState,
+  config: &Config,
+  dashboard_assets: Option<AssetBundle>,
+) -> Router<AppState> {
   let mut router = Router::new();
 
   if config.ui.assets_enabled() {
@@ -359,25 +364,10 @@ pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
     }
   }
 
-  if config.ui.dashboard_enabled() {
-    // Topcoat resolves the session itself, since its connected reruns never
-    // pass through axum's middleware.
-    match dashboard::assets::load() {
-      Ok(assets) => {
-        let live = dashboard::live::service(state.clone(), assets);
-        router = router
-          .route_service("/queue", live.clone())
-          .route_service("/_topcoat/{*rest}", live);
-      },
-      Err(error) => {
-        tracing::error!(
-          "dashboard assets unavailable, live pages disabled: {error}"
-        );
-      },
-    }
-
+  if let Some(assets) = dashboard_assets {
+    let live = dashboard::live::service(state.clone(), assets);
     router = router.merge(
-      dashboard::router()
+      dashboard::router(live)
         .route_layer(middleware::from_fn_with_state(state, extract_session)),
     );
   }
@@ -385,7 +375,11 @@ pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
   router
 }
 
-pub fn router(state: AppState, config: &Config) -> Router {
+/// # Errors
+///
+/// Returns an error when the dashboard is enabled but its asset bundle is
+/// missing, see `circus-server --bundle-assets`.
+pub fn router(state: AppState, config: &Config) -> std::io::Result<Router> {
   let server_config = &config.server;
   let cors_layer = if server_config.cors_permissive {
     tracing::warn!(
@@ -407,12 +401,20 @@ pub fn router(state: AppState, config: &Config) -> Router {
     CorsLayer::new().allow_origin(AllowOrigin::list(origins))
   };
 
+  // Every dashboard page needs the runtime, so a missing bundle fails startup
+  // rather than leaving a server without its login page.
+  let dashboard_assets = config
+    .ui
+    .dashboard_enabled()
+    .then(dashboard::assets::load)
+    .transpose()?;
+
   let mut app = Router::new()
     .nest("/api/v1", api_router(state.clone()))
-    .merge(public_router(config));
+    .merge(public_router(config, dashboard_assets.is_some()));
 
   if config.ui.enabled {
-    app = app.merge(ui_router(state.clone(), config));
+    app = app.merge(ui_router(state.clone(), config, dashboard_assets));
   }
 
   app = app
@@ -449,7 +451,7 @@ pub fn router(state: AppState, config: &Config) -> Router {
     ));
   }
 
-  app.with_state(state)
+  Ok(app.with_state(state))
 }
 
 #[cfg(test)]

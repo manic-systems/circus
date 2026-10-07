@@ -1,42 +1,14 @@
-use axum::{extract::Query, response::Response};
-use circus_common::models::{BuildProduct, SystemStatus};
-use jiff::{SignedDuration, Timestamp};
+use axum::response::Response;
+use circus_common::models::SystemStatus;
 
 use super::{
   super::{
-    shared::{
-      ApiKeyView,
-      BrokeInView,
-      LinkedIdentityView,
-      PrivateTemplate,
-      QueueSystemView,
-      StarredJobView,
-      UserView,
-      WorkerSummaryView,
-    },
+    shared::{ApiKeyView, LinkedIdentityView, PrivateTemplate, UserView},
     templates::{
       AdminTemplate,
       AgentView,
-      BuildTemplate,
-      BuildsTemplate,
       CacheDetailTemplate,
-      CacheNarsTemplate,
-      CacheRowView,
-      CachesTemplate,
-      ChannelTemplate,
-      ChannelView,
-      ChannelsTemplate,
-      EvaluationTemplate,
-      EvaluationsTemplate,
-      HomeTemplate,
-      JobsetJobsTemplate,
-      JobsetTemplate,
-      LoginIcon,
-      LoginProvider,
-      LoginTemplate,
       MetricsTemplate,
-      NarRowView,
-      NewsTemplate,
       NotificationTaskView,
       NotificationsTemplate,
       PinnedOutputView,
@@ -44,102 +16,12 @@ use super::{
       ProjectTemplate,
       ProjectsTemplate,
       SortHeaderView,
-      StarredTemplate,
       UsersTemplate,
     },
   },
-  fixtures::{
-    self,
-    builds_fixture,
-    channel_fixture,
-    csrf,
-    eval_summaries,
-    evals_fixture,
-    id,
-    job_columns,
-    job_rows,
-    jobset_fixture,
-    news_items,
-    project_fixture,
-    project_summaries,
-    ui,
-  },
+  fixtures::{csrf, evals_fixture, id, jobset_fixture, project_fixture, ui},
   render,
 };
-
-#[derive(serde::Deserialize)]
-pub(super) struct PreviewBuildFilterParams {
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  status:   Option<String>,
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  system:   Option<String>,
-  #[serde(
-    default,
-    deserialize_with = "crate::routes::serde_util::empty_string_as_none"
-  )]
-  job_name: Option<String>,
-}
-
-pub(super) async fn home() -> Response {
-  render(HomeTemplate {
-    ui:                 ui(),
-    total_builds:       1842,
-    completed_builds:   1710,
-    failed_builds:      27,
-    running_builds:     3,
-    pending_builds:     19,
-    recent_builds:      builds_fixture(),
-    failed_builds_list: vec![fixtures::build_view(
-      5,
-      "packages.aarch64-linux.circus-server",
-      "Failed",
-      "failed",
-    )],
-    recent_evals:       evals_fixture(),
-    projects:           project_summaries(),
-    queue_by_system:    vec![
-      QueueSystemView {
-        system: "x86_64-linux".into(),
-        count:  12,
-      },
-      QueueSystemView {
-        system: "aarch64-linux".into(),
-        count:  7,
-      },
-    ],
-    workers:            vec![
-      WorkerSummaryView {
-        name:         "agent-fast-01".into(),
-        system:       "x86_64-linux".into(),
-        status_text:  "busy".into(),
-        status_class: "running".into(),
-        current_jobs: 2,
-        max_jobs:     4,
-      },
-      WorkerSummaryView {
-        name:         "agent-arm-01".into(),
-        system:       "aarch64-linux".into(),
-        status_text:  "idle".into(),
-        status_class: "completed".into(),
-        current_jobs: 0,
-        max_jobs:     2,
-      },
-    ],
-    system_filters:     vec!["aarch64-linux".into(), "x86_64-linux".into()],
-    worker_online:      2,
-    worker_total:       3,
-    refreshed_at:       "2026-06-18 12:00 UTC".into(),
-    announcements:      news_items(),
-    is_admin:           true,
-    auth_name:          "operator".into(),
-  })
-}
 
 pub(super) async fn projects() -> Response {
   render(ProjectsTemplate {
@@ -191,212 +73,6 @@ pub(super) async fn project() -> Response {
     is_admin:        true,
     auth_name:       "operator".into(),
     csrf_token:      csrf(),
-  })
-}
-
-pub(super) async fn jobset() -> Response {
-  render(JobsetTemplate {
-    ui:              ui(),
-    project:         project_fixture(),
-    jobset:          jobset_fixture(),
-    eval_summaries:  eval_summaries(),
-    project_mutable: true,
-    is_admin:        true,
-    auth_name:       "operator".into(),
-    csrf_token:      csrf(),
-  })
-}
-
-pub(super) async fn jobset_jobs() -> Response {
-  render(JobsetJobsTemplate {
-    ui:            ui(),
-    project:       project_fixture(),
-    jobset:        jobset_fixture(),
-    columns:       job_columns(),
-    rows:          job_rows(),
-    show_inactive: false,
-    is_admin:      true,
-    auth_name:     "operator".into(),
-  })
-}
-
-pub(super) async fn evaluations() -> Response {
-  render(EvaluationsTemplate {
-    ui:             ui(),
-    evals:          evals_fixture(),
-    filter_project: String::new(),
-    filter_jobset:  String::new(),
-    filter_commit:  String::new(),
-    filter_status:  String::new(),
-    limit:          20,
-    has_prev:       false,
-    has_next:       false,
-    prev_offset:    0,
-    next_offset:    20,
-    page:           1,
-    total_pages:    1,
-    is_admin:       true,
-    auth_name:      "operator".into(),
-    csrf_token:     csrf(),
-  })
-}
-
-pub(super) async fn evaluation() -> Response {
-  let failed_derivations = vec![
-    fixtures::build_view(
-      5,
-      "packages.aarch64-linux.circus-server",
-      "Failed",
-      "failed",
-    ),
-    fixtures::build_view(7, "drv:0vdd2i8j-intermediate", "Failed", "failed"),
-  ];
-  render(EvaluationTemplate {
-    ui: ui(),
-    eval: fixtures::eval_view(3, "Completed", "completed"),
-    builds: builds_fixture(),
-    failed_derivations,
-    project_name: "circus".into(),
-    project_id: id(1),
-    jobset_name: "packages".into(),
-    jobset_id: id(2),
-    succeeded_count: 2,
-    failed_count: 1,
-    running_count: 1,
-    pending_count: 1,
-    is_admin: true,
-    auth_name: "operator".into(),
-    csrf_token: csrf(),
-  })
-}
-
-pub(super) async fn builds(
-  Query(params): Query<PreviewBuildFilterParams>,
-) -> Response {
-  let status = params.status.unwrap_or_default();
-  let system = params.system.unwrap_or_default();
-  let job_name = params.job_name.unwrap_or_default();
-  let status_filter = status.to_lowercase();
-  let system_filter = system.to_lowercase();
-  let job_filter = job_name.to_lowercase();
-  let builds = builds_fixture()
-    .into_iter()
-    .filter(|build| {
-      let status_matches = status_filter.is_empty()
-        || build.status_class == status_filter
-        || (status_filter == "succeeded" && build.status_class == "completed");
-      let system_matches = system_filter.is_empty()
-        || build.system.to_lowercase().contains(&system_filter);
-      let job_matches = job_filter.is_empty()
-        || build.job_name.to_lowercase().contains(&job_filter);
-
-      status_matches && system_matches && job_matches
-    })
-    .collect();
-
-  render(BuildsTemplate {
-    ui: ui(),
-    builds,
-    limit: 20,
-    has_prev: false,
-    has_next: false,
-    prev_offset: 0,
-    next_offset: 20,
-    page: 1,
-    total_pages: 1,
-    filter_status: status,
-    filter_system: system,
-    filter_job: job_name,
-    is_admin: true,
-    auth_name: "operator".into(),
-  })
-}
-
-pub(super) async fn build() -> Response {
-  let build_id = id(4);
-  render(BuildTemplate {
-    ui:                ui(),
-    build:             fixtures::build_view(
-      4,
-      "packages.x86_64-linux.circus-server",
-      "Succeeded",
-      "completed",
-    ),
-    builder_label:     "agent-fast-01".into(),
-    products:          vec![BuildProduct {
-      id: id(32),
-      build_id,
-      name: "out".into(),
-      path: "/nix/store/preview-circus-server".into(),
-      sha256_hash: Some("sha256-preview".into()),
-      file_size: Some(42_000_000),
-      content_type: Some("application/x-nix-archive".into()),
-      is_directory: true,
-      gc_root_path: Some("/nix/var/nix/gcroots/circus/preview".into()),
-      created_at: Timestamp::now() - SignedDuration::from_mins(1),
-    }],
-    dependencies:      vec![fixtures::build_view(
-      6,
-      "checks.x86_64-linux.config",
-      "Succeeded",
-      "completed",
-    )],
-    dependents:        Vec::new(),
-    broke_in:          Some(BrokeInView {
-      build_id:              id(5),
-      commit_short:          "4be1c0ffee21".into(),
-      commit_subject:        "server: bump axum to 0.9".into(),
-      last_success_build_id: id(4),
-      last_success_short:    "9f2c7a113bad".into(),
-    }),
-    eval_id:           id(3),
-    eval_commit_short: "9f2c7a113bad".into(),
-    jobset_id:         id(2),
-    jobset_name:       "packages".into(),
-    project_id:        id(1),
-    project_name:      "circus".into(),
-    is_admin:          true,
-    auth_name:         "operator".into(),
-  })
-}
-
-pub(super) async fn channels() -> Response {
-  render(ChannelsTemplate {
-    ui:        ui(),
-    channels:  vec![ChannelView {
-      id:                    id(5),
-      name:                  "latest".into(),
-      current_evaluation_id: Some(id(3)),
-      updated_at:            "2026-06-18 12:02 UTC".into(),
-      status_text:           "Completed".into(),
-      status_class:          "completed".into(),
-      job_count:             3,
-    }],
-    is_admin:  true,
-    auth_name: "operator".into(),
-  })
-}
-
-pub(super) async fn channel() -> Response {
-  render(ChannelTemplate {
-    ui:              ui(),
-    channel:         channel_fixture(),
-    builds:          builds_fixture(),
-    succeeded_count: 2,
-    failed_count:    1,
-    pending_count:   1,
-    is_admin:        true,
-    auth_name:       "operator".into(),
-  })
-}
-
-pub(super) async fn news() -> Response {
-  render(NewsTemplate {
-    ui:         ui(),
-    items:      news_items(),
-    is_admin:   true,
-    auth_name:  "operator".into(),
-    csrf_token: csrf(),
   })
 }
 
@@ -506,27 +182,6 @@ pub(super) async fn users() -> Response {
   })
 }
 
-pub(super) async fn starred() -> Response {
-  render(StarredTemplate {
-    ui:           ui(),
-    starred_jobs: vec![StarredJobView {
-      id:              id(61),
-      project_id:      id(1),
-      project_name:    "circus".into(),
-      jobset_id:       Some(id(2)),
-      jobset_name:     "packages".into(),
-      job_name:        "packages.x86_64-linux.circus-server".into(),
-      status_text:     "Succeeded".into(),
-      status_class:    "completed".into(),
-      latest_build_id: Some(id(4)),
-    }],
-    is_logged_in: true,
-    is_admin:     true,
-    auth_name:    "operator".into(),
-    csrf_token:   csrf(),
-  })
-}
-
 pub(super) async fn metrics() -> Response {
   render(MetricsTemplate {
     ui:        ui(),
@@ -535,65 +190,11 @@ pub(super) async fn metrics() -> Response {
   })
 }
 
-pub(super) async fn login() -> Response {
-  render(LoginTemplate {
-    ui:             ui(),
-    error:          Some("Preview mode accepts no credentials.".into()),
-    is_admin:       false,
-    auth_name:      String::new(),
-    providers:      vec![
-      LoginProvider {
-        href:  "/api/v1/auth/github".into(),
-        label: "GitHub".into(),
-        icon:  LoginIcon::Github,
-      },
-      LoginProvider {
-        href:  "/api/v1/auth/oidc/pocketid".into(),
-        label: "PocketID".into(),
-        icon:  LoginIcon::Oidc,
-      },
-    ],
-    password_login: true,
-    next:           None,
-  })
-}
-
 pub(super) async fn private() -> Response {
   render(PrivateTemplate {
     ui:        ui(),
     is_admin:  false,
     auth_name: String::new(),
-  })
-}
-
-pub(super) async fn caches() -> Response {
-  render(CachesTemplate {
-    ui:                 ui(),
-    is_admin:           true,
-    auth_name:          "operator".into(),
-    total_nars:         42,
-    total_compressed:   "12.3 MiB".into(),
-    total_uncompressed: "45.6 MiB".into(),
-    caches:             vec![
-      CacheRowView {
-        name:              "global".into(),
-        scope_label:       "Global".into(),
-        active:            true,
-        nar_count:         30,
-        compressed:        "8.1 MiB".into(),
-        requests_per_hour: 142,
-        detail_href:       "/caches/global".into(),
-      },
-      CacheRowView {
-        name:              "circus".into(),
-        scope_label:       "Project".into(),
-        active:            true,
-        nar_count:         12,
-        compressed:        "4.2 MiB".into(),
-        requests_per_hour: 37,
-        detail_href:       "/caches/circus".into(),
-      },
-    ],
   })
 }
 
@@ -630,84 +231,5 @@ pub(super) async fn cache_detail() -> Response {
     gc_notice:              String::new(),
     gc_error:               false,
     is_global:              true,
-  })
-}
-
-pub(super) async fn cache_nars() -> Response {
-  render(CacheNarsTemplate {
-    ui:                 ui(),
-    is_admin:           true,
-    auth_name:          "operator".into(),
-    name:               "global".into(),
-    scope_label:        "Global".into(),
-    detail_href:        "/caches/global".into(),
-    filter_hash:        String::new(),
-    filter_package:     String::new(),
-    sort_headers:       [
-      ("hash", "Hash"),
-      ("package", "Package"),
-      ("nar_size", "NAR size"),
-      ("compressed", "Compressed"),
-      ("created", "Created"),
-      ("last_fetched", "Last fetched"),
-    ]
-    .into_iter()
-    .map(|(key, label)| {
-      let active = key == "last_fetched";
-      SortHeaderView {
-        key: key.into(),
-        label: label.into(),
-        href: format!("/caches/global/nars?sort={key}&dir=asc"),
-        default_dir: "asc".into(),
-        active,
-        indicator: if active { "desc" } else { "" }.into(),
-        aria_sort: if active { "descending" } else { "none" }.into(),
-      }
-    })
-    .collect(),
-    sort_key:           "last_fetched".into(),
-    sort_dir:           "desc".into(),
-    total_nars:         30,
-    nar_size:           "45.6 MiB".into(),
-    file_size:          "8.1 MiB".into(),
-    last_uploaded:      "2026-06-18 12:00 UTC".into(),
-    last_uploaded_iso:  "2026-06-18T12:00:00+00:00".into(),
-    oldest_fetched:     "2026-06-18 11:30 UTC".into(),
-    oldest_fetched_iso: "2026-06-18T11:30:00+00:00".into(),
-    nars:               vec![
-      NarRowView {
-        hash:             "9f2c7a113badf00d7e57c".into(),
-        package:          "circus-server".into(),
-        store_path:       "/nix/store/9f2c7a113badf00d7e57c-circus-server"
-          .into(),
-        nar_size:         "1.5 MiB".into(),
-        nar_bytes:        "1,572,864 bytes".into(),
-        compressed:       "420 KiB".into(),
-        compressed_bytes: "430,080 bytes".into(),
-        created_at:       "2026-06-18 11:45 UTC".into(),
-        created_iso:      "2026-06-18T11:45:00+00:00".into(),
-        last_fetched:     "2026-06-18 11:50 UTC".into(),
-        last_fetched_iso: "2026-06-18T11:50:00+00:00".into(),
-      },
-      NarRowView {
-        hash:             "a1b2c3d4e5f6a7b8c9d0".into(),
-        package:          "circus-agent".into(),
-        store_path:       "/nix/store/a1b2c3d4e5f6a7b8c9d0-circus-agent".into(),
-        nar_size:         "2.1 MiB".into(),
-        nar_bytes:        "2,202,009 bytes".into(),
-        compressed:       "680 KiB".into(),
-        compressed_bytes: "696,320 bytes".into(),
-        created_at:       "2026-06-18 11:30 UTC".into(),
-        created_iso:      "2026-06-18T11:30:00+00:00".into(),
-        last_fetched:     "2026-06-18 11:45 UTC".into(),
-        last_fetched_iso: "2026-06-18T11:45:00+00:00".into(),
-      },
-    ],
-    page:               1,
-    total_pages:        2,
-    has_prev:           false,
-    has_next:           true,
-    prev_href:          "/caches/global/nars?offset=0&limit=20".into(),
-    next_href:          "/caches/global/nars?offset=20&limit=20".into(),
   })
 }
