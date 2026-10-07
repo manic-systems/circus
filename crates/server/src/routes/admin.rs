@@ -271,41 +271,56 @@ async fn get_config_file(
   }))
 }
 
+/// Validate `contents` as a circus config and atomically replace the file
+/// named by `CIRCUS_CONFIG_FILE` with its normalised rendering.
+///
+/// # Errors
+///
+/// Fails when the editor is disabled, no config file is set, the TOML is
+/// invalid, or the write fails.
+pub async fn write_config_file(
+  state: &AppState,
+  contents: &str,
+) -> Result<(std::path::PathBuf, String), circus_common::CiError> {
+  if !state.config.server.config_editor_enabled {
+    return Err(circus_common::CiError::Forbidden(
+      "Config editor is disabled by server configuration".to_string(),
+    ));
+  }
+
+  let parsed = circus_config::Config::from_toml_with_defaults(contents)
+    .map_err(|e| {
+      circus_common::CiError::Validation(format!(
+        "Invalid TOML configuration: {e}"
+      ))
+    })?;
+  let rendered = toml::to_string_pretty(&parsed).map_err(|e| {
+    circus_common::CiError::Internal(format!(
+      "Failed to render configuration: {e}"
+    ))
+  })?;
+
+  let Some(path) = config_file_path() else {
+    return Err(circus_common::CiError::Forbidden(
+      "CIRCUS_CONFIG_FILE is not set; no config file is available".to_string(),
+    ));
+  };
+  let tmp_path = path.with_extension("toml.tmp");
+  tokio::fs::write(&tmp_path, &rendered)
+    .await
+    .map_err(circus_common::CiError::Io)?;
+  tokio::fs::rename(&tmp_path, &path)
+    .await
+    .map_err(circus_common::CiError::Io)?;
+  Ok((path, rendered))
+}
+
 async fn update_config_file(
   auth: RequireAdmin,
   State(state): State<AppState>,
   Json(input): Json<UpdateConfigFile>,
 ) -> Result<Json<ConfigFileResponse>, ApiError> {
-  if !state.config.server.config_editor_enabled {
-    return Err(ApiError(circus_common::CiError::Forbidden(
-      "Config editor is disabled by server configuration".to_string(),
-    )));
-  }
-
-  let parsed = circus_config::Config::from_toml_with_defaults(&input.contents)
-    .map_err(|e| {
-      ApiError(circus_common::CiError::Validation(format!(
-        "Invalid TOML configuration: {e}"
-      )))
-    })?;
-  let rendered = toml::to_string_pretty(&parsed).map_err(|e| {
-    ApiError(circus_common::CiError::Internal(format!(
-      "Failed to render configuration: {e}"
-    )))
-  })?;
-
-  let Some(path) = config_file_path() else {
-    return Err(ApiError(circus_common::CiError::Forbidden(
-      "CIRCUS_CONFIG_FILE is not set; no config file is available".to_string(),
-    )));
-  };
-  let tmp_path = path.with_extension("toml.tmp");
-  tokio::fs::write(&tmp_path, &rendered)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
-  tokio::fs::rename(&tmp_path, &path)
-    .await
-    .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
+  let (path, rendered) = write_config_file(&state, &input.contents).await?;
 
   crate::audit::record_for_key(
     &state.pool,

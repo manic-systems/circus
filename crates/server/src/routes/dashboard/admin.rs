@@ -9,53 +9,100 @@ use std::{cmp::Ordering, env};
 
 use axum::{
   Form,
-  extract::{Path, Query, State},
+  extract::{Path, State},
   http::StatusCode,
-  response::{Html, IntoResponse, Redirect, Response},
+  response::{IntoResponse, Redirect, Response},
 };
-use circus_common::models::{
-  CreateNotificationConfig,
-  NotificationType,
-  SortDirection,
-  SystemStatus,
-  UserType,
+use circus_common::{
+  models::{
+    CreateNotificationConfig,
+    CreateUser,
+    NotificationType,
+    SortDirection,
+    SystemStatus,
+    UpdateUser,
+  },
+  roles::GlobalRole,
+  validation::{
+    validate_email,
+    validate_full_name,
+    validate_password,
+    validate_username,
+  },
 };
+use jiff::Timestamp;
 use tokio::fs;
 use uuid::Uuid;
 
 use super::{
-  pages::PageParams,
-  shared::{
-    ApiKeyView,
-    DashboardContext,
-    LinkedIdentityView,
-    PageError,
-    Pagination,
-    RenderExt,
-    UserView,
-  },
-  templates::{
-    AdminTemplate,
-    AgentView,
-    NotificationTaskView,
-    NotificationsTemplate,
-    PinnedOutputView,
-    SortHeaderView,
-    UiTemplateConfig,
-    UsersTemplate,
-  },
+  shared::{ApiKeyView, DashboardContext, PageError},
+  templates::SortHeaderView,
+  views::users::{UserDone, UserError},
 };
 use crate::{permissions::Permission, state::AppState};
 
-fn ui_config(state: &AppState) -> UiTemplateConfig {
-  UiTemplateConfig::from_config(&state.config.ui)
-}
-
+/// Query of `/admin`: the agent table's sort and the result of the last
+/// form post, which every admin action reports through a redirect.
 #[derive(Default, serde::Deserialize)]
 pub(super) struct AdminParams {
-  agent_sort: Option<String>,
-  agent_dir:  Option<SortDirection>,
-  gc:         Option<String>,
+  pub(super) agent_sort:   Option<String>,
+  pub(super) agent_dir:    Option<SortDirection>,
+  pub(super) gc:           Option<String>,
+  pub(super) key:          Option<String>,
+  pub(super) task:         Option<String>,
+  pub(super) unpinned:     Option<String>,
+  pub(super) failed_paths: Option<String>,
+  pub(super) deleted:      Option<i64>,
+  pub(super) restarted:    Option<i64>,
+}
+
+pub(super) struct AgentView {
+  pub(super) machine_id:       Uuid,
+  pub(super) name:             String,
+  pub(super) hostname:         String,
+  pub(super) systems:          String,
+  pub(super) max_jobs:         i32,
+  pub(super) current_jobs:     i32,
+  pub(super) connected:        bool,
+  pub(super) builds_succeeded: i64,
+  pub(super) builds_failed:    i64,
+  pub(super) last_seen:        Option<Timestamp>,
+}
+
+pub(super) struct NotificationTaskView {
+  pub(super) id:                Uuid,
+  pub(super) notification_type: String,
+  pub(super) status:            String,
+  pub(super) attempts:          i32,
+  pub(super) max_attempts:      i32,
+  pub(super) next_retry_at:     Timestamp,
+  pub(super) last_error:        String,
+  pub(super) created_at:        Timestamp,
+}
+
+pub(super) struct PinnedOutputView {
+  pub(super) build_id:           Uuid,
+  pub(super) job_name:           String,
+  pub(super) system:             String,
+  pub(super) status:             String,
+  pub(super) product_name:       String,
+  pub(super) path:               String,
+  pub(super) gc_root_path:       String,
+  pub(super) product_created_at: Timestamp,
+}
+
+/// Everything `/admin` shows.
+pub(super) struct AdminOverview {
+  pub(super) status:                  SystemStatus,
+  pub(super) agents:                  Vec<AgentView>,
+  pub(super) agent_sort_headers:      Vec<SortHeaderView>,
+  pub(super) api_keys:                Vec<ApiKeyView>,
+  pub(super) notification_tasks:      Vec<NotificationTaskView>,
+  pub(super) pinned_outputs:          Vec<PinnedOutputView>,
+  pub(super) config_contents:         String,
+  pub(super) config_editable:         bool,
+  pub(super) config_read_only_reason: String,
+  pub(super) gc_enabled:              bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -185,17 +232,14 @@ fn compare_agents_by_sort(
     AgentSort::Status => a.connected.cmp(&b.connected),
     AgentSort::Succeeded => a.builds_succeeded.cmp(&b.builds_succeeded),
     AgentSort::Failed => a.builds_failed.cmp(&b.builds_failed),
-    AgentSort::LastSeen => a.last_seen_sort.cmp(&b.last_seen_sort),
+    AgentSort::LastSeen => a.last_seen.cmp(&b.last_seen),
   };
 
   apply_direction(primary, dir)
     .then_with(|| {
       match sort {
         AgentSort::Status => {
-          apply_direction(
-            a.last_seen_sort.cmp(&b.last_seen_sort),
-            SortDirection::Desc,
-          )
+          apply_direction(a.last_seen.cmp(&b.last_seen), SortDirection::Desc)
         },
         _ => Ordering::Equal,
       }
@@ -222,23 +266,13 @@ const fn apply_direction(ordering: Ordering, dir: SortDirection) -> Ordering {
   }
 }
 
-/// Render the admin overview at `/admin`: system status counters, builder
-/// load and last-activity, API keys, queued notification tasks, pinned
-/// build outputs, and the on-disk config editor when writes are enabled.
-pub(super) async fn admin_page(
-  State(state): State<AppState>,
-  Query(params): Query<AdminParams>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  if !ctx.is_admin {
-    let target = if ctx.auth_name.is_empty() {
-      "/login"
-    } else {
-      "/"
-    };
-    return Err(PageError::new(Redirect::to(target)));
-  }
-
+/// Load the admin overview: system status counters, builder load and
+/// last-activity, API keys, queued notification tasks, pinned build outputs,
+/// and the on-disk config editor when writes are enabled.
+pub(super) async fn load_overview(
+  state: &AppState,
+  params: &AdminParams,
+) -> AdminOverview {
   let pool = &state.pool;
 
   let projects = circus_common::repo::projects::count(pool)
@@ -277,24 +311,17 @@ pub(super) async fn admin_page(
   let mut agents = raw_sessions
     .into_iter()
     .map(|s| {
-      let last_seen = s.last_seen;
-      let last_seen_display = last_seen.as_ref().map_or_else(
-        || "Never".to_string(),
-        |t| t.strftime("%Y-%m-%d %H:%M").to_string(),
-      );
-      let last_seen_sort = last_seen.map_or(0, jiff::Timestamp::as_second);
       AgentView {
-        machine_id: s.machine_id,
-        name: s.name,
-        hostname: s.hostname,
-        systems: s.systems.join(", "),
-        max_jobs: s.max_jobs,
-        current_jobs: s.current_jobs,
-        connected: s.connected,
+        machine_id:       s.machine_id,
+        name:             s.name,
+        hostname:         s.hostname,
+        systems:          s.systems.join(", "),
+        max_jobs:         s.max_jobs,
+        current_jobs:     s.current_jobs,
+        connected:        s.connected,
         builds_succeeded: s.builds_succeeded,
-        builds_failed: s.builds_failed,
-        last_seen: last_seen_display,
-        last_seen_sort,
+        builds_failed:    s.builds_failed,
+        last_seen:        s.last_seen,
       }
     })
     .collect::<Vec<AgentView>>();
@@ -312,11 +339,8 @@ pub(super) async fn admin_page(
         id:           k.id,
         name:         k.name,
         role:         k.role.to_string(),
-        created_at:   k.created_at.strftime("%Y-%m-%d %H:%M").to_string(),
-        last_used_at: k.last_used_at.map_or_else(
-          || "Never".to_string(),
-          |t| t.strftime("%Y-%m-%d %H:%M").to_string(),
-        ),
+        created_at:   k.created_at,
+        last_used_at: k.last_used_at,
       }
     })
     .collect();
@@ -332,15 +356,9 @@ pub(super) async fn admin_page(
           status:            format!("{:?}", task.status).to_lowercase(),
           attempts:          task.attempts,
           max_attempts:      task.max_attempts,
-          next_retry_at:     task
-            .next_retry_at
-            .strftime("%Y-%m-%d %H:%M")
-            .to_string(),
+          next_retry_at:     task.next_retry_at,
           last_error:        task.last_error.unwrap_or_default(),
-          created_at:        task
-            .created_at
-            .strftime("%Y-%m-%d %H:%M")
-            .to_string(),
+          created_at:        task.created_at,
         }
       })
       .collect();
@@ -352,17 +370,13 @@ pub(super) async fn admin_page(
       .map(|product| {
         PinnedOutputView {
           build_id:           product.build_id,
-          product_id:         product.product_id,
           job_name:           product.job_name,
           system:             product.system,
           status:             product.status.to_string(),
           product_name:       product.product_name,
           path:               product.path,
           gc_root_path:       product.gc_root_path.unwrap_or_default(),
-          product_created_at: product
-            .product_created_at
-            .strftime("%Y-%m-%d %H:%M")
-            .to_string(),
+          product_created_at: product.product_created_at,
         }
       })
       .collect();
@@ -394,27 +408,18 @@ pub(super) async fn admin_page(
     "Config editor is disabled by server configuration".to_string()
   };
 
-  let tmpl = AdminTemplate {
-    ui: ui_config(&state),
+  AdminOverview {
     status,
     agents,
     agent_sort_headers,
-    agent_sort_key: agent_sort.as_param().to_string(),
-    agent_sort_dir: agent_dir.as_str().to_string(),
     api_keys,
     notification_tasks,
     pinned_outputs,
-    config_path,
     config_contents,
     config_editable,
     config_read_only_reason,
     gc_enabled: state.config.gc.enabled,
-    gc_requested: params.gc.as_deref() == Some("requested"),
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-  };
-  tmpl.render_html_or_500()
+  }
 }
 
 /// Ask the queue runner to run a GC cycle now. The runner's GC loop listens
@@ -446,6 +451,143 @@ pub(super) async fn store_gc(
   }
   tracing::info!("GC cycle requested from the dashboard");
   Redirect::to("/admin?gc=requested").into_response()
+}
+
+/// Delete an API key from the admin page.
+pub(super) async fn api_key_delete(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+  if let Err(e) = circus_common::repo::api_keys::delete(&state.pool, id).await {
+    tracing::error!(%id, "failed to delete API key: {e}");
+    return Redirect::to("/admin?key=error").into_response();
+  }
+  crate::audit::record_action(
+    &state.pool,
+    &extensions,
+    "API_KEY_DELETE",
+    Some("api_key"),
+    Some(&id.to_string()),
+    serde_json::Value::Null,
+  )
+  .await;
+  Redirect::to("/admin?key=deleted").into_response()
+}
+
+/// Requeue a failed notification task.
+pub(super) async fn notification_task_retry(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+  if let Err(e) =
+    circus_common::repo::notification_tasks::requeue_failed(&state.pool, id)
+      .await
+  {
+    tracing::error!(%id, "failed to retry notification task: {e}");
+    return Redirect::to("/admin?task=error").into_response();
+  }
+  crate::audit::record_action(
+    &state.pool,
+    &extensions,
+    "NOTIFICATION_TASK_RETRY",
+    Some("notification_task"),
+    Some(&id.to_string()),
+    serde_json::Value::Null,
+  )
+  .await;
+  Redirect::to("/admin?task=retried").into_response()
+}
+
+/// Drop a build's keep flag so its outputs can age out of GC.
+pub(super) async fn build_unpin(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+  match circus_common::repo::builds::set_keep(&state.pool, id, false).await {
+    Ok(build) => {
+      crate::audit::record_action(
+        &state.pool,
+        &extensions,
+        "BUILD_UNPIN",
+        Some("build"),
+        Some(&id.to_string()),
+        serde_json::json!({ "job_name": &build.job_name }),
+      )
+      .await;
+      Redirect::to("/admin?unpinned=ok").into_response()
+    },
+    Err(e) => {
+      tracing::error!(%id, "failed to unpin build: {e}");
+      Redirect::to("/admin?unpinned=error").into_response()
+    },
+  }
+}
+
+/// Clear the failed-paths cache and requeue the cached failures it held.
+pub(super) async fn failed_paths_clear(
+  State(state): State<AppState>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+  match circus_common::repo::failed_paths_cache::clear_all(&state.pool).await {
+    Ok(result) => {
+      crate::audit::record_action(
+        &state.pool,
+        &extensions,
+        "FAILED_PATHS_CACHE_CLEAR",
+        Some("failed_paths_cache"),
+        None,
+        serde_json::json!({
+          "deleted": result.deleted,
+          "restarted": result.restarted,
+        }),
+      )
+      .await;
+      Redirect::to(&format!(
+        "/admin?failed_paths=cleared&deleted={}&restarted={}",
+        result.deleted, result.restarted
+      ))
+      .into_response()
+    },
+    Err(e) => {
+      tracing::error!("failed to clear failed paths cache: {e}");
+      Redirect::to("/admin?failed_paths=error").into_response()
+    },
+  }
 }
 
 /// Form for `POST /caches/{name}/gc`. `mode` is `all` or `stale`; `days`
@@ -574,94 +716,186 @@ pub(super) async fn cache_gc(
   .into_response()
 }
 
-/// Render the user-management page at `/users`. Admin-only because the
-/// listing exposes emails and other account metadata.
-pub(super) async fn users_page(
+#[derive(serde::Deserialize)]
+pub(super) struct UserCreateForm {
+  username:   String,
+  email:      String,
+  #[serde(default)]
+  full_name:  String,
+  password:   String,
+  role:       String,
+  csrf_token: String,
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct UserEnabledForm {
+  enabled:    bool,
+  csrf_token: String,
+}
+
+fn users_redirect(outcome: Result<UserDone, UserError>) -> Response {
+  let query = match outcome {
+    Ok(done) => format!("done={}", done.code()),
+    Err(error) => format!("error={}", error.code()),
+  };
+  Redirect::to(&format!("/users?{query}")).into_response()
+}
+
+const fn user_error(error: &circus_common::CiError) -> UserError {
+  match error {
+    circus_common::CiError::Conflict(_) => UserError::Exists,
+    circus_common::CiError::NotFound(_) => UserError::NotFound,
+    _ => UserError::Failed,
+  }
+}
+
+pub(super) async fn user_create(
   State(state): State<AppState>,
-  Query(params): Query<PageParams>,
   ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  // Only admins can view user list (contains PII like emails)
+  extensions: axum::http::Extensions,
+  Form(form): Form<UserCreateForm>,
+) -> Response {
   if !ctx.is_admin {
-    return Err(PageError::new(Redirect::to("/")));
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
   }
 
-  let limit = params.limit.unwrap_or(50).clamp(1, 200);
-  let offset = params.offset.unwrap_or(0).max(0);
-
-  let users_list = circus_common::repo::users::list(&state.pool, limit, offset)
-    .await
-    .unwrap_or_default();
-  let total = circus_common::repo::users::count(&state.pool)
-    .await
-    .unwrap_or(0);
-
-  let ids: Vec<Uuid> = users_list.iter().map(|user| user.id).collect();
-  let mut linked =
-    circus_common::repo::users::identities_for_users(&state.pool, &ids)
-      .await
-      .unwrap_or_else(|error| {
-        tracing::warn!("failed to list linked identities: {error}");
-        std::collections::HashMap::new()
-      });
-
-  let users: Vec<UserView> = users_list
-    .into_iter()
-    .map(|u| {
-      let linked = linked
-        .remove(&u.id)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|provider| {
-          let label = state
-            .config
-            .oauth
-            .oidc
-            .get(&provider)
-            .map_or_else(|| provider.clone(), |p| p.display_name.clone());
-          LinkedIdentityView { provider, label }
-        })
-        .collect();
-      let user_type = match u.user_type {
-        UserType::Local => "Local",
-        UserType::Github => "GitHub",
-        UserType::Google => "Google",
-        UserType::Ldap => "LDAP",
-        UserType::Oidc => "OIDC",
-      };
-      UserView {
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        role: u.role.to_string(),
-        user_type: user_type.to_string(),
-        enabled: u.enabled,
-        last_login_at: u.last_login_at.map_or_else(
-          || "Never".to_string(),
-          |t| t.strftime("%Y-%m-%d %H:%M").to_string(),
-        ),
-        linked,
-      }
-    })
-    .collect();
-
-  let pagination = Pagination::new(total, offset, limit);
-
-  let tmpl = UsersTemplate {
-    ui: ui_config(&state),
-    users,
-    limit,
-    has_prev: pagination.has_prev,
-    has_next: pagination.has_next,
-    prev_offset: pagination.prev_offset,
-    next_offset: pagination.next_offset,
-    page: pagination.page,
-    total_pages: pagination.total_pages,
-    is_admin: true, // Already checked above
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
+  let Ok(role) = form.role.parse::<GlobalRole>() else {
+    return users_redirect(Err(UserError::Role));
   };
-  tmpl.render_html_or_500()
+  let full_name =
+    Some(form.full_name.trim().to_owned()).filter(|name| !name.is_empty());
+  let checks = validate_username(&form.username)
+    .and_then(|()| validate_email(&form.email, state.email_regex.as_deref()))
+    .and_then(|()| validate_password(&form.password))
+    .and_then(|()| full_name.as_deref().map_or(Ok(()), validate_full_name));
+
+  if let Err(error) = checks {
+    return users_redirect(Err(UserError::for_field(&error.field)));
+  }
+
+  let data = CreateUser {
+    username: form.username,
+    email: form.email,
+    full_name,
+    password: form.password,
+    role: Some(role),
+  };
+
+  match circus_common::repo::users::create(
+    &state.pool,
+    &data,
+    state.email_regex.as_deref(),
+  )
+  .await
+  {
+    Ok(user) => {
+      crate::audit::record_action(
+        &state.pool,
+        &extensions,
+        "USER_CREATE",
+        Some("user"),
+        Some(&user.id.to_string()),
+        serde_json::json!({ "username": user.username, "role": user.role }),
+      )
+      .await;
+      users_redirect(Ok(UserDone::Created))
+    },
+    Err(error) => {
+      tracing::warn!("dashboard user create failed: {error}");
+      users_redirect(Err(user_error(&error)))
+    },
+  }
+}
+
+pub(super) async fn user_enabled(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<UserEnabledForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+
+  let data = UpdateUser {
+    email:            None,
+    full_name:        None,
+    password:         None,
+    role:             None,
+    enabled:          Some(form.enabled),
+    public_dashboard: None,
+  };
+
+  match circus_common::repo::users::update(
+    &state.pool,
+    id,
+    &data,
+    state.email_regex.as_deref(),
+  )
+  .await
+  {
+    Ok(user) => {
+      crate::audit::record_action(
+        &state.pool,
+        &extensions,
+        "USER_UPDATE",
+        Some("user"),
+        Some(&user.id.to_string()),
+        serde_json::json!({ "fields_changed": ["enabled"], "new_role": null }),
+      )
+      .await;
+      users_redirect(Ok(if form.enabled {
+        UserDone::Enabled
+      } else {
+        UserDone::Disabled
+      }))
+    },
+    Err(error) => {
+      tracing::warn!(user_id = %id, "dashboard user update failed: {error}");
+      users_redirect(Err(user_error(&error)))
+    },
+  }
+}
+
+pub(super) async fn user_delete(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+
+  match circus_common::repo::users::delete(&state.pool, id).await {
+    Ok(()) => {
+      crate::audit::record_action(
+        &state.pool,
+        &extensions,
+        "USER_DELETE",
+        Some("user"),
+        Some(&id.to_string()),
+        serde_json::Value::Null,
+      )
+      .await;
+      users_redirect(Ok(UserDone::Deleted))
+    },
+    Err(error) => {
+      tracing::warn!(user_id = %id, "dashboard user delete failed: {error}");
+      users_redirect(Err(user_error(&error)))
+    },
+  }
 }
 
 /// Removes a provider linked to someone else's account, for cleaning up after
@@ -926,43 +1160,6 @@ pub(super) async fn evaluation_restart(
   Ok(Redirect::to(&format!("/evaluation/{evaluation_id}")))
 }
 
-pub(super) async fn notifications_page(
-  State(state): State<AppState>,
-  Path(project_id): Path<Uuid>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  if !ctx.is_admin {
-    let target = if ctx.auth_name.is_empty() {
-      "/login"
-    } else {
-      "/projects"
-    };
-    return Err(PageError::new(Redirect::to(target)));
-  }
-
-  let project = circus_common::repo::projects::get(&state.pool, project_id)
-    .await
-    .map_err(|_| Redirect::to("/projects").into_response())?;
-  let configs = circus_common::repo::notification_configs::list_for_project(
-    &state.pool,
-    project_id,
-  )
-  .await
-  .unwrap_or_default();
-  let tmpl = NotificationsTemplate {
-    ui: ui_config(&state),
-    project_mutable: crate::routes::declarative::project_is_mutable(
-      &state, &project,
-    ),
-    project,
-    configs,
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
 pub(super) async fn notifications_create(
   State(state): State<AppState>,
   Path(project_id): Path<Uuid>,
@@ -1083,4 +1280,104 @@ pub(super) async fn queue_bump(
     )));
   }
   Ok(Redirect::to("/queue"))
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct JobsetCreateForm {
+  csrf_token:        String,
+  name:              String,
+  nix_expression:    String,
+  flake_mode:        Option<String>,
+  trigger_mode:      circus_common::models::JobsetTriggerMode,
+  only_build_latest: Option<String>,
+  #[serde(default)]
+  path_filters:      String,
+}
+
+pub(super) async fn jobset_create(
+  State(state): State<AppState>,
+  Path(project_id): Path<Uuid>,
+  ctx: DashboardContext,
+  Form(form): Form<JobsetCreateForm>,
+) -> Result<Redirect, PageError> {
+  ctx
+    .require_permission(Permission::CreateProjects)
+    .map_err(|s| (s, "Insufficient permissions").into_response())?;
+  ctx.check_csrf(&form.csrf_token)?;
+  crate::routes::declarative::require_project_mutable(&state, project_id)
+    .await
+    .map_err(IntoResponse::into_response)?;
+
+  let input = circus_common::models::CreateJobset {
+    project_id,
+    name: form.name,
+    nix_expression: form.nix_expression,
+    enabled: None,
+    flake_mode: Some(form.flake_mode.is_some()),
+    check_interval: None,
+    trigger_mode: Some(form.trigger_mode),
+    branch: None,
+    branch_pattern: None,
+    tag_pattern: None,
+    scheduling_shares: None,
+    state: None,
+    keep_nr: None,
+    systems: None,
+    only_build_latest: Some(form.only_build_latest.is_some()),
+    path_filters: Some(
+      form
+        .path_filters
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect(),
+    ),
+  };
+  let failure = |message: String| {
+    let message: String =
+      url::form_urlencoded::byte_serialize(message.as_bytes()).collect();
+    Redirect::to(&format!("/project/{project_id}?jobset_error={message}"))
+  };
+
+  if let Err(message) = circus_common::validate::Validate::validate(&input) {
+    return Ok(failure(message));
+  }
+
+  match circus_common::repo::jobsets::create(&state.pool, input).await {
+    Ok(_) => Ok(Redirect::to(&format!("/project/{project_id}"))),
+    Err(e) => Ok(failure(e.to_string())),
+  }
+}
+
+pub(super) async fn project_delete(
+  State(state): State<AppState>,
+  Path(project_id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Result<Redirect, PageError> {
+  if !ctx.is_admin {
+    return Err(PageError::new((StatusCode::FORBIDDEN, "Admin required")));
+  }
+  ctx.check_csrf(&form.csrf_token)?;
+  let project =
+    crate::routes::declarative::require_project_mutable(&state, project_id)
+      .await
+      .map_err(IntoResponse::into_response)?;
+  circus_common::repo::projects::delete(&state.pool, project_id)
+    .await
+    .map_err(|e| {
+      (StatusCode::BAD_REQUEST, format!("Delete failed: {e}")).into_response()
+    })?;
+  crate::audit::record_action(
+    &state.pool,
+    &extensions,
+    "PROJECT_DELETE",
+    Some("project"),
+    Some(&project_id.to_string()),
+    serde_json::json!({ "name": project.name }),
+  )
+  .await;
+  Ok(Redirect::to("/projects"))
 }
