@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'merge_group' && 'merge-queue' || github.ref_name }}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -54,6 +57,9 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.files_changed == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,11 +72,14 @@ jobs:
         id: cache-store-restore
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
+          primary-key: nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: |
+            nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-
+            nix-packages-${{ runner.os }}-main-
+            nix-packages-${{ runner.os }}-
           gc-max-store-size-linux: 8G
           purge: true
-          purge-prefixes: nix-packages-${{ runner.os }}-
+          purge-prefixes: nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-
           purge-created: 0
           purge-last-accessed: 0
           purge-primary-key: never
@@ -137,8 +146,11 @@ jobs:
         id: cache-store-restore
         uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
+          primary-key: nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: |
+            nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-
+            nix-packages-${{ runner.os }}-main-
+            nix-packages-${{ runner.os }}-
 
       - name: Build ${{ matrix.check }} for x86_64-linux
         run: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
