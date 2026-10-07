@@ -81,36 +81,6 @@ jobs:
                     .#circus-queue-runner .#circus-evaluator .#circus-agent \
                     .#ci-cargo-artifacts -L --out-link result-circus
 
-  build:
-    name: Build ${{ matrix.package }}
-    needs: [changes, build-packages]
-    if: ${{ needs.changes.outputs.files_changed == 'true' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - circus-cli
-          - circus-agent
-          - circus-agent-static
-          - circus-evaluator
-          - circus-queue-runner
-          - circus-server
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: cachix/install-nix-action@b97f05dcb019ddea06450a50ef6203d2fdc19fee # v31
-      - name: Restore cached paths
-        id: cache-store-restore
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-        with:
-          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
-
-      - name: Build ${{ matrix.package }}
-        run: nix build .#${{ matrix.package }} -L --no-link
-
   vm-test:
     name: ${{ matrix.name }}
     needs: [changes, build-packages]
