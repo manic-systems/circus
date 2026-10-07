@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'merge_group' && 'merge-queue' || github.ref_name }}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -59,8 +62,11 @@ jobs:
       - name: Restore cached paths
         uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-packages-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
-          restore-prefixes-first-match: nix-packages-${{ runner.os }}-
+          primary-key: nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**') }}
+          restore-prefixes-first-match: |
+            nix-packages-${{ runner.os }}-${{ env.CACHE_SCOPE }}-
+            nix-packages-${{ runner.os }}-main-
+            nix-packages-${{ runner.os }}-
       - name: Check Dependency Policy
         run: nix build .#checks.x86_64-linux.cargo-deny --no-link -L
       - name: Audit Dependency Advisories
