@@ -1,42 +1,19 @@
-//! Read-only viewing pages: home, projects, project detail, jobset detail,
+//! Read-only viewing pages: home, project detail, jobset detail,
 //! evaluations, evaluation detail, builds, build detail, queue, channels,
-//! channel detail, starred, metrics, and the project-setup wizard.
+//! channel detail, and starred.
 //!
 //! These handlers do not mutate server state; they only render templates.
 //! Mutating admin actions live in `super::admin`.
 
 use std::collections::BTreeSet;
 
-use axum::{
-  extract::{Query, State},
-  response::Html,
-};
 use circus_common::models::BuildStatus;
 
-use super::{
-  shared::{
-    DashboardContext,
-    DashboardPage,
-    PageError,
-    Pagination,
-    RenderExt,
-    enforce_page_access,
-    status_badge,
-  },
-  templates::{ProjectsTemplate, UiTemplateConfig},
-};
-use crate::{operator, state::AppState};
+use super::shared::status_badge;
+use crate::operator;
 
-mod caches;
 mod queue;
-mod secondary;
-pub(super) use caches::cache_detail_page;
 pub(super) use queue::{Queue, QueueFilter, load as load_queue};
-pub(super) use secondary::{metrics_page, project_setup_page};
-
-fn ui_config(state: &AppState) -> UiTemplateConfig {
-  UiTemplateConfig::from_config(&state.config.ui)
-}
 
 pub(super) fn is_job_name(name: &str) -> bool {
   !name.starts_with(circus_common::models::DEPENDENCY_JOB_PREFIX)
@@ -100,12 +77,6 @@ pub(super) fn dashboard_system_filters(
   systems.into_iter().collect()
 }
 
-#[derive(serde::Deserialize)]
-pub(super) struct PageParams {
-  pub(super) limit:  Option<i64>,
-  pub(super) offset: Option<i64>,
-}
-
 pub(super) fn format_elapsed(secs: i64) -> String {
   if secs < 60 {
     format!("{secs}s")
@@ -114,40 +85,6 @@ pub(super) fn format_elapsed(secs: i64) -> String {
   } else {
     format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
   }
-}
-
-/// Render the paginated project list at `/projects`.
-pub(super) async fn projects_page(
-  State(state): State<AppState>,
-  Query(params): Query<PageParams>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Projects)?;
-  let limit = params.limit.unwrap_or(50).clamp(1, 200);
-  let offset = params.offset.unwrap_or(0).max(0);
-  let items = circus_common::repo::projects::list(&state.pool, limit, offset)
-    .await
-    .unwrap_or_default();
-  let total = circus_common::repo::projects::count(&state.pool)
-    .await
-    .unwrap_or(0);
-
-  let pagination = Pagination::new(total, offset, limit);
-  let tmpl = ProjectsTemplate {
-    ui: ui_config(&state),
-    projects: items,
-    limit,
-    has_prev: pagination.has_prev,
-    has_next: pagination.has_next,
-    prev_offset: pagination.prev_offset,
-    next_offset: pagination.next_offset,
-    page: pagination.page,
-    total_pages: pagination.total_pages,
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-  };
-  tmpl.render_html_or_500()
 }
 
 pub(super) fn elapsed_since(started: i64) -> String {

@@ -37,7 +37,10 @@ use uuid::Uuid;
 use super::{
   shared::{ApiKeyView, DashboardContext, PageError},
   templates::SortHeaderView,
-  views::users::{UserDone, UserError},
+  views::{
+    projects::CreateError,
+    users::{UserDone, UserError},
+  },
 };
 use crate::{permissions::Permission, state::AppState};
 
@@ -1314,4 +1317,47 @@ pub(super) async fn project_delete(
   )
   .await;
   Ok(Redirect::to("/projects"))
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct ProjectCreateForm {
+  name:           String,
+  repository_url: String,
+  #[serde(default)]
+  description:    String,
+  #[serde(default)]
+  csrf_token:     String,
+}
+
+pub(super) async fn project_create(
+  State(state): State<AppState>,
+  ctx: DashboardContext,
+  Form(form): Form<ProjectCreateForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(denied) = ctx.check_csrf(&form.csrf_token) {
+    return denied.into_response();
+  }
+
+  let description = form.description.trim();
+  let input = circus_common::CreateProject {
+    name:            form.name.trim().to_owned(),
+    repository_url:  form.repository_url.trim().to_owned(),
+    description:     (!description.is_empty()).then(|| description.to_owned()),
+    cache_enabled:   true,
+    cache_url:       None,
+    cache_upstreams: circus_common::models::BinaryCacheUpstreams::default(),
+  };
+  match crate::routes::projects::create(&state, input).await {
+    Ok(project) => {
+      Redirect::to(&format!("/project/{}", project.id)).into_response()
+    },
+    Err(error) => {
+      tracing::warn!("Failed to create project: {error}");
+      let code = CreateError::from(&error).code();
+      Redirect::to(&format!("/projects?error={code}")).into_response()
+    },
+  }
 }

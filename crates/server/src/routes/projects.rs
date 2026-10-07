@@ -6,6 +6,7 @@ use axum::{
   routing::{delete, get, post},
 };
 use circus_common::{
+  CiError,
   CreateJobset,
   CreateProject,
   Jobset,
@@ -73,17 +74,21 @@ async fn create_project(
   Json(input): Json<CreateProject>,
 ) -> Result<Json<Project>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
-  input
-    .validate()
-    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
+  Ok(Json(create(&state, input).await?))
+}
+
+/// Validates and stores a new project.
+pub(crate) async fn create(
+  state: &AppState,
+  input: CreateProject,
+) -> Result<Project, CiError> {
+  input.validate().map_err(CiError::Validation)?;
   circus_common::validate::validate_url_scheme(
     &input.repository_url,
     &state.config.server.allowed_url_schemes,
   )
-  .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let project =
-    circus_common::repo::projects::create(&state.pool, input).await?;
-  Ok(Json(project))
+  .map_err(CiError::Validation)?;
+  circus_common::repo::projects::create(&state.pool, input).await
 }
 
 async fn get_project(
@@ -228,15 +233,23 @@ async fn probe_repository(
   Json(body): Json<ProbeRequest>,
 ) -> Result<Json<nix::FlakeProbeResult>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
+  Ok(Json(
+    probe(&state, &body.repository_url, body.revision.as_deref()).await?,
+  ))
+}
+
+/// Probes a flake, keeping only the systems this instance builds.
+pub(crate) async fn probe(
+  state: &AppState,
+  repository_url: &str,
+  revision: Option<&str>,
+) -> Result<nix::FlakeProbeResult, CiError> {
   circus_common::validate::validate_url_scheme(
-    &body.repository_url,
+    repository_url,
     &state.config.server.allowed_url_schemes,
   )
-  .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  let mut result =
-    nix::probe::probe_flake(&body.repository_url, body.revision.as_deref())
-      .await
-      .map_err(circus_common::CiError::from)?;
+  .map_err(CiError::Validation)?;
+  let mut result = nix::probe::probe_flake(repository_url, revision).await?;
   if let Some(allowed) = circus_common::systems::resolve_allowed_systems(
     &state.pool,
     &state.config.evaluator,
@@ -250,22 +263,22 @@ async fn probe_repository(
       suggestion.systems.retain(|system| allowed.contains(system));
     }
   }
-  Ok(Json(result))
+  Ok(result)
 }
 
 #[derive(Debug, Deserialize)]
-struct SetupJobsetInput {
-  name:           String,
-  nix_expression: String,
-  systems:        Option<Vec<String>>,
+pub(crate) struct SetupJobsetInput {
+  pub(crate) name:           String,
+  pub(crate) nix_expression: String,
+  pub(crate) systems:        Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct SetupProjectRequest {
-  repository_url: String,
-  name:           String,
-  description:    Option<String>,
-  jobsets:        Vec<SetupJobsetInput>,
+pub(crate) struct SetupProjectRequest {
+  pub(crate) repository_url: String,
+  pub(crate) name:           String,
+  pub(crate) description:    Option<String>,
+  pub(crate) jobsets:        Vec<SetupJobsetInput>,
 }
 
 #[derive(serde::Serialize)]
@@ -280,56 +293,82 @@ async fn setup_project(
   Json(body): Json<SetupProjectRequest>,
 ) -> Result<Json<SetupProjectResponse>, ApiError> {
   permissions::require_api(&extensions, Permission::CreateProjects)?;
+  let (project, jobsets) = setup(&state, body).await?;
+  Ok(Json(SetupProjectResponse { project, jobsets }))
+}
 
-  let create_project = CreateProject {
+/// Creates a project and the jobsets chosen from its probe, or nothing.
+pub(crate) async fn setup(
+  state: &AppState,
+  body: SetupProjectRequest,
+) -> Result<(Project, Vec<Jobset>), CiError> {
+  let inputs: Vec<CreateJobset> = body
+    .jobsets
+    .into_iter()
+    .map(|js_input| {
+      CreateJobset {
+        project_id:        Uuid::nil(),
+        name:              js_input.name,
+        nix_expression:    js_input.nix_expression,
+        enabled:           Some(true),
+        flake_mode:        Some(true),
+        check_interval:    None,
+        trigger_mode:      None,
+        branch:            None,
+        branch_pattern:    None,
+        tag_pattern:       None,
+        scheduling_shares: None,
+        state:             None,
+        keep_nr:           None,
+        systems:           js_input.systems,
+        only_build_latest: None,
+        path_filters:      None,
+      }
+    })
+    .collect();
+
+  for (index, input) in inputs.iter().enumerate() {
+    input.validate().map_err(CiError::Validation)?;
+
+    if inputs[..index].iter().any(|other| other.name == input.name) {
+      return Err(CiError::Validation(format!(
+        "jobset name '{}' is used twice",
+        input.name
+      )));
+    }
+  }
+
+  let project = create(state, CreateProject {
     name:            body.name,
     repository_url:  body.repository_url,
     description:     body.description,
     cache_enabled:   true,
     cache_url:       None,
     cache_upstreams: BinaryCacheUpstreams::default(),
-  };
-  create_project
-    .validate()
-    .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-  circus_common::validate::validate_url_scheme(
-    &create_project.repository_url,
-    &state.config.server.allowed_url_schemes,
-  )
-  .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-
-  let project =
-    circus_common::repo::projects::create(&state.pool, create_project).await?;
+  })
+  .await?;
 
   let mut jobsets = Vec::new();
-  for js_input in body.jobsets {
-    let input = CreateJobset {
-      project_id:        project.id,
-      name:              js_input.name,
-      nix_expression:    js_input.nix_expression,
-      enabled:           Some(true),
-      flake_mode:        Some(true),
-      check_interval:    None,
-      trigger_mode:      None,
-      branch:            None,
-      branch_pattern:    None,
-      tag_pattern:       None,
-      scheduling_shares: None,
-      state:             None,
-      keep_nr:           None,
-      systems:           js_input.systems,
-      only_build_latest: None,
-      path_filters:      None,
-    };
-    input
-      .validate()
-      .map_err(|msg| ApiError(circus_common::CiError::Validation(msg)))?;
-    let jobset =
-      circus_common::repo::jobsets::create(&state.pool, input).await?;
-    jobsets.push(jobset);
+  for mut input in inputs {
+    input.project_id = project.id;
+
+    match circus_common::repo::jobsets::create(&state.pool, input).await {
+      Ok(jobset) => jobsets.push(jobset),
+      Err(error) => {
+        if let Err(cleanup) =
+          circus_common::repo::projects::delete(&state.pool, project.id).await
+        {
+          tracing::error!(
+            project_id = %project.id,
+            "Failed to remove a half set up project: {cleanup}"
+          );
+        }
+        return Err(error);
+      },
+    }
   }
 
-  Ok(Json(SetupProjectResponse { project, jobsets }))
+  Ok((project, jobsets))
 }
 
 // Webhook configuration routes
