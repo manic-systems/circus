@@ -12,10 +12,6 @@ pub(super) async fn api_ok() -> Json<serde_json::Value> {
   Json(serde_json::json!({ "ok": true }))
 }
 
-pub(super) async fn api_failed_paths_cache_clear() -> Json<serde_json::Value> {
-  Json(serde_json::json!({ "deleted": 0, "restarted": 0 }))
-}
-
 pub(super) async fn api_project_create(
   Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
@@ -125,21 +121,6 @@ pub(super) async fn api_key_create(
       "name": name,
       "role": role
     }
-  }))
-}
-
-pub(super) async fn api_user_create(
-  Json(body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-  let username = body
-    .get("username")
-    .and_then(serde_json::Value::as_str)
-    .unwrap_or("preview-user");
-
-  Json(serde_json::json!({
-    "id": "00000000-0000-0000-0000-000000000031",
-    "username": username,
-    "enabled": true
   }))
 }
 

@@ -2,6 +2,7 @@ use axum::http::HeaderMap;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use circus_config::ServerConfig;
 use time::Duration as CookieDuration;
+use uuid::Uuid;
 
 pub const USER_SESSION_COOKIE: &str = "circus_user_session";
 pub const API_KEY_SESSION_COOKIE: &str = "circus_session";
@@ -76,6 +77,31 @@ pub fn oauth_user_session_cookie(
     SameSite::Lax,
     oauth_cookie_secure(config, redirect_uri),
   )
+}
+
+/// Carries a new API key's secret across the redirect to `/admin`, the one
+/// page that shows it. Named per key so concurrent creations keep their own.
+#[must_use]
+pub fn new_api_key_cookie_name(key_id: Uuid) -> String {
+  format!("circus_new_api_key_{}", key_id.simple())
+}
+
+/// `max_age_secs` of 0 clears it.
+#[must_use]
+pub fn new_api_key_cookie(
+  key_id: Uuid,
+  key: &str,
+  max_age_secs: i64,
+  config: &ServerConfig,
+) -> String {
+  Cookie::build((new_api_key_cookie_name(key_id), key.to_owned()))
+    .http_only(true)
+    .same_site(SameSite::Strict)
+    .secure(server_cookie_secure(config))
+    .path("/admin")
+    .max_age(CookieDuration::seconds(max_age_secs))
+    .build()
+    .to_string()
 }
 
 #[must_use]

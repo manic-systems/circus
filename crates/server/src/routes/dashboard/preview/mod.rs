@@ -8,7 +8,7 @@ use axum::{
   body::Body,
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
-  routing::{delete, get, post, put},
+  routing::{delete, get, post},
 };
 use tower_http::services::ServeDir;
 
@@ -35,17 +35,6 @@ pub fn router() -> Router {
     .route("/api/v1/me/starred-jobs/{id}", delete(api::api_ok))
     .route("/api/v1/api-keys", post(api::api_key_create))
     .route("/api/v1/api-keys/{id}", delete(api::api_ok))
-    .route("/api/v1/users", post(api::api_user_create))
-    .route("/api/v1/users/{id}", put(api::api_ok).delete(api::api_ok))
-    .route(
-      "/api/v1/admin/notification-tasks/{id}/retry",
-      post(api::api_ok),
-    )
-    .route("/api/v1/admin/pinned-builds/{id}/unpin", post(api::api_ok))
-    .route(
-      "/api/v1/admin/failed-paths-cache/clear",
-      post(api::api_failed_paths_cache_clear),
-    )
     .route(
       "/api/v1/metrics/timeseries/builds",
       get(api::api_metrics_builds),
@@ -70,15 +59,6 @@ pub fn router() -> Router {
     .route("/logout", post(preview_logout_action))
     .route("/projects", get(pages::projects))
     .route("/projects/new", get(pages::project_setup))
-    .route(
-      "/project/{id}/notifications",
-      get(pages::notifications).post(preview_notifications_action),
-    )
-    .route(
-      "/project/{id}/notifications/{config_id}/delete",
-      post(preview_notifications_action),
-    )
-    .route("/project/{id}", get(pages::project))
     .route("/jobset/{id}/delete", post(preview_project_action))
     .route(
       "/evaluation/{id}/visibility",
@@ -87,8 +67,6 @@ pub fn router() -> Router {
     .route("/evaluation/{id}/cancel", post(preview_evaluations_action))
     .route("/evaluation/{id}/restart", post(preview_evaluations_action))
     .route("/build/{id}/bump", post(preview_queue_action))
-    .route("/admin", get(pages::admin))
-    .route("/users", get(pages::users))
     .route("/metrics", get(pages::metrics))
     .route("/private", get(pages::private))
     .route("/caches/{name}", get(pages::cache_detail))
@@ -117,10 +95,6 @@ async fn preview_logout_action() -> Redirect {
 
 async fn preview_project_action() -> Redirect {
   Redirect::to("/project/00000000-0000-0000-0000-000000000001")
-}
-
-async fn preview_notifications_action() -> Redirect {
-  Redirect::to("/project/00000000-0000-0000-0000-000000000001/notifications")
 }
 
 async fn preview_evaluations_action() -> Redirect {

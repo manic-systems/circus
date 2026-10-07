@@ -1,6 +1,11 @@
 //! The dashboard shell and access checks shared by every Topcoat page.
 
-use axum::http::Extensions;
+use std::net::SocketAddr;
+
+use axum::{
+  extract::ConnectInfo,
+  http::{Extensions, Method},
+};
 use circus_common::models::User;
 use circus_config::PageAccessLevel;
 use topcoat::{
@@ -109,6 +114,31 @@ fn allowed(cx: &Cx, viewer: &DashboardContext, page: DashboardPage) -> bool {
   }
 }
 
+/// The viewer of a page only admins may open.
+pub async fn admin_viewer(cx: &Cx) -> Result<DashboardContext> {
+  admin_session(cx).await.map(|(viewer, _)| viewer)
+}
+
+/// [`admin_viewer`] plus the session, for pages that write audit entries.
+pub async fn admin_session(cx: &Cx) -> Result<(DashboardContext, Extensions)> {
+  let state = app_context::<AppState>(cx);
+  let mut session = session_extensions(state, request::headers(cx)).await;
+
+  if let Some(peer) = request::extensions(cx).get::<ConnectInfo<SocketAddr>>() {
+    session.insert(*peer);
+  }
+
+  let viewer = DashboardContext::from_extensions(&session);
+
+  if viewer.is_admin {
+    Ok((viewer, session))
+  } else if viewer.is_authenticated {
+    Err(see_other("/").into())
+  } else {
+    Err(see_other(login_href(cx)).into())
+  }
+}
+
 async fn session(cx: &Cx) -> DashboardContext {
   signed_in(cx).await.0
 }
@@ -127,7 +157,8 @@ fn login_href(cx: &Cx) -> String {
   let uri = request::uri(cx);
   let here = uri.path_and_query().map_or("/", |path| path.as_str());
 
-  if uri.path() == "/login" {
+  // A POST-only page would answer the post-login GET with a 405.
+  if uri.path() == "/login" || request::method(cx) != Method::GET {
     return "/login".to_owned();
   }
 

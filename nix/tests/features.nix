@@ -136,13 +136,6 @@ testers.runNixOSTest {
         )
         assert code.strip() == "403", f"Expected 403 for read-only setup, got {code.strip()}"
 
-    # Dashboard
-    with subtest("Admin page JS uses escapeHtml for error handling"):
-        body = machine.succeed(
-            f"curl -sf {auth_header} http://127.0.0.1:3000/admin"
-        )
-        assert "escapeHtml" in body, "Admin page JS should use escapeHtml"
-
     # Metrics reflect actual data
     with subtest("Metrics circus_projects_total reflects created projects"):
         result = machine.succeed("curl -sf http://127.0.0.1:3000/prometheus")

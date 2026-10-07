@@ -37,22 +37,31 @@ pub fn hash_api_key(key: &str) -> String {
   HEXLOWER.encode(&hasher.finalize())
 }
 
+/// A fresh API key secret and the hash stored for it.
+///
+/// # Errors
+///
+/// Fails if the system RNG is unavailable.
+pub fn generate_api_key() -> Result<(String, String), circus_common::CiError> {
+  let mut bytes = [0u8; 32];
+  ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
+    .map_err(|_| {
+      circus_common::CiError::Internal(
+        "Failed to generate random API key".into(),
+      )
+    })?;
+  let key = format!("circus_{}", BASE64URL_NOPAD.encode(&bytes));
+  let key_hash = hash_api_key(&key);
+  Ok((key, key_hash))
+}
+
 async fn create_api_key(
   auth: RequireAdmin,
   State(state): State<AppState>,
   Json(input): Json<CreateApiKeyRequest>,
 ) -> Result<Json<CreateApiKeyResponse>, ApiError> {
   let role = input.role.unwrap_or(GlobalRole::ReadOnly);
-
-  let mut bytes = [0u8; 32];
-  ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
-    .map_err(|_| {
-      ApiError(circus_common::CiError::Internal(
-        "Failed to generate random API key".into(),
-      ))
-    })?;
-  let key = format!("circus_{}", BASE64URL_NOPAD.encode(&bytes));
-  let key_hash = hash_api_key(&key);
+  let (key, key_hash) = generate_api_key()?;
 
   let api_key =
     repo::api_keys::create(&state.pool, &input.name, &key_hash, role).await?;
