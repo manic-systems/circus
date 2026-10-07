@@ -1058,6 +1058,10 @@ pub(super) async fn build_log(
   tmpl.render_html_or_500().map(IntoResponse::into_response)
 }
 
+pub(super) fn elapsed_since(started: i64) -> String {
+  format_elapsed((jiff::Timestamp::now().as_second() - started).max(0))
+}
+
 #[cfg(test)]
 mod tests {
   use circus_common::models::BuildStatus;

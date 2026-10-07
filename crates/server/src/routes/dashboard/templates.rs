@@ -304,18 +304,6 @@ pub(super) struct PinnedOutputView {
   pub(super) product_created_at: String,
 }
 
-/// The dashboard frame around a Topcoat page, split at [`LIVE_SLOT`].
-#[derive(Template)]
-#[template(path = "live_shell.html")]
-pub(super) struct LiveShellTemplate<'page> {
-  pub(super) ui:        UiTemplateConfig,
-  pub(super) title:     &'page str,
-  pub(super) is_admin:  bool,
-  pub(super) auth_name: &'page str,
-}
-
-pub(super) const LIVE_SLOT: &str = "<!-- topcoat page -->";
-
 #[cfg(test)]
 mod tests {
   use circus_common::models::BinaryCacheUpstreams;
