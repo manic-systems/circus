@@ -124,6 +124,7 @@ tokio-util = { version = "0.7.19", features = [ "io", "compat" ] }
 toml = "1.1.6"
 topcoat = { version = "0.10.0", default-features = false, features = [
   "asset",
+  "discover",
   "router",
   "runtime",
   "serve",

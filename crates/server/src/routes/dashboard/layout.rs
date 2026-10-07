@@ -1,6 +1,7 @@
 //! The dashboard shell and access checks shared by every Topcoat page.
 
 use axum::http::Extensions;
+use circus_common::models::User;
 use circus_config::PageAccessLevel;
 use topcoat::{
   Result,
@@ -109,9 +110,17 @@ fn allowed(cx: &Cx, viewer: &DashboardContext, page: DashboardPage) -> bool {
 }
 
 async fn session(cx: &Cx) -> DashboardContext {
+  signed_in(cx).await.0
+}
+
+/// The viewer and their user row, for pages outside the page access table.
+pub async fn signed_in(cx: &Cx) -> (DashboardContext, Option<User>) {
   let state = app_context::<AppState>(cx);
   let session = session_extensions(state, request::headers(cx)).await;
-  DashboardContext::from_extensions(&session)
+  (
+    DashboardContext::from_extensions(&session),
+    session.get::<User>().cloned(),
+  )
 }
 
 fn login_href(cx: &Cx) -> String {
@@ -175,6 +184,10 @@ pub async fn document(
   cx: &Cx,
   title: &str,
   viewer: &DashboardContext,
+  /// Leaves out the sign-in controls, for the login page itself.
+  #[default]
+  hide_auth: bool,
+  #[default(true)] topbar: bool,
   child: Child<'_>,
 ) -> Result<impl View> {
   let state = app_context::<AppState>(cx);
@@ -188,7 +201,9 @@ pub async fn document(
         <div class="app-shell">
           sidebar(ui: &ui, viewer: viewer)
           <div class="shell-main">
-            topbar(viewer: viewer)
+            if topbar {
+              header(viewer: viewer, hide_auth: hide_auth)
+            }
             <main class="page-main">
               <div class="container">(child)</div>
             </main>
@@ -271,7 +286,11 @@ async fn sidebar(
 }
 
 #[component]
-async fn topbar(cx: &Cx, viewer: &DashboardContext) -> Result<impl View> {
+async fn header(
+  cx: &Cx,
+  viewer: &DashboardContext,
+  hide_auth: bool,
+) -> Result<impl View> {
   let login = login_href(cx);
 
   Ok(view! {
@@ -291,13 +310,15 @@ async fn topbar(cx: &Cx, viewer: &DashboardContext) -> Result<impl View> {
         <button class="btn btn-small btn-secondary" type="submit">"Search"</button>
       </form>
       <div class="topbar-actions nav-auth">
-        if viewer.auth_name.is_empty() {
-          <a class="btn btn-secondary" href=(login)>"Login"</a>
-        } else {
-          <a class="auth-user" href="/account">(viewer.auth_name.as_str())</a>
-          <form method="POST" action="/logout">
-            <button class="btn-ghost" type="submit">"Logout"</button>
-          </form>
+        if !hide_auth {
+          if viewer.auth_name.is_empty() {
+            <a class="btn btn-secondary" href=(login)>"Login"</a>
+          } else {
+            <a class="auth-user" href="/account">(viewer.auth_name.as_str())</a>
+            <form method="POST" action="/logout">
+              <button class="btn-ghost" type="submit">"Logout"</button>
+            </form>
+          }
         }
       </div>
     </header>

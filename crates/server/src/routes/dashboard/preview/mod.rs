@@ -6,7 +6,6 @@ use askama::Template;
 use axum::{
   Router,
   body::Body,
-  extract::Path,
   http::{StatusCode, header},
   response::{Html, IntoResponse, Redirect, Response},
   routing::{delete, get, post, put},
@@ -68,7 +67,6 @@ pub fn router() -> Router {
       "/api/v1/builds/{build_id}/products/{product_id}/download",
       get(product_download),
     )
-    .route("/", get(pages::home))
     .route("/logout", post(preview_logout_action))
     .route("/projects", get(pages::projects))
     .route("/projects/new", get(pages::project_setup))
@@ -81,34 +79,19 @@ pub fn router() -> Router {
       post(preview_notifications_action),
     )
     .route("/project/{id}", get(pages::project))
-    .route("/jobset/{id}", get(pages::jobset))
-    .route("/jobset/{id}/jobs", get(pages::jobset_jobs))
     .route("/jobset/{id}/delete", post(preview_project_action))
-    .route("/evaluations", get(pages::evaluations))
-    .route("/evaluation/{id}", get(pages::evaluation))
     .route(
       "/evaluation/{id}/visibility",
       post(preview_evaluations_action),
     )
     .route("/evaluation/{id}/cancel", post(preview_evaluations_action))
     .route("/evaluation/{id}/restart", post(preview_evaluations_action))
-    .route("/builds", get(pages::builds))
-    .route("/build/{id}", get(pages::build))
-    .route("/build/{id}/log", get(build_log))
     .route("/build/{id}/bump", post(preview_queue_action))
-    .route("/channels", get(pages::channels))
-    .route("/channel/{id}", get(pages::channel))
-    .route("/news", get(pages::news).post(preview_news_action))
-    .route("/news/{id}/delete", post(preview_news_action))
     .route("/admin", get(pages::admin))
     .route("/users", get(pages::users))
-    .route("/starred", get(pages::starred))
     .route("/metrics", get(pages::metrics))
-    .route("/login", get(pages::login).post(preview_login_action))
     .route("/private", get(pages::private))
-    .route("/caches", get(pages::caches))
     .route("/caches/{name}", get(pages::cache_detail))
-    .route("/caches/{name}/nars", get(pages::cache_nars))
 }
 
 pub(super) fn render<T: Template>(template: T) -> Response {
@@ -125,11 +108,7 @@ pub(super) fn render<T: Template>(template: T) -> Response {
 }
 
 async fn index() -> Redirect {
-  Redirect::temporary("/")
-}
-
-async fn preview_login_action() -> Redirect {
-  Redirect::to("/login")
+  Redirect::temporary("/projects")
 }
 
 async fn preview_logout_action() -> Redirect {
@@ -150,17 +129,6 @@ async fn preview_evaluations_action() -> Redirect {
 
 async fn preview_queue_action() -> Redirect {
   Redirect::to("/queue")
-}
-
-async fn preview_news_action() -> Redirect {
-  Redirect::to("/news")
-}
-
-async fn build_log(Path(id): Path<uuid::Uuid>) -> Response {
-  fixtures::build_log_template(id).map_or_else(
-    || (StatusCode::NOT_FOUND, "Build log not found").into_response(),
-    render,
-  )
 }
 
 async fn product_download() -> Response {

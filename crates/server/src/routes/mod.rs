@@ -360,26 +360,20 @@ pub fn ui_router(state: AppState, config: &Config) -> Router<AppState> {
   }
 
   if config.ui.dashboard_enabled() {
-    // Topcoat resolves the session itself, since its connected reruns never
-    // pass through axum's middleware.
     match dashboard::assets::load() {
       Ok(assets) => {
         let live = dashboard::live::service(state.clone(), assets);
-        router = router
-          .route_service("/queue", live.clone())
-          .route_service("/_topcoat/{*rest}", live);
+        router =
+          router.merge(dashboard::router(live).route_layer(
+            middleware::from_fn_with_state(state, extract_session),
+          ));
       },
       Err(error) => {
         tracing::error!(
-          "dashboard assets unavailable, live pages disabled: {error}"
+          "dashboard assets unavailable, dashboard disabled: {error}"
         );
       },
     }
-
-    router = router.merge(
-      dashboard::router()
-        .route_layer(middleware::from_fn_with_state(state, extract_session)),
-    );
   }
 
   router

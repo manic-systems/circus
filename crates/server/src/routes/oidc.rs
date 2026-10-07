@@ -1,11 +1,10 @@
 use std::{collections::BTreeMap, error::Error, sync::Arc, time::Duration};
 
-use askama::Template;
 use axum::{
   Router,
   extract::{Path, Query, State, rejection::QueryRejection},
   http::{StatusCode, header::SET_COOKIE},
-  response::{AppendHeaders, Html, IntoResponse, Redirect, Response},
+  response::{AppendHeaders, IntoResponse, Redirect, Response},
   routing::get,
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -35,7 +34,7 @@ use uuid::Uuid;
 use crate::{
   audit::record_with_actor,
   oauth_client::{AuthCodeClient, ClientAuth, Secret, TokenError},
-  routes::dashboard::templates::LoginTemplate,
+  routes::dashboard::views::account::SignInError,
   session_cookie::{
     OIDC_FLOW_COOKIE,
     USER_SESSION_MAX_AGE_SECS,
@@ -202,25 +201,12 @@ impl LoginError {
     Self::Unavailable(error.into())
   }
 
-  const fn status(&self) -> StatusCode {
+  const fn sign_in_error(&self) -> SignInError {
     match self {
-      Self::UnknownProvider => StatusCode::NOT_FOUND,
-      Self::Unavailable(_) => StatusCode::BAD_GATEWAY,
-      _ => StatusCode::UNAUTHORIZED,
-    }
-  }
-
-  const fn message(&self) -> &'static str {
-    match self {
-      Self::Unavailable(_) => {
-        "Sign-in is temporarily unavailable. Please try again."
-      },
-      Self::Conflict(_) => "An account already uses this username or email.",
-      Self::AlreadyLinked(_) => {
-        "This sign-in is already linked to an account, or yours already has \
-         one from this provider."
-      },
-      _ => "Unable to sign in. Please try again or contact an administrator.",
+      Self::Unavailable(_) => SignInError::ProviderUnavailable,
+      Self::Conflict(_) => SignInError::AccountConflict,
+      Self::AlreadyLinked(_) => SignInError::AlreadyLinked,
+      _ => SignInError::ProviderFailed,
     }
   }
 }
@@ -495,12 +481,6 @@ async fn login_failure(
     .await;
   }
 
-  let html = LoginTemplate::new(&state.config, Some(error.message().into()))
-    .render()
-    .unwrap_or_else(|render_error| {
-      tracing::error!(%render_error, "Unable to render OIDC login failure");
-      error.message().to_owned()
-    });
   let redirect_uri = state
     .config
     .oauth
@@ -509,12 +489,11 @@ async fn login_failure(
     .map_or("", |config| config.redirect_uri.as_str());
 
   (
-    error.status(),
     [(
       SET_COOKIE,
       clear_oidc_flow_cookie(&state.config.server, redirect_uri),
     )],
-    Html(html),
+    Redirect::to(&error.sign_in_error().login_href(None)),
   )
     .into_response()
 }
