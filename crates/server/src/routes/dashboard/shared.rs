@@ -215,6 +215,32 @@ pub(super) struct EvalProgressView {
   pub(super) percent: i64,
 }
 
+pub(super) struct ClosureView {
+  pub(super) size:   String,
+  pub(super) exact:  String,
+  pub(super) change: Option<ClosureChangeView>,
+}
+
+pub(super) struct ClosureChangeView {
+  pub(super) text:         String,
+  pub(super) class:        &'static str,
+  pub(super) build_id:     Uuid,
+  pub(super) commit_short: String,
+}
+
+pub(super) struct PackageChangesView {
+  pub(super) against_build_id: Uuid,
+  pub(super) against_short:    String,
+  pub(super) changes:          Vec<PackageChangeView>,
+}
+
+pub(super) struct PackageChangeView {
+  pub(super) name: String,
+  pub(super) kind: &'static str,
+  pub(super) old:  String,
+  pub(super) new:  String,
+}
+
 pub(super) struct BrokeInView {
   pub(super) build_id:              Uuid,
   pub(super) commit_short:          String,

@@ -172,7 +172,7 @@ async fn channel_page(cx: &Cx) -> Result<impl View> {
     .await
     .map_err(|_| not_found())?;
 
-  let builds = match channel.current_evaluation_id {
+  let mut builds = match channel.current_evaluation_id {
     Some(eval_id) => {
       circus_common::repo::builds::list_for_evaluation(&state.pool, eval_id)
         .await
@@ -180,6 +180,7 @@ async fn channel_page(cx: &Cx) -> Result<impl View> {
     },
     None => Vec::new(),
   };
+  builds.retain(|build| !build.kind.is_effect());
   let count = |pred: fn(BuildStatus) -> bool| {
     builds.iter().filter(|build| pred(build.status)).count()
   };
@@ -415,6 +416,7 @@ async fn starred_jobs(
           None,
           None,
           Some(&star.job_name),
+          Some("build"),
           1,
           0,
         )
