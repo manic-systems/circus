@@ -5,7 +5,6 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod api_docs;
-mod fmt_templates;
 mod openapi_check;
 mod preview_frontend;
 
@@ -24,17 +23,10 @@ enum Cmd {
     #[arg(long)]
     check: bool,
   },
-  /// Format Askama HTML templates in crates/server/templates/.
-  FmtTemplates {
-    /// Check formatting without writing files (exits non-zero if any need
-    /// changes).
-    #[arg(long)]
-    check: bool,
-  },
   /// Verify that every API route registered in the server has a matching
   /// entry in the generated `OpenAPI` document.
   OpenapiCheck,
-  /// Serve fixture-backed dashboard HTML for local frontend iteration.
+  /// Serve the dashboard against a throwaway, seeded Postgres.
   PreviewFrontend {
     /// Address to bind.
     #[arg(long, default_value_t = preview_frontend::default_host())]
@@ -55,7 +47,6 @@ async fn main() -> ExitCode {
   let cli = Cli::parse();
   let result = match cli.command {
     Cmd::ApiDocs { check } => api_docs::run(check),
-    Cmd::FmtTemplates { check } => fmt_templates::run(check),
     Cmd::OpenapiCheck => openapi_check::run(),
     Cmd::PreviewFrontend { host, port } => {
       preview_frontend::run(host, port).await

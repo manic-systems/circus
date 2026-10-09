@@ -7,7 +7,6 @@ repository.workspace = true
 description          = "HTTP server for Circus"
 
 [dependencies]
-askama.workspace              = true
 async-compression.workspace   = true
 axum.workspace                = true
 axum-extra                    = { workspace = true, features = [ "cookie" ] }
