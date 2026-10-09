@@ -35,8 +35,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::{
-  shared::{ApiKeyView, DashboardContext, PageError},
-  templates::SortHeaderView,
+  shared::{ApiKeyView, DashboardContext, PageError, SortHeaderView},
   views::{
     projects::CreateError,
     users::{UserDone, UserError},
@@ -185,14 +184,12 @@ fn agent_sort_headers(
         sort.default_direction()
       };
       SortHeaderView {
-        key: sort.as_param().to_string(),
         label: (*label).to_string(),
         href: format!(
           "/admin?agent_sort={}&agent_dir={}#agents",
           sort.as_param(),
           next_dir.as_str(),
         ),
-        default_dir: sort.default_direction().as_str().to_string(),
         active,
         indicator: if active {
           active_dir.as_str().to_string()

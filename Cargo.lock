@@ -157,76 +157,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
-name = "askama"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6024d73179f43f15ccd2b881bfea6fee7f3a46ec53f33b52210dea749ebebaa4"
-dependencies = [
- "askama_macros",
- "itoa",
- "percent-encoding",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "askama_derive"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "071ee5ebf2138e3ad180e0aacf6940c2cab5e6d8333741d9925c7bee2b153f39"
-dependencies = [
- "askama_parser",
- "basic-toml",
- "glob",
- "memchr",
- "proc-macro2",
- "quote",
- "rustc-hash",
- "serde",
- "serde_derive",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "askama_fmt"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46be2961768f442d7d7bb3f7efa4ef17d9b7b967fa4ff8ea2da2d1dc44a2f654"
-dependencies = [
- "clap",
- "fancy-regex",
- "glob",
- "ignore",
- "rayon",
- "regex",
- "serde",
- "similar",
- "toml",
-]
-
-[[package]]
-name = "askama_macros"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "643e1c7cbb6aec1d920332fe51a7c0d8219e273dcb8602db03f5263e4d16487b"
-dependencies = [
- "askama_derive",
-]
-
-[[package]]
-name = "askama_parser"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c5ae75772275d268b03ab8bdccdd12117b6169ee23256942b34e46c9f476583"
-dependencies = [
- "rustc-hash",
- "serde",
- "serde_derive",
- "unicode-ident",
- "winnow",
-]
-
-[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -406,15 +336,6 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
-
-[[package]]
-name = "basic-toml"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba62675e8242a4c4e806d12f11d136e626e6c8361d6b829310732241652a178a"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bindgen"
@@ -955,7 +876,6 @@ dependencies = [
 name = "circus-server"
 version = "0.14.0"
 dependencies = [
- "askama",
  "async-compression",
  "axum",
  "axum-extra",
@@ -1017,8 +937,9 @@ dependencies = [
 name = "circus-xtask"
 version = "0.1.0"
 dependencies = [
- "askama_fmt",
- "axum",
+ "circus-common",
+ "circus-config",
+ "circus-migrations",
  "circus-server",
  "clap",
  "color-eyre",
@@ -1026,6 +947,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]
@@ -1306,16 +1228,6 @@ version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
 dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-deque"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "622f3fc73690be383c7214310406f28a90e6edeadc3cea882f9d71e495b9711a"
-dependencies = [
- "crossbeam-epoch",
  "crossbeam-utils",
 ]
 
@@ -1662,12 +1574,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "either"
-version = "1.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
-
-[[package]]
 name = "elsa"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1790,17 +1696,6 @@ name = "fallible-streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
-
-[[package]]
-name = "fancy-regex"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
-dependencies = [
- "bit-set",
- "regex-automata",
- "regex-syntax",
-]
 
 [[package]]
 name = "faster-hex"
@@ -2900,19 +2795,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
-name = "globset"
-version = "0.4.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07c34a9410465b45bd9787443bc7370f37735bad04b0f0cd57ff1a3186c98988"
-dependencies = [
- "aho-corasick",
- "bstr",
- "log",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
 name = "h2"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3260,22 +3142,6 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
-]
-
-[[package]]
-name = "ignore"
-version = "0.4.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b69833ed729dc5aa7d19541d96d6cf8e9137194207a04916d658e43168402f"
-dependencies = [
- "crossbeam-deque",
- "globset",
- "log",
- "memchr",
- "regex-automata",
- "same-file",
- "walkdir",
- "winapi-util",
 ]
 
 [[package]]
@@ -4401,26 +4267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rayon"
-version = "1.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
-dependencies = [
- "either",
- "rayon-core",
-]
-
-[[package]]
-name = "rayon-core"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
-dependencies = [
- "crossbeam-deque",
- "crossbeam-utils",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4986,15 +4832,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "similar"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f66ca1f7aca2474dc10c942eb22feffc897735f54cd1db90138c2fddb490987"
-dependencies = [
- "bstr",
-]
 
 [[package]]
 name = "siphasher"

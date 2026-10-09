@@ -5,7 +5,6 @@
 
 use std::convert::Infallible;
 
-use askama::Template;
 use axum::{
   extract::FromRequestParts,
   http::{Extensions, StatusCode, request::Parts},
@@ -63,12 +62,12 @@ impl UiTemplateConfig {
   }
 }
 
-#[derive(Template)]
-#[template(path = "private.html")]
-pub(super) struct PrivateTemplate {
-  pub(super) ui:        UiTemplateConfig,
-  pub(super) is_admin:  bool,
-  pub(super) auth_name: String,
+pub(super) struct SortHeaderView {
+  pub(super) label:     String,
+  pub(super) href:      String,
+  pub(super) active:    bool,
+  pub(super) indicator: String,
+  pub(super) aria_sort: String,
 }
 
 /// Boxed so every dashboard handler result stays small.
