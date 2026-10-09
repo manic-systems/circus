@@ -759,6 +759,7 @@ dependencies = [
  "gix",
  "jiff",
  "libc",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

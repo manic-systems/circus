@@ -1,6 +1,8 @@
 use std::{
   collections::{HashMap, HashSet, VecDeque},
+  future,
   path::Path,
+  time::Duration,
 };
 
 use circus_common::{
@@ -10,6 +12,7 @@ use circus_common::{
   systems::system_allowed,
 };
 use data_encoding::HEXLOWER;
+use futures::stream::{self, StreamExt};
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -134,8 +137,9 @@ async fn show_recursive_derivations(
     .unwrap_or_default()
 }
 
-/// Paths the command cannot vouch for are treated as invalid so the
-/// derivation still gets enqueued.
+/// Outputs neither in the local store nor on a substituter. Paths the checks
+/// cannot vouch for are treated as invalid so the derivation still gets
+/// enqueued.
 async fn invalid_output_paths(
   derivations: &HashMap<String, DerivationInfo>,
   memory_limit: MemoryLimit,
@@ -171,7 +175,93 @@ async fn invalid_output_paths(
       _ => invalid.extend(chunk.iter().cloned()),
     }
   }
+
+  let substituters = http_substituters(memory_limit).await;
+  for path in substitutable(&invalid, &substituters).await {
+    invalid.remove(&path);
+  }
   invalid
+}
+
+/// The HTTP binary caches this host's Nix substitutes from.
+async fn http_substituters(memory_limit: MemoryLimit) -> Vec<String> {
+  let mut command = Command::new("nix");
+  command
+    .args(["config", "show", "substituters"])
+    .kill_on_drop(true);
+  if memory_limit.apply_to(&mut command).is_err() {
+    return Vec::new();
+  }
+
+  match command.output().await {
+    Ok(output) if output.status.success() => {
+      String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+        .map(|url| url.trim_end_matches('/').to_owned())
+        .collect()
+    },
+    Ok(output) => {
+      tracing::warn!(
+        stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+        "Failed to read Nix substituters"
+      );
+      Vec::new()
+    },
+    Err(error) => {
+      tracing::warn!("Failed to read Nix substituters: {error}");
+      Vec::new()
+    },
+  }
+}
+
+/// Paths some substituter already serves. An agent fetches these instead of
+/// building them, so they need no build of their own.
+async fn substitutable(
+  paths: &HashSet<String>,
+  substituters: &[String],
+) -> Vec<String> {
+  if paths.is_empty() || substituters.is_empty() {
+    return Vec::new();
+  }
+
+  let client = match reqwest::Client::builder()
+    .connect_timeout(Duration::from_secs(5))
+    .timeout(Duration::from_secs(10))
+    .build()
+  {
+    Ok(client) => client,
+    Err(error) => {
+      tracing::warn!("Failed to build the substituter client: {error}");
+      return Vec::new();
+    },
+  };
+
+  stream::iter(paths)
+    .map(|path| {
+      let client = &client;
+      async move {
+        let hash = Path::new(path)
+          .file_name()
+          .and_then(|name| name.to_str())
+          .and_then(|name| name.get(..32))?;
+        for substituter in substituters {
+          let found = client
+            .head(format!("{substituter}/{hash}.narinfo"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success());
+          if found {
+            return Some(path.clone());
+          }
+        }
+        None
+      }
+    })
+    .buffer_unordered(32)
+    .filter_map(future::ready)
+    .collect()
+    .await
 }
 
 fn should_enqueue_derivation(
