@@ -30,26 +30,33 @@ use crate::{permissions::UiPermissions, state::AppState};
 /// Bursts of build updates within this window rerender once.
 const SETTLE: Duration = Duration::from_millis(500);
 
+/// Resolving the viewer touches its session row, so a ticking view re-checks
+/// access every this many ticks rather than every second.
+const RECHECK_TICKS: u32 = 30;
+
 /// Bumped whenever a build is inserted or changes status.
 #[derive(Clone)]
-pub(super) struct BuildsChanged(watch::Receiver<u64>);
+pub(super) struct BuildsChanged {
+  receiver: watch::Receiver<u64>,
+  ticks:    u32,
+}
 
 /// Why a live build view woke up.
 pub(super) enum Wake {
-  /// A build changed, so reload.
-  Changed,
+  /// A build changed, so reload as the viewer resolved again.
+  Changed(DashboardContext),
   /// A second passed, so redraw running clocks.
   Tick,
 }
 
 impl BuildsChanged {
   pub(super) fn subscribe(cx: &Cx) -> Self {
-    let mut receiver = app_context::<Self>(cx).0.clone();
+    let mut receiver = app_context::<Self>(cx).receiver.clone();
     receiver.mark_unchanged();
-    Self(receiver)
+    Self { receiver, ticks: 0 }
   }
 
-  /// Waits for a build change, or one second when `ticking`, then resolves the
+  /// Waits for a build change, or one second when `ticking`, and resolves the
   /// viewer again, since a run outlives the request that started it. `None`
   /// once the viewer has gone, and the redirect once they lost access.
   pub(super) async fn next(
@@ -57,7 +64,7 @@ impl BuildsChanged {
     cx: &Cx,
     page: DashboardPage,
     ticking: bool,
-  ) -> Result<Option<(Wake, DashboardContext)>> {
+  ) -> Result<Option<Wake>> {
     if !connected(cx) {
       return Ok(None);
     }
@@ -70,20 +77,24 @@ impl BuildsChanged {
       }
     };
 
-    let wake = tokio::select! {
-      changed = self.0.changed() => {
+    tokio::select! {
+      changed = self.receiver.changed() => {
         if changed.is_err() {
           return Ok(None);
         }
 
         tokio::time::sleep(SETTLE).await;
-        self.0.mark_unchanged();
-        Wake::Changed
+        self.receiver.mark_unchanged();
+        Ok(Some(Wake::Changed(shard_viewer(cx, page).await?)))
       },
-      () = tick => Wake::Tick,
-    };
-
-    Ok(Some((wake, shard_viewer(cx, page).await?)))
+      () = tick => {
+        self.ticks += 1;
+        if self.ticks.is_multiple_of(RECHECK_TICKS) {
+          shard_viewer(cx, page).await?;
+        }
+        Ok(Some(Wake::Tick))
+      },
+    }
   }
 }
 
@@ -105,7 +116,7 @@ pub fn service(state: AppState, assets: AssetBundle) -> TowerService {
 
   let router = Router::builder()
     .app_context(state)
-    .app_context(BuildsChanged(receiver))
+    .app_context(BuildsChanged { receiver, ticks: 0 })
     .discover()
     .assets(assets)
     .runtime()
@@ -193,13 +204,13 @@ async fn queue_tables(
         tables(data: &data, permissions: &ctx.permissions, csrf_token: &ctx.csrf_token)
       }?;
 
-      let Some((wake, current)) = changed.next(cx, DashboardPage::Queue, ticking).await? else {
-        break Ok(token);
-      };
-      ctx = current;
-
-      if matches!(wake, Wake::Changed) {
-        data = load_queue(state, &filter).await;
+      match changed.next(cx, DashboardPage::Queue, ticking).await? {
+        None => break Ok(token),
+        Some(Wake::Changed(current)) => {
+          ctx = current;
+          data = load_queue(state, &filter).await;
+        },
+        Some(Wake::Tick) => {},
       }
     }
   })
