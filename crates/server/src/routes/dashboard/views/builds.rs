@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use circus_common::models::{BuildProduct, NewsItem};
+use circus_common::models::{BuildProduct, BuildStatus, NewsItem};
 use topcoat::{
   Result,
   context::{Cx, app_context},
@@ -14,19 +14,25 @@ use uuid::Uuid;
 
 use super::super::{
   build_log::{BuildLogView, parse_build_log},
+  components::eta_text,
   layout::{document, shard_viewer, viewer},
   live::{BuildsChanged, Wake},
   pages::{
     dashboard_system_filters,
     derivation_name,
     elapsed_since,
+    format_elapsed,
     is_failed_status,
   },
   shared::{
     BrokeInView,
     BuildView,
+    ClosureChangeView,
+    ClosureView,
     DashboardPage,
     EvalView,
+    PackageChangeView,
+    PackageChangesView,
     Pagination,
     ProjectSummaryView,
     QueueSystemView,
@@ -34,6 +40,8 @@ use super::super::{
     build_view,
     build_view_with_context,
     eval_view,
+    format_bytes,
+    format_exact_bytes,
   },
 };
 use crate::{operator, state::AppState};
@@ -677,6 +685,7 @@ async fn builds_table(
         status.as_deref(),
         system.as_deref(),
         job_name.as_deref(),
+        Some("build"),
         limit,
         offset,
       )
@@ -688,6 +697,7 @@ async fn builds_table(
         status.as_deref(),
         system.as_deref(),
         job_name.as_deref(),
+        Some("build"),
       )
       .await
       .unwrap_or(0);
@@ -886,8 +896,35 @@ async fn build_page(cx: &Cx) -> Result<impl View> {
     .iter()
     .map(build_view)
     .collect();
+  let package_changes = circus_common::repo::build_closure_diffs::get(
+    &state.pool,
+    id,
+  )
+  .await
+  .unwrap_or_else(|error| {
+    tracing::warn!(build_id = %id, "Failed to load the closure diff: {error}");
+    None
+  })
+  .map(|diff| {
+    PackageChangesView {
+      against_build_id: diff.against_build_id,
+      against_short:    diff.against_commit.chars().take(12).collect(),
+      changes:          diff
+        .changes
+        .into_iter()
+        .map(|change| {
+          PackageChangeView {
+            name: change.name,
+            kind: change.kind.as_str(),
+            old:  change.old.join(", "),
+            new:  change.new.join(", "),
+          }
+        })
+        .collect(),
+    }
+  });
   let build = build_view(&build);
-  let title = format!("Build {}", build.job_name);
+  let title = format!("{} {}", build.kind_label, build.job_name);
 
   Ok(view! {
     document(title: &title, viewer: &viewer,
@@ -902,7 +939,7 @@ async fn build_page(cx: &Cx) -> Result<impl View> {
         <span class="sep">"/"</span>
         <a href=(format!("/evaluation/{}", lineage.eval_id))>(lineage.commit_short.clone())</a>
       </nav>
-      <h1>"Build: " (build.job_name.clone())</h1>
+      <h1>(build.kind_label.clone()) ": " (build.job_name.clone())</h1>
       live_overview(id: id.to_string())
       <section class="panel build-detail-section">
         <div class="panel-header">
@@ -940,8 +977,60 @@ async fn build_page(cx: &Cx) -> Result<impl View> {
           </div>
         }
       </section>
+      if let Some(diff) = package_changes {
+        package_changes_panel(diff: diff)
+      }
       products_panel(build_id: build.id, products: products)
     )
+  })
+}
+
+#[component]
+async fn package_changes_panel(diff: PackageChangesView) -> Result<impl View> {
+  Ok(view! {
+    <section class="panel build-detail-section">
+      <div class="panel-header">
+        <h2>"Package Changes"</h2>
+        <span>
+          "since "
+          <a href=(format!("/build/{}", diff.against_build_id))><code class="commit-ref">(diff.against_short)</code></a>
+        </span>
+      </div>
+      if diff.changes.is_empty() {
+        <div class="empty compact-empty">
+          <div class="empty-title">"Same package versions as the last success."</div>
+        </div>
+      } else {
+        <div class="table-wrap compact-table-wrap">
+          <table class="dense-table">
+            <colgroup>
+              <col style="width:30%">
+              <col style="width:14%">
+              <col style="width:28%">
+              <col style="width:28%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>"Package"</th>
+                <th>"Change"</th>
+                <th>"Before"</th>
+                <th>"After"</th>
+              </tr>
+            </thead>
+            <tbody>
+              for change in diff.changes {
+                <tr>
+                  <td>(change.name)</td>
+                  <td><span class=(format!("package-change package-{}", change.kind))>(change.kind)</span></td>
+                  <td class="mono-trunc">(change.old)</td>
+                  <td class="mono-trunc">(change.new)</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
   })
 }
 
@@ -950,6 +1039,9 @@ struct Overview {
   details:       BuildView,
   builder_label: String,
   broke_in:      Option<BrokeInView>,
+  closure:       Option<ClosureView>,
+  /// The usual duration, and when a running build should finish.
+  expected:      Option<(String, Option<i64>)>,
 }
 
 async fn load_overview(state: &AppState, id: Uuid) -> Option<Overview> {
@@ -988,10 +1080,63 @@ async fn load_overview(state: &AppState, id: Uuid) -> Option<Overview> {
     None => "local".to_owned(),
   };
 
+  let history = circus_common::repo::builds::job_history(&state.pool, id, 20)
+    .await
+    .unwrap_or_else(|error| {
+      tracing::warn!(build_id = %id, "Failed to load the job's history: {error}");
+      Vec::new()
+    });
+  let closure = build.closure_size.map(|size| {
+    let change = history
+      .iter()
+      .find_map(|past| {
+        let past_size = past
+          .closure_size
+          .filter(|_| past.status == BuildStatus::Succeeded)?;
+        Some((past, past_size))
+      })
+      .map(|(past, past_size)| {
+        let delta = size - past_size;
+        let (text, class) = match delta.signum() {
+          1 => (format!("+{}", format_bytes(delta)), "grew"),
+          -1 => (format!("-{}", format_bytes(-delta)), "shrank"),
+          _ => ("unchanged".to_owned(), "same"),
+        };
+        ClosureChangeView {
+          text,
+          class,
+          build_id: past.build_id,
+          commit_short: past.commit_hash.chars().take(12).collect(),
+        }
+      });
+    ClosureView {
+      size: format_bytes(size),
+      exact: format_exact_bytes(size),
+      change,
+    }
+  });
+  let expected_secs = if build.status.is_finished() {
+    None
+  } else {
+    circus_common::repo::builds::expected_durations(&state.pool, &[id])
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!(build_id = %id, "Failed to estimate the build's duration: {error}");
+        HashMap::new()
+      })
+      .remove(&id)
+  };
+  let expected = expected_secs.map(|secs| {
+    let eta = build.started_at.map(|started| started.as_second() + secs);
+    (format_elapsed(secs), eta)
+  });
+
   Some(Overview {
     details: build_view(&build),
     builder_label,
     broke_in,
+    closure,
+    expected,
   })
 }
 
@@ -1032,6 +1177,8 @@ async fn build_overview(overview: &Overview) -> Result<impl View> {
     details,
     builder_label,
     broke_in,
+    closure,
+    expected,
   } = overview;
   let signed = if details.signed { "Yes" } else { "No" };
 
@@ -1045,6 +1192,7 @@ async fn build_overview(overview: &Overview) -> Result<impl View> {
           meta_item(label: "Status",
             <span class=(format!("badge badge-{}", details.status_class))>(details.status_text.as_str())</span>
           )
+          meta_item(label: "Kind", (details.kind_label.as_str()))
           meta_item(label: "System", (details.system.as_str()))
           meta_item(label: "Builder", (builder_label.as_str()))
           meta_item(label: "Created", (details.created_at.as_str()))
@@ -1060,6 +1208,14 @@ async fn build_overview(overview: &Overview) -> Result<impl View> {
             (None, false) => meta_item(label: "Duration", (details.duration.as_str())),
             (None, true) => {},
           }
+          if let Some((usual, eta)) = expected {
+            meta_item(label: "Usually takes",
+              (usual.clone())
+              if let Some(until) = eta {
+                <span class="eta">(eta_text(*until))</span>
+              }
+            )
+          }
           meta_item(label: "Priority", (details.priority))
           meta_item(label: "Signed", (signed))
           if details.is_aggregate {
@@ -1068,6 +1224,18 @@ async fn build_overview(overview: &Overview) -> Result<impl View> {
           meta_item(label: "Derivation", <code>(details.drv_path.as_str())</code>)
           if !details.output_path.is_empty() {
             meta_item(label: "Output", <code>(details.output_path.as_str())</code>)
+          }
+          if let Some(closure) = closure {
+            meta_item(label: "Closure size",
+              <span title=(closure.exact.clone())>(closure.size.clone())</span>
+              if let Some(change) = &closure.change {
+                <span class="closure-change">
+                  <span class=(format!("closure-{}", change.class))>(change.text.clone())</span>
+                  " since "
+                  <a href=(format!("/build/{}", change.build_id))><code class="commit-ref">(change.commit_short.clone())</code></a>
+                </span>
+              }
+            )
           }
           if let Some(broke) = broke_in {
             <div class="build-meta-item build-meta-wide">

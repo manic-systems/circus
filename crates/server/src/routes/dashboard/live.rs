@@ -21,6 +21,7 @@ use topcoat::{
 use uuid::Uuid;
 
 use super::{
+  components::eta_text,
   layout::{document, shard_viewer, viewer},
   pages::{Queue, QueueFilter, elapsed_since, load_queue},
   shared::{DashboardContext, DashboardPage},
@@ -246,6 +247,9 @@ async fn tables(
                 match build.started_epoch {
                   Some(started) => (elapsed_since(started)),
                   None => (build.elapsed.as_str()),
+                }
+                if let Some(eta) = build.eta_epoch {
+                  <span class="eta">(eta_text(eta))</span>
                 }
               </td>
               <td>(build.builder_name.as_deref().unwrap_or("local"))</td>

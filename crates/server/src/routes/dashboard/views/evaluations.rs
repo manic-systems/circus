@@ -468,6 +468,7 @@ struct EvaluationData {
   eval:               EvalView,
   status:             EvaluationStatus,
   builds:             Vec<BuildView>,
+  effects:            Vec<BuildView>,
   failed_derivations: Vec<BuildView>,
   project:            Project,
   jobset:             Jobset,
@@ -503,7 +504,7 @@ async fn load_evaluation(
 
   let top_level: Vec<&Build> = builds
     .iter()
-    .filter(|build| is_job_name(&build.job_name))
+    .filter(|build| is_job_name(&build.job_name) && !build.kind.is_effect())
     .collect();
   let count = |matches: fn(BuildStatus) -> bool| {
     top_level
@@ -522,9 +523,16 @@ async fn load_evaluation(
     failed: count(is_failed_status),
     running: count(|status| status == BuildStatus::Running),
     pending: count(|status| status == BuildStatus::Pending),
+    effects: builds
+      .iter()
+      .filter(|build| build.kind.is_effect())
+      .map(build_view)
+      .collect(),
     failed_derivations: builds
       .iter()
-      .filter(|build| is_failed_derivation_status(build.status))
+      .filter(|build| {
+        !build.kind.is_effect() && is_failed_derivation_status(build.status)
+      })
       .map(build_view)
       .collect(),
     builds: top_level.into_iter().map(build_view).collect(),
@@ -784,6 +792,32 @@ async fn evaluation_details(
         </table>
       </div>
     }
+
+    if !data.effects.is_empty() {
+      <h2>"Effects"</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>"Effect"</th>
+              <th>"Status"</th>
+              <th>"System"</th>
+              <th>"Created"</th>
+            </tr>
+          </thead>
+          <tbody>
+            for effect in data.effects.iter() {
+              <tr>
+                <td><a href=(format!("/build/{}", effect.id))>(effect.job_name.clone())</a></td>
+                <td><span class=(format!("badge badge-{}", effect.status_class))>(effect.status_text.clone())</span></td>
+                <td>(effect.system.clone())</td>
+                <td>(effect.created_at.clone())</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
   })
 }
 
@@ -853,7 +887,10 @@ fn eval_summaries(
   builds: &[Build],
 ) -> Vec<EvalSummaryView> {
   let mut builds_by_eval: HashMap<Uuid, Vec<&Build>> = HashMap::new();
-  for build in builds.iter().filter(|build| is_job_name(&build.job_name)) {
+  for build in builds
+    .iter()
+    .filter(|build| !build.kind.is_effect() && is_job_name(&build.job_name))
+  {
     builds_by_eval
       .entry(build.evaluation_id)
       .or_default()
@@ -1165,7 +1202,7 @@ fn job_history(
     BTreeMap::new();
   for build in builds
     .into_iter()
-    .filter(|build| is_job_name(&build.job_name))
+    .filter(|build| !build.kind.is_effect() && is_job_name(&build.job_name))
   {
     builds_by_job
       .entry(build.job_name.clone())

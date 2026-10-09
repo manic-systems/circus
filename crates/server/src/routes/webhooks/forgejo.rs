@@ -23,8 +23,8 @@ pub(super) async fn handle_webhook(
   headers: HeaderMap,
   body: Bytes,
 ) -> Result<(StatusCode, Json<WebhookResponse>), ApiError> {
-  gitea_compatible::handle_signed_push(
+  Box::pin(gitea_compatible::handle_signed_push(
     PROVIDER, state, project_id, headers, body,
-  )
+  ))
   .await
 }
