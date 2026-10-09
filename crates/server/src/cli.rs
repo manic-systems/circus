@@ -124,6 +124,15 @@ where
     config.ui.enabled = true;
   }
 
+  serve(config, &format!("{host}:{port}")).await
+}
+
+/// Serve `config` on `bind_addr` until a shutdown signal arrives.
+///
+/// # Errors
+///
+/// Returns an error when database setup, bootstrap, or serving fails.
+pub async fn serve(config: Config, bind_addr: &str) -> color_eyre::Result<()> {
   circus_common::validate::warn_insecure_schemes(
     &config.server.allowed_url_schemes,
   );
@@ -213,7 +222,6 @@ where
      ui.dashboard = false",
   )?;
 
-  let bind_addr = format!("{host}:{port}");
   tracing::info!(
     mode = if config.ui.enabled {
       "full"
@@ -224,7 +232,7 @@ where
     bind_addr
   );
 
-  let listener = TcpListener::bind(&bind_addr).await?;
+  let listener = TcpListener::bind(bind_addr).await?;
   let app = app.into_make_service_with_connect_info::<SocketAddr>();
   axum::serve(listener, app)
     .with_graceful_shutdown(shutdown_signal())

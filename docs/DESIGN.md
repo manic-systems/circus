@@ -147,8 +147,8 @@ While this is not a part of actual Circus deployments, it still deserves a
 honorable mention. `circus-xtask` is our developer tooling crate. It provides
 commands you'd expect from a command runner, but with access to library APIs of
 Circus crates. One example is the API documentation generator task and the
-accompanying route drift checks for validating `API.md`. It can also invoke the
-formatter, which is only provided as Rust crate, for Askama templates.
+accompanying route drift checks for validating `API.md`. `preview-frontend`
+serves the dashboard against a throwaway Postgres seeded with sample data.
 
 ### Supporting crates
 
