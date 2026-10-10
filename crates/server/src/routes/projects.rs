@@ -185,6 +185,7 @@ struct CreateJobsetBody {
   systems:           Option<Vec<String>>,
   only_build_latest: Option<bool>,
   path_filters:      Option<Vec<String>>,
+  build_timeout:     Option<i32>,
 }
 
 async fn create_project_jobset(
@@ -213,6 +214,7 @@ async fn create_project_jobset(
     systems: body.systems,
     only_build_latest: body.only_build_latest,
     path_filters: body.path_filters,
+    build_timeout: body.build_timeout,
   };
   input
     .validate()
@@ -323,6 +325,7 @@ pub(crate) async fn setup(
         systems:           js_input.systems,
         only_build_latest: None,
         path_filters:      None,
+        build_timeout:     None,
       }
     })
     .collect();

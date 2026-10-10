@@ -100,6 +100,7 @@ async fn test_project_search() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create jobset");
@@ -170,6 +171,7 @@ async fn test_build_search_with_filters() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create jobset");
@@ -362,6 +364,7 @@ async fn test_multi_entity_search() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create jobset");
@@ -598,6 +601,7 @@ async fn test_quick_search() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create jobset");

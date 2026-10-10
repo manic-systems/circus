@@ -596,6 +596,11 @@ evaluation with no known base revision always runs. If a recorded base revision
 is unavailable after a force-push, Circus evaluates conservatively instead of
 silently dropping work.
 
+Jobsets can set `build_timeout` in seconds to override the global
+`queue_runner.build_timeout` for their builds, for example a kernel jobset that
+needs several hours. Updating a jobset with `build_timeout: 0` through the API
+clears the override.
+
 ### Evaluations
 
 An evaluation runs Nix evaluation for a jobset and creates builds. Users browse

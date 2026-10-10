@@ -103,6 +103,7 @@ async fn jobset_create(
         .map(str::to_owned)
         .collect(),
     ),
+    build_timeout: None,
   };
   let created = match crate::routes::declarative::require_project_mutable(
     state, project_id,

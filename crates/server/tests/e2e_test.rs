@@ -85,6 +85,7 @@ async fn test_e2e_project_eval_build_flow() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create jobset");

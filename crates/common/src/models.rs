@@ -51,6 +51,8 @@ pub struct Jobset {
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: bool,
   pub path_filters:      Vec<String>,
+  /// Overrides the queue runner's `build_timeout`, in seconds.
+  pub build_timeout:     Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -998,6 +1000,7 @@ pub struct CreateJobset {
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: Option<bool>,
   pub path_filters:      Option<Vec<String>>,
+  pub build_timeout:     Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1017,6 +1020,8 @@ pub struct UpdateJobset {
   pub systems:           Option<Vec<String>>,
   pub only_build_latest: Option<bool>,
   pub path_filters:      Option<Vec<String>>,
+  /// `0` clears the override.
+  pub build_timeout:     Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

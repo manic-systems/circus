@@ -233,7 +233,7 @@ configuration or the Nix store.
 | `evaluator`          | `strict_errors`                                        | `false`                                             | Abort on first evaluation cycle error                                     |
 | `queue_runner`       | `workers`                                              | `4`                                                 | Concurrent build slots                                                    |
 | `queue_runner`       | `poll_interval`                                        | `5`                                                 | Seconds between build queue polls                                         |
-| `queue_runner`       | `build_timeout`                                        | `3600`                                              | Per-build timeout (seconds)                                               |
+| `queue_runner`       | `build_timeout`                                        | `3600`                                              | Per-build timeout (seconds), a jobset's `build_timeout` overrides it      |
 | `queue_runner`       | `max_silent_time`                                      | `0`                                                 | Fail agent builds silent for `N` seconds                                  |
 | `queue_runner`       | `work_dir`                                             | `/tmp/circus-queue-runner`                          | Working directory for builds                                              |
 | `queue_runner`       | `strict_errors`                                        | `false`                                             | Abort on first runner loop error                                          |

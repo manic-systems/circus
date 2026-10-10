@@ -121,6 +121,7 @@ async fn sync_declarative_project(
       systems: decl_jobset.systems.clone(),
       only_build_latest: Some(decl_jobset.only_build_latest),
       path_filters: Some(decl_jobset.path_filters.clone()),
+      build_timeout: decl_jobset.build_timeout,
     })
     .await?;
 

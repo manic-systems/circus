@@ -1,7 +1,10 @@
 use std::{
   collections::HashMap,
   path::{Path, PathBuf},
-  sync::Arc,
+  sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+  },
   time::Duration,
 };
 
@@ -87,6 +90,8 @@ pub struct WorkerPool {
   heartbeat_ttl:       Duration,
   drain_token:         CancellationToken,
   active_builds:       ActiveBuilds,
+  /// Longest jobset `build_timeout` dispatched so far, in seconds.
+  longest_timeout:     Arc<AtomicU64>,
 }
 
 impl WorkerPool {
@@ -132,6 +137,7 @@ impl WorkerPool {
       heartbeat_ttl,
       drain_token: CancellationToken::new(),
       active_builds: Arc::new(DashMap::new()),
+      longest_timeout: Arc::new(AtomicU64::new(0)),
     }
   }
 
@@ -144,8 +150,14 @@ impl WorkerPool {
   /// Wait until all active builds finish. Agent builds are included even
   /// though they do not hold worker permits.
   pub async fn wait_for_drain(&self) {
-    let build_timeout = self.hot_config.read().await.build_timeout;
-    let _ = timeout(Duration::from_secs(build_timeout.as_secs() + 60), async {
+    let build_timeout = self
+      .hot_config
+      .read()
+      .await
+      .build_timeout
+      .as_secs()
+      .max(self.longest_timeout.load(Ordering::Relaxed));
+    let _ = timeout(Duration::from_secs(build_timeout + 60), async {
       while !self.active_builds.is_empty() {
         sleep(Duration::from_millis(100)).await;
       }
@@ -212,6 +224,7 @@ impl WorkerPool {
     let runner_caps = Arc::clone(&self.runner_caps);
     let heartbeat_ttl = self.heartbeat_ttl;
     let active_builds = Arc::clone(&self.active_builds);
+    let longest_timeout = Arc::clone(&self.longest_timeout);
     let build_id = build.id;
 
     // A claim's NOTIFY refetches pending rows before it commits, so the same
@@ -231,7 +244,7 @@ impl WorkerPool {
         let build = features::ensure_effective_features(&pool, build).await;
 
         let (
-          timeout,
+          global_timeout,
           max_silent_time,
           notifications_config,
           notification_secret_key,
@@ -249,6 +262,21 @@ impl WorkerPool {
             hot.psi_threshold,
             Arc::new(hot.extra_nix_build_args.clone()),
           )
+        };
+
+        let timeout = match repo::builds::jobset_build_timeout(&pool, build.id)
+          .await
+        {
+          Ok(Some(secs)) => {
+            let seconds = u64::from(secs.unsigned_abs());
+            longest_timeout.fetch_max(seconds, Ordering::Relaxed);
+            Duration::from_secs(seconds)
+          },
+          Ok(None) => global_timeout,
+          Err(e) => {
+            tracing::error!(build_id = %build.id, "Failed to load the jobset build timeout: {e}");
+            return;
+          },
         };
 
         let ctx = BuildContext {
@@ -1606,6 +1634,7 @@ mod tests {
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     })
     .await
     .expect("create jobset");

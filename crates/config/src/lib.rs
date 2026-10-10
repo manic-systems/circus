@@ -242,6 +242,7 @@ mod tests {
           only_build_latest: false,
           path_filters:      Vec::new(),
           inputs:            vec![],
+          build_timeout:     None,
         }],
         notifications:          vec![],
         webhooks:               vec![],

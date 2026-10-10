@@ -1449,6 +1449,7 @@ async fn sync_repo_declarative_config(
       systems: js.systems.clone(),
       only_build_latest: Some(js.only_build_latest),
       path_filters: Some(js.path_filters.clone()),
+      build_timeout: js.build_timeout,
     };
 
     match repo::jobsets::upsert(pool, input).await {

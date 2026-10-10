@@ -110,6 +110,7 @@ async fn create_test_jobset(
     systems: None,
     only_build_latest: None,
     path_filters: None,
+    build_timeout: None,
   })
   .await
   .expect("create jobset")
@@ -524,6 +525,7 @@ async fn test_jobset_crud() {
     systems:           None,
     only_build_latest: None,
     path_filters:      Some(vec!["packages/**".to_string()]),
+    build_timeout:     None,
   })
   .await
   .expect("create jobset");
@@ -561,6 +563,7 @@ async fn test_jobset_crud() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("update jobset");
@@ -601,6 +604,7 @@ async fn test_interval_evaluations_can_repeat_commit() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create interval jobset");
@@ -1070,6 +1074,7 @@ async fn test_restarting_one_shot_evaluation_resets_its_attempt() {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await
   .expect("create one-shot jobset");

@@ -1463,6 +1463,7 @@ async fn test_channel_binary_cache_url_uses_active_project_cache_when_global_dis
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     })
     .await
     .unwrap();
@@ -1969,6 +1970,7 @@ async fn test_failed_paths_cache_clear_is_admin_only_and_idempotent() {
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     })
     .await
     .unwrap();
@@ -2424,6 +2426,7 @@ async fn test_admin_global_cache_includes_signed_local_build_products() {
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     })
     .await
     .unwrap();
@@ -2633,6 +2636,7 @@ async fn test_project_cache_includes_local_product_when_other_project_uploaded_s
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     })
     .await
     .unwrap();
