@@ -136,6 +136,16 @@ pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
     })
 }
 
+/// How a reported build result counts against the agent that ran it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentOutcome {
+  Succeeded,
+  /// Preparing, importing, uploading, or post-processing broke on the agent.
+  AgentFailed,
+  /// The derivation itself failed, timed out, was aborted, or hit OOM.
+  BuildFailed,
+}
+
 /// Record a final outcome of a build dispatched to a connected agent.
 /// Used by the runner's RPC `ResultSink` to keep per-agent counters in
 /// sync with the in-memory `AgentPool`.
@@ -146,19 +156,25 @@ pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
 pub async fn record_outcome(
   pool: &PgPool,
   machine_id: Uuid,
-  succeeded: bool,
+  outcome: AgentOutcome,
 ) -> Result<()> {
   let client = pool.get().await?;
-  if succeeded {
-    q::record_outcome_succeeded()
-      .bind(&client, &machine_id)
-      .await?;
-  } else {
-    // Exponential backoff matches the SSH path:
-    // 60 * 3^(min(consecutive_failures + 1, 4) - 1) seconds + jitter.
-    q::record_outcome_failed()
-      .bind(&client, &machine_id)
-      .await?;
+  match outcome {
+    AgentOutcome::Succeeded => {
+      q::record_outcome_succeeded()
+        .bind(&client, &machine_id)
+        .await?;
+    },
+    AgentOutcome::AgentFailed => {
+      // Exponential backoff matches the SSH path:
+      // 60 * 3^(min(consecutive_failures + 1, 4) - 1) seconds + jitter.
+      q::record_outcome_failed()
+        .bind(&client, &machine_id)
+        .await?;
+    },
+    AgentOutcome::BuildFailed => {
+      q::record_build_failure().bind(&client, &machine_id).await?;
+    },
   }
   Ok(())
 }

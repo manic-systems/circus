@@ -48,6 +48,14 @@ SET
 WHERE
   machine_id =:machine_id;
 
+--! record_build_failure
+UPDATE builder_sessions
+SET
+  builds_failed = builds_failed + 1,
+  updated_at = NOW()
+WHERE
+  machine_id =:machine_id;
+
 --! is_schedulable
 SELECT
   disabled_until IS NULL
