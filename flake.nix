@@ -182,7 +182,6 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with crossPkgs.buildPackages; [pkg-config capnproto];
-        buildInputs = [(crossPkgs.openssl.override {static = true;})];
         cargoExtraArgs = "--package circus-agent";
         doCheck = false;
         hardeningDisable = ["fortify" "fortify3"];
