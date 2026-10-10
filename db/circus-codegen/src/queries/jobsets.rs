@@ -30,6 +30,7 @@ pub struct CreateParams<
     pub systems: Option<T9>,
     pub only_build_latest: bool,
     pub path_filters: T11,
+    pub build_timeout: Option<i32>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ListForProjectParams {
@@ -66,6 +67,7 @@ pub struct UpdateParams<
     pub systems: Option<T9>,
     pub only_build_latest: bool,
     pub path_filters: T11,
+    pub build_timeout: Option<i32>,
     pub id: uuid::Uuid,
 }
 #[derive(Debug)]
@@ -103,6 +105,7 @@ pub struct UpsertParams<
     pub systems: Option<T9>,
     pub only_build_latest: bool,
     pub path_filters: T11,
+    pub build_timeout: Option<i32>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobsetRow {
@@ -126,6 +129,7 @@ pub struct JobsetRow {
     pub systems: Option<Vec<String>>,
     pub only_build_latest: bool,
     pub path_filters: Vec<String>,
+    pub build_timeout: Option<i32>,
 }
 pub struct JobsetRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -148,6 +152,7 @@ pub struct JobsetRowBorrowed<'a> {
     pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
     pub only_build_latest: bool,
     pub path_filters: crate::ArrayIterator<'a, &'a str>,
+    pub build_timeout: Option<i32>,
 }
 impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
     fn from(
@@ -172,6 +177,7 @@ impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
             systems,
             only_build_latest,
             path_filters,
+            build_timeout,
         }: JobsetRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -195,6 +201,7 @@ impl<'a> From<JobsetRowBorrowed<'a>> for JobsetRow {
             systems: systems.map(|v| v.map(|v| v.into()).collect()),
             only_build_latest,
             path_filters: path_filters.map(|v| v.into()).collect(),
+            build_timeout,
         }
     }
 }
@@ -564,7 +571,7 @@ where
 pub struct CreateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn create() -> CreateStmt {
     CreateStmt(
-        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest, path_filters) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *",
+        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest, path_filters, build_timeout) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *",
         None,
     )
 }
@@ -611,7 +618,8 @@ impl CreateStmt {
         systems: &'a Option<T9>,
         only_build_latest: &'a bool,
         path_filters: &'a T11,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16> {
+        build_timeout: &'a Option<i32>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17> {
         JobsetRowQuery {
             client,
             params: [
@@ -631,6 +639,7 @@ impl CreateStmt {
                 systems,
                 only_build_latest,
                 path_filters,
+                build_timeout,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -657,6 +666,7 @@ impl CreateStmt {
                         systems: row.try_get(17)?,
                         only_build_latest: row.try_get(18)?,
                         path_filters: row.try_get(19)?,
+                        build_timeout: row.try_get(20)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -685,7 +695,7 @@ impl<
         'a,
         's,
         CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17>,
         C,
     > for CreateStmt
 {
@@ -693,7 +703,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a CreateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17> {
         self.bind(
             client,
             &params.project_id,
@@ -712,6 +722,7 @@ impl<
             &params.systems,
             &params.only_build_latest,
             &params.path_filters,
+            &params.build_timeout,
         )
     }
 }
@@ -760,6 +771,7 @@ impl GetStmt {
                         systems: row.try_get(17)?,
                         only_build_latest: row.try_get(18)?,
                         path_filters: row.try_get(19)?,
+                        build_timeout: row.try_get(20)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -816,6 +828,7 @@ impl ListForProjectStmt {
                         systems: row.try_get(17)?,
                         only_build_latest: row.try_get(18)?,
                         path_filters: row.try_get(19)?,
+                        build_timeout: row.try_get(20)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -888,6 +901,7 @@ impl ListAllForProjectStmt {
                         systems: row.try_get(17)?,
                         only_build_latest: row.try_get(18)?,
                         path_filters: row.try_get(19)?,
+                        build_timeout: row.try_get(20)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -950,7 +964,7 @@ impl CountStmt {
 pub struct UpdateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn update() -> UpdateStmt {
     UpdateStmt(
-        "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = $11, keep_nr = $12, systems = $13, only_build_latest = $14, path_filters = $15 WHERE id = $16 RETURNING *",
+        "UPDATE jobsets SET name = $1, nix_expression = $2, enabled = $3, flake_mode = $4, check_interval = $5, trigger_mode = $6, branch = $7, branch_pattern = $8, tag_pattern = $9, scheduling_shares = $10, state = $11, keep_nr = $12, systems = $13, only_build_latest = $14, path_filters = $15, build_timeout = $16 WHERE id = $17 RETURNING *",
         None,
     )
 }
@@ -996,8 +1010,9 @@ impl UpdateStmt {
         systems: &'a Option<T9>,
         only_build_latest: &'a bool,
         path_filters: &'a T11,
+        build_timeout: &'a Option<i32>,
         id: &'a uuid::Uuid,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17> {
         JobsetRowQuery {
             client,
             params: [
@@ -1016,6 +1031,7 @@ impl UpdateStmt {
                 systems,
                 only_build_latest,
                 path_filters,
+                build_timeout,
                 id,
             ],
             query: self.0,
@@ -1043,6 +1059,7 @@ impl UpdateStmt {
                         systems: row.try_get(17)?,
                         only_build_latest: row.try_get(18)?,
                         path_filters: row.try_get(19)?,
+                        build_timeout: row.try_get(20)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -1071,7 +1088,7 @@ impl<
         'a,
         's,
         UpdateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17>,
         C,
     > for UpdateStmt
 {
@@ -1079,7 +1096,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a UpdateParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17> {
         self.bind(
             client,
             &params.name,
@@ -1097,6 +1114,7 @@ impl<
             &params.systems,
             &params.only_build_latest,
             &params.path_filters,
+            &params.build_timeout,
             &params.id,
         )
     }
@@ -1177,7 +1195,7 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::StringSql, T2: crate::ArrayS
 pub struct UpsertStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn upsert() -> UpsertStmt {
     UpsertStmt(
-        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest, path_filters) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems, only_build_latest = EXCLUDED.only_build_latest, path_filters = EXCLUDED.path_filters RETURNING *",
+        "INSERT INTO jobsets (project_id, name, nix_expression, enabled, flake_mode, check_interval, trigger_mode, branch, branch_pattern, tag_pattern, scheduling_shares, state, keep_nr, systems, only_build_latest, path_filters, build_timeout) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) ON CONFLICT (project_id, name) DO UPDATE SET nix_expression = EXCLUDED.nix_expression, enabled = EXCLUDED.enabled, flake_mode = EXCLUDED.flake_mode, check_interval = EXCLUDED.check_interval, trigger_mode = EXCLUDED.trigger_mode, branch = EXCLUDED.branch, branch_pattern = EXCLUDED.branch_pattern, tag_pattern = EXCLUDED.tag_pattern, scheduling_shares = EXCLUDED.scheduling_shares, state = EXCLUDED.state, keep_nr = EXCLUDED.keep_nr, systems = EXCLUDED.systems, only_build_latest = EXCLUDED.only_build_latest, path_filters = EXCLUDED.path_filters, build_timeout = EXCLUDED.build_timeout RETURNING *",
         None,
     )
 }
@@ -1224,7 +1242,8 @@ impl UpsertStmt {
         systems: &'a Option<T9>,
         only_build_latest: &'a bool,
         path_filters: &'a T11,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16> {
+        build_timeout: &'a Option<i32>,
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17> {
         JobsetRowQuery {
             client,
             params: [
@@ -1244,6 +1263,7 @@ impl UpsertStmt {
                 systems,
                 only_build_latest,
                 path_filters,
+                build_timeout,
             ],
             query: self.0,
             cached: self.1.as_ref(),
@@ -1270,6 +1290,7 @@ impl UpsertStmt {
                         systems: row.try_get(17)?,
                         only_build_latest: row.try_get(18)?,
                         path_filters: row.try_get(19)?,
+                        build_timeout: row.try_get(20)?,
                     })
                 },
             mapper: |it| JobsetRow::from(it),
@@ -1298,7 +1319,7 @@ impl<
         'a,
         's,
         UpsertParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>,
-        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16>,
+        JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17>,
         C,
     > for UpsertStmt
 {
@@ -1306,7 +1327,7 @@ impl<
         &'s self,
         client: &'c C,
         params: &'a UpsertParams<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>,
-    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 16> {
+    ) -> JobsetRowQuery<'c, 'a, 's, C, JobsetRow, 17> {
         self.bind(
             client,
             &params.project_id,
@@ -1325,6 +1346,7 @@ impl<
             &params.systems,
             &params.only_build_latest,
             &params.path_filters,
+            &params.build_timeout,
         )
     }
 }

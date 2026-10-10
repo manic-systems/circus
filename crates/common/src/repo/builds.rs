@@ -218,6 +218,25 @@ pub async fn project_id_for_build(
   Ok(q::project_id_for_build().bind(&client, &id).opt().await?)
 }
 
+/// The build timeout its jobset overrides the global one with, in seconds.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn jobset_build_timeout(
+  pool: &PgPool,
+  id: Uuid,
+) -> Result<Option<i32>> {
+  let client = pool.get().await?;
+  Ok(
+    q::jobset_build_timeout_for_build()
+      .bind(&client, &id)
+      .opt()
+      .await?
+      .flatten(),
+  )
+}
+
 /// Get a build by ID.
 ///
 /// # Errors

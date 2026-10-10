@@ -770,6 +770,7 @@ mod tests {
       systems:           None,
       only_build_latest: false,
       path_filters:      Vec::new(),
+      build_timeout:     None,
     }
   }
 

@@ -40,6 +40,7 @@ impl TryFrom<q::JobsetRow> for Jobset {
       systems:           r.systems,
       only_build_latest: r.only_build_latest,
       path_filters:      r.path_filters,
+      build_timeout:     r.build_timeout,
     })
   }
 }
@@ -117,6 +118,7 @@ pub async fn create(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &input.systems,
       &only_build_latest,
       &input.path_filters.unwrap_or_default(),
+      &input.build_timeout,
     )
     .one()
     .await
@@ -253,6 +255,11 @@ pub async fn update(
     .only_build_latest
     .unwrap_or(existing.only_build_latest);
   let path_filters = input.path_filters.unwrap_or(existing.path_filters);
+  let build_timeout = match input.build_timeout {
+    None => existing.build_timeout,
+    Some(0) => None,
+    Some(secs) => Some(secs),
+  };
   crate::validate::validate_latest_only_policy(trigger_mode, only_build_latest)
     .map_err(CiError::Validation)?;
   crate::validate::path_filter::validate_path_filter_policy(
@@ -280,6 +287,7 @@ pub async fn update(
       &systems,
       &only_build_latest,
       &path_filters,
+      &build_timeout,
       &id,
     )
     .one()
@@ -370,6 +378,7 @@ pub async fn upsert(pool: &PgPool, input: CreateJobset) -> Result<Jobset> {
       &input.systems,
       &only_build_latest,
       &input.path_filters.unwrap_or_default(),
+      &input.build_timeout,
     )
     .one()
     .await?;

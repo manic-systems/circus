@@ -15,6 +15,8 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 
 - Dashboard OIDC login with named providers, group access rules, and global role
   mappings.
+- Jobsets can set `build_timeout` in seconds to override
+  `queue_runner.build_timeout` for their builds.
 
 ### Changed
 

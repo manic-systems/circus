@@ -200,6 +200,9 @@ pub(super) enum JobsetCommand {
     check_interval:    Option<i32>,
     #[pound(long)]
     only_build_latest: Option<bool>,
+    /// Seconds before a build is killed, overriding the global timeout.
+    #[pound(long, min = 1)]
+    build_timeout:     Option<i32>,
     /// Git pathspecs that must match at least one changed path. Repeat it
     /// or separate pathspecs with commas.
     #[pound(long, delimiter = ',')]

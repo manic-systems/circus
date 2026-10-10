@@ -262,6 +262,7 @@ fn jobset_from_search_row(row: q::JobsetSearchRow) -> Result<Jobset> {
     systems:           row.systems,
     only_build_latest: row.only_build_latest,
     path_filters:      row.path_filters,
+    build_timeout:     row.build_timeout,
   })
 }
 

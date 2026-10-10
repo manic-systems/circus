@@ -747,6 +747,9 @@ pub struct DeclarativeJobset {
   /// Git pathspecs; a source evaluation runs when any matching path changes.
   #[serde(default)]
   pub path_filters:      Vec<String>,
+  /// Seconds before a build is killed, overriding
+  /// `queue_runner.build_timeout`.
+  pub build_timeout:     Option<i32>,
   /// Jobset inputs for parameterized evaluations
   #[serde(default)]
   pub inputs:            Vec<DeclarativeJobsetInput>,

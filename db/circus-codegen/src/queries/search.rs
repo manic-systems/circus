@@ -318,6 +318,7 @@ pub struct JobsetSearchRow {
     pub systems: Option<Vec<String>>,
     pub only_build_latest: bool,
     pub path_filters: Vec<String>,
+    pub build_timeout: Option<i32>,
 }
 pub struct JobsetSearchRowBorrowed<'a> {
     pub id: uuid::Uuid,
@@ -340,6 +341,7 @@ pub struct JobsetSearchRowBorrowed<'a> {
     pub systems: Option<crate::ArrayIterator<'a, &'a str>>,
     pub only_build_latest: bool,
     pub path_filters: crate::ArrayIterator<'a, &'a str>,
+    pub build_timeout: Option<i32>,
 }
 impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
     fn from(
@@ -364,6 +366,7 @@ impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
             systems,
             only_build_latest,
             path_filters,
+            build_timeout,
         }: JobsetSearchRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -387,6 +390,7 @@ impl<'a> From<JobsetSearchRowBorrowed<'a>> for JobsetSearchRow {
             systems: systems.map(|v| v.map(|v| v.into()).collect()),
             only_build_latest,
             path_filters: path_filters.map(|v| v.into()).collect(),
+            build_timeout,
         }
     }
 }
@@ -1180,6 +1184,7 @@ impl SearchJobsetsStmt {
                     systems: row.try_get(17)?,
                     only_build_latest: row.try_get(18)?,
                     path_filters: row.try_get(19)?,
+                    build_timeout: row.try_get(20)?,
                 })
             },
             mapper: |it| JobsetSearchRow::from(it),

@@ -171,6 +171,13 @@ fn validate_check_interval(interval: i32) -> Result<(), String> {
   Ok(())
 }
 
+fn validate_build_timeout(build_timeout: Option<i32>) -> Result<(), String> {
+  if build_timeout.is_some_and(|secs| secs < 1) {
+    return Err("build_timeout must be positive".to_string());
+  }
+  Ok(())
+}
+
 fn validate_branch(branch: &str) -> Result<(), String> {
   if branch.starts_with("refs/") {
     return Err("branch must be a branch name, not a full ref".to_string());
@@ -278,6 +285,7 @@ impl Validate for CreateJobset {
       }
       validate_systems(systems)?;
     }
+    validate_build_timeout(self.build_timeout)?;
     validate_latest_only_policy(
       self.trigger_mode.unwrap_or_default(),
       self.only_build_latest.unwrap_or(false),
@@ -311,6 +319,9 @@ impl Validate for UpdateJobset {
     }
     if let Some(filters) = &self.path_filters {
       validate_path_filters(filters)?;
+    }
+    if self.build_timeout != Some(0) {
+      validate_build_timeout(self.build_timeout)?;
     }
     if let (Some(trigger_mode), Some(only_build_latest)) =
       (self.trigger_mode, self.only_build_latest)
@@ -459,6 +470,7 @@ mod tests {
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     };
     assert!(j.validate().is_ok());
   }
@@ -482,6 +494,7 @@ mod tests {
       systems:           None,
       only_build_latest: None,
       path_filters:      None,
+      build_timeout:     None,
     };
     assert!(j.validate().is_err());
   }
@@ -505,6 +518,7 @@ mod tests {
       systems:           None,
       only_build_latest: Some(true),
       path_filters:      None,
+      build_timeout:     None,
     };
     assert!(j.validate().is_err());
   }

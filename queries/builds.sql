@@ -36,6 +36,13 @@ JOIN evaluations e ON e.id = b.evaluation_id
 JOIN jobsets j ON j.id = e.jobset_id
 WHERE b.id = :id;
 
+--! jobset_build_timeout_for_build : (build_timeout?)
+SELECT j.build_timeout
+FROM builds b
+JOIN evaluations e ON e.id = b.evaluation_id
+JOIN jobsets j ON j.id = e.jobset_id
+WHERE b.id = :id;
+
 --! list_for_evaluation : BuildRow
 SELECT * FROM builds
 WHERE evaluation_id = :evaluation_id

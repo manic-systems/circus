@@ -224,6 +224,7 @@ impl CommandRunner {
         flake_mode,
         check_interval,
         only_build_latest,
+        build_timeout,
         path_filter,
       } => {
         let mut body = Map::new();
@@ -234,6 +235,7 @@ impl CommandRunner {
         insert_optional_bool(&mut body, "flake_mode", flake_mode);
         insert_optional_i32(&mut body, "check_interval", check_interval);
         insert_optional_bool(&mut body, "only_build_latest", only_build_latest);
+        insert_optional_i32(&mut body, "build_timeout", build_timeout);
         if !path_filter.is_empty() {
           body.insert("path_filters".to_string(), json!(path_filter));
         }

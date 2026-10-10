@@ -185,6 +185,7 @@ async fn seed(pool: &PgPool) -> Result<()> {
     systems:           None,
     only_build_latest: None,
     path_filters:      None,
+    build_timeout:     None,
   })
   .await?;
 
