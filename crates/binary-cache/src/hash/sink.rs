@@ -18,7 +18,7 @@ enum InnerContext {
 /// # Examples
 ///
 /// ```
-/// use harmonia_utils_hash as hash;
+/// use circus_binary_cache as hash;
 ///
 /// let one_shot = hash::Algorithm::SHA256.digest("hello, world");
 ///
@@ -94,7 +94,7 @@ impl sfmt::Debug for Context {
 /// # Examples
 ///
 /// ```
-/// use harmonia_utils_hash as hash;
+/// use circus_binary_cache as hash;
 /// use tokio::io;
 ///
 /// # #[tokio::main]

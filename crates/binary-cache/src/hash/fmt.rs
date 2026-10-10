@@ -367,7 +367,7 @@ impl<H: HashView + Sized> Base16<H> {
   /// # Examples
   ///
   /// ```rust
-  /// use harmonia_utils_hash::{Algorithm, HashFormat as _};
+  /// use circus_binary_cache::{Algorithm, HashFormat as _};
   ///
   /// let hex = Algorithm::SHA256.digest(b"Hello World!").base16();
   /// assert_eq!(hex.into_hash(), Algorithm::SHA256.digest(b"Hello World!"));
@@ -478,7 +478,7 @@ impl<H: HashView + Sized> Base32<H> {
   /// # Examples
   ///
   /// ```rust
-  /// use harmonia_utils_hash::{Algorithm, HashFormat as _};
+  /// use circus_binary_cache::{Algorithm, HashFormat as _};
   ///
   /// let base32 = Algorithm::SHA256.digest(b"Hello World!").base32();
   /// assert_eq!(
@@ -596,7 +596,7 @@ impl<H: HashView> Base64<H> {
   /// # Examples
   ///
   /// ```rust
-  /// use harmonia_utils_hash::{Algorithm, HashFormat as _};
+  /// use circus_binary_cache::{Algorithm, HashFormat as _};
   ///
   /// let base64 = Algorithm::SHA256.digest(b"Hello World!").base64();
   /// assert_eq!(
@@ -814,7 +814,7 @@ impl<H: HashView + Sized> SRI<H> {
   /// # Examples
   ///
   /// ```rust
-  /// use harmonia_utils_hash::{Algorithm, HashFormat as _};
+  /// use circus_binary_cache::{Algorithm, HashFormat as _};
   ///
   /// let sri = Algorithm::SHA256.digest(b"Hello World!").sri();
   /// assert_eq!(sri.into_hash(), Algorithm::SHA256.digest(b"Hello World!"));
