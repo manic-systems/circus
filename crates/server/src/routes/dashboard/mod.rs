@@ -12,7 +12,7 @@
 
 use axum::{
   Router,
-  routing::{get, get_service, post},
+  routing::{get, get_service, post, post_service},
 };
 use topcoat::router::tower::TowerService;
 
@@ -47,10 +47,12 @@ pub fn router(live: TowerService) -> Router<AppState> {
     .route("/", get_service(live.clone()))
     .route("/projects", get(pages::projects_page))
     .route("/projects/new", get(pages::project_setup_page))
-    .route("/project/{id}", get(pages::project_page))
+    .route("/project/{id}", get_service(live.clone()))
+    .route("/project/{id}/jobsets", post(admin::jobset_create))
+    .route("/project/{id}/delete", post(admin::project_delete))
     .route(
       "/project/{id}/notifications",
-      get(admin::notifications_page).post(admin::notifications_create),
+      get_service(live.clone()).post(admin::notifications_create),
     )
     .route(
       "/project/{id}/notifications/{config_id}/delete",
@@ -75,9 +77,20 @@ pub fn router(live: TowerService) -> Router<AppState> {
     .route("/channel/{id}", get_service(live.clone()))
     .route("/news", get_service(live.clone()).post(admin::news_create))
     .route("/news/{id}/delete", post(admin::news_delete))
-    .route("/admin", get(admin::admin_page))
+    .route("/admin", get_service(live.clone()))
+    .route("/admin/api-keys", post_service(live.clone()))
+    .route("/admin/api-keys/{id}/delete", post(admin::api_key_delete))
+    .route("/admin/config", post_service(live.clone()))
+    .route(
+      "/admin/notification-tasks/{id}/retry",
+      post(admin::notification_task_retry),
+    )
+    .route("/admin/pinned-builds/{id}/unpin", post(admin::build_unpin))
+    .route("/admin/failed-paths/clear", post(admin::failed_paths_clear))
     .route("/admin/store-gc", post(admin::store_gc))
-    .route("/users", get(admin::users_page))
+    .route("/users", get_service(live.clone()).post(admin::user_create))
+    .route("/users/{id}/enabled", post(admin::user_enabled))
+    .route("/users/{id}/delete", post(admin::user_delete))
     .route("/users/{id}/unlink/{provider}", post(admin::user_unlink))
     .route("/starred", get_service(live.clone()))
     .route("/starred/{id}/delete", post(admin::starred_delete))

@@ -581,24 +581,8 @@ pub(super) struct ApiKeyView {
   pub(super) id:           Uuid,
   pub(super) name:         String,
   pub(super) role:         String,
-  pub(super) created_at:   String,
-  pub(super) last_used_at: String,
-}
-
-pub(super) struct UserView {
-  pub(super) id:            Uuid,
-  pub(super) username:      String,
-  pub(super) email:         String,
-  pub(super) role:          String,
-  pub(super) user_type:     String,
-  pub(super) enabled:       bool,
-  pub(super) last_login_at: String,
-  pub(super) linked:        Vec<LinkedIdentityView>,
-}
-
-pub(super) struct LinkedIdentityView {
-  pub(super) provider: String,
-  pub(super) label:    String,
+  pub(super) created_at:   jiff::Timestamp,
+  pub(super) last_used_at: Option<jiff::Timestamp>,
 }
 
 pub(super) struct StarredJobView {

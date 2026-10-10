@@ -5,14 +5,13 @@
 //! These handlers do not mutate server state; they only render templates.
 //! Mutating admin actions live in `super::admin`.
 
-use std::{cmp::Reverse, collections::BTreeSet};
+use std::collections::BTreeSet;
 
 use axum::{
-  extract::{Path, Query, State},
+  extract::{Query, State},
   response::Html,
 };
 use circus_common::models::BuildStatus;
-use uuid::Uuid;
 
 use super::{
   shared::{
@@ -22,12 +21,9 @@ use super::{
     Pagination,
     RenderExt,
     enforce_page_access,
-    eval_view,
-    not_found,
-    repository_page_url,
     status_badge,
   },
-  templates::{ProjectTemplate, ProjectsTemplate, UiTemplateConfig},
+  templates::{ProjectsTemplate, UiTemplateConfig},
 };
 use crate::{operator, state::AppState};
 
@@ -147,57 +143,6 @@ pub(super) async fn projects_page(
     next_offset: pagination.next_offset,
     page: pagination.page,
     total_pages: pagination.total_pages,
-    is_admin: ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-    csrf_token: ctx.csrf_token.clone(),
-  };
-  tmpl.render_html_or_500()
-}
-
-pub(super) async fn project_page(
-  State(state): State<AppState>,
-  Path(id): Path<Uuid>,
-  ctx: DashboardContext,
-) -> Result<Html<String>, PageError> {
-  enforce_page_access(&state.config, &ctx, DashboardPage::Project)?;
-  let include_hidden = ctx.is_admin;
-  let Ok(project) = circus_common::repo::projects::get(&state.pool, id).await
-  else {
-    return Err(not_found("Project"));
-  };
-  let jobsets =
-    circus_common::repo::jobsets::list_for_project(&state.pool, id, 100, 0)
-      .await
-      .unwrap_or_default();
-
-  // Get evaluations for this project's jobsets
-  let mut evals = Vec::new();
-  for js in &jobsets {
-    let mut js_evals =
-      circus_common::repo::evaluations::list_filtered_with_visibility(
-        &state.pool,
-        Some(js.id),
-        None,
-        5,
-        0,
-        include_hidden,
-      )
-      .await
-      .unwrap_or_default();
-    evals.append(&mut js_evals);
-  }
-  evals.sort_by_key(|e| Reverse(e.evaluation_time));
-  evals.truncate(10);
-
-  let tmpl = ProjectTemplate {
-    ui: ui_config(&state),
-    project_mutable: crate::routes::declarative::project_is_mutable(
-      &state, &project,
-    ),
-    repository_page: repository_page_url(&project.repository_url),
-    project,
-    jobsets,
-    recent_evals: evals.iter().map(eval_view).collect(),
     is_admin: ctx.is_admin,
     auth_name: ctx.auth_name.clone(),
     csrf_token: ctx.csrf_token.clone(),
