@@ -29,6 +29,7 @@ use super::super::{
     DashboardContext,
     DashboardPage,
     Pagination,
+    SortHeaderView,
     StarredJobView,
     build_view,
     format_bytes,
@@ -36,7 +37,6 @@ use super::super::{
     status_badge,
     store_path_hash,
   },
-  templates::SortHeaderView,
 };
 use crate::{error::ApiError, state::AppState};
 
@@ -651,13 +651,11 @@ fn nar_sort_headers(
       let next_sort = next_dir.map(|direction| NarSort { column, direction });
 
       SortHeaderView {
-        key:         column.as_str().to_owned(),
-        label:       nar_sort_label(column).to_owned(),
-        href:        nars_href(detail_href, params, next_sort, None),
-        default_dir: SortDirection::Asc.as_str().to_owned(),
-        active:      active_dir.is_some(),
-        indicator:   active_dir.map_or("", SortDirection::as_str).to_owned(),
-        aria_sort:   match active_dir {
+        label:     nar_sort_label(column).to_owned(),
+        href:      nars_href(detail_href, params, next_sort, None),
+        active:    active_dir.is_some(),
+        indicator: active_dir.map_or("", SortDirection::as_str).to_owned(),
+        aria_sort: match active_dir {
           None => "none",
           Some(SortDirection::Asc) => "ascending",
           Some(SortDirection::Desc) => "descending",

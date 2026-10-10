@@ -2,7 +2,6 @@
 //! per-concern modules to keep maintenance focused:
 //!
 //! - [`shared`]: view models, formatters, badges, per-request auth helpers
-//! - [`templates`]: every askama `#[derive(Template)]` struct
 //! - [`auth`]: login / logout
 //! - [`pages`]: read-only viewing pages (home, projects, jobsets, ...)
 //! - [`admin`]: admin-only pages and the forms that mutate server state (news,
@@ -27,9 +26,7 @@ mod components;
 mod layout;
 pub mod live;
 mod pages;
-mod preview;
 mod shared;
-pub(crate) mod templates;
 pub(crate) mod views;
 
 /// Topcoat pages route their GETs to `live`, which also serves the runtime
@@ -105,8 +102,4 @@ pub fn router(live: TowerService) -> Router<AppState> {
     .route("/caches/{name}/gc", post(admin::cache_gc))
     .route("/caches/{name}/nars", get_service(live.clone()))
     .route_service("/_topcoat/{*rest}", live)
-}
-
-pub fn preview_router() -> Router {
-  preview::router()
 }
