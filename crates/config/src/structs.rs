@@ -36,6 +36,79 @@ pub struct Config {
   pub oauth:         OAuthConfig,
   #[serde(default)]
   pub nix:           NixConfig,
+  #[serde(default)]
+  pub remote_cache:  RemoteCacheConfig,
+}
+
+/// A Bazel remote-execution API cache, action cache and CAS only, served by
+/// `circus-remote-cache`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteCacheConfig {
+  /// Holds a `cas/` and an `ac/` tree for every instance.
+  pub root:         PathBuf,
+  pub instances:    Vec<RemoteCacheInstance>,
+  pub listeners:    Vec<RemoteCacheListener>,
+  /// `host:port` serving Prometheus metrics at `/metrics` over plain HTTP.
+  pub metrics_bind: Option<String>,
+}
+
+impl Default for RemoteCacheConfig {
+  fn default() -> Self {
+    Self {
+      root:         PathBuf::from("/var/lib/circus/remote-cache"),
+      instances:    Vec::new(),
+      listeners:    Vec::new(),
+      metrics_bind: None,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCacheInstance {
+  /// The REAPI `instance_name`, the URL path clients put after the port.
+  pub name:          String,
+  /// Least recently used blobs are evicted past this many bytes.
+  #[serde(default = "default_remote_cas_max_bytes")]
+  pub cas_max_bytes: u64,
+  /// Least recently used action results are evicted past this many bytes.
+  #[serde(default = "default_remote_ac_max_bytes")]
+  pub ac_max_bytes:  u64,
+}
+
+const fn default_remote_cas_max_bytes() -> u64 {
+  150 << 30
+}
+
+const fn default_remote_ac_max_bytes() -> u64 {
+  4 << 30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCacheListener {
+  /// `host:port` to listen on. Without `tls` it speaks plain HTTP/2.
+  pub bind:      String,
+  /// Whether clients may upload. A read-only listener answers writes with
+  /// `PERMISSION_DENIED`.
+  #[serde(default)]
+  pub writable:  bool,
+  #[serde(default)]
+  pub tls:       Option<RemoteCacheTls>,
+  /// The instances this listener serves, every instance when empty.
+  #[serde(default)]
+  pub instances: Vec<String>,
+}
+
+/// TLS that requires a client certificate signed by `client_ca`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCacheTls {
+  pub cert_file: PathBuf,
+  pub key_file:  PathBuf,
+  pub client_ca: PathBuf,
+  /// PEM certificate revocation lists checked against client certificates,
+  /// read at startup.
+  #[serde(default)]
+  pub crl_file:  Option<PathBuf>,
 }
 
 /// Nix-specific settings, primarily for non-standard Nix installations.

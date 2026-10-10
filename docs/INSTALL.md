@@ -529,6 +529,48 @@ with their stored object size and remain the responsibility of the backing
 store's lifecycle policy. Local Nix-store outputs remain governed by `[gc]` and
 pinned builds.
 
+### REAPI Remote Cache
+
+`circus-remote-cache` serves a Bazel remote-execution API cache, the action
+cache and CAS without execution. Each instance evicts least recently used
+entries past its byte budgets. A listener without `tls` speaks plain HTTP/2, and
+one with `tls` requires a client certificate signed by `client_ca`. Only
+`writable` listeners accept uploads. A listener's `instances` limits it to those
+instances, every instance when unset. On NixOS, enable it with
+`services.circus.remoteCache.enable`.
+
+```toml
+[remote_cache]
+root = "/var/lib/circus/remote-cache"
+metrics_bind = "127.0.0.1:9466"
+
+[[remote_cache.instances]]
+name = "main"
+cas_max_bytes = 161061273600 # 150 GiB
+ac_max_bytes = 4294967296    # 4 GiB
+
+[[remote_cache.listeners]]
+bind = "100.64.0.1:50051"
+writable = true
+
+[[remote_cache.listeners]]
+bind = "0.0.0.0:50052"
+instances = ["main"]
+
+[remote_cache.listeners.tls]
+cert_file = "/run/secrets/remote-cache.pem"
+key_file = "/run/secrets/remote-cache.key"
+client_ca = "/etc/remote-cache/clients-ca.pem"
+crl_file = "/etc/remote-cache/clients.crl"
+```
+
+Clients point at `grpc://host:50051/main` or `grpcs://host:50052/main`. The CRL
+is read at startup, so restart `circus-remote-cache` after revoking a
+certificate.
+
+SHA-256 and BLAKE3 digests are accepted, and transfers may be zstd compressed.
+`metrics_bind` serves Prometheus metrics at `/metrics`.
+
 ### Public Binary Cache Use
 
 Configure a public URL for the global cache with `[cache].cache_url`, for
@@ -788,7 +830,7 @@ uses the same helper. Helpers such as `store` run as `git credential-store`, so
 ```ini
 # /var/lib/circus/.gitconfig
 [credential]
-	helper = store
+ helper = store
 ```
 
 ```
@@ -942,21 +984,21 @@ loopback addresses stay plaintext unless `sslmode` says otherwise, and
 The flake exposes one package per binary:
 
 ```bash
-$ nix build .#circus-server
-$ nix build .#circus-evaluator
-$ nix build .#circus-queue-runner
-$ nix build .#circus-cli
-$ nix build .#circus-agent
+nix build .#circus-server
+nix build .#circus-evaluator
+nix build .#circus-queue-runner
+nix build .#circus-cli
+nix build .#circus-agent
 ```
 
 For local source builds without Nix packaging, use Cargo package names:
 
 ```bash
-$ cargo build -p circus-server
-$ cargo build -p circus-evaluator
-$ cargo build -p circus-queue-runner
-$ cargo build -p circus-cli
-$ cargo build -p circus-agent
+cargo build -p circus-server
+cargo build -p circus-evaluator
+cargo build -p circus-queue-runner
+cargo build -p circus-cli
+cargo build -p circus-agent
 ```
 
 Run all service binaries with the same `--config <path>` or
