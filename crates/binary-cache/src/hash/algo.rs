@@ -49,7 +49,7 @@ impl Algorithm {
   /// Returns the digest of `data` using the given digest algorithm.
   ///
   /// ```
-  /// # use harmonia_utils_hash::{Algorithm, HashFormat as _};
+  /// # use circus_binary_cache::{Algorithm, HashFormat as _};
   /// let hash = Algorithm::SHA256.digest("abc");
   ///
   /// assert_eq!(

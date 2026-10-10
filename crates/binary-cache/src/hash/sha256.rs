@@ -27,8 +27,8 @@ impl Sha256 {
   /// Returns the digest of `data` using the sha256
   ///
   /// ```
-  /// # use harmonia_utils_hash::Sha256;
-  /// # use harmonia_utils_hash::fmt::HashFormat;
+  /// # use circus_binary_cache::Sha256;
+  /// # use circus_binary_cache::fmt::HashFormat;
   /// let hash = Sha256::digest("abc");
   ///
   /// assert_eq!(
