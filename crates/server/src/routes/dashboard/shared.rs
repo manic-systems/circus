@@ -9,7 +9,7 @@ use askama::Template;
 use axum::{
   extract::FromRequestParts,
   http::{Extensions, StatusCode, request::Parts},
-  response::{Html, IntoResponse, Redirect, Response},
+  response::{IntoResponse, Response},
 };
 use circus_common::{
   models::{
@@ -23,7 +23,7 @@ use circus_common::{
   },
   repo::narinfo_cache::NarSortColumn,
 };
-use circus_config::{Config, PageAccessLevel, ServerConfig, UiConfig};
+use circus_config::{PageAccessLevel, ServerConfig, UiConfig};
 use cognos::internal::json::{self as nix_json, Actions, Verbosity};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
@@ -91,21 +91,6 @@ impl IntoResponse for PageError {
     *self.0
   }
 }
-
-pub(super) trait RenderExt: Template {
-  fn render_html_or_500(&self) -> Result<Html<String>, PageError> {
-    self.render().map(Html).map_err(|error| {
-      (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Template error: {error}"),
-      )
-        .into_response()
-        .into()
-    })
-  }
-}
-
-impl<T: Template> RenderExt for T {}
 
 pub(super) struct Pagination {
   pub(super) page:        i64,
@@ -447,38 +432,6 @@ pub(super) fn store_path_hash(store_path: &str) -> String {
     .strip_prefix("/nix/store/")
     .and_then(|rest| rest.split_once('-'))
     .map_or_else(|| store_path.to_owned(), |(hash, _name)| hash.to_owned())
-}
-
-pub(super) fn enforce_page_access(
-  config: &Config,
-  ctx: &DashboardContext,
-  page: DashboardPage,
-) -> Result<(), PageError> {
-  let allowed = match page.access(&config.server) {
-    PageAccessLevel::Public => true,
-    PageAccessLevel::Authenticated => ctx.is_authenticated,
-    PageAccessLevel::Admin => ctx.is_admin,
-  };
-  if allowed {
-    return Ok(());
-  }
-
-  if ctx.is_authenticated {
-    return Err(PageError::new(Redirect::to("/")));
-  }
-  let tmpl = PrivateTemplate {
-    ui:        UiTemplateConfig::from_config(&config.ui),
-    is_admin:  ctx.is_admin,
-    auth_name: ctx.auth_name.clone(),
-  };
-  Err(PageError::new(tmpl.render().map_or_else(
-    |_| (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response(),
-    |html| (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
-  )))
-}
-
-pub(super) fn not_found(entity: &str) -> PageError {
-  PageError::new((StatusCode::NOT_FOUND, format!("{entity} not found")))
 }
 
 pub(super) struct ProjectSummaryView {

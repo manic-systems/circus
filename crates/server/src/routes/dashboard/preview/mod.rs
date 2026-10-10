@@ -36,29 +36,10 @@ pub fn router() -> Router {
     .route("/api/v1/api-keys", post(api::api_key_create))
     .route("/api/v1/api-keys/{id}", delete(api::api_ok))
     .route(
-      "/api/v1/metrics/timeseries/builds",
-      get(api::api_metrics_builds),
-    )
-    .route(
-      "/api/v1/metrics/timeseries/duration",
-      get(api::api_metrics_duration),
-    )
-    .route("/api/v1/metrics/systems", get(api::api_metrics_systems))
-    .route(
-      "/api/v1/admin/caches/{name}/storage-timeseries",
-      get(api::api_cache_storage_timeseries),
-    )
-    .route(
-      "/api/v1/admin/caches/{name}/traffic-timeseries",
-      get(api::api_cache_traffic_timeseries),
-    )
-    .route(
       "/api/v1/builds/{build_id}/products/{product_id}/download",
       get(product_download),
     )
     .route("/logout", post(preview_logout_action))
-    .route("/projects", get(pages::projects))
-    .route("/projects/new", get(pages::project_setup))
     .route("/jobset/{id}/delete", post(preview_project_action))
     .route(
       "/evaluation/{id}/visibility",
@@ -67,9 +48,7 @@ pub fn router() -> Router {
     .route("/evaluation/{id}/cancel", post(preview_evaluations_action))
     .route("/evaluation/{id}/restart", post(preview_evaluations_action))
     .route("/build/{id}/bump", post(preview_queue_action))
-    .route("/metrics", get(pages::metrics))
     .route("/private", get(pages::private))
-    .route("/caches/{name}", get(pages::cache_detail))
 }
 
 pub(super) fn render<T: Template>(template: T) -> Response {
@@ -86,7 +65,7 @@ pub(super) fn render<T: Template>(template: T) -> Response {
 }
 
 async fn index() -> Redirect {
-  Redirect::temporary("/projects")
+  Redirect::temporary("/private")
 }
 
 async fn preview_logout_action() -> Redirect {

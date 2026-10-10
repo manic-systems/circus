@@ -1703,27 +1703,6 @@ button:disabled {
   gap: 16px;
 }
 
-.metric-card {
-  display: flex;
-  flex-direction: column;
-  height: 320px;
-  padding: 16px;
-}
-
-.metric-card h3 {
-  flex: 0 0 auto;
-  margin: 0 0 12px;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 650;
-}
-
-.metric-card canvas {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: 100%;
-}
-
 .metric-panel {
   display: flex;
   flex-direction: column;
@@ -1738,10 +1717,173 @@ button:disabled {
   min-height: 0;
 }
 
-.metric-chart-body canvas {
+.metric-chart-body .chart {
   flex: 1 1 auto;
   min-height: 0;
-  max-height: 100%;
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  height: 100%;
+}
+
+.chart-svg {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chart-tone);
+}
+
+.chart-donut {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+.chart-donut-svg {
+  height: 100%;
+  max-height: 260px;
+  min-width: 0;
+  aspect-ratio: 1;
+}
+
+.chart-legend-list {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.chart-legend-label {
+  font-family: var(--font-mono);
+}
+
+.chart-legend-share {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.chart-tick {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-axis-title {
+  fill: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chart-bar {
+  fill: var(--chart-tone);
+  fill-opacity: 0.75;
+  stroke: var(--chart-tone);
+  stroke-width: 1;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--chart-tone);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-area {
+  fill: var(--chart-tone);
+  fill-opacity: 0.08;
+  stroke: none;
+}
+
+.chart-point {
+  fill: var(--chart-tone);
+  stroke: var(--surface);
+  stroke-width: 1;
+}
+
+.chart-point-quiet {
+  fill-opacity: 0;
+  stroke-opacity: 0;
+}
+
+.chart-point:hover,
+.chart-bar:hover {
+  fill-opacity: 1;
+  stroke-opacity: 1;
+  stroke-width: 2;
+}
+
+.chart-wedge {
+  fill: var(--chart-tone);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.chart-wedge:hover {
+  opacity: 0.85;
+}
+
+.chart-empty {
+  margin: auto;
+  text-align: center;
+}
+
+.tone-success {
+  --chart-tone: var(--status-success);
+}
+.tone-failed {
+  --chart-tone: var(--status-failed);
+}
+.tone-running {
+  --chart-tone: var(--status-running);
+}
+.tone-accent {
+  --chart-tone: var(--accent);
+}
+.tone-muted {
+  --chart-tone: var(--text-muted);
+}
+.tone-subtle {
+  --chart-tone: var(--text-subtle);
 }
 
 .load-bar {
@@ -2931,12 +3073,9 @@ body:has(#login-dialog[open]) .login-container {
 }
 
 .cache-chart-body {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   height: 280px;
-}
-
-.cache-chart-body canvas {
-  max-height: 280px;
 }
 
 /* Segmented granularity switch */
@@ -2947,9 +3086,9 @@ body:has(#login-dialog[open]) .login-container {
   overflow: hidden;
 }
 
-.granularity-toggle button {
-  appearance: none;
+.granularity-toggle a {
   border: none;
+  text-decoration: none;
   background: var(--surface);
   color: var(--text-muted);
   font-size: 13px;
@@ -2959,16 +3098,16 @@ body:has(#login-dialog[open]) .login-container {
   border-right: 1px solid var(--border);
 }
 
-.granularity-toggle button:last-child {
+.granularity-toggle a:last-child {
   border-right: none;
 }
 
-.granularity-toggle button:hover {
+.granularity-toggle a:hover {
   background: var(--surface-2);
   color: var(--text);
 }
 
-.granularity-toggle button.active {
+.granularity-toggle a.active {
   background: var(--text);
   color: var(--bg);
 }

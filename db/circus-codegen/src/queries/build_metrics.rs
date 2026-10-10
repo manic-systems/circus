@@ -1065,7 +1065,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct GetBuildStatsTimeseriesStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_build_stats_timeseries() -> GetBuildStatsTimeseriesStmt {
     GetBuildStatsTimeseriesStmt(
-        "SELECT date_trunc('minute', b.completed_at) + ( EXTRACT( MINUTE FROM b.completed_at )::int /$1 ) * INTERVAL '1 minute' *$1 AS bucket_time, COUNT(*) AS total_builds, COUNT(*) FILTER ( WHERE b.status = 'failed' ) AS failed_builds, AVG( EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) )::float8 AS avg_duration FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE b.completed_at IS NOT NULL AND b.completed_at > NOW() - (INTERVAL '1 hour' *$2) AND ( $3::uuid IS NULL OR j.project_id =$3 ) AND ( $4::uuid IS NULL OR j.id =$4 ) GROUP BY bucket_time ORDER BY bucket_time ASC",
+        "SELECT date_bin( make_interval(mins =>$1), b.completed_at, TIMESTAMPTZ '2000-01-01 00:00+00' ) AS bucket_time, COUNT(*) AS total_builds, COUNT(*) FILTER ( WHERE b.status = 'failed' ) AS failed_builds, AVG( EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) )::float8 AS avg_duration FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE b.completed_at IS NOT NULL AND b.completed_at > NOW() - (INTERVAL '1 hour' *$2) AND ( $3::uuid IS NULL OR j.project_id =$3 ) AND ( $4::uuid IS NULL OR j.id =$4 ) GROUP BY bucket_time ORDER BY bucket_time ASC",
         None,
     )
 }
@@ -1131,7 +1131,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct GetDurationPercentilesTimeseriesStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_duration_percentiles_timeseries() -> GetDurationPercentilesTimeseriesStmt {
     GetDurationPercentilesTimeseriesStmt(
-        "SELECT date_trunc('minute', b.completed_at) + ( EXTRACT( MINUTE FROM b.completed_at )::int /$1 ) * INTERVAL '1 minute' *$1 AS bucket_time, PERCENTILE_CONT(0.5) WITHIN GROUP ( ORDER BY EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS p50, PERCENTILE_CONT(0.95) WITHIN GROUP ( ORDER BY EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS p95, PERCENTILE_CONT(0.99) WITHIN GROUP ( ORDER BY EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS p99 FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE b.completed_at IS NOT NULL AND b.started_at IS NOT NULL AND b.completed_at > NOW() - (INTERVAL '1 hour' *$2) AND ( $3::uuid IS NULL OR j.project_id =$3 ) AND ( $4::uuid IS NULL OR j.id =$4 ) GROUP BY bucket_time ORDER BY bucket_time ASC",
+        "SELECT date_bin( make_interval(mins =>$1), b.completed_at, TIMESTAMPTZ '2000-01-01 00:00+00' ) AS bucket_time, PERCENTILE_CONT(0.5) WITHIN GROUP ( ORDER BY EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS p50, PERCENTILE_CONT(0.95) WITHIN GROUP ( ORDER BY EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS p95, PERCENTILE_CONT(0.99) WITHIN GROUP ( ORDER BY EXTRACT( EPOCH FROM (b.completed_at - b.started_at) ) ) AS p99 FROM builds b JOIN evaluations e ON b.evaluation_id = e.id JOIN jobsets j ON e.jobset_id = j.id WHERE b.completed_at IS NOT NULL AND b.started_at IS NOT NULL AND b.completed_at > NOW() - (INTERVAL '1 hour' *$2) AND ( $3::uuid IS NULL OR j.project_id =$3 ) AND ( $4::uuid IS NULL OR j.id =$4 ) GROUP BY bucket_time ORDER BY bucket_time ASC",
         None,
     )
 }
@@ -1199,7 +1199,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct GetQueueDepthTimeseriesStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_queue_depth_timeseries() -> GetQueueDepthTimeseriesStmt {
     GetQueueDepthTimeseriesStmt(
-        "SELECT date_trunc('minute', created_at) + ( EXTRACT( MINUTE FROM created_at )::int /$1 ) * INTERVAL '1 minute' *$1 AS bucket_time, COUNT(*) FILTER ( WHERE status = 'pending' ) AS pending_count FROM builds WHERE created_at > NOW() - (INTERVAL '1 hour' *$2) GROUP BY bucket_time ORDER BY bucket_time ASC",
+        "SELECT date_bin( make_interval(mins =>$1), created_at, TIMESTAMPTZ '2000-01-01 00:00+00' ) AS bucket_time, COUNT(*) FILTER ( WHERE status = 'pending' ) AS pending_count FROM builds WHERE created_at > NOW() - (INTERVAL '1 hour' *$2) GROUP BY bucket_time ORDER BY bucket_time ASC",
         None,
     )
 }

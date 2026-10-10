@@ -12,7 +12,7 @@
 
 use axum::{
   Router,
-  routing::{get, get_service, post, post_service},
+  routing::{get_service, post, post_service},
 };
 use topcoat::router::tower::TowerService;
 
@@ -22,6 +22,7 @@ mod admin;
 pub mod assets;
 mod auth;
 mod build_log;
+mod charts;
 mod components;
 mod layout;
 pub mod live;
@@ -45,8 +46,12 @@ pub fn router(live: TowerService) -> Router<AppState> {
     )
     .route("/account/unlink/{provider}", post(auth::account_unlink))
     .route("/", get_service(live.clone()))
-    .route("/projects", get(pages::projects_page))
-    .route("/projects/new", get(pages::project_setup_page))
+    .route(
+      "/projects",
+      get_service(live.clone()).post(admin::project_create),
+    )
+    .route("/projects/new", get_service(live.clone()))
+    .route("/projects/setup", post(admin::project_setup))
     .route("/project/{id}", get_service(live.clone()))
     .route("/project/{id}/jobsets", post(admin::jobset_create))
     .route("/project/{id}/delete", post(admin::project_delete))
@@ -94,9 +99,9 @@ pub fn router(live: TowerService) -> Router<AppState> {
     .route("/users/{id}/unlink/{provider}", post(admin::user_unlink))
     .route("/starred", get_service(live.clone()))
     .route("/starred/{id}/delete", post(admin::starred_delete))
-    .route("/metrics", get(pages::metrics_page))
+    .route("/metrics", get_service(live.clone()))
     .route("/caches", get_service(live.clone()))
-    .route("/caches/{name}", get(pages::cache_detail_page))
+    .route("/caches/{name}", get_service(live.clone()))
     .route("/caches/{name}/gc", post(admin::cache_gc))
     .route("/caches/{name}/nars", get_service(live.clone()))
     .route_service("/_topcoat/{*rest}", live)

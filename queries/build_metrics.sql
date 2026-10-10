@@ -34,13 +34,11 @@ ORDER BY
 
 --! get_build_stats_timeseries (project_id?, jobset_id?) : (avg_duration?)
 SELECT
-  date_trunc('minute', b.completed_at) + (
-    EXTRACT(
-      MINUTE
-      FROM
-        b.completed_at
-    )::int /:bucket_minutes
-  ) * INTERVAL '1 minute' *:bucket_minutes AS bucket_time,
+  date_bin(
+    make_interval(mins =>:bucket_minutes),
+    b.completed_at,
+    TIMESTAMPTZ '2000-01-01 00:00+00'
+  ) AS bucket_time,
   COUNT(*) AS total_builds,
   COUNT(*) FILTER (
     WHERE
@@ -75,13 +73,11 @@ ORDER BY
 
 --! get_duration_percentiles_timeseries (project_id?, jobset_id?) : (p50?, p95?, p99?)
 SELECT
-  date_trunc('minute', b.completed_at) + (
-    EXTRACT(
-      MINUTE
-      FROM
-        b.completed_at
-    )::int /:bucket_minutes
-  ) * INTERVAL '1 minute' *:bucket_minutes AS bucket_time,
+  date_bin(
+    make_interval(mins =>:bucket_minutes),
+    b.completed_at,
+    TIMESTAMPTZ '2000-01-01 00:00+00'
+  ) AS bucket_time,
   PERCENTILE_CONT(0.5) WITHIN GROUP (
     ORDER BY
       EXTRACT(
@@ -129,13 +125,11 @@ ORDER BY
 
 --! get_queue_depth_timeseries : (bucket_time, pending_count)
 SELECT
-  date_trunc('minute', created_at) + (
-    EXTRACT(
-      MINUTE
-      FROM
-        created_at
-    )::int /:bucket_minutes
-  ) * INTERVAL '1 minute' *:bucket_minutes AS bucket_time,
+  date_bin(
+    make_interval(mins =>:bucket_minutes),
+    created_at,
+    TIMESTAMPTZ '2000-01-01 00:00+00'
+  ) AS bucket_time,
   COUNT(*) FILTER (
     WHERE
       status = 'pending'
