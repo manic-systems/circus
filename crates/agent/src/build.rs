@@ -205,6 +205,9 @@ fn build_command(opts: &BuildOptions<'_>) -> color_eyre::Result<Command> {
     "--realise".into(),
     "--log-format".into(),
     "internal-json".into(),
+    "--option".into(),
+    "builders".into(),
+    String::new(),
     opts.drv_path.into(),
   ];
   // Substitute the drv closure from the runner's cache.
