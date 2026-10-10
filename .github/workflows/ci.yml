@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  checks:
+    name: Checks (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            os: ubuntu-latest
+            clippy: --all-targets
+            test: >-
+              cargo nextest run --all &&
+              cargo nextest run -p circus-evaluator --test eval_tests --run-ignored ignored-only
+          - platform: macOS
+            os: macos-latest
+            clippy: -p circus-agent --all-targets
+            test: cargo nextest run -p circus-agent
+    uses: manic-systems/workflows/.github/workflows/rust-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      os: ${{ matrix.os }}
+      flake-check: false
+      fmt: ${{ matrix.platform == 'Linux' }}
+      fmt-command: cargo fmt --check
+      clippy: true
+      clippy-command: cargo clippy ${{ matrix.clippy }} -- -D warnings
+      test: true
+      test-command: ${{ matrix.test }}
+
+  formatting:
+    name: Formatting
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      flake-check: false
+      build: true
+      build-command: nix build .#checks.x86_64-linux.formatting -L --no-link
+
+  codegen:
+    name: Codegen Up To Date
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      flake-check: false
+      build: true
+      build-command: nix build .#checks.x86_64-linux.codegen-up-to-date -L --no-link
+
+  deny:
+    name: Dependency Audit
+    uses: manic-systems/workflows/.github/workflows/rust-audit.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      install-nix: true
+      policy-command: nix build .#checks.x86_64-linux.cargo-deny --no-link -L
+      audit-command: nix develop --command cargo deny check advisories
+
+  agent-macos:
+    name: Build Agent Package (macOS)
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      os: macos-latest
+      flake-check: false
+      build: true
+      build-command: nix build .#packages.aarch64-darwin.circus-agent -L --no-link
+
+  changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      nix: ${{ steps.filter.outputs.nix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          filters: |
+            nix:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'nix/**'
+              - 'flake.nix'
+              - 'flake.lock'
+
+  build-packages:
+    name: Build Packages
+    needs: changes
+    if: ${{ needs.changes.outputs.nix == 'true' }}
+    permissions:
+      actions: write
+      contents: read
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      timeout-minutes: 90
+      flake-check: false
+      build: true
+      build-command: >-
+        nix build .#circus-agent-static .#circus-server .#circus-cli
+        .#circus-queue-runner .#circus-evaluator .#circus-agent
+        .#ci-cargo-artifacts -L --no-link
+      cache: true
+      cache-save: true
+      cache-hash-files: |
+        **/*.nix
+        **/flake.lock
+        Cargo.lock
+        Cargo.toml
+        crates/**
+
+  vm-tests:
+    name: List VM Tests
+    runs-on: ubuntu-latest
+    outputs:
+      checks: ${{ steps.list.outputs.checks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - id: list
+        env:
+          FILTER: "cs: builtins.filter (n: cs.${n} ? driverInteractive) (builtins.attrNames cs)"
+        run: echo "checks=$(nix eval --json .#checks.x86_64-linux --apply "$FILTER")" >> "$GITHUB_OUTPUT"
+
+  vm-test:
+    name: ${{ matrix.check }}
+    needs: [changes, vm-tests, build-packages]
+    if: ${{ needs.changes.outputs.nix == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        check: ${{ fromJSON(needs.vm-tests.outputs.checks) }}
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    with:
+      timeout-minutes: 90
+      extra-nix-config: |
+        system-features = kvm benchmark big-parallel nixos-test uid-range
+        extra-experimental-features = nix-command flakes auto-allocate-uids cgroups
+        auto-allocate-uids = true
+        use-cgroups = true
+      flake-check: false
+      build: true
+      build-command: nix build .#checks.x86_64-linux.${{ matrix.check }} -L --no-link
+      cache: true
+      cache-hash-files: |
+        **/*.nix
+        **/flake.lock
+        Cargo.lock
+        Cargo.toml
+        crates/**
+
+  actions:
+    name: Actions Lint
+    uses: manic-systems/workflows/.github/workflows/actions-lint.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
