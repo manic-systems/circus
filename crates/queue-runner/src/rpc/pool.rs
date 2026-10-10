@@ -24,6 +24,7 @@ use std::{
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Upper bound on an agent's advertised `max_jobs`.
@@ -102,7 +103,9 @@ pub struct AgentMeta {
   pub registered_at: Instant,
 
   /// Hand-off into the connection task.
-  pub tx: mpsc::UnboundedSender<DispatchCommand>,
+  pub tx:     mpsc::UnboundedSender<DispatchCommand>,
+  /// Cancelled once this connection's RPC system has finished.
+  pub closed: CancellationToken,
 }
 
 impl AgentMeta {
@@ -129,6 +132,7 @@ impl AgentMeta {
     oidc_repository: Option<String>,
     oidc_subject: Option<String>,
     tx: mpsc::UnboundedSender<DispatchCommand>,
+    closed: CancellationToken,
   ) -> Self {
     Self {
       machine_id,
@@ -150,6 +154,7 @@ impl AgentMeta {
       heartbeat: RwLock::new(HeartbeatSnapshot::default()),
       registered_at: Instant::now(),
       tx,
+      closed,
     }
   }
 
@@ -449,6 +454,7 @@ mod tests {
       None,
       None,
       tx,
+      CancellationToken::new(),
     ))
   }
 
