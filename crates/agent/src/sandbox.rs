@@ -516,9 +516,11 @@ fn bind(
 
 /// Nix only probes the Debian path on its own.
 #[cfg(target_os = "linux")]
-const HOST_CA_BUNDLES: [&str; 2] = [
+const HOST_CA_BUNDLES: [&str; 4] = [
   "/etc/ssl/certs/ca-certificates.crt",
   "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/ssl/cert.pem",
 ];
 
 #[cfg(target_os = "linux")]
@@ -587,6 +589,12 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
   bind_if_exists("/etc/ssl/certs", newroot.join("etc/ssl/certs"))?;
   // RHEL keeps the bundle here and /etc/ssl/certs only symlinks into it.
   bind_if_exists("/etc/pki", newroot.join("etc/pki"))?;
+  // openSUSE and Alpine keep theirs directly in /etc/ssl.
+  bind_if_exists(
+    "/etc/ssl/ca-bundle.pem",
+    newroot.join("etc/ssl/ca-bundle.pem"),
+  )?;
+  bind_if_exists("/etc/ssl/cert.pem", newroot.join("etc/ssl/cert.pem"))?;
 
   // Bind the host /proc rather than mounting a fresh procfs as it needs
   // CAP_SYS_ADMIN over the PID namespace it exposes, which this sandbox does
