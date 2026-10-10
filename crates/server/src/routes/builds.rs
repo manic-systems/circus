@@ -7,7 +7,13 @@ use axum::{
   response::{IntoResponse, Response},
   routing::{get, post, put},
 };
-use circus_common::{Build, BuildProduct, PaginatedResponse, PaginationParams};
+use circus_common::{
+  Build,
+  BuildProduct,
+  PaginatedResponse,
+  PaginationParams,
+  repo::builds::JobHistoryEntry,
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -122,6 +128,22 @@ async fn list_build_dependencies(
   )
   .await?;
   Ok(Json(deps))
+}
+
+#[derive(Deserialize)]
+struct HistoryParams {
+  limit: Option<i64>,
+}
+
+async fn build_history(
+  State(state): State<AppState>,
+  Path(id): Path<Uuid>,
+  Query(params): Query<HistoryParams>,
+) -> Result<Json<Vec<JobHistoryEntry>>, ApiError> {
+  let limit = params.limit.unwrap_or(20).clamp(1, 200);
+  let history =
+    circus_common::repo::builds::job_history(&state.pool, id, limit).await?;
+  Ok(Json(history))
 }
 
 async fn list_build_dependents(
@@ -344,6 +366,7 @@ pub fn router() -> Router<AppState> {
     .route("/builds/{id}/products", get(list_build_products))
     .route("/builds/{id}/dependencies", get(list_build_dependencies))
     .route("/builds/{id}/dependents", get(list_build_dependents))
+    .route("/builds/{id}/history", get(build_history))
     .route(
       "/builds/{build_id}/products/{product_id}/download",
       get(download_build_product),
