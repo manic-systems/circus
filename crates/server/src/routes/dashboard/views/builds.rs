@@ -1,25 +1,25 @@
 //! The dashboard home, the build list, a build, and its log.
 
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{collections::HashMap, path::Path};
 
 use circus_common::models::{BuildProduct, NewsItem};
-use jiff::Timestamp;
 use topcoat::{
   Result,
   context::{Cx, app_context},
   router::{error::RouterErrorExt, page, path_param, query_params},
-  runtime::{connected, shard},
+  runtime::shard,
   view::{View, component, emit, live, view},
 };
 use uuid::Uuid;
 
 use super::super::{
   build_log::{BuildLogView, parse_build_log},
-  layout::{document, viewer},
+  layout::{document, shard_viewer, viewer},
+  live::{BuildsChanged, Wake},
   pages::{
     dashboard_system_filters,
     derivation_name,
-    format_elapsed,
+    elapsed_since,
     is_failed_status,
   },
   shared::{
@@ -74,26 +74,6 @@ async fn home_page(cx: &Cx) -> Result<impl View> {
   let announcements = circus_common::repo::news::list(&state.pool, 3, 0)
     .await
     .unwrap_or_default();
-  let needle = search.trim().to_lowercase();
-  let recent_builds: Vec<BuildView> = overview
-    .recent_builds
-    .iter()
-    .map(BuildView::from)
-    .filter(|build| status.is_empty() || build.status_class == status)
-    .filter(|build| {
-      needle.is_empty()
-        || [&build.project_name, &build.job_name, &build.system]
-          .iter()
-          .any(|field| field.to_lowercase().contains(&needle))
-    })
-    .collect();
-  let totals = Totals {
-    total:     overview.total_builds,
-    succeeded: overview.completed_builds,
-    failed:    overview.failed_builds,
-    running:   overview.running_builds,
-    pending:   overview.pending_builds,
-  };
 
   Ok(view! {
     document(title: "Dashboard", viewer: &viewer, topbar: false,
@@ -132,14 +112,14 @@ async fn home_page(cx: &Cx) -> Result<impl View> {
         </form>
       </header>
       announcement_lines(items: announcements)
-      metric_strip(totals: totals)
+      live_totals()
       <section class="dashboard-grid" aria-label="Build farm overview">
         <div class="operator-primary">
           projects_panel(
             projects: overview.projects.iter().map(ProjectSummaryView::from).collect(),
             is_admin: viewer.is_admin,
           )
-          recent_builds_panel(builds: recent_builds, search: search, status: status)
+          recent_builds_panel(search: search, status: status)
           agents_panel(
             workers: overview.workers.iter().map(WorkerSummaryView::from).collect(),
             show_names: !viewer.auth_name.is_empty(),
@@ -308,9 +288,38 @@ async fn projects_panel(
   })
 }
 
+/// The home page's build counts, reloaded whenever a build changes.
+#[shard]
+async fn live_totals(cx: &Cx) -> Result<impl View> {
+  let mut ctx = shard_viewer(cx, DashboardPage::Home).await?;
+  let state = app_context::<AppState>(cx);
+
+  Ok(live! {
+    let mut changed = BuildsChanged::subscribe(cx);
+
+    loop {
+      let overview = operator::overview(state, ctx.is_admin)
+        .await
+        .map_err(|error| error.0)?;
+      let totals = Totals {
+        total:     overview.total_builds,
+        succeeded: overview.completed_builds,
+        failed:    overview.failed_builds,
+        running:   overview.running_builds,
+        pending:   overview.pending_builds,
+      };
+      let token = emit! { metric_strip(totals: totals) }?;
+
+      let Some((_, current)) = changed.next(cx, DashboardPage::Home, false).await? else {
+        break Ok(token);
+      };
+      ctx = current;
+    }
+  })
+}
+
 #[component]
 async fn recent_builds_panel(
-  builds: Vec<BuildView>,
   search: String,
   status: String,
 ) -> Result<impl View> {
@@ -332,7 +341,7 @@ async fn recent_builds_panel(
         <input
           type="search"
           name="q"
-          value=(search)
+          value=(search.clone())
           aria-label="Filter recent builds"
           placeholder="filter project, job, system"
         >
@@ -343,6 +352,42 @@ async fn recent_builds_panel(
         </select>
         <button class="btn btn-small btn-secondary" type="submit">"Filter"</button>
       </form>
+      recent_builds_table(search: search, status: status.clone())
+    </section>
+  })
+}
+
+/// Recent builds matching the home filter, reloaded whenever a build changes.
+#[shard]
+async fn recent_builds_table(
+  cx: &Cx,
+  search: String,
+  status: String,
+) -> Result<impl View> {
+  let mut ctx = shard_viewer(cx, DashboardPage::Home).await?;
+  let state = app_context::<AppState>(cx);
+  let needle = search.trim().to_lowercase();
+
+  Ok(live! {
+    let mut changed = BuildsChanged::subscribe(cx);
+
+    loop {
+      let overview = operator::overview(state, ctx.is_admin)
+        .await
+        .map_err(|error| error.0)?;
+      let builds: Vec<BuildView> = overview
+        .recent_builds
+        .iter()
+        .map(BuildView::from)
+        .filter(|build| status.is_empty() || build.status_class == status)
+        .filter(|build| {
+          needle.is_empty()
+            || [&build.project_name, &build.job_name, &build.system]
+              .iter()
+              .any(|field| field.to_lowercase().contains(&needle))
+        })
+        .collect();
+      let token = emit! {
       if builds.is_empty() {
         <div class="empty compact-empty">
           <div class="empty-title">"No builds yet"</div>
@@ -384,7 +429,13 @@ async fn recent_builds_panel(
           </table>
         </div>
       }
-    </section>
+      }?;
+
+      let Some((_, current)) = changed.next(cx, DashboardPage::Home, false).await? else {
+        break Ok(token);
+      };
+      ctx = current;
+    }
   })
 }
 
@@ -556,92 +607,12 @@ pub(in crate::routes::dashboard) struct BuildFilterParams {
 #[page("/builds")]
 async fn builds_page(cx: &Cx) -> Result<impl View> {
   let viewer = viewer(cx, DashboardPage::Builds).await?;
-  let state = app_context::<AppState>(cx);
   let params = query_params::<BuildFilterParams>(cx)?;
   let limit = params.limit.unwrap_or(50).clamp(1, 200);
   let offset = params.offset.unwrap_or(0).max(0);
-  let items = circus_common::repo::builds::list_filtered(
-    &state.pool,
-    None,
-    params.status.as_deref(),
-    params.system.as_deref(),
-    params.job_name.as_deref(),
-    limit,
-    offset,
-  )
-  .await
-  .unwrap_or_default();
-  let total = circus_common::repo::builds::count_filtered(
-    &state.pool,
-    None,
-    params.status.as_deref(),
-    params.system.as_deref(),
-    params.job_name.as_deref(),
-  )
-  .await
-  .unwrap_or(0);
-  let pagination = Pagination::new(total, offset, limit);
-
-  let mut context_by_eval = HashMap::new();
-  for item in &items {
-    if context_by_eval.contains_key(&item.evaluation_id) {
-      continue;
-    }
-
-    let Ok(eval) =
-      circus_common::repo::evaluations::get(&state.pool, item.evaluation_id)
-        .await
-    else {
-      continue;
-    };
-    let Ok(jobset) =
-      circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
-    else {
-      continue;
-    };
-    let Ok(project) =
-      circus_common::repo::projects::get(&state.pool, jobset.project_id).await
-    else {
-      continue;
-    };
-    context_by_eval.insert(
-      item.evaluation_id,
-      (project.id, project.name, jobset.id, jobset.name),
-    );
-  }
-
-  let rows: Vec<BuildView> = items
-    .iter()
-    .map(|item| {
-      context_by_eval.get(&item.evaluation_id).map_or_else(
-        || build_view(item),
-        |(project_id, project_name, jobset_id, jobset_name)| {
-          build_view_with_context(
-            item,
-            *project_id,
-            project_name,
-            *jobset_id,
-            jobset_name,
-          )
-        },
-      )
-    })
-    .collect();
   let status = params.status.clone().unwrap_or_default();
   let system = params.system.clone().unwrap_or_default();
   let job = params.job_name.clone().unwrap_or_default();
-  let page_href = |page_offset: i64| {
-    let query: String = url::form_urlencoded::Serializer::new(String::new())
-      .append_pair("offset", &page_offset.to_string())
-      .append_pair("limit", &limit.to_string())
-      .append_pair("status", &status)
-      .append_pair("system", &system)
-      .append_pair("job_name", &job)
-      .finish();
-    format!("/builds?{query}")
-  };
-  let prev_href = page_href(pagination.prev_offset);
-  let next_href = page_href(pagination.next_offset);
   let statuses = [
     ("", "All"),
     ("pending", "Pending"),
@@ -672,6 +643,114 @@ async fn builds_page(cx: &Cx) -> Result<impl View> {
         </label>
         <button type="submit" class="btn btn-secondary">"Filter"</button>
       </form>
+      builds_table(
+        status: params.status.clone(),
+        system: params.system.clone(),
+        job_name: params.job_name.clone(),
+        limit: limit,
+        offset: offset,
+      )
+    )
+  })
+}
+
+/// The filtered build list, reloaded whenever a build changes.
+#[shard]
+async fn builds_table(
+  cx: &Cx,
+  status: Option<String>,
+  system: Option<String>,
+  job_name: Option<String>,
+  limit: i64,
+  offset: i64,
+) -> Result<impl View> {
+  shard_viewer(cx, DashboardPage::Builds).await?;
+  let state = app_context::<AppState>(cx);
+
+  Ok(live! {
+    let mut changed = BuildsChanged::subscribe(cx);
+
+    loop {
+      let items = circus_common::repo::builds::list_filtered(
+        &state.pool,
+        None,
+        status.as_deref(),
+        system.as_deref(),
+        job_name.as_deref(),
+        limit,
+        offset,
+      )
+      .await
+      .unwrap_or_default();
+      let total = circus_common::repo::builds::count_filtered(
+        &state.pool,
+        None,
+        status.as_deref(),
+        system.as_deref(),
+        job_name.as_deref(),
+      )
+      .await
+      .unwrap_or(0);
+      let pagination = Pagination::new(total, offset, limit);
+
+      let mut context_by_eval = HashMap::new();
+      for item in &items {
+        if context_by_eval.contains_key(&item.evaluation_id) {
+          continue;
+        }
+
+        let Ok(eval) =
+          circus_common::repo::evaluations::get(&state.pool, item.evaluation_id)
+            .await
+        else {
+          continue;
+        };
+        let Ok(jobset) =
+          circus_common::repo::jobsets::get(&state.pool, eval.jobset_id).await
+        else {
+          continue;
+        };
+        let Ok(project) =
+          circus_common::repo::projects::get(&state.pool, jobset.project_id).await
+        else {
+          continue;
+        };
+        context_by_eval.insert(
+          item.evaluation_id,
+          (project.id, project.name, jobset.id, jobset.name),
+        );
+      }
+
+      let rows: Vec<BuildView> = items
+        .iter()
+        .map(|item| {
+          context_by_eval.get(&item.evaluation_id).map_or_else(
+            || build_view(item),
+            |(project_id, project_name, jobset_id, jobset_name)| {
+              build_view_with_context(
+                item,
+                *project_id,
+                project_name,
+                *jobset_id,
+                jobset_name,
+              )
+            },
+          )
+        })
+        .collect();
+      let page_href = |page_offset: i64| {
+        let query: String = url::form_urlencoded::Serializer::new(String::new())
+          .append_pair("offset", &page_offset.to_string())
+          .append_pair("limit", &limit.to_string())
+          .append_pair("status", status.as_deref().unwrap_or_default())
+          .append_pair("system", system.as_deref().unwrap_or_default())
+          .append_pair("job_name", job_name.as_deref().unwrap_or_default())
+          .finish();
+        format!("/builds?{query}")
+      };
+      let prev_href = page_href(pagination.prev_offset);
+      let next_href = page_href(pagination.next_offset);
+      let token = emit! {
       if rows.is_empty() {
         <div class="empty">
           <div class="empty-title">"No builds match filters"</div>
@@ -730,7 +809,12 @@ async fn builds_page(cx: &Cx) -> Result<impl View> {
           </nav>
         }
       }
-    )
+      }?;
+
+      if changed.next(cx, DashboardPage::Builds, false).await?.is_none() {
+        break Ok(token);
+      }
+    }
   })
 }
 
@@ -802,37 +886,6 @@ async fn build_page(cx: &Cx) -> Result<impl View> {
     .iter()
     .map(build_view)
     .collect();
-  let broke_in = if is_failed_status(build.status) {
-    circus_common::repo::builds::broke_in(&state.pool, id)
-      .await
-      .unwrap_or_else(|error| {
-        tracing::warn!(build_id = %id, "Failed to find where the job broke: {error}");
-        None
-      })
-      .map(|found| {
-        BrokeInView {
-          build_id:              found.build_id,
-          commit_short:          found.commit_hash.chars().take(12).collect(),
-          commit_subject:        found.commit_subject.unwrap_or_default(),
-          last_success_build_id: found.last_success_build_id,
-          last_success_short:    found
-            .last_success_commit
-            .chars()
-            .take(12)
-            .collect(),
-        }
-      })
-  } else {
-    None
-  };
-  let builder_label = match build.agent_machine_id {
-    Some(machine_id) => {
-      circus_common::repo::builder_sessions::get(&state.pool, machine_id)
-        .await
-        .map_or_else(|_| "local".to_owned(), |session| session.name)
-    },
-    None => "local".to_owned(),
-  };
   let build = build_view(&build);
   let title = format!("Build {}", build.job_name);
 
@@ -850,7 +903,7 @@ async fn build_page(cx: &Cx) -> Result<impl View> {
         <a href=(format!("/evaluation/{}", lineage.eval_id))>(lineage.commit_short.clone())</a>
       </nav>
       <h1>"Build: " (build.job_name.clone())</h1>
-      build_overview(details: &build, builder_label: builder_label, broke_in: broke_in)
+      live_overview(id: id.to_string())
       <section class="panel build-detail-section">
         <div class="panel-header">
           <h2>"Reproduce This Build"</h2>
@@ -892,12 +945,94 @@ async fn build_page(cx: &Cx) -> Result<impl View> {
   })
 }
 
-#[component]
-async fn build_overview(
-  details: &BuildView,
+/// What the overview panel shows, reloaded whenever a build changes.
+struct Overview {
+  details:       BuildView,
   builder_label: String,
-  broke_in: Option<BrokeInView>,
-) -> Result<impl View> {
+  broke_in:      Option<BrokeInView>,
+}
+
+async fn load_overview(state: &AppState, id: Uuid) -> Option<Overview> {
+  let build = circus_common::repo::builds::get(&state.pool, id)
+    .await
+    .ok()?;
+  let broke_in = if is_failed_status(build.status) {
+    circus_common::repo::builds::broke_in(&state.pool, id)
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!(build_id = %id, "Failed to find where the job broke: {error}");
+        None
+      })
+      .map(|found| {
+        BrokeInView {
+          build_id:              found.build_id,
+          commit_short:          found.commit_hash.chars().take(12).collect(),
+          commit_subject:        found.commit_subject.unwrap_or_default(),
+          last_success_build_id: found.last_success_build_id,
+          last_success_short:    found
+            .last_success_commit
+            .chars()
+            .take(12)
+            .collect(),
+        }
+      })
+  } else {
+    None
+  };
+  let builder_label = match build.agent_machine_id {
+    Some(machine_id) => {
+      circus_common::repo::builder_sessions::get(&state.pool, machine_id)
+        .await
+        .map_or_else(|_| "local".to_owned(), |session| session.name)
+    },
+    None => "local".to_owned(),
+  };
+
+  Some(Overview {
+    details: build_view(&build),
+    builder_label,
+    broke_in,
+  })
+}
+
+/// The overview panel, reloaded when the build changes and ticking while it
+/// runs.
+#[shard]
+async fn live_overview(cx: &Cx, id: String) -> Result<impl View> {
+  shard_viewer(cx, DashboardPage::Build).await?;
+  let id = id.parse::<Uuid>().ok().ok_or_not_found()?;
+  let state = app_context::<AppState>(cx);
+  let first = load_overview(state, id).await.ok_or_not_found()?;
+
+  Ok(live! {
+    let mut changed = BuildsChanged::subscribe(cx);
+    let mut overview = first;
+
+    loop {
+      let running = overview.details.started_epoch.is_some()
+        && overview.details.duration.is_empty();
+      let token = emit! { build_overview(overview: &overview) }?;
+
+      match changed.next(cx, DashboardPage::Build, running).await? {
+        None => break Ok(token),
+        Some((Wake::Changed, _)) => {
+          if let Some(fresh) = load_overview(state, id).await {
+            overview = fresh;
+          }
+        },
+        Some((Wake::Tick, _)) => {},
+      }
+    }
+  })
+}
+
+#[component]
+async fn build_overview(overview: &Overview) -> Result<impl View> {
+  let Overview {
+    details,
+    builder_label,
+    broke_in,
+  } = overview;
   let signed = if details.signed { "Yes" } else { "No" };
 
   Ok(view! {
@@ -908,21 +1043,21 @@ async fn build_overview(
       <div class="panel-body">
         <div class="build-meta">
           meta_item(label: "Status",
-            <span class=(format!("badge badge-{}", details.status_class))>(details.status_text.clone())</span>
+            <span class=(format!("badge badge-{}", details.status_class))>(details.status_text.as_str())</span>
           )
-          meta_item(label: "System", (details.system.clone()))
-          meta_item(label: "Builder", (builder_label))
-          meta_item(label: "Created", (details.created_at.clone()))
+          meta_item(label: "System", (details.system.as_str()))
+          meta_item(label: "Builder", (builder_label.as_str()))
+          meta_item(label: "Created", (details.created_at.as_str()))
           if !details.started_at.is_empty() {
-            meta_item(label: "Started", (details.started_at.clone()))
+            meta_item(label: "Started", (details.started_at.as_str()))
           }
           if !details.completed_at.is_empty() {
-            meta_item(label: "Completed", (details.completed_at.clone()))
+            meta_item(label: "Completed", (details.completed_at.as_str()))
           }
           match (details.started_epoch, details.duration.is_empty()) {
-            (Some(started), true) => meta_item(label: "Elapsed", elapsed(started: started)),
-            (Some(started), false) => meta_item(label: "Duration", elapsed(started: started)),
-            (None, false) => meta_item(label: "Duration", (details.duration.clone())),
+            (Some(started), true) => meta_item(label: "Elapsed", (elapsed_since(started))),
+            (Some(started), false) => meta_item(label: "Duration", (elapsed_since(started))),
+            (None, false) => meta_item(label: "Duration", (details.duration.as_str())),
             (None, true) => {},
           }
           meta_item(label: "Priority", (details.priority))
@@ -930,9 +1065,9 @@ async fn build_overview(
           if details.is_aggregate {
             meta_item(label: "Aggregate", "Yes")
           }
-          meta_item(label: "Derivation", <code>(details.drv_path.clone())</code>)
+          meta_item(label: "Derivation", <code>(details.drv_path.as_str())</code>)
           if !details.output_path.is_empty() {
-            meta_item(label: "Output", <code>(details.output_path.clone())</code>)
+            meta_item(label: "Output", <code>(details.output_path.as_str())</code>)
           }
           if let Some(broke) = broke_in {
             <div class="build-meta-item build-meta-wide">
@@ -941,14 +1076,14 @@ async fn build_overview(
                 if broke.build_id == details.id {
                   "This evaluation"
                 } else {
-                  <a href=(format!("/build/{}", broke.build_id))><code class="commit-ref">(broke.commit_short)</code></a>
+                  <a href=(format!("/build/{}", broke.build_id))><code class="commit-ref">(broke.commit_short.as_str())</code></a>
                 }
                 if !broke.commit_subject.is_empty() {
-                  <span class="commit-message">(broke.commit_subject)</span>
+                  <span class="commit-message">(broke.commit_subject.as_str())</span>
                 }
                 <span class="broke-in-since">
                   "Last passed at "
-                  <a href=(format!("/build/{}", broke.last_success_build_id))><code class="commit-ref">(broke.last_success_short)</code></a>
+                  <a href=(format!("/build/{}", broke.last_success_build_id))><code class="commit-ref">(broke.last_success_short.as_str())</code></a>
                 </span>
               </span>
             </div>
@@ -959,14 +1094,14 @@ async fn build_overview(
             <h2 class="section-title">"Errors"</h2>
             <ul class="error-log">
               for line in &details.error_lines {
-                <li class=(format!("error-log-line error-log-{}", line.level))>(line.text.clone())</li>
+                <li class=(format!("error-log-line error-log-{}", line.level))>(line.text.as_str())</li>
               }
             </ul>
           </section>
         } else if !details.error_message.is_empty() {
           <section class="build-error">
             <h2 class="section-title">"Errors"</h2>
-            <pre class="error-log-raw">(details.error_message.clone())</pre>
+            <pre class="error-log-raw">(details.error_message.as_str())</pre>
           </section>
         }
         if details.has_log {
@@ -989,25 +1124,6 @@ async fn meta_item(
       <span class="build-meta-label">(label)</span>
       <span class="build-meta-value">(child)</span>
     </div>
-  })
-}
-
-/// A running build's elapsed time, ticking once a second while the page is
-/// open.
-#[shard]
-async fn elapsed(cx: &Cx, started: i64) -> Result<impl View> {
-  Ok(live! {
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-
-    loop {
-      tick.tick().await;
-      let secs = (Timestamp::now().as_second() - started).max(0);
-      let token = emit! { (format_elapsed(secs)) }?;
-
-      if !connected(cx) {
-        break Ok(token);
-      }
-    }
   })
 }
 

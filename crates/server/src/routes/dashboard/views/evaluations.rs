@@ -30,7 +30,7 @@ use super::super::{
   components::{confirm_button, local_time},
   layout::{document, shard_viewer, viewer},
   pages::{
-    format_elapsed,
+    elapsed_since,
     is_failed_derivation_status,
     is_failed_status,
     is_job_name,
@@ -88,10 +88,6 @@ async fn when(iso: &str, text: &str) -> Result<impl View> {
 
 fn non_empty(value: Option<&String>) -> Option<&str> {
   value.map(String::as_str).filter(|value| !value.is_empty())
-}
-
-fn elapsed_since(epoch: i64) -> String {
-  format_elapsed((Timestamp::now().as_second() - epoch).max(0))
 }
 
 #[component]
