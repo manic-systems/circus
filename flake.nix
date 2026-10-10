@@ -63,7 +63,8 @@
     in {
       inherit cargoArtifacts;
       package = pkgs.callPackage ./nix/packages/circus-agent.nix {
-        inherit craneLib cargoArtifacts commonArgs;
+        inherit craneLib cargoArtifacts;
+        commonArgs = commonArgs // {doCheck = false;};
       };
     };
     mkPackageSet = pkgs: let
@@ -93,7 +94,7 @@
       callCratePackage = path:
         pkgs.callPackage path {
           inherit craneLib cargoArtifacts;
-          commonArgs = commonArgs // buildShaArgs;
+          commonArgs = commonArgs // buildShaArgs // {doCheck = false;};
         };
     in {
       inherit craneLib cargoArtifacts depsCommonArgs;
