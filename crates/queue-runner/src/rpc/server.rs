@@ -37,9 +37,9 @@ use tokio::{
   sync::{Semaphore, mpsc, oneshot},
 };
 use tokio_rustls::TlsAcceptor;
-use tokio_util::compat::{
-  TokioAsyncReadCompatExt as _,
-  TokioAsyncWriteCompatExt as _,
+use tokio_util::{
+  compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _},
+  sync::CancellationToken,
 };
 use uuid::Uuid;
 use x509_parser::prelude::FromDer;
@@ -285,14 +285,17 @@ async fn serve_one(
 
   let registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>> =
     Arc::new(parking_lot::Mutex::new(None));
+  let closed = CancellationToken::new();
   let rpc_result = run_rpc(
     socket,
     Arc::clone(&cfg),
     Arc::clone(&pool),
     db_pool.clone(),
     Arc::clone(&registered_machine),
+    closed.clone(),
   )
   .await;
+  closed.cancel();
 
   let registered = *registered_machine.lock();
   if let Some(registered) = registered {
@@ -331,6 +334,7 @@ async fn run_rpc(
   pool: Arc<AgentPool>,
   db_pool: PgPool,
   registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>>,
+  closed: CancellationToken,
 ) -> color_eyre::Result<()> {
   if let Some(tls) = cfg.tls.as_ref() {
     let stream = tls.acceptor.clone().accept(socket).await?;
@@ -348,10 +352,14 @@ async fn run_rpc(
       db_pool,
       registered_machine,
       peer_cert,
+      closed: closed.clone(),
     };
     let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
     let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
-    rpc.await?;
+    tokio::select! {
+      result = rpc => result?,
+      () = closed.cancelled() => {},
+    }
   } else {
     let (read_half, write_half) = socket.into_split();
     let network = twoparty::VatNetwork::new(
@@ -366,10 +374,14 @@ async fn run_rpc(
       db_pool,
       registered_machine,
       peer_cert: PeerCertIdentity::default(),
+      closed: closed.clone(),
     };
     let runner_cap: runner::Client = capnp_rpc::new_client(runner_impl);
     let rpc = RpcSystem::new(Box::new(network), Some(runner_cap.client));
-    rpc.await?;
+    tokio::select! {
+      result = rpc => result?,
+      () = closed.cancelled() => {},
+    }
   }
   Ok(())
 }
@@ -425,6 +437,7 @@ struct RunnerImpl {
   registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>>,
   /// Client certificate identity, if one was presented.
   peer_cert:          PeerCertIdentity,
+  closed:             CancellationToken,
 }
 
 #[allow(refining_impl_trait_internal, refining_impl_trait_reachable)]
@@ -439,6 +452,7 @@ impl runner::Server for RunnerImpl {
     let db_pool = self.db_pool.clone();
     let registered_slot = Arc::clone(&self.registered_machine);
     let peer_cert = self.peer_cert.clone();
+    let closed = self.closed.clone();
     Promise::from_future(async move {
       let pr = params.get()?;
       let info = pr.get_info()?;
@@ -591,6 +605,7 @@ impl runner::Server for RunnerImpl {
         oidc_identity.as_ref().map(|id| id.repository.clone()),
         oidc_identity.as_ref().map(|id| id.subject.clone()),
         tx,
+        closed,
       ));
       if let Some(previous) = pool.insert(Arc::clone(&meta)) {
         tracing::warn!(
@@ -600,6 +615,8 @@ impl runner::Server for RunnerImpl {
           %connection_id,
           "agent registration replaced an existing live connection"
         );
+        // The old connection may be half-open and never close on its own.
+        previous.closed.cancel();
       }
       tracing::info!(name = %name, ?machine_id, "agent registered");
 
@@ -1237,22 +1254,29 @@ async fn dispatch_one(
     };
   }
 
-  let out = match done_rx.await {
-    Ok(BuildOutcomeKind::Success { error_message }) => {
+  let outcome = tokio::select! {
+    outcome = done_rx => outcome.ok(),
+    () = meta.closed.cancelled() => {
+      tracing::warn!(build_id = %cmd.build_id, %machine_id, "agent connection closed before the build reported");
+      None
+    },
+  };
+  let out = match outcome {
+    Some(BuildOutcomeKind::Success { error_message }) => {
       DispatchResult::Succeeded { error_message }
     },
-    Ok(BuildOutcomeKind::TimedOut) => DispatchResult::TimedOut,
-    Ok(BuildOutcomeKind::Aborted) => DispatchResult::Aborted,
-    Ok(BuildOutcomeKind::OomKilled { error_message }) => {
+    Some(BuildOutcomeKind::TimedOut) => DispatchResult::TimedOut,
+    Some(BuildOutcomeKind::Aborted) => DispatchResult::Aborted,
+    Some(BuildOutcomeKind::OomKilled { error_message }) => {
       DispatchResult::OomKilled(error_message.unwrap_or_default())
     },
-    Ok(BuildOutcomeKind::Failure { error_message }) => {
+    Some(BuildOutcomeKind::Failure { error_message }) => {
       DispatchResult::Failed(error_message.unwrap_or_default())
     },
-    Ok(BuildOutcomeKind::InfraFailure { error_message }) => {
+    Some(BuildOutcomeKind::InfraFailure { error_message }) => {
       DispatchResult::InfraFailed(error_message.unwrap_or_default())
     },
-    Err(_) => DispatchResult::Disconnected,
+    None => DispatchResult::Disconnected,
   };
   meta.active_builds.write().remove(&cmd.build_id);
   cfg.forget_uploads_for(machine_id, cmd.build_id);
