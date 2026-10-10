@@ -1,10 +1,8 @@
 //! Topcoat pages served inside axum. Forms still post to axum handlers.
 
-use std::{sync::Arc, time::Duration};
+use std::{future, sync::Arc, time::Duration};
 
-use askama::Template;
 use circus_common::pg_notify::{self, CHANNEL_BUILDS_CHANGED};
-use circus_config::PageAccessLevel;
 use tokio::sync::{Notify, watch};
 use topcoat::{
   Result,
@@ -12,34 +10,82 @@ use topcoat::{
   context::{Cx, app_context},
   router::{
     Router,
-    error::{internal_server_error, see_other},
+    RouterBuilderDiscoverExt,
     page,
     query_params,
-    request,
     tower::TowerService,
   },
   runtime::{RouterBuilderRuntimeExt, connected, shard},
-  view::{Child, Unescaped, View, component, emit, live, view},
+  view::{Child, View, component, emit, live, view},
 };
 use uuid::Uuid;
 
 use super::{
-  pages::{Queue, QueueFilter, load_queue},
-  shared::{DashboardContext, DashboardPage, UiTemplateConfig},
-  templates::{LIVE_SLOT, LiveShellTemplate},
+  layout::{document, shard_viewer, viewer},
+  pages::{Queue, QueueFilter, elapsed_since, load_queue},
+  shared::{DashboardContext, DashboardPage},
 };
-use crate::{
-  auth_middleware::session_extensions,
-  permissions::UiPermissions,
-  state::AppState,
-};
+use crate::{permissions::UiPermissions, state::AppState};
 
 /// Bursts of build updates within this window rerender once.
 const SETTLE: Duration = Duration::from_millis(500);
 
 /// Bumped whenever a build is inserted or changes status.
 #[derive(Clone)]
-struct BuildsChanged(watch::Receiver<u64>);
+pub(super) struct BuildsChanged(watch::Receiver<u64>);
+
+/// Why a live build view woke up.
+pub(super) enum Wake {
+  /// A build changed, so reload.
+  Changed,
+  /// A second passed, so redraw running clocks.
+  Tick,
+}
+
+impl BuildsChanged {
+  pub(super) fn subscribe(cx: &Cx) -> Self {
+    let mut receiver = app_context::<Self>(cx).0.clone();
+    receiver.mark_unchanged();
+    Self(receiver)
+  }
+
+  /// Waits for a build change, or one second when `ticking`, then resolves the
+  /// viewer again, since a run outlives the request that started it. `None`
+  /// once the viewer has gone, and the redirect once they lost access.
+  pub(super) async fn next(
+    &mut self,
+    cx: &Cx,
+    page: DashboardPage,
+    ticking: bool,
+  ) -> Result<Option<(Wake, DashboardContext)>> {
+    if !connected(cx) {
+      return Ok(None);
+    }
+
+    let tick = async {
+      if ticking {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+      } else {
+        future::pending::<()>().await;
+      }
+    };
+
+    let wake = tokio::select! {
+      changed = self.0.changed() => {
+        if changed.is_err() {
+          return Ok(None);
+        }
+
+        tokio::time::sleep(SETTLE).await;
+        self.0.mark_unchanged();
+        Wake::Changed
+      },
+      () = tick => Wake::Tick,
+    };
+
+    Ok(Some((wake, shard_viewer(cx, page).await?)))
+  }
+}
 
 #[must_use]
 pub fn service(state: AppState, assets: AssetBundle) -> TowerService {
@@ -60,63 +106,11 @@ pub fn service(state: AppState, assets: AssetBundle) -> TowerService {
   let router = Router::builder()
     .app_context(state)
     .app_context(BuildsChanged(receiver))
-    .page(queue)
-    .route(queue_tables)
+    .discover()
     .assets(assets)
     .runtime()
     .build();
   TowerService::new(router)
-}
-
-/// WebSocket reruns skip axum's middleware, so read the viewer from the cookie.
-async fn viewer(cx: &Cx, page: DashboardPage) -> Result<DashboardContext> {
-  let state = app_context::<AppState>(cx);
-  let session = session_extensions(state, request::headers(cx)).await;
-  let ctx = DashboardContext::from_extensions(&session);
-  let allowed = match page.access(&state.config.server) {
-    PageAccessLevel::Public => true,
-    PageAccessLevel::Authenticated => ctx.is_authenticated,
-    PageAccessLevel::Admin => ctx.is_admin,
-  };
-
-  if allowed {
-    Ok(ctx)
-  } else if ctx.is_authenticated {
-    Err(see_other("/").into())
-  } else {
-    Err(see_other("/login").into())
-  }
-}
-
-#[component]
-async fn document(
-  cx: &Cx,
-  title: &str,
-  viewer: &DashboardContext,
-  child: Child<'_>,
-) -> Result<impl View> {
-  let state = app_context::<AppState>(cx);
-  let shell = LiveShellTemplate {
-    ui: UiTemplateConfig::from_config(&state.config.ui),
-    title,
-    is_admin: viewer.is_admin,
-    auth_name: &viewer.auth_name,
-  }
-  .render()
-  .map_err(internal_server_error)?;
-  let (before, after) = shell
-    .split_once(LIVE_SLOT)
-    .map(|(before, after)| (before.to_owned(), after.to_owned()))
-    .ok_or_else(|| {
-      internal_server_error(std::io::Error::other("live shell lost its slot"))
-    })?;
-
-  Ok(view! {
-    (Unescaped::new_unchecked(before))
-    (child)
-    topcoat::runtime::script()
-    (Unescaped::new_unchecked(after))
-  })
 }
 
 #[query_params(error = bad_request)]
@@ -172,7 +166,8 @@ async fn queue(cx: &Cx) -> Result<impl View> {
   })
 }
 
-/// Rerenders whenever the builds table changes.
+/// Rerenders whenever the builds table changes, and every second while
+/// builds run.
 #[shard]
 async fn queue_tables(
   cx: &Cx,
@@ -180,7 +175,7 @@ async fn queue_tables(
   system: Option<String>,
   job_name: Option<String>,
 ) -> Result<impl View> {
-  let mut ctx = viewer(cx, DashboardPage::Queue).await?;
+  let mut ctx = shard_viewer(cx, DashboardPage::Queue).await?;
   let filter = QueueFilter {
     status,
     system,
@@ -189,27 +184,22 @@ async fn queue_tables(
 
   Ok(live! {
     let state = app_context::<AppState>(cx);
-    let mut changed = app_context::<BuildsChanged>(cx).0.clone();
-    changed.mark_unchanged();
+    let mut changed = BuildsChanged::subscribe(cx);
+    let mut data = load_queue(state, &filter).await;
 
     loop {
-      let data = load_queue(state, &filter).await;
+      let ticking = data.running.as_ref().is_some_and(|running| !running.is_empty());
       let token = emit! {
-        tables(data: data, permissions: &ctx.permissions, csrf_token: &ctx.csrf_token)
+        tables(data: &data, permissions: &ctx.permissions, csrf_token: &ctx.csrf_token)
       }?;
 
-      if !connected(cx) || changed.changed().await.is_err() {
+      let Some((wake, current)) = changed.next(cx, DashboardPage::Queue, ticking).await? else {
         break Ok(token);
-      }
+      };
+      ctx = current;
 
-      tokio::time::sleep(SETTLE).await;
-      changed.mark_unchanged();
-
-      // The run outlives the request that started it, so the session may
-      // have ended or lost access since. Its redirect still reaches the page.
-      match viewer(cx, DashboardPage::Queue).await {
-        Ok(current) => ctx = current,
-        Err(error) => break Err(error),
+      if matches!(wake, Wake::Changed) {
+        data = load_queue(state, &filter).await;
       }
     }
   })
@@ -217,12 +207,12 @@ async fn queue_tables(
 
 #[component]
 async fn tables(
-  data: Queue,
+  data: &Queue,
   permissions: &UiPermissions,
   csrf_token: &str,
 ) -> Result<impl View> {
   Ok(view! {
-    if let Some(running) = data.running {
+    if let Some(running) = &data.running {
       panel(
         kind: "running",
         title: "Running",
@@ -245,21 +235,26 @@ async fn tables(
             <tr>
               context_cells(
                 project_id: build.project_id,
-                project_name: build.project_name,
+                project_name: &build.project_name,
                 jobset_id: build.jobset_id,
-                jobset_name: build.jobset_name,
+                jobset_name: &build.jobset_name,
               )
-              <td><a href=(format!("/build/{}", build.id))>(build.job_name)</a></td>
-              <td>(build.system)</td>
-              <td>(build.started_at)</td>
-              <td data-live-elapsed=(build.started_epoch)>(build.elapsed)</td>
+              <td><a href=(format!("/build/{}", build.id))>(build.job_name.as_str())</a></td>
+              <td>(build.system.as_str())</td>
+              <td>(build.started_at.as_str())</td>
+              <td>
+                match build.started_epoch {
+                  Some(started) => (elapsed_since(started)),
+                  None => (build.elapsed.as_str()),
+                }
+              </td>
               <td>(build.builder_name.as_deref().unwrap_or("local"))</td>
             </tr>
           }
         </tbody>
       )
     }
-    if let Some(pending) = data.pending {
+    if let Some(pending) = &data.pending {
       panel(
         kind: "pending",
         title: "Pending",
@@ -286,14 +281,14 @@ async fn tables(
               <td>(build.queue_pos)</td>
               context_cells(
                 project_id: build.project_id,
-                project_name: build.project_name,
+                project_name: &build.project_name,
                 jobset_id: build.jobset_id,
-                jobset_name: build.jobset_name,
+                jobset_name: &build.jobset_name,
               )
-              <td><a href=(format!("/build/{}", build.id))>(build.job_name)</a></td>
-              <td>(build.system)</td>
+              <td><a href=(format!("/build/{}", build.id))>(build.job_name.as_str())</a></td>
+              <td>(build.system.as_str())</td>
               <td>(build.priority)</td>
-              <td>(build.created_at)</td>
+              <td>(build.created_at.as_str())</td>
               if permissions.bump_to_front {
                 <td class="row-actions">
                   <form method="POST" action=(format!("/build/{}/bump", build.id)) class="inline-form">
@@ -348,9 +343,9 @@ async fn panel(
 #[component]
 async fn context_cells(
   project_id: Option<Uuid>,
-  project_name: String,
+  project_name: &str,
   jobset_id: Option<Uuid>,
-  jobset_name: String,
+  jobset_name: &str,
 ) -> Result<impl View> {
   Ok(view! {
     <td>

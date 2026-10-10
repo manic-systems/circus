@@ -3326,6 +3326,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "io-close"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5456,6 +5465,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7802e424033acc38249ada210b380d9846243b2830e097163780569990f8dfe"
 dependencies = [
  "futures-util",
+ "inventory",
  "serde",
  "tokio",
  "tokio-tungstenite",
@@ -5554,6 +5564,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ccfde441afe9559296586891317bc8bd332bed8bfb4daaf78578d2f4f5f08ae"
 dependencies = [
  "heck",
+ "inventory",
  "serde",
  "serde_json",
  "topcoat-asset",
@@ -5618,6 +5629,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "inventory",
  "ipnet",
  "matchit 0.9.2",
  "percent-encoding",

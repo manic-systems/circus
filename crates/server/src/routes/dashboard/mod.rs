@@ -12,8 +12,9 @@
 
 use axum::{
   Router,
-  routing::{get, post},
+  routing::{get, get_service, post},
 };
+use topcoat::router::tower::TowerService;
 
 use crate::state::AppState;
 
@@ -21,23 +22,29 @@ mod admin;
 pub mod assets;
 mod auth;
 mod build_log;
+mod components;
+mod layout;
 pub mod live;
 mod pages;
 mod preview;
 mod shared;
 pub(crate) mod templates;
+pub(crate) mod views;
 
-pub fn router() -> Router<AppState> {
+/// Topcoat pages route their GETs to `live`, which also serves the runtime
+/// under `/_topcoat`.
+pub fn router(live: TowerService) -> Router<AppState> {
   Router::new()
-    .route("/login", get(auth::login_page).post(auth::login_action))
+    .route("/queue", get_service(live.clone()))
+    .route("/login", get_service(live.clone()).post(auth::login_action))
     .route("/logout", post(auth::logout_action))
-    .route("/account", get(auth::account_page))
+    .route("/account", get_service(live.clone()))
     .route(
       "/account/link/{provider}",
-      get(auth::account_link_page).post(auth::account_link),
+      get_service(live.clone()).post(auth::account_link),
     )
     .route("/account/unlink/{provider}", post(auth::account_unlink))
-    .route("/", get(pages::home))
+    .route("/", get_service(live.clone()))
     .route("/projects", get(pages::projects_page))
     .route("/projects/new", get(pages::project_setup_page))
     .route("/project/{id}", get(pages::project_page))
@@ -49,35 +56,37 @@ pub fn router() -> Router<AppState> {
       "/project/{id}/notifications/{config_id}/delete",
       post(admin::notifications_delete),
     )
-    .route("/jobset/{id}", get(pages::jobset_page))
-    .route("/jobset/{id}/jobs", get(pages::jobset_jobs_page))
+    .route("/jobset/{id}", get_service(live.clone()))
+    .route("/jobset/{id}/jobs", get_service(live.clone()))
     .route("/jobset/{id}/delete", post(admin::jobset_delete))
-    .route("/evaluations", get(pages::evaluations_page))
-    .route("/evaluation/{id}", get(pages::evaluation_page))
+    .route("/evaluations", get_service(live.clone()))
+    .route("/evaluation/{id}", get_service(live.clone()))
     .route(
       "/evaluation/{id}/visibility",
       post(admin::evaluation_visibility),
     )
     .route("/evaluation/{id}/cancel", post(admin::evaluation_cancel))
     .route("/evaluation/{id}/restart", post(admin::evaluation_restart))
-    .route("/builds", get(pages::builds_page))
-    .route("/build/{id}", get(pages::build_page))
-    .route("/build/{id}/log", get(pages::build_log))
+    .route("/builds", get_service(live.clone()))
+    .route("/build/{id}", get_service(live.clone()))
+    .route("/build/{id}/log", get_service(live.clone()))
     .route("/build/{id}/bump", post(admin::queue_bump))
-    .route("/channels", get(pages::channels_page))
-    .route("/channel/{id}", get(pages::channel_page))
-    .route("/news", get(admin::news_page).post(admin::news_create))
+    .route("/channels", get_service(live.clone()))
+    .route("/channel/{id}", get_service(live.clone()))
+    .route("/news", get_service(live.clone()).post(admin::news_create))
     .route("/news/{id}/delete", post(admin::news_delete))
     .route("/admin", get(admin::admin_page))
     .route("/admin/store-gc", post(admin::store_gc))
     .route("/users", get(admin::users_page))
     .route("/users/{id}/unlink/{provider}", post(admin::user_unlink))
-    .route("/starred", get(pages::starred_page))
+    .route("/starred", get_service(live.clone()))
+    .route("/starred/{id}/delete", post(admin::starred_delete))
     .route("/metrics", get(pages::metrics_page))
-    .route("/caches", get(pages::caches_page))
+    .route("/caches", get_service(live.clone()))
     .route("/caches/{name}", get(pages::cache_detail_page))
     .route("/caches/{name}/gc", post(admin::cache_gc))
-    .route("/caches/{name}/nars", get(pages::cache_nars_page))
+    .route("/caches/{name}/nars", get_service(live.clone()))
+    .route_service("/_topcoat/{*rest}", live)
 }
 
 pub fn preview_router() -> Router {

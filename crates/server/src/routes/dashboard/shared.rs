@@ -225,7 +225,6 @@ pub(super) struct EvalView {
 }
 
 pub(super) struct EvalProgressView {
-  pub(super) id:      Uuid,
   pub(super) count:   String,
   pub(super) percent: i64,
 }
@@ -254,7 +253,6 @@ pub(super) struct EvalSummaryView {
   pub(super) time_iso:       String,
   pub(super) duration:       String,
   pub(super) running_since:  Option<i64>,
-  pub(super) progress:       Option<EvalProgressView>,
   pub(super) succeeded:      i64,
   pub(super) failed:         i64,
   pub(super) pending:        i64,
@@ -1059,11 +1057,7 @@ pub(super) fn eval_progress(e: &Evaluation) -> Option<EvalProgressView> {
     },
     _ => ("-".to_owned(), 0),
   };
-  Some(EvalProgressView {
-    id: e.id,
-    count,
-    percent,
-  })
+  Some(EvalProgressView { count, percent })
 }
 
 pub(super) fn eval_view(e: &Evaluation) -> EvalView {
