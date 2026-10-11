@@ -76,7 +76,6 @@ lettre = { version = "0.11.23", default-features = false, features = [
 ] }
 libc = "0.2.190"
 md5 = "0.8.1"
-moka = { version = "0.12.16", features = [ "sync" ] }
 nix = { version = "0.31.3", default-features = false, features = [
   "sched",
   "mount",
