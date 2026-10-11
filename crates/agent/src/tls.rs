@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use color_eyre::eyre::{bail, eyre};
+use misstep::{bail, report};
 use rustls::{
   ClientConfig,
   RootCertStore,
@@ -25,7 +25,7 @@ use crate::config::TlsConfig;
 /// PEM, or unsupported key types.
 pub fn build_client_connector(
   cfg: &TlsConfig,
-) -> color_eyre::Result<TlsConnector> {
+) -> misstep::Result<TlsConnector> {
   let client_identity = match (&cfg.cert_file, &cfg.key_file) {
     (Some(cert_file), Some(key_file)) => Some((cert_file, key_file)),
     (None, None) => None,
@@ -67,7 +67,7 @@ pub fn build_client_connector(
       .collect::<Result<Vec<_>, _>>()?;
     let key_bytes = std::fs::read(key_file)?;
     let key = PrivateKeyDer::from_pem_slice(&key_bytes).map_err(|e| {
-      eyre!("no usable private key in {}: {e}", key_file.display())
+      report!("no usable private key in {}: {e}", key_file.display())
     })?;
     builder.with_client_auth_cert(cert_chain, key)?
   } else {

@@ -351,7 +351,7 @@ pub async fn run(
   strict_errors: bool,
   failed_paths_cache: bool,
   unsupported_timeout: Option<Duration>,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let mut last_orphan_reset = tokio::time::Instant::now();
   let orphan_reset_interval = Duration::from_mins(1);
   let mut closure_publications: JoinSet<()> = JoinSet::new();
@@ -740,9 +740,7 @@ pub async fn run(
       },
       Err(e) => {
         if strict_errors {
-          return Err(color_eyre::eyre::eyre!(
-            "Failed to fetch pending builds: {e}"
-          ));
+          return Err(misstep::report!("Failed to fetch pending builds: {e}"));
         }
         tracing::error!("Failed to fetch pending builds: {e}");
       },

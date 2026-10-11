@@ -22,8 +22,8 @@ circus-queue-runner.workspace = true
 circus-s3.workspace           = true
 circus-server.workspace       = true
 circus-types.workspace        = true
-color-eyre.workspace          = true
 evix.workspace                = true
+misstep.workspace             = true
 tokio.workspace               = true
 
 [lints]

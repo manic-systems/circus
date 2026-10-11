@@ -14,7 +14,7 @@ use std::{
 ///
 /// Returns an error from the selected applet, or when the command name is not
 /// recognized.
-pub fn run() -> color_eyre::Result<()> {
+pub fn run() -> misstep::Result<()> {
   let args = env::args_os().collect::<Vec<_>>();
 
   if env::var_os(evix::WORKER_ENV).is_some() {
@@ -39,7 +39,7 @@ pub fn run() -> color_eyre::Result<()> {
   }
 }
 
-fn run_subcommand(mut args: Vec<OsString>) -> color_eyre::Result<()> {
+fn run_subcommand(mut args: Vec<OsString>) -> misstep::Result<()> {
   let Some(command) = args.get(1).and_then(|arg| arg.to_str()) else {
     print_help();
     return Ok(());
@@ -55,9 +55,7 @@ fn run_subcommand(mut args: Vec<OsString>) -> color_eyre::Result<()> {
   }
 
   let applet = applet_from_command(command).ok_or_else(|| {
-    color_eyre::eyre::eyre!(
-      "unknown circus command `{command}`; run `circus --help`"
-    )
+    misstep::report!("unknown circus command `{command}`; run `circus --help`")
   })?;
   args.remove(1);
   args[0] = OsString::from(applet.name());
@@ -71,8 +69,8 @@ fn run_subcommand(mut args: Vec<OsString>) -> color_eyre::Result<()> {
   }
 }
 
-fn run_ctl(args: Vec<OsString>) -> color_eyre::Result<()> {
-  color_eyre::install()?;
+fn run_ctl(args: Vec<OsString>) -> misstep::Result<()> {
+  misstep::install_panic_hook();
   circus_common::install_crypto_provider()?;
 
   let runtime = tokio::runtime::Builder::new_multi_thread()

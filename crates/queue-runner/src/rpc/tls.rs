@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use circus_config::RpcTlsConfig;
-use color_eyre::eyre::{Context as _, eyre};
+use misstep::{ResultExt as _, report};
 use rustls::{
   RootCertStore,
   ServerConfig,
@@ -23,7 +23,7 @@ use tokio_rustls::TlsAcceptor;
 /// # Errors
 ///
 /// Returns any underlying IO or rustls error.
-pub fn build_acceptor(cfg: &RpcTlsConfig) -> color_eyre::Result<TlsAcceptor> {
+pub fn build_acceptor(cfg: &RpcTlsConfig) -> misstep::Result<TlsAcceptor> {
   let cert_bytes = std::fs::read(&cfg.cert_file)
     .with_context(|| format!("read cert {}", cfg.cert_file.display()))?;
   let cert_chain: Vec<_> =
@@ -32,7 +32,7 @@ pub fn build_acceptor(cfg: &RpcTlsConfig) -> color_eyre::Result<TlsAcceptor> {
   let key_bytes = std::fs::read(&cfg.key_file)
     .with_context(|| format!("read key {}", cfg.key_file.display()))?;
   let key = PrivateKeyDer::from_pem_slice(&key_bytes).map_err(|e| {
-    eyre!("no usable private key in {}: {e}", cfg.key_file.display())
+    report!("no usable private key in {}: {e}", cfg.key_file.display())
   })?;
 
   let server_cfg = if let Some(ca_path) = &cfg.client_ca {

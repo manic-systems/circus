@@ -45,7 +45,7 @@ pub enum Commands {
 /// # Errors
 ///
 /// Returns error if command execution fails.
-pub async fn run() -> color_eyre::Result<()> {
+pub async fn run() -> misstep::Result<()> {
   let cli = Cli::parse();
   run_command(cli.command).await
 }
@@ -59,7 +59,7 @@ pub async fn run() -> color_eyre::Result<()> {
   clippy::print_stdout,
   reason = "CLI output is the primary user-facing interface"
 )]
-pub async fn run_command(command: Commands) -> color_eyre::Result<()> {
+pub async fn run_command(command: Commands) -> misstep::Result<()> {
   match command {
     Commands::Up { database_url } => {
       info!("Running database migrations");
@@ -82,12 +82,12 @@ pub async fn run_command(command: Commands) -> color_eyre::Result<()> {
 }
 
 /// Validate that `name` is safe to use as part of a migration filename.
-fn validate_name(name: &str) -> color_eyre::Result<()> {
+fn validate_name(name: &str) -> misstep::Result<()> {
   if name.is_empty() {
-    return Err(color_eyre::eyre::eyre!("Migration name must not be empty"));
+    return Err(misstep::report!("Migration name must not be empty"));
   }
   if name.len() > 80 {
-    return Err(color_eyre::eyre::eyre!(
+    return Err(misstep::report!(
       "Migration name too long ({} chars); keep it under 80",
       name.len()
     ));
@@ -96,7 +96,7 @@ fn validate_name(name: &str) -> color_eyre::Result<()> {
     .chars()
     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
   if !ok {
-    return Err(color_eyre::eyre::eyre!(
+    return Err(misstep::report!(
       "Migration name must contain only ASCII alphanumerics, '_' or '-'; got: \
        {name}"
     ));
@@ -116,7 +116,7 @@ fn validate_name(name: &str) -> color_eyre::Result<()> {
 pub fn create_migration(
   output_dir: &Path,
   name: &str,
-) -> color_eyre::Result<PathBuf> {
+) -> misstep::Result<PathBuf> {
   use std::{fs, io::Write as _};
 
   use jiff::Timestamp;

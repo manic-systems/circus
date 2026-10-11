@@ -50,7 +50,7 @@ impl DrvSinkImpl {
   }
 }
 
-fn spawn_import(rootless: bool) -> color_eyre::Result<(Child, ChildStdin)> {
+fn spawn_import(rootless: bool) -> misstep::Result<(Child, ChildStdin)> {
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
   cmd.arg("--import");
   let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
@@ -59,9 +59,10 @@ fn spawn_import(rootless: bool) -> color_eyre::Result<(Child, ChildStdin)> {
     .stdout(Stdio::null())
     .kill_on_drop(true)
     .spawn()?;
-  let stdin = child.stdin.take().ok_or_else(|| {
-    color_eyre::eyre::eyre!("nix-store --import produced no stdin")
-  })?;
+  let stdin = child
+    .stdin
+    .take()
+    .ok_or_else(|| misstep::report!("nix-store --import produced no stdin"))?;
   Ok((child, stdin))
 }
 

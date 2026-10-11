@@ -1,8 +1,5 @@
 use circus_http::RequestExt as _;
-use color_eyre::{
-  Result,
-  eyre::{Context, bail},
-};
+use misstep::{Result, ResultExt, bail};
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -116,6 +113,7 @@ impl ApiClient {
       .base_url
       .join(path.trim_start_matches('/'))
       .with_context(|| format!("invalid endpoint path: {path}"))
+      .erase()
   }
 }
 

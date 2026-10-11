@@ -33,13 +33,13 @@ fn parse_dry_run_will_build(stderr: &str) -> Vec<String> {
   out
 }
 
-async fn will_build_set(drv_path: &str) -> color_eyre::Result<Vec<String>> {
+async fn will_build_set(drv_path: &str) -> misstep::Result<Vec<String>> {
   let out = Command::new("nix-store")
     .args(["--realise", "--dry-run", drv_path])
     .output()
     .await?;
   if !out.status.success() {
-    color_eyre::eyre::bail!(
+    misstep::bail!(
       "nix-store --realise --dry-run failed: {}",
       String::from_utf8_lossy(&out.stderr).trim()
     );
@@ -51,7 +51,7 @@ async fn will_build_set(drv_path: &str) -> color_eyre::Result<Vec<String>> {
 
 /// Union `requiredSystemFeatures` over the drvs the runner's nix says will
 /// be built for `drv_path` given current store and substituter state.
-async fn compute(drv_path: &str) -> color_eyre::Result<Vec<String>> {
+async fn compute(drv_path: &str) -> misstep::Result<Vec<String>> {
   let drvs = will_build_set(drv_path).await?;
   Ok(circus_nix::derivation::show_required_features(&drvs).await?)
 }
