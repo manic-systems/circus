@@ -11,7 +11,6 @@ blake3.workspace           = true
 bstr.workspace             = true
 bytes.workspace            = true
 data-encoding.workspace    = true
-derive_more.workspace      = true
 ed25519-dalek.workspace    = true
 futures-core.workspace     = true
 futures-sink.workspace     = true
