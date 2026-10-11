@@ -1,7 +1,5 @@
-use axum::http::HeaderMap;
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum::http::{HeaderMap, header::COOKIE};
 use circus_config::ServerConfig;
-use time::Duration as CookieDuration;
 use uuid::Uuid;
 
 pub const USER_SESSION_COOKIE: &str = "circus_user_session";
@@ -19,11 +17,23 @@ pub const OAUTH_STATE_MAX_AGE_SECS: i64 = 10 * 60;
 pub const API_KEY_SESSION_MAX_AGE: std::time::Duration =
   std::time::Duration::from_secs(API_KEY_SESSION_MAX_AGE_SECS as u64);
 
+#[derive(Clone, Copy)]
+enum SameSite {
+  Strict,
+  Lax,
+}
+
+/// The value of the first `name` cookie across every `Cookie` header.
 #[must_use]
 pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-  CookieJar::from_headers(headers)
-    .get(name)
-    .map(|cookie| cookie.value().to_string())
+  headers
+    .get_all(COOKIE)
+    .iter()
+    .filter_map(|header| header.to_str().ok())
+    .flat_map(|header| header.split(';'))
+    .filter_map(|pair| pair.trim().split_once('='))
+    .find(|(key, _)| *key == name)
+    .map(|(_, value)| value.to_owned())
 }
 
 #[must_use]
@@ -94,14 +104,14 @@ pub fn new_api_key_cookie(
   max_age_secs: i64,
   config: &ServerConfig,
 ) -> String {
-  Cookie::build((new_api_key_cookie_name(key_id), key.to_owned()))
-    .http_only(true)
-    .same_site(SameSite::Strict)
-    .secure(server_cookie_secure(config))
-    .path("/admin")
-    .max_age(CookieDuration::seconds(max_age_secs))
-    .build()
-    .to_string()
+  set_cookie(
+    &new_api_key_cookie_name(key_id),
+    key,
+    "/admin",
+    max_age_secs,
+    SameSite::Strict,
+    server_cookie_secure(config),
+  )
 }
 
 #[must_use]
@@ -129,14 +139,14 @@ pub fn oidc_flow_cookie(
   config: &ServerConfig,
   redirect_uri: &str,
 ) -> String {
-  Cookie::build((OIDC_FLOW_COOKIE, value.to_owned()))
-    .http_only(true)
-    .same_site(SameSite::Lax)
-    .secure(oauth_cookie_secure(config, redirect_uri))
-    .path("/api/v1/auth/oidc/")
-    .max_age(CookieDuration::seconds(OAUTH_STATE_MAX_AGE_SECS))
-    .build()
-    .to_string()
+  set_cookie(
+    OIDC_FLOW_COOKIE,
+    value,
+    "/api/v1/auth/oidc/",
+    OAUTH_STATE_MAX_AGE_SECS,
+    SameSite::Lax,
+    oauth_cookie_secure(config, redirect_uri),
+  )
 }
 
 #[must_use]
@@ -144,14 +154,14 @@ pub fn clear_oidc_flow_cookie(
   config: &ServerConfig,
   redirect_uri: &str,
 ) -> String {
-  Cookie::build((OIDC_FLOW_COOKIE, String::new()))
-    .http_only(true)
-    .same_site(SameSite::Lax)
-    .secure(oauth_cookie_secure(config, redirect_uri))
-    .path("/api/v1/auth/oidc/")
-    .max_age(CookieDuration::ZERO)
-    .build()
-    .to_string()
+  set_cookie(
+    OIDC_FLOW_COOKIE,
+    "",
+    "/api/v1/auth/oidc/",
+    0,
+    SameSite::Lax,
+    oauth_cookie_secure(config, redirect_uri),
+  )
 }
 
 #[must_use]
@@ -187,14 +197,26 @@ fn cookie(
   same_site: SameSite,
   secure: bool,
 ) -> String {
-  Cookie::build((name, value.to_string()))
-    .http_only(true)
-    .same_site(same_site)
-    .secure(secure)
-    .path("/")
-    .max_age(CookieDuration::seconds(max_age_secs))
-    .build()
-    .to_string()
+  set_cookie(name, value, "/", max_age_secs, same_site, secure)
+}
+
+fn set_cookie(
+  name: &str,
+  value: &str,
+  path: &str,
+  max_age_secs: i64,
+  same_site: SameSite,
+  secure: bool,
+) -> String {
+  let same_site = match same_site {
+    SameSite::Strict => "Strict",
+    SameSite::Lax => "Lax",
+  };
+  let secure = if secure { "; Secure" } else { "" };
+  format!(
+    "{name}={value}; HttpOnly; SameSite={same_site}{secure}; Path={path}; \
+     Max-Age={max_age_secs}"
+  )
 }
 
 fn server_cookie_secure(config: &ServerConfig) -> bool {

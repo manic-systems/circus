@@ -3,11 +3,10 @@
 use axum::{
   Router,
   extract::{Query, State},
-  http::{StatusCode, header},
+  http::{HeaderMap, StatusCode, header},
   response::{IntoResponse, Response},
   routing::get,
 };
-use axum_extra::extract::cookie::CookieJar;
 use circus_common::{models::UserType, repo};
 use circus_config::GitHubOAuthConfig;
 use circus_http::{RequestExt as _, ResponseExt as _};
@@ -23,6 +22,7 @@ use crate::{
     OAUTH_STATE_COOKIE,
     USER_SESSION_MAX_AGE_SECS,
     clear_oauth_state_cookie,
+    cookie_value,
     oauth_state_cookie,
     oauth_user_session_cookie,
   },
@@ -109,7 +109,7 @@ async fn github_login(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn github_callback(
   State(state): State<AppState>,
-  jar: CookieJar,
+  headers: HeaderMap,
   Query(params): Query<OAuthCallbackParams>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Some(config) = &state.config.oauth.github else {
@@ -121,9 +121,7 @@ async fn github_callback(
   // Verify CSRF token from cookie. Use constant-time comparison: the
   // received state and the cookie value are both attacker-controlled
   // inputs to the compare, and a timing leak would reveal a valid token.
-  let stored_state = jar
-    .get(OAUTH_STATE_COOKIE)
-    .map(axum_extra::extract::cookie::Cookie::value);
+  let stored_state = cookie_value(&headers, OAUTH_STATE_COOKIE);
 
   let state_ok = stored_state.is_some_and(|s| {
     s.len() == params.state.len()
@@ -442,12 +440,10 @@ mod tests {
         .unwrap(),
     );
 
-    let jar = CookieJar::from_headers(&headers);
-    let stored_state = jar
-      .get(OAUTH_STATE_COOKIE)
-      .map(axum_extra::extract::cookie::Cookie::value);
-
-    assert_eq!(stored_state, Some("abc123"));
+    assert_eq!(
+      cookie_value(&headers, OAUTH_STATE_COOKIE).as_deref(),
+      Some("abc123")
+    );
   }
 
   #[test]
@@ -458,8 +454,7 @@ mod tests {
       "other_cookie=value; another=xyz".parse().unwrap(),
     );
 
-    let jar = CookieJar::from_headers(&headers);
-    assert!(jar.get(OAUTH_STATE_COOKIE).is_none());
+    assert!(cookie_value(&headers, OAUTH_STATE_COOKIE).is_none());
   }
 
   #[test]
