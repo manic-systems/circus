@@ -19,7 +19,7 @@ struct Cli {
 ///
 /// Returns an error when worker startup, configuration, database setup, or the
 /// evaluator runtime fails.
-pub fn run() -> color_eyre::Result<()> {
+pub fn run() -> misstep::Result<()> {
   run_from(env::args_os())
 }
 
@@ -29,7 +29,7 @@ pub fn run() -> color_eyre::Result<()> {
 ///
 /// Returns an error when worker startup, configuration, database setup, or the
 /// evaluator runtime fails.
-pub fn run_from<I, T>(args: I) -> color_eyre::Result<()>
+pub fn run_from<I, T>(args: I) -> misstep::Result<()>
 where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
@@ -47,13 +47,10 @@ where
   if env::var_os(evix::WORKER_ENV).is_some() {
     crate::memory::limit_evix_worker_from_env()?;
     return evix::run_worker().map_err(|e| {
-      color_eyre::eyre::eyre!(
-        "evix worker failed: {}",
-        crate::nix::error_chain(&e)
-      )
+      misstep::report!("evix worker failed: {}", crate::nix::error_chain(&e))
     });
   }
-  color_eyre::install()?;
+  misstep::install_panic_hook();
   circus_common::install_crypto_provider()?;
 
   let cli = Cli::parse_from(args);
@@ -76,7 +73,7 @@ where
   runtime.block_on(run_async(config))
 }
 
-async fn run_async(config: Config) -> color_eyre::Result<()> {
+async fn run_async(config: Config) -> misstep::Result<()> {
   circus_common::init_tracing(&config.tracing);
 
   tracing::info!("Starting CI Evaluator");

@@ -32,7 +32,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
-use color_eyre::eyre::Context as _;
+use misstep::ResultExt as _;
 use sha2::{Digest as _, Sha256};
 use socket2::{SockRef, TcpKeepalive};
 use subtle::ConstantTimeEq as _;
@@ -185,10 +185,10 @@ impl ServerConfig {
   /// # Errors
   ///
   /// Returns the underlying error if TLS files are missing or invalid.
-  pub fn from_user(cfg: &RpcConfig) -> color_eyre::Result<Self> {
-    let bind: SocketAddr = cfg
+  pub fn from_user(cfg: &RpcConfig) -> misstep::Result<Self> {
+    let bind = cfg
       .bind
-      .parse()
+      .parse::<SocketAddr>()
       .with_context(|| format!("parse bind {}", cfg.bind))?;
     let tls = match &cfg.tls {
       None => None,
@@ -278,7 +278,7 @@ pub async fn serve(
   cfg: ServerConfig,
   pool: Arc<AgentPool>,
   db_pool: PgPool,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let listener = TcpListener::bind(cfg.bind)
     .await
     .with_context(|| format!("bind {}", cfg.bind))?;
@@ -340,8 +340,8 @@ pub async fn serve(
 }
 
 enum SessionEnd {
-  Registered(color_eyre::Report),
-  Unregistered(color_eyre::Report),
+  Registered(misstep::Report),
+  Unregistered(misstep::Report),
 }
 
 #[expect(clippy::future_not_send, reason = "capnp future")]
@@ -436,7 +436,7 @@ async fn run_rpc(
   db_pool: PgPool,
   registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>>,
   closed: CancellationToken,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   if let Some(tls) = cfg.tls.as_ref() {
     let stream = tokio::select! {
       stream = tls.acceptor.clone().accept(socket) => stream?,
@@ -1202,12 +1202,12 @@ impl runner::Server for RunnerImpl {
 async fn export_drv_closure(
   drv_path: &str,
   sink: drv_sink::Client,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   use tokio::io::AsyncReadExt as _;
 
   let closure = crate::dispatch::drv_requisites(drv_path).await?;
   if closure.is_empty() {
-    return Err(color_eyre::eyre::eyre!(
+    return Err(misstep::report!(
       "derivation {drv_path} has an empty closure"
     ));
   }
@@ -1222,7 +1222,7 @@ async fn export_drv_closure(
   let mut stdout = child
     .stdout
     .take()
-    .ok_or_else(|| color_eyre::eyre::eyre!("export stdout missing"))?;
+    .ok_or_else(|| misstep::report!("export stdout missing"))?;
 
   let mut buf = vec![0u8; 1024 * 1024];
   let mut stream_err = None;
@@ -1231,15 +1231,14 @@ async fn export_drv_closure(
       Ok(0) => break,
       Ok(n) => n,
       Err(e) => {
-        stream_err =
-          Some(color_eyre::eyre::eyre!("read nix-store --export: {e}"));
+        stream_err = Some(misstep::report!("read nix-store --export: {e}"));
         break;
       },
     };
     let mut req = sink.write_request();
     req.get().set_chunk(&buf[..n]);
     if let Err(e) = req.send().promise.await {
-      stream_err = Some(color_eyre::eyre::eyre!("stream drv closure: {e}"));
+      stream_err = Some(misstep::report!("stream drv closure: {e}"));
       break;
     }
   }
@@ -1253,9 +1252,7 @@ async fn export_drv_closure(
 
   let status = child.wait().await?;
   if !status.success() {
-    return Err(color_eyre::eyre::eyre!(
-      "nix-store --export exited with {status}"
-    ));
+    return Err(misstep::report!("nix-store --export exited with {status}"));
   }
   Ok(())
 }
@@ -1268,7 +1265,7 @@ async fn sign_fingerprint(
   nar_hash: &str,
   nar_size: i64,
   references: &[String],
-) -> color_eyre::Result<String> {
+) -> misstep::Result<String> {
   let key = circus_common::narinfo_signing::read_signing_key(key_file).await?;
   Ok(circus_common::narinfo_signing::sign_narinfo(
     &key, store_path, nar_hash, nar_size, references,

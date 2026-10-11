@@ -1,3 +1,3 @@
-fn main() -> color_eyre::Result<()> {
+fn main() -> misstep::Result<()> {
   circus_queue_runner::cli::run()
 }

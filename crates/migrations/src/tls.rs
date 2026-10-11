@@ -6,7 +6,7 @@ use std::{
   sync::{Arc, Once},
 };
 
-use color_eyre::eyre::{Context as _, bail};
+use misstep::{ResultExt as _, bail};
 use rustls::{
   DigitallySignedStruct,
   SignatureScheme,
@@ -43,12 +43,12 @@ pub struct DatabaseTarget {
 ///
 /// Returns an error for a non-URL connection string, an unknown `sslmode`,
 /// or an unreadable `sslrootcert`.
-pub fn resolve(database_url: &str) -> color_eyre::Result<DatabaseTarget> {
+pub fn resolve(database_url: &str) -> misstep::Result<DatabaseTarget> {
   let mut url = Url::parse(database_url)
     .ok()
     .filter(|url| matches!(url.scheme(), "postgres" | "postgresql"))
     .ok_or_else(|| {
-      color_eyre::eyre::eyre!("database URL must be a postgresql:// URL")
+      misstep::report!("database URL must be a postgresql:// URL")
     })?;
 
   let mut sslmode = None;
@@ -149,7 +149,7 @@ fn tls_connector(
 
 fn root_store(
   root_cert: Option<&PathBuf>,
-) -> color_eyre::Result<rustls::RootCertStore> {
+) -> misstep::Result<rustls::RootCertStore> {
   let Some(path) = root_cert else {
     return Ok(webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect());
   };
@@ -173,7 +173,7 @@ fn root_store(
 /// Returns an error when URL resolution, negotiation, or startup fails.
 pub async fn connect_once(
   database_url: &str,
-) -> color_eyre::Result<tokio_postgres::Client> {
+) -> misstep::Result<tokio_postgres::Client> {
   let target = resolve(database_url)?;
   let config = target.url.parse::<tokio_postgres::Config>()?;
   let client = match target.tls {

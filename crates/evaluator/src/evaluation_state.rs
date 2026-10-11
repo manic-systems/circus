@@ -15,7 +15,7 @@ pub enum ExistingEvaluationClaim {
 pub async fn claim_existing(
   pool: &PgPool,
   existing: Evaluation,
-) -> color_eyre::Result<ExistingEvaluationClaim> {
+) -> misstep::Result<ExistingEvaluationClaim> {
   match existing.status {
     EvaluationStatus::Pending => {
       Ok(

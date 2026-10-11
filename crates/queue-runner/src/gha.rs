@@ -6,7 +6,7 @@ use std::{
 
 use circus_common::{PgPool, repo};
 use circus_config::{EphemeralPoolConfig, GithubActionsPoolConfig};
-use color_eyre::eyre::{Context as _, bail};
+use misstep::{ResultExt as _, bail};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -71,7 +71,7 @@ impl Autoscaler {
     pool: PgPool,
     agent_pool: Arc<AgentPool>,
     shutdown_token: CancellationToken,
-  ) -> color_eyre::Result<Self> {
+  ) -> misstep::Result<Self> {
     let token = load_token(&cfg.github_actions).await?;
     let http = reqwest::Client::builder()
       .user_agent("circus-queue-runner")
@@ -117,7 +117,7 @@ impl Autoscaler {
     }
   }
 
-  async fn tick(&mut self) -> color_eyre::Result<()> {
+  async fn tick(&mut self) -> misstep::Result<()> {
     self.prune_inflight();
     if self.in_cooldown() {
       return Ok(());
@@ -171,7 +171,7 @@ impl Autoscaler {
     })
   }
 
-  async fn demand(&self) -> color_eyre::Result<Demand> {
+  async fn demand(&self) -> misstep::Result<Demand> {
     let builds =
       repo::builds::list_pending_for_systems(&self.pool, &self.cfg.systems)
         .await
@@ -271,12 +271,12 @@ impl Autoscaler {
     })
   }
 
-  async fn dispatch_workflow(&self) -> color_eyre::Result<()> {
+  async fn dispatch_workflow(&self) -> misstep::Result<()> {
     let gha = &self.cfg.github_actions;
-    let (owner, repo) =
-      gha.workflow_repository.split_once('/').ok_or_else(|| {
-        color_eyre::eyre::eyre!("repository must be owner/repo")
-      })?;
+    let (owner, repo) = gha
+      .workflow_repository
+      .split_once('/')
+      .ok_or_else(|| misstep::report!("repository must be owner/repo"))?;
     let workflow = urlencoding::encode(&gha.workflow);
     let url = format!(
       "https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow}/dispatches"
@@ -333,9 +333,7 @@ fn agent_name_matches_pool(agent_name: &str, pool_name: &str) -> bool {
       .is_some_and(|suffix| suffix.starts_with('-'))
 }
 
-async fn load_token(
-  cfg: &GithubActionsPoolConfig,
-) -> color_eyre::Result<String> {
+async fn load_token(cfg: &GithubActionsPoolConfig) -> misstep::Result<String> {
   if let Some(token) = cfg.token.as_deref()
     && !token.trim().is_empty()
   {

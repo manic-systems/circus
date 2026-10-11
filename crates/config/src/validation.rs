@@ -4,7 +4,7 @@ use circus_types::validation::{
   validate_binary_cache_upstream,
   validate_cache_url,
 };
-use color_eyre::eyre::{self, WrapErr, bail};
+use misstep::{self, ResultExt, bail};
 use url::{Host, Url};
 
 use crate::{
@@ -20,7 +20,7 @@ use crate::{
 const MAX_OIDC_PROVIDER_NAME_LEN: usize = 16;
 
 impl CacheGcConfig {
-  fn validate(&self, upload: &CacheUploadConfig) -> eyre::Result<()> {
+  fn validate(&self, upload: &CacheUploadConfig) -> misstep::Result<()> {
     self.validate_policy()?;
     if self.is_enabled() {
       Self::validate_storage(upload)?;
@@ -28,7 +28,7 @@ impl CacheGcConfig {
     Ok(())
   }
 
-  fn validate_policy(&self) -> eyre::Result<()> {
+  fn validate_policy(&self) -> misstep::Result<()> {
     if self.max_size_bytes.is_some_and(|bytes| bytes <= 0) {
       bail!("cache.gc.max_size_bytes must be greater than 0");
     }
@@ -61,7 +61,7 @@ impl CacheGcConfig {
     Ok(())
   }
 
-  fn validate_storage(upload: &CacheUploadConfig) -> eyre::Result<()> {
+  fn validate_storage(upload: &CacheUploadConfig) -> misstep::Result<()> {
     if upload
       .store_uri
       .as_deref()
@@ -84,7 +84,7 @@ impl CacheGcConfig {
   }
 }
 
-fn validate_css_variable_name(name: &str) -> eyre::Result<()> {
+fn validate_css_variable_name(name: &str) -> misstep::Result<()> {
   let name = name.trim_start_matches("--");
   if name.is_empty()
     || !name
@@ -98,8 +98,8 @@ fn validate_css_variable_name(name: &str) -> eyre::Result<()> {
   Ok(())
 }
 
-fn validate_shared(result: Result<(), String>) -> eyre::Result<()> {
-  result.map_err(|error| eyre::eyre!(error))
+fn validate_shared(result: Result<(), String>) -> misstep::Result<()> {
+  result.map_err(misstep::Report::msg)
 }
 
 impl DatabaseConfig {
@@ -108,7 +108,7 @@ impl DatabaseConfig {
   /// # Errors
   ///
   /// Returns error if configuration is invalid.
-  pub fn validate(&self) -> eyre::Result<()> {
+  pub fn validate(&self) -> misstep::Result<()> {
     if self.url.is_empty() {
       bail!("Database URL cannot be empty");
     }
@@ -128,7 +128,7 @@ impl DatabaseConfig {
 }
 
 impl Config {
-  fn validate_global_cache(&self) -> eyre::Result<()> {
+  fn validate_global_cache(&self) -> misstep::Result<()> {
     if let Some(url) = self.cache.cache_url.as_deref() {
       validate_shared(validate_cache_url(url, "cache.cache_url"))?;
     }
@@ -141,7 +141,7 @@ impl Config {
     self.cache.gc.validate(&self.cache_upload)
   }
 
-  fn validate_project_caches(&self) -> eyre::Result<()> {
+  fn validate_project_caches(&self) -> misstep::Result<()> {
     for (project_idx, project) in self.declarative.projects.iter().enumerate() {
       if let Some(url) = project.cache_url.as_deref() {
         validate_shared(validate_cache_url(
@@ -168,7 +168,7 @@ impl Config {
   /// # Errors
   ///
   /// Returns error if any configuration section is invalid.
-  pub fn validate(&self) -> eyre::Result<()> {
+  pub fn validate(&self) -> misstep::Result<()> {
     // Validate database URL
     if self.database.url.is_empty() {
       bail!("Database URL cannot be empty");
@@ -579,23 +579,22 @@ impl Config {
       }
 
       let issuer = Url::parse(&provider.issuer_url)
-        .wrap_err_with(|| format!("oauth.oidc.{name}.issuer_url is invalid"))?;
+        .with_context(|| format!("oauth.oidc.{name}.issuer_url is invalid"))?;
 
       if !https_or_loopback(&issuer) {
         bail!("oauth.oidc.{name}.issuer_url requires HTTPS or loopback HTTP");
       }
 
-      let redirect =
-        Url::parse(&provider.redirect_uri).wrap_err_with(|| {
-          format!("oauth.oidc.{name}.redirect_uri is invalid")
-        })?;
+      let redirect = Url::parse(&provider.redirect_uri).with_context(|| {
+        format!("oauth.oidc.{name}.redirect_uri is invalid")
+      })?;
 
       if !https_or_loopback(&redirect) {
         bail!("oauth.oidc.{name}.redirect_uri requires HTTPS or loopback HTTP");
       }
 
       if let Some(uri) = &provider.post_logout_redirect_uri {
-        let uri = Url::parse(uri).wrap_err_with(|| {
+        let uri = Url::parse(uri).with_context(|| {
           format!("oauth.oidc.{name}.post_logout_redirect_uri is invalid")
         })?;
 

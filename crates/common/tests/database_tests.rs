@@ -5,7 +5,7 @@ use circus_common::*;
 use circus_config::DatabaseConfig;
 
 #[tokio::test]
-async fn test_database_connection() -> color_eyre::Result<()> {
+async fn test_database_connection() -> misstep::Result<()> {
   let config = DatabaseConfig {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
@@ -45,7 +45,7 @@ async fn test_database_connection() -> color_eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_database_health_check() -> color_eyre::Result<()> {
+async fn test_database_health_check() -> misstep::Result<()> {
   let url = "postgresql://postgres:password@localhost/test";
   let pool = circus_common::db::build_pool(url, 5)?;
 
@@ -64,7 +64,7 @@ async fn test_database_health_check() -> color_eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_info() -> color_eyre::Result<()> {
+async fn test_connection_info() -> misstep::Result<()> {
   // Try to connect, skip test if database is not available
   let url = "postgresql://postgres:password@localhost/test";
   let pool = circus_common::db::build_pool(url, 5)?;
@@ -109,7 +109,7 @@ async fn test_connection_info() -> color_eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_pool_stats() -> color_eyre::Result<()> {
+async fn test_pool_stats() -> misstep::Result<()> {
   let db = match Database::new(DatabaseConfig {
     url:             "postgresql://postgres:password@localhost/test"
       .to_string(),
@@ -140,7 +140,7 @@ async fn test_pool_stats() -> color_eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_database_config_validation() -> color_eyre::Result<()> {
+async fn test_database_config_validation() -> misstep::Result<()> {
   // Valid config
   let config = DatabaseConfig {
     url:             "postgresql://user:pass@localhost/db".to_string(),

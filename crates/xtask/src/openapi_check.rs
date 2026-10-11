@@ -7,10 +7,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use color_eyre::{
-  Result,
-  eyre::{Context, bail},
-};
+use misstep::{Result, ResultExt, bail};
 use regex::Regex;
 use serde_json::Value;
 use utoipa::openapi::OpenApi;

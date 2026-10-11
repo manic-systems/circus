@@ -26,7 +26,7 @@ use circus_common::{
   roles::GlobalRole,
 };
 use circus_config::Config;
-use color_eyre::eyre::{Result, WrapErr, bail};
+use misstep::{Result, ResultExt, bail};
 
 const USERNAME: &str = "preview";
 const PASSWORD: &str = "Preview-password-1";
@@ -45,7 +45,7 @@ impl Cluster {
     DirBuilder::new()
       .mode(0o700)
       .create(&dir)
-      .wrap_err_with(|| format!("creating {}", dir.display()))?;
+      .with_context(|| format!("creating {}", dir.display()))?;
     let cluster = Self { dir };
     let data = cluster.dir.join("data");
 
@@ -98,7 +98,7 @@ impl Drop for Cluster {
 
 fn exec(command: &mut Command) -> Result<()> {
   let program = command.get_program().to_string_lossy().into_owned();
-  let output = command.output().wrap_err_with(|| {
+  let output = command.output().with_context(|| {
     format!("{program} not found, run inside `nix develop`")
   })?;
 

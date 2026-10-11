@@ -11,9 +11,9 @@ use std::{
 
 use async_compression::tokio::bufread::{GzipDecoder, XzDecoder, ZstdDecoder};
 use circus_binary_cache::{archive::NarEvent, parse_nar};
-use color_eyre::eyre::{Context as _, bail, eyre};
 use data_encoding::{BASE64, HEXLOWER, HEXLOWER_PERMISSIVE};
 use futures::{StreamExt as _, TryStreamExt as _};
+use misstep::{ResultExt as _, bail, report};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, BufReader, ReadBuf};
@@ -50,7 +50,7 @@ fn http_client() -> &'static reqwest::Client {
   })
 }
 
-pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
+pub async fn verify(req: VerifyRequest) -> misstep::Result<UploadedNar> {
   let response = http_client()
     .get(&req.get_url)
     .send()
@@ -122,7 +122,7 @@ pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
   let computed_nar = hasher.finalize();
   let computed_file = {
     let hasher = Arc::try_unwrap(file_hasher)
-      .map_err(|_| eyre!("file hasher still has live readers"))?
+      .map_err(|_| report!("file hasher still has live readers"))?
       .into_inner();
     hasher.finalize()
   };
@@ -220,7 +220,7 @@ struct RefScanner {
 }
 
 impl RefScanner {
-  fn new(references: &[String]) -> color_eyre::Result<Self> {
+  fn new(references: &[String]) -> misstep::Result<Self> {
     let wanted = references
       .iter()
       .map(|reference| {
@@ -230,9 +230,11 @@ impl RefScanner {
           .get(..HASH_PART_LEN)
           .filter(|hash| hash.iter().copied().all(is_nix32))
           .and_then(|hash| hash.try_into().ok())
-          .ok_or_else(|| eyre!("reference {reference} has no store path hash"))
+          .ok_or_else(|| {
+            report!("reference {reference} has no store path hash")
+          })
       })
-      .collect::<color_eyre::Result<_>>()?;
+      .collect::<misstep::Result<_>>()?;
     Ok(Self {
       wanted,
       found: HashSet::new(),
@@ -321,12 +323,12 @@ fn redact_url_query(url: &str) -> String {
   )
 }
 
-fn hash_matches(text: &str, computed: &[u8]) -> color_eyre::Result<bool> {
+fn hash_matches(text: &str, computed: &[u8]) -> misstep::Result<bool> {
   let expected = parse_sha256_hash(text)?;
   Ok(expected == computed)
 }
 
-fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
+fn parse_sha256_hash(text: &str) -> misstep::Result<Vec<u8>> {
   if let Some(sri) = text.strip_prefix("sha256-") {
     let mut padded = sri.to_owned();
     while padded.len() % 4 != 0 {
@@ -353,7 +355,7 @@ fn parse_sha256_hash(text: &str) -> color_eyre::Result<Vec<u8>> {
   }
   if let Some(nix32) = text.strip_prefix("sha256:") {
     return circus_nix::base32::decode_sha256(nix32)
-      .map_err(|e| eyre!("{e}"))
+      .map_err(|e| report!("{e}"))
       .with_context(|| format!("decode Nix base32 sha256 hash {text}"));
   }
   bail!("unsupported sha256 hash format: {text}")

@@ -18,7 +18,7 @@ impl Database {
   /// # Errors
   ///
   /// Returns error if connection fails or health check fails.
-  pub async fn new(config: DatabaseConfig) -> color_eyre::Result<Self> {
+  pub async fn new(config: DatabaseConfig) -> misstep::Result<Self> {
     info!("Initializing database connection pool");
 
     // Deadpool has no equivalents for the other configured pool lifetimes.
@@ -52,14 +52,14 @@ impl Database {
   /// # Errors
   ///
   /// Returns error if query fails or returns unexpected result.
-  pub async fn health_check(pool: &PgPool) -> color_eyre::Result<()> {
+  pub async fn health_check(pool: &PgPool) -> misstep::Result<()> {
     debug!("Performing database health check");
 
     let client = pool.get().await?;
     let result = health_q::check().bind(&client).one().await?;
 
     if result != 1 {
-      return Err(color_eyre::eyre::eyre!(
+      return Err(misstep::report!(
         "Database health check failed: unexpected result"
       ));
     }
@@ -79,9 +79,7 @@ impl Database {
   /// # Errors
   ///
   /// Returns error if query fails.
-  pub async fn get_connection_info(
-    &self,
-  ) -> color_eyre::Result<ConnectionInfo> {
+  pub async fn get_connection_info(&self) -> misstep::Result<ConnectionInfo> {
     let client = self.pool.get().await?;
     let row = database_q::connection_info().bind(&client).one().await?;
 

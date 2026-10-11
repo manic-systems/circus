@@ -372,7 +372,7 @@ impl<'a> BuildStream<'a> {
     eval_id: Uuid,
     memory_limit: MemoryLimit,
     allowed_systems: Option<&'a HashSet<String>>,
-  ) -> color_eyre::Result<Self> {
+  ) -> misstep::Result<Self> {
     let mut drv_to_build = HashMap::new();
     let mut name_to_build = HashMap::new();
     let mut name_to_drv = HashMap::new();
@@ -411,7 +411,7 @@ impl<'a> BuildStream<'a> {
   pub(crate) async fn insert(
     &mut self,
     jobs: Vec<NixJob>,
-  ) -> color_eyre::Result<Option<Vec<Build>>> {
+  ) -> misstep::Result<Option<Vec<Build>>> {
     let jobs = self.allowed(jobs);
     let (aggregates, jobs): (Vec<_>, Vec<_>) =
       jobs.into_iter().partition(|job| job.constituents.is_some());
@@ -424,7 +424,7 @@ impl<'a> BuildStream<'a> {
   /// # Returns
   ///
   /// `false` if the evaluation stopped running first.
-  pub(crate) async fn complete(mut self) -> color_eyre::Result<bool> {
+  pub(crate) async fn complete(mut self) -> misstep::Result<bool> {
     let aggregates = std::mem::take(&mut self.aggregates);
     let completed = self.persist(aggregates, true).await?.is_some();
     if self.dropped > 0 {
@@ -518,7 +518,7 @@ impl<'a> BuildStream<'a> {
     &mut self,
     jobs: Vec<NixJob>,
     finish: bool,
-  ) -> color_eyre::Result<Option<Vec<Build>>> {
+  ) -> misstep::Result<Option<Vec<Build>>> {
     // A restart keeps running and succeeded builds, which only stand in for a
     // job whose derivation is unchanged.
     let mut stale = Vec::new();
@@ -653,7 +653,7 @@ impl<'a> BuildStream<'a> {
       )
       .await?;
       if !finished {
-        return Err(color_eyre::eyre::eyre!(
+        return Err(misstep::report!(
           "evaluation {} lost its running state while locked",
           self.eval_id
         ));

@@ -8,10 +8,7 @@ use std::path::{Path, PathBuf};
 
 use circus_config::apply_env_vars;
 pub use circus_logs::TracingConfig;
-use color_eyre::{
-  Result,
-  eyre::{WrapErr as _, bail},
-};
+use misstep::{Result, ResultExt as _, bail};
 use serde::{Deserialize, Serialize};
 
 /// Top-level agent config.
@@ -205,14 +202,14 @@ impl AgentConfig {
   pub fn load(path: Option<&Path>) -> Result<Self> {
     let (chosen, _) = Self::chosen_path(path);
     let contents = std::fs::read_to_string(&chosen)
-      .wrap_err_with(|| format!("read {}", chosen.display()))?;
+      .with_context(|| format!("read {}", chosen.display()))?;
     let mut table: toml::Value = toml::from_str(&contents)
-      .wrap_err_with(|| format!("parse {}", chosen.display()))?;
+      .with_context(|| format!("parse {}", chosen.display()))?;
     apply_env_vars(&mut table, "CIRCUS_AGENT__", std::env::vars());
 
     let mut parsed: Self = table
       .try_into()
-      .wrap_err_with(|| format!("invalid agent config {}", chosen.display()))?;
+      .with_context(|| format!("invalid agent config {}", chosen.display()))?;
 
     if let Ok(token) = std::env::var("CIRCUS_AGENT_TOKEN") {
       parsed.agent.auth_token = token;

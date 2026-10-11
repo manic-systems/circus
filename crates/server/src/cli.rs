@@ -4,7 +4,7 @@ use std::{ffi::OsString, net::SocketAddr, path::PathBuf, sync::Arc};
 use circus_common::Database;
 use circus_config::Config;
 use clap::Parser;
-use color_eyre::eyre::WrapErr;
+use misstep::ResultExt as _;
 use tokio::net::TcpListener;
 
 use crate::{
@@ -77,7 +77,7 @@ async fn shutdown_signal() {
 /// # Errors
 ///
 /// Returns an error when configuration, database setup, or serving fails.
-pub fn run() -> color_eyre::Result<()> {
+pub fn run() -> misstep::Result<()> {
   run_from(std::env::args_os())
 }
 
@@ -86,12 +86,12 @@ pub fn run() -> color_eyre::Result<()> {
 /// # Errors
 ///
 /// Returns an error when configuration, database setup, or serving fails.
-pub fn run_from<I, T>(args: I) -> color_eyre::Result<()>
+pub fn run_from<I, T>(args: I) -> misstep::Result<()>
 where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
 {
-  color_eyre::install()?;
+  misstep::install_panic_hook();
   circus_common::install_crypto_provider()?;
 
   let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -100,7 +100,7 @@ where
   runtime.block_on(run_async(args))
 }
 
-async fn run_async<I, T>(args: I) -> color_eyre::Result<()>
+async fn run_async<I, T>(args: I) -> misstep::Result<()>
 where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
@@ -132,7 +132,7 @@ where
 /// # Errors
 ///
 /// Returns an error when database setup, bootstrap, or serving fails.
-pub async fn serve(config: Config, bind_addr: &str) -> color_eyre::Result<()> {
+pub async fn serve(config: Config, bind_addr: &str) -> misstep::Result<()> {
   circus_common::validate::warn_insecure_schemes(
     &config.server.allowed_url_schemes,
   );
@@ -173,24 +173,24 @@ pub async fn serve(config: Config, bind_addr: &str) -> color_eyre::Result<()> {
     .email_validation_regex
     .as_deref()
     .map(|pat| {
-      regex::Regex::new(pat).map(Arc::new).map_err(|e| {
-        color_eyre::eyre::eyre!("Invalid email_validation_regex: {e}")
-      })
+      regex::Regex::new(pat)
+        .map(Arc::new)
+        .map_err(|e| misstep::report!("Invalid email_validation_regex: {e}"))
     })
     .transpose()?;
 
   let nix_store = NixStore::new(config.nix.store_dir.clone())
-    .map_err(|e| color_eyre::eyre::eyre!(e))?;
+    .map_err(misstep::Report::msg)?;
 
   // Fail fast on a signing config whose key cannot be used.
   let cache_public_key = match signing::signing_public_key(&config) {
     Some(key) => {
       Some(Arc::new(key.parse().map_err(|e| {
-        color_eyre::eyre::eyre!("signing yields an unusable public key: {e:?}")
+        misstep::report!("signing yields an unusable public key: {e:?}")
       })?))
     },
     None if config.signing.enabled && config.signing.key_file.is_some() => {
-      return Err(color_eyre::eyre::eyre!(
+      return Err(misstep::report!(
         "signing is enabled but no public key could be derived from \
          signing.key_file"
       ));
@@ -217,7 +217,7 @@ pub async fn serve(config: Config, bind_addr: &str) -> color_eyre::Result<()> {
   // Drain in-memory cache-serving counters into the cache_traffic table.
   state.spawn_cache_traffic_flush();
 
-  let app = routes::router(state, &config).wrap_err(
+  let app = routes::router(state, &config).context(
     "loading dashboard assets, bundle them with --bundle-assets or set \
      ui.dashboard = false",
   )?;

@@ -107,7 +107,7 @@ pub async fn run(
   drv_fetch: DrvFetch<'_>,
   log_sink: log_sink::Client,
   cancel: CancellationToken,
-) -> color_eyre::Result<LocalResult> {
+) -> misstep::Result<LocalResult> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -158,7 +158,7 @@ async fn drv_is_valid(opts: &BuildOptions<'_>) -> bool {
 async fn fetch_drv_over_rpc(
   opts: &BuildOptions<'_>,
   drv_fetch: &DrvFetch<'_>,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let sink: circus_proto::drv_sink::Client = capnp_rpc::new_client(
     crate::drv_sink::DrvSinkImpl::new(opts.drv_path.to_owned(), opts.rootless),
   );
@@ -213,7 +213,7 @@ async fn fetch_drv_from_cache(opts: &BuildOptions<'_>) {
 /// trust rules `nix-store` had.
 fn daemon_command(
   opts: &BuildOptions<'_>,
-) -> color_eyre::Result<(Command, BuildMode)> {
+) -> misstep::Result<(Command, BuildMode)> {
   let mut args = vec![
     "--stdio".to_owned(),
     "--option".into(),
@@ -317,7 +317,7 @@ async fn run_command(
   tun: Tunables,
   log_sink: log_sink::Client,
   cancel: CancellationToken,
-) -> color_eyre::Result<LocalResult> {
+) -> misstep::Result<LocalResult> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -326,11 +326,11 @@ async fn run_command(
   let stdin = child
     .stdin
     .take()
-    .ok_or_else(|| color_eyre::eyre::eyre!("nix-daemon stdin missing"))?;
+    .ok_or_else(|| misstep::report!("nix-daemon stdin missing"))?;
   let stdout = child
     .stdout
     .take()
-    .ok_or_else(|| color_eyre::eyre::eyre!("nix-daemon stdout missing"))?;
+    .ok_or_else(|| misstep::report!("nix-daemon stdout missing"))?;
   supervise(child, stdout, stdin, mode, opts, tun, log_sink, cancel).await
 }
 
@@ -374,7 +374,7 @@ async fn supervise<R, W>(
   tun: Tunables,
   log_sink: log_sink::Client,
   cancel: CancellationToken,
-) -> color_eyre::Result<LocalResult>
+) -> misstep::Result<LocalResult>
 where
   R: AsyncRead + Unpin + Send + 'static,
   W: AsyncWrite + Unpin + Send + 'static,
@@ -384,7 +384,7 @@ where
   let stderr = child
     .stderr
     .take()
-    .ok_or_else(|| color_eyre::eyre::eyre!("nix-daemon stderr missing"))?;
+    .ok_or_else(|| misstep::report!("nix-daemon stderr missing"))?;
 
   // The protocol task and the daemon's own stderr share one channel, which
   // closes once both are done.

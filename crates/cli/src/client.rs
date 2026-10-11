@@ -1,7 +1,4 @@
-use color_eyre::{
-  Result,
-  eyre::{Context, bail},
-};
+use misstep::{Result, ResultExt, bail};
 use reqwest::Method;
 use serde_json::{Value, json};
 

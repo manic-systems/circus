@@ -11,13 +11,13 @@ async-compression.workspace   = true
 axum.workspace                = true
 axum-extra                    = { workspace = true, features = [ "cookie" ] }
 clap.workspace                = true
-color-eyre.workspace          = true
 dashmap.workspace             = true
 data-encoding.workspace       = true
 futures.workspace             = true
 getrandom.workspace           = true
 hmac.workspace                = true
 jiff.workspace                = true
+misstep.workspace             = true
 parking_lot.workspace         = true
 reqwest.workspace             = true
 ring.workspace                = true

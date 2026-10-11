@@ -26,7 +26,7 @@ use circus_config::{
   public_key_from_secret,
 };
 use clap::Parser;
-use color_eyre::eyre::{WrapErr as _, eyre};
+use misstep::{ResultExt as _, report};
 use tokio::sync::{RwLock, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -56,7 +56,7 @@ struct Cli {
 ///
 /// Returns an error when configuration, database setup, or runner startup
 /// fails.
-pub fn run() -> color_eyre::Result<()> {
+pub fn run() -> misstep::Result<()> {
   run_from(std::env::args_os())
 }
 
@@ -66,12 +66,12 @@ pub fn run() -> color_eyre::Result<()> {
 ///
 /// Returns an error when configuration, database setup, or runner startup
 /// fails.
-pub fn run_from<I, T>(args: I) -> color_eyre::Result<()>
+pub fn run_from<I, T>(args: I) -> misstep::Result<()>
 where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
 {
-  color_eyre::install()?;
+  misstep::install_panic_hook();
   circus_common::install_crypto_provider()?;
 
   let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -80,7 +80,7 @@ where
   runtime.block_on(run_async(args))
 }
 
-async fn run_async<I, T>(args: I) -> color_eyre::Result<()>
+async fn run_async<I, T>(args: I) -> misstep::Result<()>
 where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
@@ -104,11 +104,11 @@ where
       (&signing_config.key_file, &signing_config.public_key)
   {
     let secret = std::fs::read_to_string(path)
-      .wrap_err_with(|| format!("read {}", path.display()))?;
+      .with_context(|| format!("read {}", path.display()))?;
     let derived = public_key_from_secret(secret.trim())
-      .ok_or_else(|| eyre!("signing.key_file is not a Nix secret key"))?;
+      .ok_or_else(|| report!("signing.key_file is not a Nix secret key"))?;
     if derived != *expected {
-      return Err(eyre!(
+      return Err(report!(
         "signing.public_key does not match signing.key_file, which gives \
          {derived}"
       ));
@@ -286,12 +286,12 @@ where
 }
 
 async fn rpc_thread_failure(
-  failure: Option<oneshot::Receiver<color_eyre::Report>>,
-) -> color_eyre::Report {
+  failure: Option<oneshot::Receiver<misstep::Report>>,
+) -> misstep::Report {
   match failure {
     Some(receiver) => {
       receiver.await.unwrap_or_else(|_| {
-        eyre!("agent RPC thread exited without reporting an error")
+        report!("agent RPC thread exited without reporting an error")
       })
     },
     None => pending().await,
@@ -415,19 +415,19 @@ fn spawn_rpc_thread(
   signing_cfg: SigningConfig,
   pool: Arc<AgentPool>,
   db_pool: circus_common::PgPool,
-) -> color_eyre::Result<oneshot::Receiver<color_eyre::Report>> {
+) -> misstep::Result<oneshot::Receiver<misstep::Report>> {
   let (failed_tx, failed_rx) = oneshot::channel();
   Builder::new()
     .name("circus-rpc".into())
     .spawn(move || {
       let error =
         match run_rpc_thread(&cfg, &cache_cfg, signing_cfg, pool, db_pool) {
-          Ok(()) => eyre!("agent RPC listener stopped accepting connections"),
+          Ok(()) => report!("agent RPC listener stopped accepting connections"),
           Err(error) => error,
         };
       let _ = failed_tx.send(error);
     })
-    .wrap_err("spawn agent RPC thread")?;
+    .context("spawn agent RPC thread")?;
   Ok(failed_rx)
 }
 
@@ -437,13 +437,13 @@ fn run_rpc_thread(
   signing_cfg: SigningConfig,
   pool: Arc<AgentPool>,
   db_pool: circus_common::PgPool,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let rt = tokio::runtime::Builder::new_current_thread()
     .enable_all()
     .build()
-    .wrap_err("build agent RPC runtime")?;
+    .context("build agent RPC runtime")?;
   let server_cfg = RpcServerConfig::from_user(cfg)
-    .wrap_err("agent RPC config")?
+    .context("agent RPC config")?
     .with_presigner_from(cache_cfg)
     .with_signing_key(
       signing_cfg

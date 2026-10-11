@@ -3,8 +3,8 @@
 use std::{collections::HashSet, time::Instant};
 
 use circus_codegen::queries::migrations as q;
-use color_eyre::eyre::{Context, eyre};
 use crc::{CRC_32_ISO_HDLC, Crc};
+use misstep::{ResultExt, report};
 use sha2::{Digest, Sha384};
 use tracing::{info, warn};
 
@@ -81,7 +81,7 @@ const MIGRATIONS: &[Migration] = migrations![
 ///
 /// Returns an error if the database can't be created or reached, a migration
 /// fails, or an already-applied migration's file changed.
-pub async fn run_migrations(database_url: &str) -> color_eyre::Result<()> {
+pub async fn run_migrations(database_url: &str) -> misstep::Result<()> {
   run_migrations_up_to(database_url, i64::MAX).await
 }
 
@@ -95,7 +95,7 @@ pub async fn run_migrations(database_url: &str) -> color_eyre::Result<()> {
 pub async fn run_migrations_up_to(
   database_url: &str,
   max_version: i64,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   info!("Starting database migrations");
   ensure_database_exists(database_url).await?;
 
@@ -128,14 +128,14 @@ pub async fn run_migrations_up_to(
   Ok(())
 }
 
-async fn ensure_database_exists(database_url: &str) -> color_eyre::Result<()> {
+async fn ensure_database_exists(database_url: &str) -> misstep::Result<()> {
   let mut url =
     url::Url::parse(database_url).context("parsing database URL")?;
   let dbname = urlencoding::decode(url.path().trim_start_matches('/'))
     .context("decoding database name")?
     .into_owned();
   if dbname.is_empty() {
-    return Err(eyre!("database URL has no database name"));
+    return Err(report!("database URL has no database name"));
   }
 
   // When the target is postgres itself the only maintenance DB left is
@@ -184,7 +184,7 @@ async fn ensure_database_exists(database_url: &str) -> color_eyre::Result<()> {
 
 async fn migration_lock_key(
   client: &tokio_postgres::Client,
-) -> color_eyre::Result<i64> {
+) -> misstep::Result<i64> {
   const CRC_IEEE: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
   let database = q::current_database()
@@ -200,7 +200,7 @@ async fn migration_lock_key(
 async fn apply_pending(
   client: &mut tokio_postgres::Client,
   max_version: i64,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let applied = validate_applied(client).await?;
   for migration in MIGRATIONS {
     if migration.version > max_version {
@@ -218,7 +218,7 @@ async fn apply_pending(
 
 async fn validate_applied(
   client: &tokio_postgres::Client,
-) -> color_eyre::Result<HashSet<i64>> {
+) -> misstep::Result<HashSet<i64>> {
   let rows = q::applied_migrations()
     .bind(client)
     .all()
@@ -230,17 +230,17 @@ async fn validate_applied(
     let version = row.version;
     let Some(migration) = MIGRATIONS.iter().find(|m| m.version == version)
     else {
-      return Err(eyre!(
+      return Err(report!(
         "applied migration {version} is missing from this binary"
       ));
     };
     if !row.success {
-      return Err(eyre!(
+      return Err(report!(
         "migration {version} previously failed and needs manual intervention"
       ));
     }
     if row.checksum != migration_checksum(migration) {
-      return Err(eyre!(
+      return Err(report!(
         "migration {version} checksum mismatch, the file changed after it was \
          applied"
       ));
@@ -259,7 +259,7 @@ async fn apply_one(
   client: &mut tokio_postgres::Client,
   migration: &Migration,
   checksum: &[u8],
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let started = Instant::now();
   let tx = client
     .transaction()
@@ -304,18 +304,18 @@ async fn apply_one(
 /// Returns an error if a query fails or a required table or view is missing.
 pub async fn validate_schema(
   client: &tokio_postgres::Client,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   info!("Validating database schema");
 
   for table in REQUIRED_TABLES {
     if !q::table_exists().bind(client, table).one().await? {
-      return Err(eyre!("Required table '{table}' does not exist"));
+      return Err(report!("Required table '{table}' does not exist"));
     }
   }
 
   for view in REQUIRED_VIEWS {
     if !q::view_exists().bind(client, view).one().await? {
-      return Err(eyre!("Required view '{view}' does not exist"));
+      return Err(report!("Required view '{view}' does not exist"));
     }
   }
 
