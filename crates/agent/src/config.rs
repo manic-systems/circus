@@ -6,7 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
+use circus_config::{apply_env_vars, from_value};
 pub use circus_logs::TracingConfig;
+use color_eyre::{
+  Result,
+  eyre::{WrapErr as _, bail},
+};
 use serde::{Deserialize, Serialize};
 
 /// Top-level agent config.
@@ -195,26 +200,24 @@ impl AgentConfig {
   ///
   /// # Errors
   ///
-  /// Returns the underlying `config` error on missing file or parse failure.
-  pub fn load(path: Option<&Path>) -> Result<Self, config::ConfigError> {
+  /// Returns an error on a missing or unreadable file, invalid TOML, or a
+  /// configuration that does not deserialize.
+  pub fn load(path: Option<&Path>) -> Result<Self> {
     let (chosen, _) = Self::chosen_path(path);
+    let contents = std::fs::read_to_string(&chosen)
+      .wrap_err_with(|| format!("read {}", chosen.display()))?;
+    let mut table: toml::Value = toml::from_str(&contents)
+      .wrap_err_with(|| format!("parse {}", chosen.display()))?;
+    apply_env_vars(&mut table, "CIRCUS_AGENT__", std::env::vars());
 
-    let cfg = config::Config::builder()
-      .add_source(config::File::from(chosen.as_path()))
-      .add_source(
-        config::Environment::with_prefix("CIRCUS_AGENT").separator("__"),
-      )
-      .build()?;
-
-    let mut parsed = cfg.try_deserialize::<Self>()?;
+    let mut parsed: Self = from_value(table)
+      .wrap_err_with(|| format!("invalid agent config {}", chosen.display()))?;
 
     if let Ok(token) = std::env::var("CIRCUS_AGENT_TOKEN") {
       parsed.agent.auth_token = token;
     }
     if parsed.agent.auth_token.is_empty() {
-      return Err(config::ConfigError::Message(
-        "no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token".into(),
-      ));
+      bail!("no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token");
     }
 
     Ok(parsed)
@@ -226,11 +229,9 @@ impl AgentConfig {
   ///
   /// # Errors
   ///
-  /// Returns the underlying `config` error when an explicit config file is
-  /// missing, malformed, or deserializes to an invalid agent configuration.
-  pub fn load_if_available(
-    path: Option<&Path>,
-  ) -> Result<Option<Self>, config::ConfigError> {
+  /// Returns an error when an explicit config file is missing, malformed, or
+  /// deserializes to an invalid agent configuration.
+  pub fn load_if_available(path: Option<&Path>) -> Result<Option<Self>> {
     let (chosen, explicit) = Self::chosen_path(path);
     if !explicit && !chosen.exists() {
       return Ok(None);
