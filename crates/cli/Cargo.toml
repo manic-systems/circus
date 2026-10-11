@@ -14,7 +14,6 @@ path = "src/main.rs"
 circus-common.workspace = true
 circus-http.workspace   = true
 clap.workspace          = true
-comfy-table.workspace   = true
 misstep.workspace       = true
 reqwest.workspace       = true
 serde_json.workspace    = true
