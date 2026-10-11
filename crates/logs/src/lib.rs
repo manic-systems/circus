@@ -1,7 +1,11 @@
 //! Logging configuration and initialization for Circus daemons.
 
 use serde::{Deserialize, Serialize};
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{
+  EnvFilter,
+  fmt,
+  fmt::{format::JsonFields, time::SystemTime},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -31,39 +35,24 @@ pub fn init_tracing(config: &TracingConfig) {
   let env_filter = EnvFilter::try_from_default_env()
     .unwrap_or_else(|_| EnvFilter::new(&config.level));
 
+  let format = fmt::format().with_target(config.show_targets);
+  // Swapping the timer back keeps one instantiation per format.
+  let format = if config.show_timestamps {
+    format
+  } else {
+    format.without_time().with_timer(SystemTime)
+  };
+  let builder = fmt().with_env_filter(env_filter);
+
   match config.format.as_str() {
     "json" => {
-      let builder = fmt()
-        .json()
-        .with_target(config.show_targets)
-        .with_env_filter(env_filter);
-      if config.show_timestamps {
-        builder.init();
-      } else {
-        builder.without_time().init();
-      }
+      builder
+        .event_format(format.json())
+        .fmt_fields(JsonFields::new())
+        .init();
     },
-    "full" => {
-      let builder = fmt()
-        .with_target(config.show_targets)
-        .with_env_filter(env_filter);
-      if config.show_timestamps {
-        builder.init();
-      } else {
-        builder.without_time().init();
-      }
-    },
-    _ => {
-      // "compact" or any other value
-      let builder = fmt()
-        .compact()
-        .with_target(config.show_targets)
-        .with_env_filter(env_filter);
-      if config.show_timestamps {
-        builder.init();
-      } else {
-        builder.without_time().init();
-      }
-    },
+    "full" => builder.event_format(format).init(),
+    // "compact" or any other value
+    _ => builder.event_format(format.compact()).init(),
   }
 }
