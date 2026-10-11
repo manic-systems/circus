@@ -133,7 +133,7 @@ topcoat = { version = "0.10.0", default-features = false, features = [
   "view",
 ] }
 tower = "0.5.3"
-tower-http = { version = "0.7.1", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
+tower-http = { version = "0.6.11", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter", "json" ] }
 url = "2.5.8"
