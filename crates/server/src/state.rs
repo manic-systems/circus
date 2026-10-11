@@ -17,12 +17,11 @@ use circus_config::Config;
 use dashmap::DashMap;
 use data_encoding::HEXLOWER;
 use hmac::KeyInit;
-use moka::sync::Cache;
 use regex::Regex;
 use tokio::sync::OnceCell;
 use tokio_rusqlite::{Connection as SqliteConnection, OpenFlags};
 
-use crate::routes::oidc::OidcProviders;
+use crate::{routes::oidc::OidcProviders, ttl_cache::TtlCache};
 
 /// How often the background cleanup task runs (every 5 minutes).
 const SESSION_CLEANUP_INTERVAL: std::time::Duration =
@@ -116,7 +115,7 @@ impl SessionData {
   }
 }
 
-pub type NarinfoCache = Cache<String, String>;
+pub type NarinfoCache = TtlCache<String, String>;
 
 #[derive(Clone)]
 pub struct NixStore {
@@ -209,10 +208,7 @@ pub struct AppState {
 impl AppState {
   #[must_use]
   pub fn new_narinfo_cache() -> NarinfoCache {
-    Cache::builder()
-      .max_capacity(NARINFO_CACHE_MAX_ENTRIES as u64)
-      .time_to_live(NARINFO_CACHE_TTL)
-      .build()
+    TtlCache::new(NARINFO_CACHE_TTL, NARINFO_CACHE_MAX_ENTRIES)
   }
 
   /// Compute the CSRF token bound to a given session ID. Same input always

@@ -19,7 +19,6 @@ use circus_common::{
 use circus_config::OidcProviderConfig;
 use circus_http::{RequestExt as _, ResponseExt as _};
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use moka::sync::Cache;
 use reqwest::{Client as HttpClient, header::ACCEPT};
 use serde::{
   Deserialize,
@@ -45,6 +44,7 @@ use crate::{
     oidc_provider_cookie,
   },
   state::AppState,
+  ttl_cache::TtlCache,
 };
 
 type BoxError = Box<dyn Error + Send + Sync>;
@@ -52,6 +52,8 @@ type BoxError = Box<dyn Error + Send + Sync>;
 const MAX_USERNAME_LEN: usize = 32;
 
 const DISCOVERY_TTL: Duration = Duration::from_mins(10);
+/// Providers come from config, so this only bounds a misconfiguration.
+const MAX_PROVIDERS: usize = 64;
 
 #[derive(Deserialize)]
 struct TokenResponse {
@@ -83,11 +85,11 @@ struct Provider {
 /// Discovered providers keyed by config name, so unauthenticated login starts
 /// do not each trigger a discovery fetch.
 #[derive(Clone)]
-pub struct OidcProviders(Cache<String, Arc<Provider>>);
+pub struct OidcProviders(TtlCache<String, Arc<Provider>>);
 
 impl Default for OidcProviders {
   fn default() -> Self {
-    Self(Cache::builder().time_to_live(DISCOVERY_TTL).build())
+    Self(TtlCache::new(DISCOVERY_TTL, MAX_PROVIDERS))
   }
 }
 
