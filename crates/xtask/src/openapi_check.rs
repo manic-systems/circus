@@ -58,7 +58,7 @@ pub fn run() -> Result<()> {
   #![expect(clippy::print_stdout, reason = "xtask CLI output is intentional")]
   let root = workspace_root()?;
   let routes_dir = root.join("crates/server/src/routes");
-  let spec = openapi_document();
+  let spec = openapi_document()?;
   let documented = documented_paths(&spec);
 
   let mut registered = BTreeSet::new();
@@ -107,8 +107,9 @@ pub fn run() -> Result<()> {
   Ok(())
 }
 
-pub fn openapi_document() -> OpenApi {
-  circus_server::routes::openapi::document()
+pub fn openapi_document() -> Result<OpenApi> {
+  serde_json::from_str(circus_server::routes::openapi::DOCUMENT)
+    .context("crates/server/openapi.json is not a valid OpenAPI document")
 }
 
 fn documented_paths(spec: &OpenApi) -> BTreeSet<String> {

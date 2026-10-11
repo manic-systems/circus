@@ -74,8 +74,9 @@ fn scan_routes(module: &str, prefix: &str) -> BTreeSet<String> {
 }
 
 fn parse_documented_paths() -> BTreeSet<String> {
-  let spec = circus_server::routes::openapi::document();
-  let value = serde_json::to_value(spec).expect("serialize OpenAPI document");
+  let value: Value =
+    serde_json::from_str(circus_server::routes::openapi::DOCUMENT)
+      .expect("openapi.json is valid JSON");
   let api_root = value
     .get("servers")
     .and_then(Value::as_array)
@@ -151,8 +152,9 @@ fn openapi_document_covers_every_registered_api_route() {
 
 #[test]
 fn openapi_document_parses_as_valid_json() {
-  let spec = circus_server::routes::openapi::document();
-  let value = serde_json::to_value(spec).expect("serialize OpenAPI document");
+  let value: Value =
+    serde_json::from_str(circus_server::routes::openapi::DOCUMENT)
+      .expect("openapi.json is valid JSON");
   assert_eq!(value["openapi"], "3.1.0");
   assert!(value.get("paths").is_some(), "paths key");
   assert!(value.get("components").is_some(), "components key");
