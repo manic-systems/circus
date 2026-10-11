@@ -53,7 +53,8 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs.buildPackages; [pkg-config capnproto];
-        buildInputs = [];
+        buildInputs = with pkgs; [xz zstd];
+        env.ZSTD_SYS_USE_PKG_CONFIG = "1";
       };
       cargoArtifacts = craneLib.buildDepsOnly (commonArgs
         // {
@@ -79,8 +80,10 @@
         inherit src;
         strictDeps = true;
         nativeBuildInputs = with pkgs.buildPackages; [pkg-config capnproto];
-        buildInputs = with pkgs; [sqlite nixVersions.nix_2_34.dev] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
+        buildInputs = with pkgs; [sqlite nixVersions.nix_2_34.dev xz zstd] ++ lib.optionals stdenv.hostPlatform.isLinux [glibc.dev];
         env = {
+          # Link nixpkgs' zstd and xz instead of compiling their C sources.
+          ZSTD_SYS_USE_PKG_CONFIG = "1";
           LIBCLANG_PATH = "${pkgs.buildPackages.llvmPackages.libclang.lib}/lib";
           BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
         };
@@ -348,6 +351,7 @@
           cargo-nextest
         ];
 
+        ZSTD_SYS_USE_PKG_CONFIG = "1";
         # bindgen (via nix-bindings-sys) needs libclang and a glibc sysroot.
         LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
         BINDGEN_EXTRA_CLANG_ARGS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--sysroot=${pkgs.glibc.dev}";
