@@ -135,7 +135,7 @@ utoipa = "6.0.0"
 uuid = { version = "1.27.0", features = [ "v4", "serde" ] }
 walkdir = "2.5.0"
 webpki-roots = "1.0.9"
-x509-parser = "0.18.1"
+x509-cert = { version = "0.2.5", default-features = false }
 zerocopy = { version = "0.8.60", features = [ "derive" ] }
 zeroize = "1.9.0"
 
