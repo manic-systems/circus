@@ -4,9 +4,11 @@ use std::{
 };
 
 use color_eyre::eyre::{self, WrapErr, bail};
-use config as config_crate;
 
-use crate::{Config, env::apply_env_vars};
+use crate::{
+  Config,
+  env::{apply_env_vars, from_value},
+};
 
 impl Config {
   /// This matches normal file loading semantics without environment overrides,
@@ -17,13 +19,10 @@ impl Config {
   ///
   /// Returns an error if TOML parsing, deserialization, or validation fails.
   pub fn from_toml_with_defaults(contents: &str) -> eyre::Result<Self> {
-    let settings = config_crate::Config::builder()
-      .add_source(config_crate::Config::try_from(&Self::default())?)
-      .add_source(config_crate::File::from_str(
-        contents,
-        config_crate::FileFormat::Toml,
-      ));
-    let config = settings.build()?.try_deserialize::<Self>()?;
+    let mut table = toml::Value::try_from(Self::default())
+      .wrap_err("failed to serialize config defaults")?;
+    deep_merge(&mut table, toml::from_str(contents)?);
+    let config: Self = from_value(table)?;
     config.validate()?;
     Ok(config)
   }
@@ -164,10 +163,10 @@ impl Config {
       toml::from_str(&contents).wrap_err("failed to parse config file")?;
     deep_merge(&mut table, file_table);
 
-    apply_env_vars(&mut table, std::env::vars());
+    apply_env_vars(&mut table, "CIRCUS_", std::env::vars());
 
     let mut config: Self =
-      table.try_into().wrap_err("failed to deserialize config")?;
+      from_value(table).wrap_err("failed to deserialize config")?;
 
     config.resolve_secret_files()?;
     config.validate()?;

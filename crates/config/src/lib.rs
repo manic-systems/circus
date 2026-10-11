@@ -9,8 +9,9 @@ mod validation;
 
 pub use circus_logs::TracingConfig;
 pub use circus_types::BinaryCacheUpstream;
+pub use env::{apply_env_vars, from_value};
 #[cfg(test)]
-pub(crate) use env::{apply_env_vars, parse_env_value, set_nested};
+pub(crate) use env::{parse_env_value, set_nested};
 #[cfg(test)] pub(crate) use load::deep_merge;
 pub use queue::*;
 pub use redact::{redact_secrets, restore_secrets};
@@ -317,24 +318,21 @@ mod tests {
   }
 
   #[test]
-  fn parse_env_value_bool() {
-    assert_eq!(parse_env_value("true"), toml::Value::Boolean(true));
-    assert_eq!(parse_env_value("false"), toml::Value::Boolean(false));
-    assert_eq!(parse_env_value("yes"), toml::Value::Boolean(true));
-    assert_eq!(parse_env_value("no"), toml::Value::Boolean(false));
-    assert_eq!(parse_env_value("TRUE"), toml::Value::Boolean(true));
-    assert_eq!(parse_env_value("OFF"), toml::Value::Boolean(false));
-  }
+  fn env_strings_coerce_to_field_types() {
+    let mut table = toml::Value::try_from(Config::default()).unwrap();
+    apply_env_vars(&mut table, "CIRCUS_", [
+      ("CIRCUS_SERVER__PORT".into(), "8080".into()),
+      (
+        "CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS".into(),
+        "yes".into(),
+      ),
+      ("CIRCUS_TRACING__LEVEL".into(), "off".into()),
+    ]);
 
-  #[test]
-  fn parse_env_value_integer() {
-    assert_eq!(parse_env_value("3000"), toml::Value::Integer(3000));
-    assert_eq!(parse_env_value("0"), toml::Value::Integer(0));
-  }
-
-  #[test]
-  fn parse_env_value_float() {
-    assert_eq!(parse_env_value("1.5"), toml::Value::Float(1.5));
+    let config: Config = from_value(table).unwrap();
+    assert_eq!(config.server.port, 8080);
+    assert!(config.server.require_api_key_for_reads);
+    assert_eq!(config.tracing.level, "off");
   }
 
   #[test]
@@ -390,26 +388,9 @@ mod tests {
   }
 
   #[test]
-  fn apply_env_vars_nested_bool_override() {
-    let mut val = table(toml::toml! {
-      [server]
-      require_api_key_for_reads = false
-      port = 3000
-    });
-    apply_env_vars(&mut val, [(
-      "CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS".into(),
-      "true".into(),
-    )]);
-    assert_eq!(
-      val["server"]["require_api_key_for_reads"].as_bool(),
-      Some(true),
-    );
-  }
-
-  #[test]
   fn apply_env_vars_skips_config_file() {
     let mut val = toml::Value::Table(toml::map::Map::new());
-    apply_env_vars(&mut val, [(
+    apply_env_vars(&mut val, "CIRCUS_", [(
       "CIRCUS_CONFIG_FILE".into(),
       "/some/path".into(),
     )]);
@@ -419,14 +400,17 @@ mod tests {
   #[test]
   fn apply_env_vars_skips_empty_values() {
     let mut val = table(toml::toml! { [server] host = "127.0.0.1" });
-    apply_env_vars(&mut val, [("CIRCUS_SERVER__HOST".into(), String::new())]);
+    apply_env_vars(&mut val, "CIRCUS_", [(
+      "CIRCUS_SERVER__HOST".into(),
+      String::new(),
+    )]);
     assert_eq!(val["server"]["host"].as_str(), Some("127.0.0.1"));
   }
 
   #[test]
   fn apply_env_vars_vec_string_override() {
     let mut val = toml::Value::try_from(Config::default()).unwrap();
-    apply_env_vars(&mut val, [(
+    apply_env_vars(&mut val, "CIRCUS_", [(
       "CIRCUS_SERVER__ALLOWED_URL_SCHEMES".into(),
       r#"["https", "file"]"#.into(),
     )]);
