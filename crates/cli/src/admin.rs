@@ -1,7 +1,4 @@
-use color_eyre::{
-  Result,
-  eyre::{Context, eyre},
-};
+use misstep::{Result, ResultExt, report};
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -435,7 +432,7 @@ impl CommandRunner {
         let contents = response
           .get("contents")
           .and_then(Value::as_str)
-          .ok_or_else(|| eyre!("config response did not include contents"))?;
+          .ok_or_else(|| report!("config response did not include contents"))?;
         println!("{contents}");
       },
       ConfigCommand::Apply { file } => {

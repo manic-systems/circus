@@ -40,10 +40,7 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> ExitCode {
   #![expect(clippy::print_stderr, reason = "xtask error output is intentional")]
-  if let Err(e) = color_eyre::install() {
-    eprintln!("failed to install color-eyre reporter: {e}");
-    return ExitCode::FAILURE;
-  }
+  misstep::install_panic_hook();
   let cli = Cli::parse();
   let result = match cli.command {
     Cmd::ApiDocs { check } => api_docs::run(check),
@@ -55,7 +52,7 @@ async fn main() -> ExitCode {
   match result {
     Ok(()) => ExitCode::SUCCESS,
     Err(e) => {
-      eprintln!("xtask failed: {e:#}");
+      eprintln!("xtask failed: {e}");
       ExitCode::FAILURE
     },
   }

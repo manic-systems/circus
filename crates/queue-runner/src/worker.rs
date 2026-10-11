@@ -966,7 +966,7 @@ async fn run_on_runner(
 }
 
 #[tracing::instrument(skip(ctx, build), fields(build_id = %build.id, job = %build.job_name))]
-async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
+async fn run_build(ctx: BuildContext, build: &Build) -> misstep::Result<()> {
   // Reserve capacity before claiming the build so `running` means execution
   // can start immediately.
   let Some(venue) =

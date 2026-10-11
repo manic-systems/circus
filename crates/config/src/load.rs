@@ -3,7 +3,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use color_eyre::eyre::{self, WrapErr, bail};
+use misstep::{self, ResultExt, bail};
 
 use crate::{
   Config,
@@ -18,9 +18,9 @@ impl Config {
   /// # Errors
   ///
   /// Returns an error if TOML parsing, deserialization, or validation fails.
-  pub fn from_toml_with_defaults(contents: &str) -> eyre::Result<Self> {
+  pub fn from_toml_with_defaults(contents: &str) -> misstep::Result<Self> {
     let mut table = toml::Value::try_from(Self::default())
-      .wrap_err("failed to serialize config defaults")?;
+      .context("failed to serialize config defaults")?;
     deep_merge(&mut table, toml::from_str(contents)?);
     let config: Self = from_value(table)?;
     config.validate()?;
@@ -37,9 +37,9 @@ impl Config {
   /// # Errors
   ///
   /// Returns an error if a configured file path cannot be read or is empty.
-  fn resolve_secret_files(&mut self) -> eyre::Result<()> {
-    fn read_secret(path: &Path) -> eyre::Result<String> {
-      let content = fs::read_to_string(path).wrap_err_with(|| {
+  fn resolve_secret_files(&mut self) -> misstep::Result<()> {
+    fn read_secret(path: &Path) -> misstep::Result<String> {
+      let content = fs::read_to_string(path).with_context(|| {
         format!("failed to read secret from {}", path.display())
       })?;
       let trimmed = content.trim().to_owned();
@@ -140,9 +140,9 @@ impl Config {
   /// # Errors
   ///
   /// Returns error if configuration loading or validation fails.
-  pub fn load(path: Option<&Path>) -> eyre::Result<Self> {
+  pub fn load(path: Option<&Path>) -> misstep::Result<Self> {
     let mut table = toml::Value::try_from(Self::default())
-      .wrap_err("failed to serialize config defaults")?;
+      .context("failed to serialize config defaults")?;
 
     let config_path = path
       .map_or_else(
@@ -150,23 +150,23 @@ impl Config {
         |path| Some(path.to_path_buf()),
       )
       .ok_or_else(|| {
-        eyre::eyre!(
+        misstep::report!(
           "configuration file is required; pass --config or set \
            CIRCUS_CONFIG_FILE"
         )
       })?;
 
-    let contents = fs::read_to_string(&config_path).wrap_err_with(|| {
+    let contents = fs::read_to_string(&config_path).with_context(|| {
       format!("failed to read config file {}", config_path.display())
     })?;
     let file_table: toml::Value =
-      toml::from_str(&contents).wrap_err("failed to parse config file")?;
+      toml::from_str(&contents).context("failed to parse config file")?;
     deep_merge(&mut table, file_table);
 
     apply_env_vars(&mut table, "CIRCUS_", std::env::vars());
 
     let mut config: Self =
-      from_value(table).wrap_err("failed to deserialize config")?;
+      from_value(table).context("failed to deserialize config")?;
 
     config.resolve_secret_files()?;
     config.validate()?;

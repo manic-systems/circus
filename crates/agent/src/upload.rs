@@ -36,8 +36,8 @@ use async_compression::{
 };
 use circus_http::RequestExt as _;
 use circus_proto::{nar_info, runner};
-use color_eyre::eyre::{Context as _, bail, eyre};
 use data_encoding::HEXLOWER;
+use misstep::{ResultExt as _, bail, report};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf};
@@ -78,7 +78,7 @@ pub async fn upload_all(
   outputs: &[ResolvedOutput],
   rootless: bool,
   work_dir: &Path,
-) -> color_eyre::Result<UploadStats> {
+) -> misstep::Result<UploadStats> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -149,7 +149,7 @@ pub async fn upload_all(
         }
       },
       Err(e) => {
-        failures.push((meta.store_path.clone(), format!("upload: {e:#}")));
+        failures.push((meta.store_path.clone(), format!("upload: {e}")));
       },
     }
   }
@@ -228,7 +228,7 @@ async fn upload_one(
   compression: &str,
   rootless: bool,
   work_dir: &Path,
-) -> color_eyre::Result<UploadedBytes> {
+) -> misstep::Result<UploadedBytes> {
   // Spawn `nix-store --dump <path>` and keep its stdout as a streaming
   // AsyncRead.
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
@@ -244,7 +244,7 @@ async fn upload_one(
   let stdout = dump
     .stdout
     .take()
-    .ok_or_else(|| eyre!("dump stdout missing"))?;
+    .ok_or_else(|| report!("dump stdout missing"))?;
   let buffered = BufReader::new(stdout);
 
   let encoded: Pin<Box<dyn AsyncRead + Send>> = match compression {
@@ -303,7 +303,7 @@ async fn upload_one(
   // unwrapped value; we take(...) to move it out from behind the Arc.
   let final_hash = {
     let inner = Arc::try_unwrap(hasher)
-      .map_err(|_| eyre!("hasher Arc still has live readers"))?
+      .map_err(|_| report!("hasher Arc still has live readers"))?
       .into_inner();
     inner.finalize()
   };
@@ -343,7 +343,7 @@ impl AsyncRead for HashingReader {
 async fn query_path_info(
   store_path: &str,
   rootless: bool,
-) -> color_eyre::Result<PathMetadata> {
+) -> misstep::Result<PathMetadata> {
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::Nix)?;
   cmd.args(["path-info", "--json", "--closure-size", store_path]);
   let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
@@ -361,13 +361,13 @@ async fn query_path_info(
       o.values()
         .next()
         .and_then(|v| v.as_object())
-        .ok_or_else(|| eyre!("empty path-info object"))?
+        .ok_or_else(|| report!("empty path-info object"))?
     },
     serde_json::Value::Array(arr) => {
       arr
         .first()
         .and_then(|v| v.as_object())
-        .ok_or_else(|| eyre!("empty path-info array"))?
+        .ok_or_else(|| report!("empty path-info array"))?
     },
     _ => bail!("unexpected path-info shape"),
   };
@@ -375,7 +375,7 @@ async fn query_path_info(
   let nar_hash = obj
     .get("narHash")
     .and_then(|v| v.as_str())
-    .ok_or_else(|| eyre!("missing narHash"))?
+    .ok_or_else(|| report!("missing narHash"))?
     .to_owned();
   let nar_size = obj
     .get("narSize")

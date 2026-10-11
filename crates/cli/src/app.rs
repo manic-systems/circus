@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 
 use clap::Parser;
-use color_eyre::Result;
+use misstep::Result;
 use serde_json::{Map, Value, json};
 
 use crate::{

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use circus_binary_cache::SecretKey;
-use color_eyre::eyre::{Context as _, Result, eyre};
+use misstep::{Result, ResultExt as _, report};
 
 /// Read a Nix-format `<name>:<base64 secret>` signing key from disk.
 ///
@@ -18,7 +18,7 @@ pub async fn read_signing_key(path: &Path) -> Result<SecretKey> {
   raw
     .trim()
     .parse::<SecretKey>()
-    .map_err(|e| eyre!("invalid signing key: {e:?}"))
+    .map_err(|e| report!("invalid signing key: {e:?}"))
 }
 
 /// Sign the canonical Nix narinfo fingerprint, returning

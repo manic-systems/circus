@@ -18,7 +18,7 @@ use circus_common::jwt::{
 };
 use circus_config::RpcOidcConfig;
 use circus_http::{RequestExt as _, ResponseExt as _};
-use color_eyre::eyre::{Context as _, bail, eyre};
+use misstep::{ResultExt as _, bail, report};
 use serde::Deserialize;
 use tokio::{sync::Mutex, time::Instant};
 
@@ -80,7 +80,7 @@ impl OidcVerifier {
   /// # Errors
   ///
   /// Returns an error if the HTTP client cannot be built.
-  pub fn new(cfg: &RpcOidcConfig) -> color_eyre::Result<Self> {
+  pub fn new(cfg: &RpcOidcConfig) -> misstep::Result<Self> {
     let http = circus_http::api().build()?;
     Ok(Self {
       http,
@@ -103,15 +103,12 @@ impl OidcVerifier {
   /// Returns an error when the token is malformed, the signature or claims
   /// do not validate, or the repository is not on the allowlist. The caller
   /// logs the detail and returns a generic failure to the agent.
-  pub async fn verify(
-    &self,
-    token: &str,
-  ) -> color_eyre::Result<VerifiedIdentity> {
+  pub async fn verify(&self, token: &str) -> misstep::Result<VerifiedIdentity> {
     let header = decode_header(token).context("decode JWT header")?;
     if header.alg != Algorithm::RS256 {
       bail!("unexpected JWT alg {:?}, want RS256", header.alg);
     }
-    let kid = header.kid.ok_or_else(|| eyre!("JWT has no kid"))?;
+    let kid = header.kid.ok_or_else(|| report!("JWT has no kid"))?;
     let jwk = self.jwk_for_kid(&kid).await?;
 
     let validation = Validation {
@@ -160,7 +157,7 @@ impl OidcVerifier {
     })
   }
 
-  async fn jwk_for_kid(&self, kid: &str) -> color_eyre::Result<Jwk> {
+  async fn jwk_for_kid(&self, kid: &str) -> misstep::Result<Jwk> {
     {
       let cache = self.cache.lock().await;
       if let Some(jwk) = cache.keys.get(kid)
@@ -179,10 +176,10 @@ impl OidcVerifier {
       .keys
       .get(kid)
       .cloned()
-      .ok_or_else(|| eyre!("no JWKS key for kid {kid}"))
+      .ok_or_else(|| report!("no JWKS key for kid {kid}"))
   }
 
-  async fn refresh(&self) -> color_eyre::Result<()> {
+  async fn refresh(&self) -> misstep::Result<()> {
     {
       let mut cache = self.cache.lock().await;
       if cache
@@ -215,7 +212,7 @@ impl OidcVerifier {
     Ok(())
   }
 
-  async fn resolve_jwks_uri(&self) -> color_eyre::Result<String> {
+  async fn resolve_jwks_uri(&self) -> misstep::Result<String> {
     if let Some(uri) = &self.jwks_url {
       return Ok(uri.clone());
     }

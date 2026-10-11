@@ -7,10 +7,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use color_eyre::{
-  Result,
-  eyre::{Context, bail},
-};
+use misstep::{Result, ResultExt, bail};
 use regex::Regex;
 use serde_json::Value;
 use utoipa::openapi::OpenApi;
@@ -52,6 +49,7 @@ pub fn workspace_root() -> Result<PathBuf> {
     .join("../..")
     .canonicalize()
     .context("finding workspace root")
+    .erase()
 }
 
 pub fn run() -> Result<()> {
@@ -113,6 +111,7 @@ pub fn run() -> Result<()> {
 pub fn openapi_document() -> Result<OpenApi> {
   serde_json::from_str(circus_server::routes::openapi::DOCUMENT)
     .context("crates/server/openapi.json is not a valid OpenAPI document")
+    .erase()
 }
 
 fn documented_paths(spec: &OpenApi) -> BTreeSet<String> {

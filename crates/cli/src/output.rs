@@ -1,5 +1,5 @@
-use color_eyre::Result;
 use comfy_table::Table;
+use misstep::Result;
 use serde_json::Value;
 
 pub(super) fn print_users(value: &Value) {

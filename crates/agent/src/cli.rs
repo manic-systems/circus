@@ -7,7 +7,7 @@ use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use circus_logs::init_tracing;
 use clap::Parser;
-use color_eyre::eyre::{Result, bail, eyre};
+use misstep::{Result, bail, report};
 use uuid::Uuid;
 
 use crate::{
@@ -91,7 +91,7 @@ where
   I: IntoIterator<Item = T>,
   T: Into<OsString>,
 {
-  color_eyre::install()?;
+  misstep::install_panic_hook();
 
   let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
 
@@ -102,7 +102,7 @@ where
   // Use ring for tls.
   rustls::crypto::ring::default_provider()
     .install_default()
-    .map_err(|_| eyre!("a rustls CryptoProvider is already installed"))?;
+    .map_err(|_| report!("a rustls CryptoProvider is already installed"))?;
 
   let cli = Cli::parse_from(args);
   let mut cfg = load_config(&cli)?;
@@ -116,7 +116,7 @@ where
   tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
 
   std::fs::create_dir_all(&cfg.agent.work_dir).map_err(|e| {
-    eyre!(
+    report!(
       "work_dir {} couldn't be created: {e}",
       cfg.agent.work_dir.display()
     )
@@ -179,16 +179,16 @@ fn inline_config(cli: &Cli) -> Result<AgentConfig> {
   let name = cli
     .name
     .clone()
-    .ok_or_else(|| eyre!("--name is required without a config file"))?;
+    .ok_or_else(|| report!("--name is required without a config file"))?;
   let runner_url = cli
     .runner_url
     .clone()
-    .ok_or_else(|| eyre!("--runner-url is required without a config file"))?;
+    .ok_or_else(|| report!("--runner-url is required without a config file"))?;
   if cli.systems.is_empty() {
     bail!("at least one --system is required without a config file");
   }
   let auth_token = std::env::var("CIRCUS_AGENT_TOKEN").map_err(|_| {
-    eyre!("CIRCUS_AGENT_TOKEN is required without a config file")
+    report!("CIRCUS_AGENT_TOKEN is required without a config file")
   })?;
   Ok(AgentConfig {
     agent:   Agent {

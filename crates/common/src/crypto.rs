@@ -15,11 +15,11 @@ const NONCE_LEN: usize = 12;
 ///
 /// Returns an error if a provider was already installed, which should never
 /// happen.
-pub fn install_crypto_provider() -> color_eyre::Result<()> {
+pub fn install_crypto_provider() -> misstep::Result<()> {
   rustls::crypto::ring::default_provider()
     .install_default()
     .map_err(|_| {
-      color_eyre::eyre::eyre!("a rustls CryptoProvider is already installed")
+      misstep::report!("a rustls CryptoProvider is already installed")
     })
 }
 

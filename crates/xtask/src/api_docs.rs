@@ -2,10 +2,7 @@
 
 use std::{fmt::Write, fs};
 
-use color_eyre::{
-  Result,
-  eyre::{Context, bail},
-};
+use misstep::{Result, ResultExt, bail};
 use serde_json::{Map, Value};
 use utoipa::openapi::OpenApi;
 

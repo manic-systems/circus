@@ -59,7 +59,7 @@ async fn listen_loop(
   database_url: &str,
   channels: &[String],
   wakeup: &Notify,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
   let target = circus_migrations::tls::resolve(database_url)?;
   let config = target.url.parse::<tokio_postgres::Config>()?;

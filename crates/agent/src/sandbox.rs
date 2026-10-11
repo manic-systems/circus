@@ -115,7 +115,7 @@ impl std::error::Error for Error {
 pub(crate) fn nix_command(
   rootless: bool,
   tool: NixTool,
-) -> color_eyre::Result<Command> {
+) -> misstep::Result<Command> {
   let program = if rootless {
     rootless_nix_tool(tool)?
   } else {
@@ -135,16 +135,16 @@ pub(crate) fn wrap_command(
   }
 }
 
-fn rootless_nix_tool(tool: NixTool) -> color_eyre::Result<PathBuf> {
+fn rootless_nix_tool(tool: NixTool) -> misstep::Result<PathBuf> {
   if !cfg!(target_os = "linux") {
-    return Err(color_eyre::eyre::eyre!(
+    return Err(misstep::report!(
       "rootless agent mode is only supported on Linux"
     ));
   }
   let nix = std::env::var_os(NIX_ENV)
-    .ok_or_else(|| color_eyre::Report::new(Error::MissingNixEnv))?;
+    .ok_or_else(|| misstep::Report::new(Error::MissingNixEnv))?;
   sibling_tool(PathBuf::from(nix), tool)
-    .ok_or_else(|| color_eyre::Report::new(Error::BadNixEnv))
+    .ok_or_else(|| misstep::Report::new(Error::BadNixEnv))
 }
 
 /// Resolve the requested tool next to whichever of the two binaries
@@ -191,23 +191,23 @@ fn helper_command(target: &Command) -> io::Result<Command> {
 /// fails before the build command can report an exit status.
 pub fn maybe_run_helper(
   mut args: impl Iterator<Item = OsString>,
-) -> color_eyre::Result<Option<i32>> {
+) -> misstep::Result<Option<i32>> {
   let _exe = args.next();
   if args.next().as_deref() != Some(OsStr::new(HELPER_ARG)) {
     return Ok(None);
   }
   if args.next().as_deref() != Some(OsStr::new("--")) {
-    return Err(color_eyre::Report::new(Error::MissingCommand));
+    return Err(misstep::Report::new(Error::MissingCommand));
   }
   let program = args
     .next()
-    .ok_or_else(|| color_eyre::Report::new(Error::MissingCommand))?;
+    .ok_or_else(|| misstep::Report::new(Error::MissingCommand))?;
   let mut cmd = Command::new(program);
   cmd.args(args);
   #[cfg(not(target_os = "linux"))]
   {
     let _ = cmd;
-    Err(color_eyre::eyre::eyre!(
+    Err(misstep::report!(
       "rootless agent mode is only supported on Linux"
     ))
   }
@@ -224,9 +224,9 @@ pub fn maybe_run_helper(
 /// # Errors
 ///
 /// Returns an error describing the failing requirement.
-pub fn preflight() -> color_eyre::Result<()> {
+pub fn preflight() -> misstep::Result<()> {
   if !cfg!(target_os = "linux") {
-    return Err(color_eyre::eyre::eyre!(
+    return Err(misstep::report!(
       "rootless agent mode is only supported on Linux"
     ));
   }
@@ -240,7 +240,7 @@ pub fn preflight() -> color_eyre::Result<()> {
   if out.status.success() {
     Ok(())
   } else {
-    Err(color_eyre::eyre::eyre!(
+    Err(misstep::report!(
       "rootless preflight failed, either user namespaces unavailable, or \
        {NIX_ENV} does not resolve inside the sandbox store: {}",
       String::from_utf8_lossy(&out.stderr).trim()
@@ -264,7 +264,7 @@ struct SyncPipes {
 }
 
 #[cfg(target_os = "linux")]
-fn run_sandboxed_command(cmd: Command) -> color_eyre::Result<i32> {
+fn run_sandboxed_command(cmd: Command) -> misstep::Result<i32> {
   let paths = prepare_paths()?;
   let (child_rx, child_tx) = pipe2(OFlag::O_CLOEXEC)?;
   let (parent_rx, parent_tx) = pipe2(OFlag::O_CLOEXEC)?;
@@ -286,7 +286,7 @@ fn run_sandboxed_command(cmd: Command) -> color_eyre::Result<i32> {
 
 /// `$CIRCUS_AGENT_DATA_DIR` when set, else `$XDG_DATA_HOME/circus-agent`.
 #[cfg(target_os = "linux")]
-fn data_dir() -> color_eyre::Result<PathBuf> {
+fn data_dir() -> misstep::Result<PathBuf> {
   if let Some(dir) = std::env::var_os(DATA_DIR_ENV)
     .map(PathBuf::from)
     .filter(|d| d.is_absolute())
@@ -309,7 +309,7 @@ fn data_dir() -> color_eyre::Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn prepare_paths() -> color_eyre::Result<SandboxPaths> {
+fn prepare_paths() -> misstep::Result<SandboxPaths> {
   let local_nixdir = data_dir()?;
   for path in [
     local_nixdir.join("store"),
@@ -359,7 +359,7 @@ fn prepare_paths() -> color_eyre::Result<SandboxPaths> {
 fn parent_handshake(
   child: nix::unistd::Pid,
   pipes: SyncPipes,
-) -> color_eyre::Result<i32> {
+) -> misstep::Result<i32> {
   let SyncPipes {
     child_rx,
     child_tx,
@@ -395,7 +395,7 @@ fn child_enter_and_exec(
   drop(child_rx);
   drop(parent_tx);
 
-  let child_result = (|| -> color_eyre::Result<()> {
+  let child_result = (|| -> misstep::Result<()> {
     set_parent_death_signal()?;
     unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)?;
     write_token(&child_tx, *b"6", "announce namespace")?;
@@ -446,7 +446,7 @@ fn write_token(
   fd: &OwnedFd,
   token: [u8; 1],
   phase: &'static str,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let mut token = token.as_slice();
   while !token.is_empty() {
     let n = write(fd, token).map_err(|e| {
@@ -456,7 +456,7 @@ fn write_token(
       }
     })?;
     if n == 0 {
-      return Err(color_eyre::Report::new(Error::PipeClosed(phase)));
+      return Err(misstep::Report::new(Error::PipeClosed(phase)));
     }
     token = &token[n..];
   }
@@ -468,7 +468,7 @@ fn read_token(
   fd: &OwnedFd,
   token: [u8; 1],
   phase: &'static str,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let mut buf = [0; 1];
   let mut tail = buf.as_mut_slice();
   while !tail.is_empty() {
@@ -479,18 +479,18 @@ fn read_token(
       }
     })?;
     if n == 0 {
-      return Err(color_eyre::Report::new(Error::PipeClosed(phase)));
+      return Err(misstep::Report::new(Error::PipeClosed(phase)));
     }
     tail = &mut tail[n..];
   }
   if buf != token {
-    return Err(color_eyre::Report::new(Error::BadHandshake(phase)));
+    return Err(misstep::Report::new(Error::BadHandshake(phase)));
   }
   Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn touch(path: impl AsRef<Path>) -> color_eyre::Result<()> {
+fn touch(path: impl AsRef<Path>) -> misstep::Result<()> {
   if let Some(parent) = path.as_ref().parent() {
     fs::create_dir_all(parent)?;
   }
@@ -505,7 +505,7 @@ fn touch(path: impl AsRef<Path>) -> color_eyre::Result<()> {
 fn bind(
   source: impl AsRef<Path>,
   target: impl AsRef<Path>,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   mount(
     Some(source.as_ref()),
     target.as_ref(),
@@ -529,7 +529,7 @@ const HOST_CA_BUNDLES: [&str; 4] = [
 fn bind_if_exists(
   source: impl AsRef<Path>,
   target: impl AsRef<Path>,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let source = source.as_ref();
   let target = target.as_ref();
   // Only materialize the target when the source exists.
@@ -547,7 +547,7 @@ fn bind_if_exists(
 /// Nix opens `/dev/ptmx` for the builder console before it forks, and a
 /// private `devpts` is one of the few mounts an unprivileged namespace gets.
 #[cfg(target_os = "linux")]
-fn mount_devpts(target: impl AsRef<Path>) -> color_eyre::Result<()> {
+fn mount_devpts(target: impl AsRef<Path>) -> misstep::Result<()> {
   mount(
     Some("devpts"),
     target.as_ref(),
@@ -559,7 +559,7 @@ fn mount_devpts(target: impl AsRef<Path>) -> color_eyre::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn make_mounts_private() -> color_eyre::Result<()> {
+fn make_mounts_private() -> misstep::Result<()> {
   mount::<str, str, str, str>(
     None,
     "/",
@@ -571,7 +571,7 @@ fn make_mounts_private() -> color_eyre::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
+fn setup_pivot_root(paths: &SandboxPaths) -> misstep::Result<()> {
   make_mounts_private()?;
 
   let newroot = paths.newroot.path();
@@ -611,7 +611,7 @@ fn setup_pivot_root(paths: &SandboxPaths) -> color_eyre::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn write_id_maps(child: nix::unistd::Pid) -> color_eyre::Result<()> {
+fn write_id_maps(child: nix::unistd::Pid) -> misstep::Result<()> {
   let base = PathBuf::from("/proc").join(child.to_string());
   fs::write(base.join("setgroups"), "deny\n")?;
   fs::write(
@@ -626,7 +626,7 @@ fn write_id_maps(child: nix::unistd::Pid) -> color_eyre::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn set_parent_death_signal() -> color_eyre::Result<()> {
+fn set_parent_death_signal() -> misstep::Result<()> {
   // SAFETY: prctl is called in the freshly forked child before exec, with a
   // constant operation and signal number.
   let rc = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
@@ -644,7 +644,7 @@ fn set_parent_death_signal() -> color_eyre::Result<()> {
 mod tests {
   use super::*;
 
-  fn dispatch(argv: &[&str]) -> color_eyre::Result<Option<i32>> {
+  fn dispatch(argv: &[&str]) -> misstep::Result<Option<i32>> {
     maybe_run_helper(argv.iter().copied().map(OsString::from))
   }
 

@@ -35,7 +35,7 @@ use circus_proto::{
   result_sink,
   runner,
 };
-use color_eyre::eyre::{Context as _, bail, eyre};
+use misstep::{ResultExt as _, bail, report};
 use parking_lot::Mutex;
 use tokio::net::TcpStream;
 use tokio_util::{
@@ -65,7 +65,7 @@ use crate::{
   clippy::future_not_send,
   reason = "capnp futures are not Send; agent uses a single-threaded runtime"
 )]
-pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
+pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> misstep::Result<()> {
   let endpoint = Endpoint::from_config(cfg)?;
   let mut rpc = endpoint.dial().await?;
 
@@ -171,16 +171,14 @@ struct Endpoint {
 }
 
 impl Endpoint {
-  fn from_config(cfg: &Agent) -> color_eyre::Result<Self> {
+  fn from_config(cfg: &Agent) -> misstep::Result<Self> {
     let (host, port, want_tls) = parse_endpoint(&cfg.runner_url)?;
     let tls = (want_tls || cfg.tls.is_some())
       .then(|| cfg.tls.clone().unwrap_or_default());
     Ok(Self { host, port, tls })
   }
 
-  async fn dial(
-    &self,
-  ) -> color_eyre::Result<RpcSystem<rpc_twoparty_capnp::Side>> {
+  async fn dial(&self) -> misstep::Result<RpcSystem<rpc_twoparty_capnp::Side>> {
     let Self { host, port, tls } = self;
     tracing::info!(host = %host, port, tls = tls.is_some(), "dialing runner");
     let socket = TcpStream::connect((host.as_str(), *port))
@@ -194,7 +192,7 @@ impl Endpoint {
       let connector = crate::tls::build_client_connector(tls)?;
       let server_name =
         rustls::pki_types::ServerName::try_from(host.clone())
-          .map_err(|e| eyre!("invalid server name {host}: {e}"))?;
+          .map_err(|e| report!("invalid server name {host}: {e}"))?;
       let stream = connector.connect(server_name, socket).await?;
       let (rh, wh) = tokio::io::split(stream);
       let network = twoparty::VatNetwork::new(
@@ -218,7 +216,7 @@ impl Endpoint {
   }
 }
 
-fn parse_endpoint(url: &str) -> color_eyre::Result<(String, u16, bool)> {
+fn parse_endpoint(url: &str) -> misstep::Result<(String, u16, bool)> {
   let has_scheme = url.contains("://");
   let normalized = if has_scheme {
     url.to_owned()
@@ -234,17 +232,17 @@ fn parse_endpoint(url: &str) -> color_eyre::Result<(String, u16, bool)> {
   }
   let host = parsed
     .host_str()
-    .ok_or_else(|| eyre!("missing host in runner_url"))?
+    .ok_or_else(|| report!("missing host in runner_url"))?
     .to_owned();
   let port = parsed
     .port()
-    .ok_or_else(|| eyre!("missing port in runner_url"))?;
+    .ok_or_else(|| report!("missing port in runner_url"))?;
   Ok((host, port, tls))
 }
 
 async fn verify_runner_version(
   runner_cap: &runner::Client,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -268,7 +266,7 @@ async fn register(
   cfg: &Agent,
   machine_id: Uuid,
   local_builder: builder::Client,
-) -> color_eyre::Result<agent_session::Client> {
+) -> misstep::Result<agent_session::Client> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -883,7 +881,7 @@ impl builder::Server for BuilderImpl {
 
 async fn report_result(
   sink: &result_sink::Client,
-  outcome: color_eyre::Result<build::LocalResult>,
+  outcome: misstep::Result<build::LocalResult>,
 ) -> Result<(), capnp::Error> {
   #![expect(
     clippy::future_not_send,
@@ -924,7 +922,7 @@ async fn export_outputs_to_sink(
   token: &str,
   output_paths: &[String],
   rootless: bool,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -939,7 +937,7 @@ async fn export_outputs_to_sink(
   let wanted = match runner_missing_paths(sink, &closure).await {
     Ok(missing) => missing,
     Err(e) if e.kind == capnp::ErrorKind::Unimplemented => closure,
-    Err(e) => return Err(eyre!("query runner for missing paths: {e}")),
+    Err(e) => return Err(report!("query runner for missing paths: {e}")),
   };
   if wanted.is_empty() {
     return Ok(());
@@ -971,7 +969,7 @@ async fn export_outputs_to_sink(
   let target = own_sink.as_ref().map_or(sink, |own| &own.sink);
 
   let chunks = argv_chunks(&wanted);
-  let export_res: color_eyre::Result<()> = async {
+  let export_res: misstep::Result<()> = async {
     for (idx, paths) in chunks.iter().enumerate() {
       export_chunk(paths, idx + 1 < chunks.len(), target, rootless).await?;
     }
@@ -988,7 +986,7 @@ async fn export_outputs_to_sink(
   let close_res = sink.close_request().send().promise.await;
   export_res?;
   close_res
-    .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
+    .map_err(|e| report!("runner failed to import output closure: {e}"))?;
   Ok(())
 }
 
@@ -1017,7 +1015,7 @@ async fn export_chunk(
   strip_trailer: bool,
   target: &output_sink::Client,
   rootless: bool,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -1037,7 +1035,7 @@ async fn export_chunk(
   let mut stdout = child
     .stdout
     .take()
-    .ok_or_else(|| eyre!("export stdout missing"))?;
+    .ok_or_else(|| report!("export stdout missing"))?;
 
   let mut buf = vec![0u8; 1024 * 1024];
   let mut held = 0;
@@ -1045,7 +1043,7 @@ async fn export_chunk(
     let n = stdout
       .read(&mut buf[held..])
       .await
-      .map_err(|e| eyre!("read nix-store --export: {e}"))?;
+      .map_err(|e| report!("read nix-store --export: {e}"))?;
     if n == 0 {
       break;
     }
@@ -1062,7 +1060,7 @@ async fn export_chunk(
         .send()
         .promise
         .await
-        .map_err(|e| eyre!("stream output closure: {e}"))?;
+        .map_err(|e| report!("stream output closure: {e}"))?;
     }
     buf.copy_within(send..len, 0);
     held = len - send;
@@ -1102,7 +1100,7 @@ async fn open_own_sink(
   endpoint: &Endpoint,
   build_id: &str,
   token: &str,
-) -> color_eyre::Result<OwnSink> {
+) -> misstep::Result<OwnSink> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -1128,7 +1126,7 @@ async fn open_own_sink(
   })
 }
 
-async fn nar_size(paths: &[String], rootless: bool) -> color_eyre::Result<u64> {
+async fn nar_size(paths: &[String], rootless: bool) -> misstep::Result<u64> {
   let mut total = 0;
   for chunk in argv_chunks(paths) {
     let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
@@ -1178,7 +1176,7 @@ async fn runner_missing_paths(
 async fn query_requisites(
   output_paths: &[String],
   rootless: bool,
-) -> color_eyre::Result<Vec<String>> {
+) -> misstep::Result<Vec<String>> {
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
   cmd
     .arg("--query")

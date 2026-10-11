@@ -25,9 +25,9 @@ use circus_common::{
   repo,
 };
 use circus_config::{DeclarativeJobset, EvaluatorConfig, NotificationsConfig};
-use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
 use jiff::Timestamp;
+use misstep::ResultExt;
 use tokio::{
   sync::{Notify, mpsc, watch},
   time::Instant,
@@ -58,7 +58,7 @@ pub async fn run(
   notifications_config: NotificationsConfig,
   notification_secret_key: Option<String>,
   wakeup: Arc<Notify>,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let poll_interval = Duration::from_secs(config.poll_interval);
   let nix_timeout = Duration::from_secs(config.nix_timeout);
   let git_timeout = Duration::from_secs(config.git_timeout);
@@ -121,7 +121,7 @@ async fn run_cycle(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   sweep_orphaned_evaluations(pool, git_timeout + nix_timeout).await;
 
   let active = repo::jobsets::list_active(pool).await?;
@@ -336,7 +336,7 @@ async fn evaluate_pending_eval(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   // Claim the row atomically. If the row is no longer pending another
   // wakeup already handled it; bail out without doing the git fetch.
   let Some(claimed) =
@@ -377,7 +377,7 @@ async fn evaluate_pending_eval(
   )
   .await
   .map_err(|_| {
-    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
+    misstep::report!("Git operation timed out after {git_timeout:?}")
   })???;
 
   if repo::evaluations::is_cancelled(pool, claimed.id).await? {
@@ -472,7 +472,7 @@ async fn run_path_filtered_evaluation(
   notifications_config: &NotificationsConfig,
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
-) -> color_eyre::Result<bool> {
+) -> misstep::Result<bool> {
   record_commit_subject(pool, repo_path, eval).await;
 
   if crate::path_filter::should_evaluate(repo_path, eval, jobset).await {
@@ -551,7 +551,7 @@ async fn run_nix_and_record_builds(
   notifications_config: &NotificationsConfig,
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let max_eval_time = config.max_eval_time.map(Duration::from_secs);
   let nix_timeout = max_eval_time.map_or(nix_timeout, |limit| {
     let elapsed =
@@ -714,7 +714,7 @@ async fn stream_builds(
   mut jobs: mpsc::UnboundedReceiver<NixJob>,
   cancel: &CancellationToken,
   notify: impl AsyncFn(Vec<Build>),
-) -> color_eyre::Result<bool> {
+) -> misstep::Result<bool> {
   let mut open = true;
   while open {
     let mut batch = Vec::new();
@@ -994,7 +994,7 @@ async fn evaluate_matching_refs(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let branch_pattern = jobset.branch_pattern.clone();
   let tag_pattern = jobset.tag_pattern.clone();
   let discover_url = jobset.repository_url.clone();
@@ -1014,7 +1014,7 @@ async fn evaluate_matching_refs(
   )
   .await
   .map_err(|_| {
-    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
+    misstep::report!("Git operation timed out after {git_timeout:?}")
   })???;
 
   if jobset.only_build_latest {
@@ -1085,7 +1085,7 @@ async fn evaluate_matching_refs(
           "Evaluation already exists for matched ref"
         );
       },
-      Err(e) => return Err(color_eyre::eyre::eyre!(e)),
+      Err(e) => return Err(misstep::report!(e)),
     }
   }
 
@@ -1102,7 +1102,7 @@ async fn create_or_claim_evaluation(
   jobset: &ActiveJobset,
   commit_hash: &str,
   create_eval: CreateEvaluation,
-) -> color_eyre::Result<Option<Evaluation>> {
+) -> misstep::Result<Option<Evaluation>> {
   let result = if jobset.trigger_mode == JobsetTriggerMode::Interval {
     repo::evaluations::create_interval(pool, create_eval).await
   } else {
@@ -1129,7 +1129,7 @@ async fn create_or_claim_evaluation(
       )
       .await?
       .ok_or_else(|| {
-        color_eyre::eyre::eyre!(
+        misstep::report!(
           "Evaluation conflict but not found: {}/{}",
           jobset.id,
           commit_hash
@@ -1183,7 +1183,7 @@ async fn create_or_claim_evaluation(
       }
     },
     Err(e) => {
-      Err(color_eyre::eyre::eyre!(e)).with_context(|| {
+      Err(misstep::report!(e)).with_context(|| {
         format!("failed to create evaluation for jobset {}", jobset.name)
       })
     },
@@ -1198,7 +1198,7 @@ async fn evaluate_single_ref(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   let url = jobset.repository_url.clone();
   let work_dir = config.work_dir.clone();
   let project_name = jobset.project_name.clone();
@@ -1216,7 +1216,7 @@ async fn evaluate_single_ref(
   )
   .await
   .map_err(|_| {
-    color_eyre::eyre::eyre!("Git operation timed out after {git_timeout:?}")
+    misstep::report!("Git operation timed out after {git_timeout:?}")
   })???;
 
   if jobset.trigger_mode != JobsetTriggerMode::Interval
@@ -1323,7 +1323,7 @@ async fn evaluate_jobset(
   notification_secret_key: Option<&str>,
   nix_timeout: Duration,
   git_timeout: Duration,
-) -> color_eyre::Result<()> {
+) -> misstep::Result<()> {
   if jobset.trigger_mode == JobsetTriggerMode::Interval
     && repo::jobsets::has_unfinished_work(pool, jobset.id).await?
   {
@@ -1376,7 +1376,7 @@ struct RepoConfig {
 fn read_repo_config(
   repo_path: &std::path::Path,
   url: &str,
-) -> color_eyre::Result<Option<RepoConfig>> {
+) -> misstep::Result<Option<RepoConfig>> {
   let Some(content) = crate::git::read_repo_config(url, repo_path)? else {
     return Ok(None);
   };

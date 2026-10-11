@@ -1,7 +1,7 @@
 pub use circus_codegen::client::GenericClient;
 pub use circus_migrations::tls::connect_once;
-use color_eyre::eyre::Context as _;
 use deadpool_postgres::Timeouts;
+use misstep::ResultExt as _;
 use tokio_postgres::NoTls;
 
 pub type PgPool = deadpool_postgres::Pool;
@@ -20,7 +20,7 @@ pub type DbTransaction<'a> = deadpool_postgres::Transaction<'a>;
 pub fn build_pool(
   database_url: &str,
   max_size: usize,
-) -> color_eyre::Result<PgPool> {
+) -> misstep::Result<PgPool> {
   build_pool_with_timeouts(database_url, max_size, Timeouts::default())
 }
 
@@ -33,7 +33,7 @@ pub fn build_pool_with_timeouts(
   database_url: &str,
   max_size: usize,
   timeouts: Timeouts,
-) -> color_eyre::Result<PgPool> {
+) -> misstep::Result<PgPool> {
   use deadpool_postgres::{
     Config,
     ManagerConfig,
