@@ -934,7 +934,6 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
- "serde_path_to_error",
  "serde_urlencoded",
  "sha2 0.11.0",
  "subtle",
@@ -951,7 +950,6 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "url",
- "utoipa",
  "uuid",
 ]
 
