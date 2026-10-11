@@ -43,7 +43,7 @@ tracing.workspace           = true
 url.workspace               = true
 urlencoding.workspace       = true
 uuid.workspace              = true
-x509-parser.workspace       = true
+x509-cert.workspace         = true
 
 [dev-dependencies]
 circus-migrations.workspace = true

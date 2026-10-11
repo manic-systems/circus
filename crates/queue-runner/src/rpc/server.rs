@@ -46,7 +46,17 @@ use tokio_util::{
   sync::CancellationToken,
 };
 use uuid::Uuid;
-use x509_parser::prelude::FromDer;
+use x509_cert::{
+  Certificate,
+  der::{
+    Decode,
+    Tag,
+    TagNumber,
+    Tagged,
+    asn1::{AnyRef, Ia5StringRef, PrintableStringRef, Utf8StringRef},
+    oid::db::{rfc4519::CN, rfc5280::ID_CE_SUBJECT_ALT_NAME},
+  },
+};
 
 use super::{
   AgentPool,
@@ -506,24 +516,50 @@ fn extract_peer_cert_identity(
   }
 }
 
+/// The first SAN DNS name, else the subject CN.
 fn parse_cert_name(der: &[u8]) -> Option<String> {
-  let (_, cert) =
-    x509_parser::certificate::X509Certificate::from_der(der).ok()?;
-  if let Ok(Some(san)) = cert.subject_alternative_name() {
-    for name in &san.value.general_names {
-      if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
-        return Some((*dns).to_owned());
-      }
-    }
+  let tbs = Certificate::from_der(der).ok()?.tbs_certificate;
+
+  // x509-cert's GeneralName fails the whole SAN on an x400Address or a
+  // non-ASCII rfc822Name, so match the dNSName tag on raw entries.
+  let dns_tag = Tag::ContextSpecific {
+    constructed: false,
+    number:      TagNumber::N2,
+  };
+  let dns = tbs
+    .extensions
+    .iter()
+    .flatten()
+    .filter(|ext| ext.extn_id == ID_CE_SUBJECT_ALT_NAME)
+    .filter_map(|ext| {
+      Vec::<AnyRef<'_>>::from_der(ext.extn_value.as_bytes()).ok()
+    })
+    .flatten()
+    .find(|name| name.tag() == dns_tag)
+    .and_then(|name| std::str::from_utf8(name.value()).ok().map(str::to_owned));
+  if dns.is_some() {
+    return dns;
   }
-  for attr in cert.subject().iter_attributes() {
-    if attr.attr_type().to_id_string() == "2.5.4.3"
-      && let Ok(val) = attr.attr_value().as_str()
-    {
-      return Some(val.to_owned());
-    }
-  }
-  None
+
+  tbs
+    .subject
+    .0
+    .iter()
+    .flat_map(|rdn| rdn.0.iter())
+    .filter(|attr| attr.oid == CN)
+    .find_map(|attr| {
+      let value = &attr.value;
+      Utf8StringRef::try_from(value)
+        .map(|text| text.as_str().to_owned())
+        .or_else(|_| {
+          PrintableStringRef::try_from(value)
+            .map(|text| text.as_str().to_owned())
+        })
+        .or_else(|_| {
+          Ia5StringRef::try_from(value).map(|text| text.as_str().to_owned())
+        })
+        .ok()
+    })
 }
 
 struct RunnerImpl {
