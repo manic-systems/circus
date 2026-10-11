@@ -9,7 +9,6 @@ description          = "HTTP server for Circus"
 [dependencies]
 async-compression.workspace   = true
 axum.workspace                = true
-axum-extra                    = { workspace = true, features = [ "cookie" ] }
 clap.workspace                = true
 dashmap.workspace             = true
 data-encoding.workspace       = true
@@ -29,7 +28,6 @@ sha2.workspace                = true
 subtle.workspace              = true
 tar.workspace                 = true
 thiserror.workspace           = true
-time.workspace                = true
 tokio.workspace               = true
 tokio-rusqlite.workspace      = true
 tokio-rustls.workspace        = true
