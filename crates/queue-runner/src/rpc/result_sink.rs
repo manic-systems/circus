@@ -30,6 +30,7 @@ pub enum BuildOutcomeKind {
   Success { error_message: Option<String> },
   Failure { error_message: Option<String> },
   InfraFailure { error_message: Option<String> },
+  TransientFailure { error_message: Option<String> },
   TimedOut,
   Aborted,
   OomKilled { error_message: Option<String> },
@@ -80,6 +81,11 @@ impl result_sink::Server for ResultSinkImpl {
             error_message: result_error_message(r),
           }
         },
+        BuildOutcome::TransientFailure => {
+          BuildOutcomeKind::TransientFailure {
+            error_message: result_error_message(r),
+          }
+        },
         BuildOutcome::TimedOut => BuildOutcomeKind::TimedOut,
         BuildOutcome::Aborted => BuildOutcomeKind::Aborted,
         BuildOutcome::OomKilled => {
@@ -97,6 +103,7 @@ impl result_sink::Server for ResultSinkImpl {
         | BuildOutcome::PostProcessFailure
         | BuildOutcome::InfraFailure => AgentOutcome::AgentFailed,
         BuildOutcome::BuildFailure
+        | BuildOutcome::TransientFailure
         | BuildOutcome::Aborted
         | BuildOutcome::TimedOut
         | BuildOutcome::OomKilled => AgentOutcome::BuildFailed,

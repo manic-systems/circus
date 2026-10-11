@@ -187,6 +187,7 @@ enum BuildOutcome {
   timedOut           @7;
   oomKilled          @8;
   infraFailure       @9;
+  transientFailure   @10;
 }
 
 struct BuildResult {

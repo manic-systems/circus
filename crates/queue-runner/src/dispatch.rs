@@ -526,9 +526,10 @@ pub async fn run_on_agent(
     Ok(DispatchResult::Aborted) => {
       Some(result(false, 130, "build aborted".into(), Vec::new()))
     },
-    Ok(DispatchResult::InfraFailed(error_message)) => {
-      Some(transient(1, error_message))
-    },
+    Ok(
+      DispatchResult::InfraFailed(error_message)
+      | DispatchResult::TransientFailed(error_message),
+    ) => Some(transient(1, error_message)),
     Ok(DispatchResult::OomKilled(error_message)) => {
       Some(transient(-9, error_message))
     },

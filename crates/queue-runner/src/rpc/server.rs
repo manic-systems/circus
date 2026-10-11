@@ -1312,6 +1312,9 @@ async fn dispatch_one(
     Some(BuildOutcomeKind::InfraFailure { error_message }) => {
       DispatchResult::InfraFailed(error_message.unwrap_or_default())
     },
+    Some(BuildOutcomeKind::TransientFailure { error_message }) => {
+      DispatchResult::TransientFailed(error_message.unwrap_or_default())
+    },
     None => DispatchResult::Disconnected,
   };
   meta.active_builds.write().remove(&cmd.build_id);

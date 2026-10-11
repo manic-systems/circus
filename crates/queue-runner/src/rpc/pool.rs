@@ -68,6 +68,8 @@ pub enum DispatchResult {
   },
   Failed(String),
   InfraFailed(String),
+  /// The derivation failed in a way Nix expects a retry might fix.
+  TransientFailed(String),
   TimedOut,
   Aborted,
   OomKilled(String),

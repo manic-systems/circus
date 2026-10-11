@@ -1121,10 +1121,11 @@ Requirements:
 - Unprivileged user namespaces must be enabled on the host kernel. You can check
   if they are with `unshare --user --map-root-user true` succeeding.
 - `CIRCUS_AGENT_NIX` must point to a `nix` (or `nix-store`) binary **at its
-  `/nix/store` path as seen inside the sandbox**, that is, the binary and its
-  closure must be seeded into `$XDG_DATA_HOME/circus-agent/store` first. This
-  can be done by unpacking a Nix release tarball there. A host path like
-  `~/.nix-profile/bin/nix` will not exist after the sandbox pivots its root.
+  `/nix/store` path as seen inside the sandbox**, with `nix-daemon` next to it,
+  that is, the binary and its closure must be seeded into
+  `$XDG_DATA_HOME/circus-agent/store` first. This can be done by unpacking a Nix
+  release tarball there. A host path like `~/.nix-profile/bin/nix` will not
+  exist after the sandbox pivots its root.
 
 The data directory can be moved with `rootless_data_dir` under `[agent]` (or the
 `CIRCUS_AGENT_DATA_DIR` environment variable) for hosts without a usable home

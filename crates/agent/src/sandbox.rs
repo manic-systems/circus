@@ -46,6 +46,7 @@ const BUILD_DEV_NODES: [&str; 6] =
 pub(crate) enum NixTool {
   Nix,
   NixStore,
+  NixDaemon,
 }
 
 impl NixTool {
@@ -53,6 +54,7 @@ impl NixTool {
     match self {
       Self::Nix => "nix",
       Self::NixStore => "nix-store",
+      Self::NixDaemon => "nix-daemon",
     }
   }
 
