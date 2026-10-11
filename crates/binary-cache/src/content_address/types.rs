@@ -1,6 +1,5 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
-use derive_more::Display;
 use harmonia_utils_hash::{
   Algorithm,
   BorrowedHash,
@@ -25,31 +24,44 @@ use thiserror::Error;
   PartialOrd,
   Ord,
   Hash,
-  Display,
   Serialize,
   Deserialize,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(Arbitrary))]
 #[serde(rename_all = "lowercase")]
 pub enum ContentAddressMethod {
-  #[display("text")]
   Text,
-  #[display("fixed")]
   Flat,
-  #[display("fixed:r")]
   #[serde(rename = "nar")]
   NixArchive,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+impl fmt::Display for ContentAddressMethod {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Text => f.write_str("text"),
+      Self::Flat => f.write_str("fixed"),
+      Self::NixArchive => f.write_str("fixed:r"),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(any(test, feature = "test"), derive(Arbitrary))]
 pub enum ContentAddressMethodAlgorithm {
-  #[display("text:sha256")]
   Text,
-  #[display("{_0}")]
   Flat(Algorithm),
-  #[display("r:{_0}")]
   NixArchive(Algorithm),
+}
+
+impl fmt::Display for ContentAddressMethodAlgorithm {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Text => f.write_str("text:sha256"),
+      Self::Flat(algo) => write!(f, "{algo}"),
+      Self::NixArchive(algo) => write!(f, "r:{algo}"),
+    }
+  }
 }
 
 /// Raw representation for JSON serialization/deserialization
@@ -125,15 +137,22 @@ impl FromStr for ContentAddressMethodAlgorithm {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(any(test, feature = "test"), derive(Arbitrary))]
 pub enum ContentAddress {
-  #[display("text:{}", _0.as_base32())]
   Text(Sha256),
-  #[display("fixed:{}", _0.as_base32())]
   Flat(Hash),
-  #[display("fixed:r:{}", _0.as_base32())]
   NixArchive(Hash),
+}
+
+impl fmt::Display for ContentAddress {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Text(sha256) => write!(f, "text:{}", sha256.as_base32()),
+      Self::Flat(hash) => write!(f, "fixed:{}", hash.as_base32()),
+      Self::NixArchive(hash) => write!(f, "fixed:r:{}", hash.as_base32()),
+    }
+  }
 }
 
 impl ContentAddress {

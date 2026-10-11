@@ -14,6 +14,8 @@
 
 pub mod base32;
 
+use std::fmt;
+
 use data_encoding::{BASE64, DecodePartial, HEXLOWER_PERMISSIVE};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -23,14 +25,21 @@ pub const fn base64_len(len: usize) -> usize {
   ((4 * len / 3) + 3) & !3
 }
 
-#[derive(derive_more::Display, Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Base {
-  #[display("base16")]
   Hex,
-  #[display("nixbase32")]
   NixBase32,
-  #[display("base64")]
   Base64,
+}
+
+impl fmt::Display for Base {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Hex => f.write_str("base16"),
+      Self::NixBase32 => f.write_str("nixbase32"),
+      Self::Base64 => f.write_str("base64"),
+    }
+  }
 }
 
 impl Serialize for Base {
