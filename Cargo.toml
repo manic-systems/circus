@@ -85,7 +85,6 @@ nix = { version = "0.31.3", default-features = false, features = [
   "user",
   "process",
 ] }
-num_enum = "0.7.6"
 parking_lot = "0.12.5"
 percent-encoding = "2.3.2"
 pin-project-lite = "0.2.17"
