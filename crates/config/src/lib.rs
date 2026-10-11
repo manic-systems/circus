@@ -9,8 +9,9 @@ mod validation;
 
 pub use circus_logs::TracingConfig;
 pub use circus_types::BinaryCacheUpstream;
+pub use env::apply_env_vars;
 #[cfg(test)]
-pub(crate) use env::{apply_env_vars, parse_env_value, set_nested};
+pub(crate) use env::{parse_env_value, set_nested};
 #[cfg(test)] pub(crate) use load::deep_merge;
 pub use queue::*;
 pub use redact::redact_secrets;
@@ -396,7 +397,7 @@ mod tests {
       require_api_key_for_reads = false
       port = 3000
     });
-    apply_env_vars(&mut val, [(
+    apply_env_vars(&mut val, "CIRCUS_", [(
       "CIRCUS_SERVER__REQUIRE_API_KEY_FOR_READS".into(),
       "true".into(),
     )]);
@@ -409,7 +410,7 @@ mod tests {
   #[test]
   fn apply_env_vars_skips_config_file() {
     let mut val = toml::Value::Table(toml::map::Map::new());
-    apply_env_vars(&mut val, [(
+    apply_env_vars(&mut val, "CIRCUS_", [(
       "CIRCUS_CONFIG_FILE".into(),
       "/some/path".into(),
     )]);
@@ -419,14 +420,17 @@ mod tests {
   #[test]
   fn apply_env_vars_skips_empty_values() {
     let mut val = table(toml::toml! { [server] host = "127.0.0.1" });
-    apply_env_vars(&mut val, [("CIRCUS_SERVER__HOST".into(), String::new())]);
+    apply_env_vars(&mut val, "CIRCUS_", [(
+      "CIRCUS_SERVER__HOST".into(),
+      String::new(),
+    )]);
     assert_eq!(val["server"]["host"].as_str(), Some("127.0.0.1"));
   }
 
   #[test]
   fn apply_env_vars_vec_string_override() {
     let mut val = toml::Value::try_from(Config::default()).unwrap();
-    apply_env_vars(&mut val, [(
+    apply_env_vars(&mut val, "CIRCUS_", [(
       "CIRCUS_SERVER__ALLOWED_URL_SCHEMES".into(),
       r#"["https", "file"]"#.into(),
     )]);

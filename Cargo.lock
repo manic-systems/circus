@@ -576,11 +576,11 @@ dependencies = [
  "async-compression",
  "capnp",
  "capnp-rpc",
+ "circus-config",
  "circus-logs",
  "circus-proto",
  "clap",
  "color-eyre",
- "config",
  "data-encoding",
  "libc",
  "nix",
@@ -597,6 +597,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "toml",
  "tracing",
  "url",
  "uuid",
@@ -716,7 +717,6 @@ dependencies = [
  "circus-logs",
  "circus-types",
  "color-eyre",
- "config",
  "data-encoding",
  "jiff",
  "serde",
@@ -1105,18 +1105,6 @@ name = "compression-core"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
-
-[[package]]
-name = "config"
-version = "0.15.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38e9fbc53afcec54441422f1c596cd054655b32e70e1cbac956651b7b175a404"
-dependencies = [
- "pathdiff",
- "serde_core",
- "toml",
- "winnow",
-]
 
 [[package]]
 name = "const-oid"
@@ -3991,12 +3979,6 @@ dependencies = [
  "getrandom 0.4.3",
  "phc",
 ]
-
-[[package]]
-name = "pathdiff"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pathfinding"

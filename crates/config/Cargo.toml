@@ -13,7 +13,6 @@ ignored = [ "humantime-serde" ] # used by a Serde `with` attr
 circus-logs.workspace   = true
 circus-types.workspace  = true
 color-eyre.workspace    = true
-config.workspace        = true
 data-encoding.workspace = true
 jiff.workspace          = true
 serde.workspace         = true

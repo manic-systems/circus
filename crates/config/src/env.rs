@@ -1,11 +1,11 @@
+/// Overlays every `<prefix>A__B=value` variable onto `table.a.b`.
 pub fn apply_env_vars(
   table: &mut toml::Value,
+  prefix: &str,
   env_vars: impl IntoIterator<Item = (String, String)>,
 ) {
-  const PREFIX: &str = "CIRCUS_";
-
   for (key, value) in env_vars {
-    let Some(rest) = key.strip_prefix(PREFIX) else {
+    let Some(rest) = key.strip_prefix(prefix) else {
       continue;
     };
     if rest == "CONFIG_FILE" || value.is_empty() {

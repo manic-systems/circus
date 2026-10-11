@@ -11,15 +11,15 @@ name = "circus-agent"
 path = "src/main.rs"
 
 [dependencies]
-circus-logs.workspace  = true
-circus-proto.workspace = true
+circus-config.workspace = true
+circus-logs.workspace   = true
+circus-proto.workspace  = true
 
 async-compression.workspace   = true
 capnp.workspace               = true
 capnp-rpc.workspace           = true
 clap.workspace                = true
 color-eyre.workspace          = true
-config.workspace              = true
 data-encoding.workspace       = true
 libc.workspace                = true
 nix.workspace                 = true
@@ -36,6 +36,7 @@ thiserror.workspace           = true
 tokio.workspace               = true
 tokio-rustls.workspace        = true
 tokio-util                    = { workspace = true, features = [ "rt" ] }
+toml.workspace                = true
 tracing.workspace             = true
 url.workspace                 = true
 uuid.workspace                = true
