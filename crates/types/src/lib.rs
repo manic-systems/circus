@@ -19,9 +19,7 @@ pub mod validation;
 #[derive(
   Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
 )]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[serde(rename_all = "kebab-case")]
-#[cfg_attr(feature = "clap", value(rename_all = "kebab-case"))]
 pub enum GlobalRole {
   Admin,
   #[default]
@@ -83,9 +81,7 @@ impl FromStr for GlobalRole {
   Deserialize,
   Default,
 )]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "clap", value(rename_all = "lowercase"))]
 pub enum ProjectRole {
   #[default]
   Member     = 1,

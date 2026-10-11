@@ -24,6 +24,7 @@ circus-server.workspace       = true
 circus-types.workspace        = true
 evix.workspace                = true
 misstep.workspace             = true
+pound.workspace               = true
 tokio.workspace               = true
 
 [lints]

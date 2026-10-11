@@ -2,20 +2,17 @@
   clippy::print_stdout,
   reason = "circus is a CLI and stdout is its user interface"
 )]
-use std::{
-  env,
-  ffi::{OsStr, OsString},
-  path::Path,
-};
+use std::{env, ffi::OsString, path::Path};
+
+use pound::{ErrorKind, Parse};
 
 /// Run the multi-call Circus CLI.
 ///
 /// # Errors
 ///
-/// Returns an error from the selected applet, or when the command name is not
-/// recognized.
+/// Returns an error from the selected applet.
 pub fn run() -> misstep::Result<()> {
-  let args = env::args_os().collect::<Vec<_>>();
+  let mut args = env::args_os().collect::<Vec<_>>();
 
   if env::var_os(evix::WORKER_ENV).is_some() {
     return circus_evaluator::cli::run_from(args);
@@ -24,85 +21,48 @@ pub fn run() -> misstep::Result<()> {
     return circus_agent::cli::run_from(args);
   }
 
-  let applet = args
+  let invoked = args
     .first()
-    .and_then(|arg| Path::new(arg).file_name())
-    .and_then(applet_from_name);
-
-  match applet {
-    Some(Applet::Agent) => circus_agent::cli::run_from(args),
-    Some(Applet::Ctl) => run_ctl(args),
-    Some(Applet::Evaluator) => circus_evaluator::cli::run_from(args),
-    Some(Applet::QueueRunner) => circus_queue_runner::cli::run_from(args),
-    Some(Applet::Server) => circus_server::cli::run_from(args),
-    None => run_subcommand(args),
+    .and_then(|arg| Path::new(arg).file_name()?.to_str())
+    .and_then(|name| Applet::try_parse_from([name]).ok());
+  if let Some(applet) = invoked {
+    return applet.run(args);
   }
-}
 
-fn run_subcommand(mut args: Vec<OsString>) -> misstep::Result<()> {
-  let Some(command) = args.get(1).and_then(|arg| arg.to_str()) else {
-    print_help();
-    return Ok(());
+  let command = args.get(1).and_then(|arg| arg.to_str());
+  let applet = match Applet::try_parse_from(command) {
+    Ok(applet) => applet,
+    Err(error) if matches!(error.kind, ErrorKind::Version(_)) => {
+      println!("circus {}", circus_common::version::long());
+      return Ok(());
+    },
+    Err(error) => error.exit(),
   };
 
-  if matches!(command, "-h" | "--help") {
-    print_help();
-    return Ok(());
-  }
-  if matches!(command, "-V" | "--version") {
-    println!("circus {}", circus_common::version::long());
-    return Ok(());
-  }
-
-  let applet = applet_from_command(command).ok_or_else(|| {
-    misstep::report!("unknown circus command `{command}`; run `circus --help`")
-  })?;
   args.remove(1);
   args[0] = OsString::from(applet.name());
-
-  match applet {
-    Applet::Agent => circus_agent::cli::run_from(args),
-    Applet::Ctl => run_ctl(args),
-    Applet::Evaluator => circus_evaluator::cli::run_from(args),
-    Applet::QueueRunner => circus_queue_runner::cli::run_from(args),
-    Applet::Server => circus_server::cli::run_from(args),
-  }
+  applet.run(args)
 }
 
-fn run_ctl(args: Vec<OsString>) -> misstep::Result<()> {
-  misstep::install_panic_hook();
-  circus_common::install_crypto_provider()?;
-
-  let runtime = tokio::runtime::Builder::new_multi_thread()
-    .enable_all()
-    .build()?;
-  runtime.block_on(circus_cli::run_from(args))
-}
-
-fn print_help() {
-  println!(
-    "\
-Usage: circus <COMMAND> [ARGS]...
-
-Commands:
-  server        Run the API server and dashboard
-  queue-runner  Run the build queue runner
-  evaluator     Run the evaluator
-  agent         Run a distributed build agent
-  ctl           Run the API client CLI
-
-The same binary also dispatches by argv0 when installed as circus-server,
-circus-queue-runner, circus-evaluator, circus-agent, or circusctl."
-  );
-}
-
-#[derive(Clone, Copy)]
+/// Circus services and client, also run by their own names via symlinks.
+#[derive(Clone, Copy, Parse)]
+#[pound(name = "circus", help_if_empty)]
 enum Applet {
-  Agent,
-  Ctl,
-  Evaluator,
-  QueueRunner,
+  /// Run the API server and dashboard
+  #[pound(alias = "circus-server")]
   Server,
+  /// Run the build queue runner
+  #[pound(alias = ["runner", "circus-queue-runner"])]
+  QueueRunner,
+  /// Run the evaluator
+  #[pound(alias = "circus-evaluator")]
+  Evaluator,
+  /// Run a distributed build agent
+  #[pound(alias = "circus-agent")]
+  Agent,
+  /// Run the API client CLI
+  #[pound(alias = ["cli", "circusctl", "circus-cli"])]
+  Ctl,
 }
 
 impl Applet {
@@ -115,26 +75,24 @@ impl Applet {
       Self::Server => "circus-server",
     }
   }
-}
 
-fn applet_from_name(name: &OsStr) -> Option<Applet> {
-  match name.to_str()? {
-    "agent" | "circus-agent" => Some(Applet::Agent),
-    "ctl" | "circus-cli" | "circusctl" => Some(Applet::Ctl),
-    "evaluator" | "circus-evaluator" => Some(Applet::Evaluator),
-    "queue-runner" | "circus-queue-runner" => Some(Applet::QueueRunner),
-    "server" | "circus-server" => Some(Applet::Server),
-    _ => None,
+  fn run(self, args: Vec<OsString>) -> misstep::Result<()> {
+    match self {
+      Self::Agent => circus_agent::cli::run_from(args),
+      Self::Ctl => run_ctl(args),
+      Self::Evaluator => circus_evaluator::cli::run_from(args),
+      Self::QueueRunner => circus_queue_runner::cli::run_from(args),
+      Self::Server => circus_server::cli::run_from(args),
+    }
   }
 }
 
-fn applet_from_command(command: &str) -> Option<Applet> {
-  match command {
-    "agent" => Some(Applet::Agent),
-    "ctl" | "cli" | "circusctl" => Some(Applet::Ctl),
-    "evaluator" => Some(Applet::Evaluator),
-    "queue-runner" | "runner" => Some(Applet::QueueRunner),
-    "server" => Some(Applet::Server),
-    _ => None,
-  }
+fn run_ctl(args: Vec<OsString>) -> misstep::Result<()> {
+  misstep::install_panic_hook();
+  circus_common::install_crypto_provider()?;
+
+  let runtime = tokio::runtime::Builder::new_multi_thread()
+    .enable_all()
+    .build()?;
+  runtime.block_on(circus_cli::run_from(args))
 }

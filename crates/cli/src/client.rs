@@ -10,13 +10,15 @@ pub(super) struct ApiClient {
 }
 
 impl ApiClient {
-  pub(super) fn new(base_url: &str, api_key: Option<String>) -> Result<Self> {
-    let mut normalized = base_url.trim().to_string();
-    if !normalized.ends_with('/') {
-      normalized.push('/');
+  pub(super) fn new(
+    mut base_url: reqwest::Url,
+    api_key: Option<String>,
+  ) -> Result<Self> {
+    if !base_url.path().ends_with('/') {
+      let path = format!("{}/", base_url.path());
+      base_url.set_path(&path);
     }
-    let base_url = reqwest::Url::parse(&normalized)
-      .with_context(|| format!("invalid Circus URL: {base_url}"))?;
+
     Ok(Self {
       client: circus_http::transfer().build()?,
       base_url,

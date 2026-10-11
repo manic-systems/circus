@@ -59,56 +59,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "anstream"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d"
-dependencies = [
- "anstyle",
- "anstyle-parse",
- "anstyle-query",
- "anstyle-wincon",
- "colorchoice",
- "is_terminal_polyfill",
- "utf8parse",
-]
-
-[[package]]
-name = "anstyle"
-version = "1.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
-
-[[package]]
-name = "anstyle-parse"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e"
-dependencies = [
- "utf8parse",
-]
-
-[[package]]
-name = "anstyle-query"
-version = "1.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
-dependencies = [
- "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "anstyle-wincon"
-version = "3.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
-dependencies = [
- "anstyle",
- "once_cell_polyfill",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -481,6 +431,7 @@ dependencies = [
  "circus-types",
  "evix",
  "misstep",
+ "pound",
  "tokio",
 ]
 
@@ -495,12 +446,12 @@ dependencies = [
  "circus-http",
  "circus-logs",
  "circus-proto",
- "clap",
  "data-encoding",
  "libc",
  "misstep",
  "nix",
  "parking_lot",
+ "pound",
  "reqwest",
  "rustls",
  "rustls-native-certs",
@@ -561,14 +512,16 @@ name = "circus-cli"
 version = "0.14.0"
 dependencies = [
  "circus-common",
+ "circus-config",
  "circus-http",
- "clap",
  "misstep",
+ "pound",
  "reqwest",
  "serde_json",
  "tempfile",
  "tokio",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -600,7 +553,6 @@ dependencies = [
  "circus-migrations",
  "circus-nix",
  "circus-types",
- "clap",
  "data-encoding",
  "deadpool-postgres",
  "futures",
@@ -608,6 +560,7 @@ dependencies = [
  "jiff",
  "misstep",
  "nix",
+ "pound",
  "regex",
  "ring",
  "rustls",
@@ -652,7 +605,6 @@ dependencies = [
  "circus-migrations",
  "circus-nix",
  "circus-notification",
- "clap",
  "data-encoding",
  "evix",
  "futures",
@@ -660,6 +612,7 @@ dependencies = [
  "jiff",
  "libc",
  "misstep",
+ "pound",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -770,7 +723,6 @@ dependencies = [
  "circus-notification",
  "circus-proto",
  "circus-s3",
- "clap",
  "dashmap",
  "data-encoding",
  "dix-diff",
@@ -778,6 +730,7 @@ dependencies = [
  "jiff",
  "misstep",
  "parking_lot",
+ "pound",
  "reqwest",
  "rustls",
  "serde",
@@ -826,7 +779,6 @@ dependencies = [
  "circus-nix",
  "circus-notification",
  "circus-s3",
- "clap",
  "cognos",
  "dashmap",
  "data-encoding",
@@ -836,6 +788,7 @@ dependencies = [
  "jiff",
  "misstep",
  "parking_lot",
+ "pound",
  "regex",
  "reqwest",
  "ring",
@@ -866,7 +819,6 @@ dependencies = [
 name = "circus-types"
 version = "0.14.0"
 dependencies = [
- "clap",
  "regex",
  "serde",
  "serde_json",
@@ -880,8 +832,8 @@ dependencies = [
  "circus-config",
  "circus-migrations",
  "circus-server",
- "clap",
  "misstep",
+ "pound",
  "regex",
  "serde_json",
  "tokio",
@@ -899,46 +851,6 @@ dependencies = [
  "libc",
  "libloading",
 ]
-
-[[package]]
-name = "clap"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946"
-dependencies = [
- "clap_builder",
- "clap_derive",
-]
-
-[[package]]
-name = "clap_builder"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
-dependencies = [
- "anstream",
- "anstyle",
- "clap_lex",
- "strsim",
-]
-
-[[package]]
-name = "clap_derive"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9c751b79415d4e559e3d1fcf128e09e720eb673a06d26cf6f392d37d75b66e0"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "clap_lex"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "clru"
@@ -965,12 +877,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
 ]
-
-[[package]]
-name = "colorchoice"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "combine"
@@ -3066,12 +2972,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
-name = "is_terminal_polyfill"
-version = "1.70.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
-
-[[package]]
 name = "itertools"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3610,12 +3510,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "once_cell_polyfill"
-version = "1.70.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
 name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3802,6 +3696,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661"
 dependencies = [
  "zerovec",
+]
+
+[[package]]
+name = "pound"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31904757f773044425cafb499e2491363863fa2c65c0843c0e955e002a8f9412"
+dependencies = [
+ "pound-derive",
+]
+
+[[package]]
+name = "pound-derive"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef6baae69fb70288539d8731b1c028179afc469e43b1087abca598038d2e72a1"
+dependencies = [
+ "pound-derive-impl",
+]
+
+[[package]]
+name = "pound-derive-impl"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f4399a19fcf1187576b5d816adbea4b05c6953024bcacc757b54a25f3481584"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "venial",
 ]
 
 [[package]]
@@ -4605,12 +4528,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "strsim"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4690,7 +4607,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
@@ -5554,12 +5471,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
-name = "utf8parse"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
 name = "utoipa"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5605,6 +5516,16 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "venial"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a42528baceab6c7784446df2a10f4185078c39bf73dc614f154353f1a6b1229"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
 
 [[package]]
 name = "version_check"

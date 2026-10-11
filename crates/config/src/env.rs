@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use serde::{
   Deserializer,
   de::{
@@ -240,4 +242,25 @@ impl<'de> Deserializer<'de> for Coerce {
       other => other.deserialize_enum(name, variants, visitor),
     }
   }
+}
+
+/// The arguments after the program name, as the UTF-8 strings pound parses.
+///
+/// # Errors
+///
+/// Returns an error for an argument that is not valid UTF-8.
+pub fn cli_args<I, T>(args: I) -> misstep::Result<Vec<String>>
+where
+  I: IntoIterator<Item = T>,
+  T: Into<OsString>,
+{
+  args
+    .into_iter()
+    .skip(1)
+    .map(|arg| {
+      arg.into().into_string().map_err(|arg| {
+        misstep::report!("argument {} is not valid UTF-8", arg.display())
+      })
+    })
+    .collect()
 }

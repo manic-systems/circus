@@ -1,5 +1,6 @@
 use misstep::{Result, ResultExt, report};
 use serde_json::{Map, Value, json};
+use uuid::Uuid;
 
 use crate::{
   app::{CommandRunner, insert_optional, with_query},
@@ -10,6 +11,7 @@ use crate::{
     ConfigCommand,
     FailedPathsCacheCommand,
     NotificationCommand,
+    Page,
     PinnedOutputCommand,
     UserCommand,
   },
@@ -109,7 +111,9 @@ impl CommandRunner {
       ApiKeyCommand::Create { name, role } => {
         let mut body = Map::new();
         body.insert("name".to_string(), Value::String(name));
-        insert_optional(&mut body, "role", role);
+        if let Some(role) = role {
+          body.insert("role".to_string(), json!(role));
+        }
         let response = self
           .api
           .post("api/v1/api-keys", Value::Object(body), true)
@@ -143,16 +147,10 @@ impl CommandRunner {
 
   pub(super) async fn users(&self, command: UserCommand) -> Result<()> {
     match command {
-      UserCommand::List { limit, offset } => {
+      UserCommand::List { page } => {
         let response = self
           .api
-          .get(
-            &with_query("api/v1/users", &[
-              ("limit", limit.to_string()),
-              ("offset", offset.to_string()),
-            ]),
-            true,
-          )
+          .get(&with_query("api/v1/users", &page.query()), true)
           .await?;
         if self.json_output {
           return print_json(&response);
@@ -170,7 +168,9 @@ impl CommandRunner {
         body.insert("username".to_string(), Value::String(username));
         body.insert("email".to_string(), Value::String(email));
         body.insert("password".to_string(), Value::String(password));
-        insert_optional(&mut body, "role", role);
+        if let Some(role) = role {
+          body.insert("role".to_string(), json!(role));
+        }
         insert_optional(&mut body, "full_name", full_name);
         let response = self
           .api
@@ -194,10 +194,10 @@ impl CommandRunner {
         print_users(&response);
       },
       UserCommand::Enable { id } => {
-        self.update_user_enabled(&id, true).await?;
+        self.update_user_enabled(id, true).await?;
       },
       UserCommand::Disable { id } => {
-        self.update_user_enabled(&id, false).await?;
+        self.update_user_enabled(id, false).await?;
       },
       UserCommand::Delete { id } => {
         let response =
@@ -211,7 +211,7 @@ impl CommandRunner {
     Ok(())
   }
 
-  async fn update_user_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+  async fn update_user_enabled(&self, id: Uuid, enabled: bool) -> Result<()> {
     let response = self
       .api
       .put(
@@ -274,7 +274,7 @@ impl CommandRunner {
       AdminCommand::PinnedOutputs { command } => {
         self.pinned_outputs(command).await
       },
-      AdminCommand::Audit { limit, offset } => self.audit(limit, offset).await,
+      AdminCommand::Audit { page } => self.audit(&page).await,
       AdminCommand::Config { command } => self.config(command).await,
     }
   }
@@ -343,14 +343,11 @@ impl CommandRunner {
 
   async fn pinned_outputs(&self, command: PinnedOutputCommand) -> Result<()> {
     match command {
-      PinnedOutputCommand::List { limit, offset } => {
+      PinnedOutputCommand::List { page } => {
         let response = self
           .api
           .get(
-            &with_query("api/v1/admin/pinned-build-products", &[
-              ("limit", limit.to_string()),
-              ("offset", offset.to_string()),
-            ]),
+            &with_query("api/v1/admin/pinned-build-products", &page.query()),
             true,
           )
           .await?;
@@ -379,16 +376,10 @@ impl CommandRunner {
     Ok(())
   }
 
-  async fn audit(&self, limit: u32, offset: u32) -> Result<()> {
+  async fn audit(&self, page: &Page) -> Result<()> {
     let response = self
       .api
-      .get(
-        &with_query("api/v1/admin/audit-log", &[
-          ("limit", limit.to_string()),
-          ("offset", offset.to_string()),
-        ]),
-        true,
-      )
+      .get(&with_query("api/v1/admin/audit-log", &page.query()), true)
       .await?;
     if self.json_output {
       return print_json(&response);

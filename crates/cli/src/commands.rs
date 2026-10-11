@@ -1,381 +1,404 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use circus_common::{BuildStatus, EvaluationStatus, roles::GlobalRole};
+use pound::Parse;
+use reqwest::Url;
+use uuid::Uuid;
 
-#[derive(Parser)]
-#[command(about = "CLI for Circus servers")]
+/// CLI for Circus servers
+#[derive(Parse)]
+#[pound(name = "circusctl", help_if_empty)]
 pub(super) struct Cli {
-  /// Server base URL. Defaults to `CIRCUS_URL` or <http://localhost:3000>.
-  #[arg(long, global = true)]
-  pub(super) url: Option<String>,
+  /// Server base URL.
+  #[pound(long, global, env = "CIRCUS_URL", default = "http://localhost:3000")]
+  pub(super) url: Url,
 
-  /// API key. Defaults to `CIRCUS_API_KEY`.
-  #[arg(long, global = true)]
+  /// API key.
+  #[pound(long, global, env = "CIRCUS_API_KEY")]
   pub(super) api_key: Option<String>,
 
   /// Print raw JSON responses instead of tables.
-  #[arg(long, global = true)]
+  #[pound(long, global)]
   pub(super) json: bool,
 
-  #[command(subcommand)]
+  #[pound(subcommand)]
   pub(super) command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
+pub(super) struct Page {
+  /// Most rows to return.
+  #[pound(long, default = 50, min = 1)]
+  pub(super) limit:  u32,
+  /// Rows to skip.
+  #[pound(long, default = 0)]
+  pub(super) offset: u32,
+}
+
+impl Page {
+  pub(super) fn query(&self) -> Vec<(&'static str, String)> {
+    vec![
+      ("limit", self.limit.to_string()),
+      ("offset", self.offset.to_string()),
+    ]
+  }
+}
+
+#[derive(Parse)]
 pub(super) enum Command {
   /// Show public health status.
   Health,
   /// Manage projects.
+  #[pound(alias = "project")]
   Projects {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: ProjectCommand,
   },
   /// Manage jobsets.
+  #[pound(alias = "jobset")]
   Jobsets {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: JobsetCommand,
   },
   /// Inspect or control builds.
+  #[pound(alias = "build")]
   Builds {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: BuildCommand,
   },
   /// Inspect queue state.
   Queue,
-  /// Read build logs.
-  Logs {
-    #[command(subcommand)]
-    command: LogCommand,
-  },
+  /// Print a build log.
+  #[pound(alias = "logs")]
+  Log { build_id: Uuid },
   /// Search projects, jobsets, evaluations, and builds.
   Search {
     query: String,
-    #[arg(long, default_value_t = 20)]
+    /// Most results to return.
+    #[pound(long, default = 20, min = 1)]
     limit: u32,
   },
   /// Manage channels.
+  #[pound(alias = "channel")]
   Channels {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: ChannelCommand,
   },
   /// Manage news items.
   News {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: NewsCommand,
   },
   /// Administrative commands.
   Admin {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: AdminCommand,
   },
   /// Manage database migrations.
   Migrate {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: circus_common::migrate_cli::Commands,
   },
   /// Inspect or trigger evaluations.
+  #[pound(alias = ["evals", "evaluation"])]
   Evaluations {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: EvaluationCommand,
   },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum AdminCommand {
   /// Show admin system status.
   Status,
   /// Manage API keys.
   ApiKeys {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: ApiKeyCommand,
   },
   /// Manage users.
   Users {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: UserCommand,
   },
   /// Manage builder agent sessions.
   Builders {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: BuilderCommand,
   },
   /// Inspect or retry notification tasks.
   Notifications {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: NotificationCommand,
   },
   /// Clear Circus's `PostgreSQL` failed-path cache skip records.
   FailedPathsCache {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: FailedPathsCacheCommand,
   },
   /// Inspect or unpin kept build outputs.
   PinnedOutputs {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: PinnedOutputCommand,
   },
   /// Show the audit log.
   Audit {
-    #[arg(long, default_value_t = 50)]
-    limit:  u32,
-    #[arg(long, default_value_t = 0)]
-    offset: u32,
+    #[pound(flatten)]
+    page: Page,
   },
   /// Read or update server config.
   Config {
-    #[command(subcommand)]
+    #[pound(subcommand)]
     command: ConfigCommand,
   },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum ProjectCommand {
   /// List projects.
+  #[pound(alias = "ls")]
   List {
-    #[arg(long, default_value_t = 50)]
-    limit:  u32,
-    #[arg(long, default_value_t = 0)]
-    offset: u32,
+    #[pound(flatten)]
+    page: Page,
   },
   /// Create a project.
   Create {
-    #[arg(long)]
+    #[pound(long)]
     name:           String,
-    #[arg(long)]
+    #[pound(long)]
     repository_url: String,
-    #[arg(long)]
+    #[pound(long)]
     description:    Option<String>,
   },
-  /// Delete a project by id.
-  Delete { id: String },
+  /// Delete a project.
+  #[pound(alias = "rm")]
+  Delete { id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum JobsetCommand {
   /// List jobsets for a project.
+  #[pound(alias = "ls")]
   List {
-    project_id: String,
-    #[arg(long, default_value_t = 50)]
-    limit:      u32,
-    #[arg(long, default_value_t = 0)]
-    offset:     u32,
+    project_id: Uuid,
+    #[pound(flatten)]
+    page:       Page,
   },
   /// Create a jobset under a project.
   Create {
-    project_id:        String,
-    #[arg(long)]
+    project_id:        Uuid,
+    #[pound(long)]
     name:              String,
-    #[arg(long)]
+    #[pound(long)]
     nix_expression:    String,
-    #[arg(long)]
+    #[pound(long)]
     enabled:           Option<bool>,
-    #[arg(long)]
+    #[pound(long)]
     flake_mode:        Option<bool>,
-    #[arg(long)]
+    /// Seconds between checks for new commits.
+    #[pound(long, min = 1)]
     check_interval:    Option<i32>,
-    #[arg(long)]
+    #[pound(long)]
     only_build_latest: Option<bool>,
-    /// Git pathspecs that must match at least one changed path.
-    #[arg(long, value_delimiter = ',', num_args = 1..)]
-    path_filter:       Option<Vec<String>>,
+    /// Git pathspecs that must match at least one changed path. Repeat it
+    /// or separate pathspecs with commas.
+    #[pound(long, delimiter = ',')]
+    path_filter:       Vec<String>,
   },
   /// Show a jobset.
-  Show {
-    project_id: String,
-    id:         String,
-  },
+  Show { project_id: Uuid, id: Uuid },
   /// Delete a jobset.
-  Delete {
-    project_id: String,
-    id:         String,
-  },
+  #[pound(alias = "rm")]
+  Delete { project_id: Uuid, id: Uuid },
   /// List jobset inputs.
-  Inputs {
-    project_id: String,
-    jobset_id:  String,
-  },
+  Inputs { project_id: Uuid, jobset_id: Uuid },
 }
 
-#[derive(Subcommand)]
-pub(super) enum LogCommand {
-  /// Print a build log.
-  Show { build_id: String },
-}
-
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum ChannelCommand {
   /// List channels.
+  #[pound(alias = "ls")]
   List,
   /// Show one channel.
-  Show { id: String },
+  Show { id: Uuid },
   /// Delete one channel.
-  Delete { id: String },
+  #[pound(alias = "rm")]
+  Delete { id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum NewsCommand {
   /// List news items.
+  #[pound(alias = "ls")]
   List,
   /// Create a news item.
   Create {
-    #[arg(long)]
+    #[pound(long)]
     title:   String,
-    #[arg(long)]
+    #[pound(long)]
     content: String,
   },
   /// Delete a news item.
-  Delete { id: String },
+  #[pound(alias = "rm")]
+  Delete { id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum ApiKeyCommand {
   /// List API keys.
+  #[pound(alias = "ls")]
   List,
   /// Create an API key and print the one-time secret.
   Create {
-    #[arg(long)]
+    #[pound(long)]
     name: String,
-    #[arg(long)]
-    role: Option<String>,
+    #[pound(long)]
+    role: Option<GlobalRole>,
   },
-  /// Revoke an API key by id.
-  Revoke { id: String },
+  /// Revoke an API key.
+  Revoke { id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum UserCommand {
   /// List users.
+  #[pound(alias = "ls")]
   List {
-    #[arg(long, default_value_t = 50)]
-    limit:  u32,
-    #[arg(long, default_value_t = 0)]
-    offset: u32,
+    #[pound(flatten)]
+    page: Page,
   },
   /// Create a local user.
   Create {
-    #[arg(long)]
+    #[pound(long)]
     username:  String,
-    #[arg(long)]
+    #[pound(long)]
     email:     String,
-    #[arg(long)]
+    /// Read from the environment to keep it out of shell history.
+    #[pound(long, env = "CIRCUS_USER_PASSWORD")]
     password:  String,
-    #[arg(long)]
-    role:      Option<String>,
-    #[arg(long)]
+    #[pound(long)]
+    role:      Option<GlobalRole>,
+    #[pound(long)]
     full_name: Option<String>,
   },
   /// Set a user's role.
   SetRole {
-    id:   String,
-    #[arg(long)]
-    role: String,
+    id:   Uuid,
+    #[pound(long)]
+    role: GlobalRole,
   },
   /// Enable a user.
-  Enable { id: String },
+  Enable { id: Uuid },
   /// Disable a user.
-  Disable { id: String },
-  /// Delete a user by id.
-  Delete { id: String },
+  Disable { id: Uuid },
+  /// Delete a user.
+  #[pound(alias = "rm")]
+  Delete { id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum BuilderCommand {
   /// List builder agent sessions.
+  #[pound(alias = "ls")]
   Sessions {
-    #[arg(long)]
+    /// Only list connected agents.
+    #[pound(long)]
     connected: bool,
   },
-  /// Show one builder agent session by machine id.
-  Session { machine_id: String },
+  /// Show one builder agent session.
+  Session { machine_id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum BuildCommand {
   /// List builds.
+  #[pound(alias = "ls")]
   List {
-    #[arg(long)]
-    status:   Option<String>,
-    #[arg(long)]
+    #[pound(long)]
+    status:   Option<BuildStatus>,
+    #[pound(long)]
     system:   Option<String>,
-    #[arg(long)]
+    #[pound(long)]
     job_name: Option<String>,
-    #[arg(long, default_value_t = 50)]
-    limit:    u32,
-    #[arg(long, default_value_t = 0)]
-    offset:   u32,
+    #[pound(flatten)]
+    page:     Page,
   },
   /// Cancel a build.
-  Cancel { id: String },
+  Cancel { id: Uuid },
   /// Restart a build.
-  Restart { id: String },
+  Restart { id: Uuid },
   /// Bump a queued build to the front.
-  Bump { id: String },
-  /// Set or clear the keep flag.
+  Bump { id: Uuid },
+  /// Keep a build's outputs from garbage collection.
   Keep {
-    id:    String,
-    #[arg(long)]
-    value: bool,
+    id:    Uuid,
+    /// Clear the keep flag instead.
+    #[pound(long)]
+    clear: bool,
   },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum EvaluationCommand {
   /// List evaluations.
+  #[pound(alias = "ls")]
   List {
-    #[arg(long)]
-    jobset_id: Option<String>,
-    #[arg(long)]
-    status:    Option<String>,
-    #[arg(long, default_value_t = 50)]
-    limit:     u32,
-    #[arg(long, default_value_t = 0)]
-    offset:    u32,
+    #[pound(long)]
+    jobset_id: Option<Uuid>,
+    #[pound(long)]
+    status:    Option<EvaluationStatus>,
+    #[pound(flatten)]
+    page:      Page,
   },
   /// Trigger an evaluation for a jobset and commit.
   Trigger {
-    #[arg(long)]
-    jobset_id:      String,
-    #[arg(long)]
+    #[pound(long)]
+    jobset_id:      Uuid,
+    #[pound(long, validate = |hash: &String| {
+      let hex = hash.bytes().all(|byte| byte.is_ascii_hexdigit());
+      let len = (1..=64).contains(&hash.len());
+      (hex && len).then_some(()).ok_or("expected 1 to 64 hex characters")
+    })]
     commit_hash:    String,
-    #[arg(long)]
+    #[pound(long)]
     pr_number:      Option<i32>,
-    #[arg(long)]
+    #[pound(long, requires = pr_number)]
     pr_head_branch: Option<String>,
-    #[arg(long)]
+    #[pound(long, requires = pr_number)]
     pr_base_branch: Option<String>,
-    #[arg(long)]
+    #[pound(long, requires = pr_number)]
     pr_action:      Option<String>,
   },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum NotificationCommand {
   /// List recent notification tasks.
+  #[pound(alias = "ls")]
   List,
   /// Retry a failed notification task.
-  Retry { id: String },
+  Retry { id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum PinnedOutputCommand {
   /// List pinned build outputs.
+  #[pound(alias = "ls")]
   List {
-    #[arg(long, default_value_t = 100)]
-    limit:  u32,
-    #[arg(long, default_value_t = 0)]
-    offset: u32,
+    #[pound(flatten)]
+    page: Page,
   },
   /// Clear the keep flag for a build and make its outputs GC-eligible.
-  Unpin { build_id: String },
+  Unpin { build_id: Uuid },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum FailedPathsCacheCommand {
   /// Delete all failed-path cache skip records.
   Clear,
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 pub(super) enum ConfigCommand {
   /// Print the current server config body.
   Get,
