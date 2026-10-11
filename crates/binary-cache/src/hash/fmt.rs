@@ -15,41 +15,46 @@ pub mod private {
   pub trait Sealed {}
 }
 
-#[derive(derive_more::Display, Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Encoding {
-  #[display("sri")]
   Sri,
-  #[display("{_0}")]
   NoAlgo(Base),
 }
 
-#[derive(derive_more::Display, Debug, PartialEq, Clone)]
+impl sfmt::Display for Encoding {
+  fn fmt(&self, f: &mut sfmt::Formatter<'_>) -> sfmt::Result {
+    match self {
+      Self::Sri => f.write_str("sri"),
+      Self::NoAlgo(base) => write!(f, "{base}"),
+    }
+  }
+}
+
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum ParseHashErrorKind {
-  #[display("has {_0}")]
+  #[error("has {0}")]
   Algorithm(crate::UnknownAlgorithm),
-  #[display("is not SRI")]
+  #[error("is not SRI")]
   NotSRI,
-  #[display("should have type '{expected}' but got '{actual}'")]
+  #[error("should have type '{expected}' but got '{actual}'")]
   TypeMismatch {
     expected: Algorithm,
     actual:   Algorithm,
   },
-  #[display(
+  #[error(
     "does not include a type, nor is the type otherwise known from context"
   )]
   MissingType,
-  #[display("has {_1} when decoding as {_0}")]
+  #[error("has {1} when decoding as {0}")]
   BadEncoding(Encoding, data_encoding::DecodeError),
-  #[display("has wrong length for hash type '{_0}'")]
+  #[error("has wrong length for hash type '{0}'")]
   WrongHashLength(Algorithm),
-  #[display("has wrong length {length} != {} for hash type '{algorithm}'", algorithm.size())]
+  #[error("has wrong length {length} != {} for hash type '{algorithm}'", .algorithm.size())]
   WrongHashLength2 {
     algorithm: Algorithm,
     length:    usize,
   },
 }
-
-impl std::error::Error for ParseHashErrorKind {}
 
 impl ParseHashErrorKind {
   fn adjust_position(&mut self, amt: usize) {

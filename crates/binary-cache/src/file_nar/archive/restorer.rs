@@ -13,7 +13,6 @@ use std::{
 
 use bstr::ByteSlice as _;
 use bytes::Bytes;
-use derive_more::Display;
 use futures_core::Stream;
 use futures_sink::Sink;
 use pin_project_lite::pin_project;
@@ -27,20 +26,27 @@ use tracing::{debug, trace};
 
 use super::{CASE_HACK_SUFFIX, NarEvent};
 
-#[derive(Display, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum NarWriteOperation {
-  #[display("creating directory")]
   CreateDirectory,
-  #[display("creating symlink")]
   CreateSymlink,
-  #[display("creating file")]
   CreateFile,
-  #[display("path contains invalid UTF-8")]
   PathUTF8,
-  #[display("restoring malformed archive")]
   InvalidArchive,
-  #[display("Could not join state")]
   JoinError,
+}
+
+impl fmt::Display for NarWriteOperation {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::CreateDirectory => f.write_str("creating directory"),
+      Self::CreateSymlink => f.write_str("creating symlink"),
+      Self::CreateFile => f.write_str("creating file"),
+      Self::PathUTF8 => f.write_str("path contains invalid UTF-8"),
+      Self::InvalidArchive => f.write_str("restoring malformed archive"),
+      Self::JoinError => f.write_str("Could not join state"),
+    }
+  }
 }
 
 #[derive(Error, Debug)]

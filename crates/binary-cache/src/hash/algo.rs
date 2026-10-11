@@ -1,6 +1,5 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
-use derive_more::Display;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
@@ -13,21 +12,26 @@ const SHA512_SIZE: usize = 512 / 8;
 const BLAKE3_SIZE: usize = 256 / 8;
 
 /// A digest algorithm.
-#[derive(
-  Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Display, Default,
-)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Default)]
 pub enum Algorithm {
-  #[display("md5")]
   MD5,
-  #[display("sha1")]
   SHA1,
   #[default]
-  #[display("sha256")]
   SHA256,
-  #[display("sha512")]
   SHA512,
-  #[display("blake3")]
   BLAKE3,
+}
+
+impl fmt::Display for Algorithm {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::MD5 => f.write_str("md5"),
+      Self::SHA1 => f.write_str("sha1"),
+      Self::SHA256 => f.write_str("sha256"),
+      Self::SHA512 => f.write_str("sha512"),
+      Self::BLAKE3 => f.write_str("blake3"),
+    }
+  }
 }
 
 impl Algorithm {

@@ -611,7 +611,6 @@ dependencies = [
  "bstr",
  "bytes",
  "data-encoding",
- "derive_more",
  "ed25519-dalek",
  "futures-core",
  "futures-sink",
