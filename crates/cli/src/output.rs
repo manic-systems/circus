@@ -1,4 +1,3 @@
-use comfy_table::Table;
 use misstep::Result;
 use serde_json::Value;
 
@@ -118,12 +117,31 @@ pub(super) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     return;
   }
 
-  let mut table = Table::new();
-  table.set_header(headers.to_vec());
+  let width = |cell: &str| cell.chars().count();
+  let mut widths: Vec<usize> =
+    headers.iter().map(|header| width(header)).collect();
   for row in rows {
-    table.add_row(row.clone());
+    for (column, cell) in row.iter().enumerate() {
+      if let Some(max) = widths.get_mut(column) {
+        *max = (*max).max(width(cell));
+      }
+    }
   }
-  println!("{table}");
+
+  let line = |cells: &mut dyn Iterator<Item = &str>| {
+    let padded: Vec<String> = cells
+      .zip(&widths)
+      .map(|(cell, width)| format!("{cell:<width$}"))
+      .collect();
+    println!("{}", padded.join("  ").trim_end());
+  };
+  let rules: Vec<String> =
+    widths.iter().map(|width| "-".repeat(*width)).collect();
+  line(&mut headers.iter().copied());
+  line(&mut rules.iter().map(String::as_str));
+  for row in rows {
+    line(&mut row.iter().map(String::as_str));
+  }
 }
 
 pub(super) fn items(value: &Value) -> Vec<&Value> {
