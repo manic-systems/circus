@@ -6,8 +6,8 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use circus_logs::init_tracing;
-use clap::Parser;
 use misstep::{Result, bail, report};
+use pound::Parse;
 use uuid::Uuid;
 
 use crate::{
@@ -16,53 +16,54 @@ use crate::{
   session,
 };
 
-#[derive(Parser)]
-#[command(name = "circus-agent", about = "Circus distributed build agent")]
+/// Circus distributed build agent
+#[derive(Parse)]
+#[pound(name = "circus-agent")]
 struct Cli {
-  #[arg(short, long, value_name = "FILE")]
+  #[pound(short, long, value_name = "FILE")]
   config: Option<PathBuf>,
 
   /// Run as a single-session, short-lived agent: generate a fresh machine ID,
   /// drain the queue, then exit instead of reconnecting. Enables ephemeral
   /// mode even if `[agent.ephemeral]` is absent (using defaults). Intended for
   /// CI runners such as GitHub Actions.
-  #[arg(long)]
+  #[pound(long)]
   ephemeral: bool,
 
   /// Agent name. Overrides `[agent].name`; required for config-free launches.
-  #[arg(long)]
+  #[pound(long)]
   name: Option<String>,
 
   /// Runner RPC endpoint. Overrides `[agent].runner_url`.
-  #[arg(long)]
+  #[pound(long)]
   runner_url: Option<String>,
 
   /// Nix system this agent can build. Repeat for multiple systems.
-  #[arg(long = "system")]
+  #[pound(long = "system")]
   systems: Vec<String>,
 
   /// Nix system feature this agent supports. Repeat for multiple features.
-  #[arg(long = "supported-feature")]
+  #[pound(long = "supported-feature")]
   supported_features: Vec<String>,
 
   /// Nix system feature required by every build assigned to this agent.
-  #[arg(long = "mandatory-feature")]
+  #[pound(long = "mandatory-feature")]
   mandatory_features: Vec<String>,
 
   /// Maximum concurrent builds accepted by this agent.
-  #[arg(long)]
+  #[pound(long)]
   max_jobs: Option<u32>,
 
   /// Per-build Nix cores setting. 0 keeps Nix's default.
-  #[arg(long)]
+  #[pound(long)]
   cores: Option<u32>,
 
   /// Scheduler speed factor advertised by this agent.
-  #[arg(long)]
+  #[pound(long)]
   speed_factor: Option<f32>,
 
   /// Agent work directory.
-  #[arg(long)]
+  #[pound(long)]
   work_dir: Option<PathBuf>,
 }
 
@@ -104,7 +105,8 @@ where
     .install_default()
     .map_err(|_| report!("a rustls CryptoProvider is already installed"))?;
 
-  let cli = Cli::parse_from(args);
+  let args = circus_config::cli_args(args)?;
+  let cli = Cli::parse_from(args.iter().map(String::as_str));
   let mut cfg = load_config(&cli)?;
   init_tracing(&cfg.tracing);
 

@@ -9,7 +9,7 @@ mod validation;
 
 pub use circus_logs::TracingConfig;
 pub use circus_types::BinaryCacheUpstream;
-pub use env::apply_env_vars;
+pub use env::{apply_env_vars, cli_args};
 #[cfg(test)]
 pub(crate) use env::{parse_env_value, set_nested};
 #[cfg(test)] pub(crate) use load::deep_merge;

@@ -9,7 +9,6 @@ description          = "HTTP server for Circus"
 [dependencies]
 async-compression.workspace   = true
 axum.workspace                = true
-clap.workspace                = true
 dashmap.workspace             = true
 data-encoding.workspace       = true
 futures.workspace             = true
@@ -18,6 +17,7 @@ hmac.workspace                = true
 jiff.workspace                = true
 misstep.workspace             = true
 parking_lot.workspace         = true
+pound.workspace               = true
 reqwest.workspace             = true
 ring.workspace                = true
 rustls.workspace              = true

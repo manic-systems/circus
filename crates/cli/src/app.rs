@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 
-use clap::Parser;
 use misstep::Result;
+use pound::Parse;
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -47,7 +47,8 @@ pub async fn run() -> Result<()> {
 /// Returns an error when argument parsing, API requests, or output rendering
 /// fail.
 pub async fn run_from(args: Vec<OsString>) -> Result<()> {
-  let cli = Cli::parse_from(args);
+  let args = circus_config::cli_args(args)?;
+  let cli = Cli::parse_from(args.iter().map(String::as_str));
   let base_url = cli
     .url
     .or_else(|| std::env::var("CIRCUS_URL").ok())
@@ -248,7 +249,11 @@ impl CommandRunner {
         insert_optional_bool(&mut body, "flake_mode", flake_mode);
         insert_optional_i32(&mut body, "check_interval", check_interval);
         insert_optional_bool(&mut body, "only_build_latest", only_build_latest);
-        if let Some(path_filters) = path_filter {
+        let path_filters: Vec<&str> = path_filter
+          .iter()
+          .flat_map(|filter| filter.split(','))
+          .collect();
+        if !path_filters.is_empty() {
           body.insert(
             "path_filters".to_string(),
             serde_json::json!(path_filters),

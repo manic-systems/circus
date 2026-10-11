@@ -25,8 +25,8 @@ use circus_config::{
   SigningConfig,
   public_key_from_secret,
 };
-use clap::Parser;
 use misstep::{ResultExt as _, report};
+use pound::Parse;
 use tokio::sync::{RwLock, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -39,14 +39,14 @@ use crate::{
   worker::{ActiveBuilds, WorkerPool},
 };
 
-#[derive(Parser)]
-#[command(name = "circus-queue-runner")]
-#[command(about = "CI Queue Runner - Build dispatch and execution")]
+/// CI Queue Runner - Build dispatch and execution
+#[derive(Parse)]
+#[pound(name = "circus-queue-runner")]
 struct Cli {
-  #[arg(short, long)]
+  #[pound(short, long)]
   config: Option<PathBuf>,
 
-  #[arg(short, long)]
+  #[pound(short, long)]
   workers: Option<usize>,
 }
 
@@ -85,7 +85,8 @@ where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
 {
-  let cli = Cli::parse_from(args);
+  let args = circus_config::cli_args(args)?;
+  let cli = Cli::parse_from(args.iter().map(String::as_str));
   let config_path = cli.config.clone();
 
   let config = Config::load(cli.config.as_deref())?;

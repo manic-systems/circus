@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 /// Overlays every `<prefix>A__B=value` variable onto `table.a.b`.
 pub fn apply_env_vars(
   table: &mut toml::Value,
@@ -60,4 +62,25 @@ pub fn set_nested(
       .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
     set_nested(child, rest, value);
   }
+}
+
+/// The arguments after the program name, as the UTF-8 strings pound parses.
+///
+/// # Errors
+///
+/// Returns an error for an argument that is not valid UTF-8.
+pub fn cli_args<I, T>(args: I) -> misstep::Result<Vec<String>>
+where
+  I: IntoIterator<Item = T>,
+  T: Into<OsString>,
+{
+  args
+    .into_iter()
+    .skip(1)
+    .map(|arg| {
+      arg.into().into_string().map_err(|arg| {
+        misstep::report!("argument {} is not valid UTF-8", arg.display())
+      })
+    })
+    .collect()
 }

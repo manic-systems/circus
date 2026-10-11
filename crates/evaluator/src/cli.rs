@@ -3,13 +3,13 @@ use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 
 use circus_common::Database;
 use circus_config::Config;
-use clap::Parser;
+use pound::Parse;
 
-#[derive(Parser)]
-#[command(name = "circus-evaluator")]
-#[command(about = "CI Evaluator - Git polling and Nix evaluation")]
+/// CI Evaluator - Git polling and Nix evaluation
+#[derive(Parse)]
+#[pound(name = "circus-evaluator")]
 struct Cli {
-  #[arg(short, long)]
+  #[pound(short, long)]
   config: Option<PathBuf>,
 }
 
@@ -53,7 +53,8 @@ where
   misstep::install_panic_hook();
   circus_common::install_crypto_provider()?;
 
-  let cli = Cli::parse_from(args);
+  let args = circus_config::cli_args(args)?;
+  let cli = Cli::parse_from(args.iter().map(String::as_str));
   let config = Config::load(cli.config.as_deref())?;
 
   // evix workers re-execute this binary and inherit its environment. Set the
