@@ -16,6 +16,11 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 - Dashboard OIDC login with named providers, group access rules, and global role
   mappings.
 
+### Fixed
+
+- The sign-in button on private dashboard pages now opens the login page, so
+  OIDC providers are offered there too.
+
 ## 0.14.0
 
 ### Added

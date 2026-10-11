@@ -2690,10 +2690,6 @@ dialog.dialog-sm {
   width: min(400px, calc(100vw - 32px));
 }
 
-body:has(#login-dialog[open]) .login-container {
-  visibility: hidden;
-}
-
 .dialog-header {
   display: flex;
   align-items: center;

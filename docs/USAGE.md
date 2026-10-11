@@ -22,20 +22,24 @@ server's `server.page_access` settings.
 
 ### Logging In
 
-Open `/login` on the Circus server.
+The login page at `/login` accepts
 
-The login page supports:
+- an API key, which gives you a dashboard session cookie
+- a local Circus account, if password login is on
+- GitHub OAuth and OIDC, with a button for each configured provider
 
-- API key login: paste a valid API key to receive a dashboard session cookie.
-- Username/password: use a local Circus user account.
+If password login is off and only a single provider is configured, `/login`
+sends you straight to it. `/login?local=1` shows the page anyway, so you can
+still sign in with an API key.
 
-Additional configured identity-provider flows are available through API routes:
+The provider flows can also be started directly
 
-- GitHub OAuth: start at `GET /api/v1/auth/github`.
-- LDAP bind login: `POST /auth/ldap` with `username` and `password` JSON. This
-  returns a dashboard session cookie on success.
+- GitHub OAuth at `GET /api/v1/auth/github`
+- OIDC at `GET /api/v1/auth/oidc/{provider}`
+- LDAP with `POST /auth/ldap` and a JSON body of `username` and `password`,
+  which returns a session cookie on success
 
-Use `/logout` to clear the dashboard session.
+`/logout` clears the session.
 
 ### Dashboard Pages
 
