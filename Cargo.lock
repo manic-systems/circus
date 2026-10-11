@@ -897,11 +897,12 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac 0.13.0",
  "jiff",
- "ldap3",
  "parking_lot",
  "regex",
  "reqwest",
  "ring",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -913,6 +914,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rusqlite",
+ "tokio-rustls",
  "tokio-util",
  "toml",
  "topcoat",
@@ -3403,41 +3405,6 @@ name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
-
-[[package]]
-name = "lber"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbcf559624bfd9fe8d488329a8959766335a43a9b8b2cdd6a2c379fca02909a5"
-dependencies = [
- "bytes",
- "nom 7.1.3",
-]
-
-[[package]]
-name = "ldap3"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01fe89f5e7cfb7e4701e3a38ff9f00358e026a9aee940355d88ee9d81e5c7503"
-dependencies = [
- "async-trait",
- "bytes",
- "futures",
- "futures-util",
- "lber",
- "log",
- "nom 7.1.3",
- "percent-encoding",
- "rustls",
- "rustls-native-certs",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-util",
- "url",
- "x509-parser",
-]
 
 [[package]]
 name = "lettre"
