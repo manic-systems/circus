@@ -691,7 +691,6 @@ dependencies = [
  "futures",
  "gix",
  "jiff",
- "jsonwebtoken",
  "nix",
  "num_enum",
  "regex",
@@ -846,7 +845,6 @@ dependencies = [
  "dix-diff",
  "futures",
  "jiff",
- "jsonwebtoken",
  "parking_lot",
  "reqwest",
  "rustls",
@@ -901,7 +899,6 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac 0.13.0",
  "jiff",
- "jsonwebtoken",
  "ldap3",
  "moka",
  "regex",
@@ -1573,7 +1570,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
 dependencies = [
- "signature 3.0.0",
+ "signature",
 ]
 
 [[package]]
@@ -3393,21 +3390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jsonwebtoken"
-version = "11.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e75fe14a82d81e5f5af639997db37d8b96045938a7ac6ab18cdbe1c7467e05e1"
-dependencies = [
- "base64 0.22.1",
- "getrandom 0.2.17",
- "js-sys",
- "serde",
- "serde_json",
- "signature 2.2.0",
- "zeroize",
-]
-
-[[package]]
 name = "kqueue"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4842,15 +4824,6 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
-]
-
-[[package]]
-name = "signature"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
-dependencies = [
- "rand_core 0.6.4",
 ]
 
 [[package]]

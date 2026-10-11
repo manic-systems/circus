@@ -145,9 +145,6 @@ zeroize = "1.9.0"
 
 argon2 = "0.6.0"
 
-# default-features off drops the `pem`/`simple_asn1` deps we don't use
-jsonwebtoken = { version = "11.1.0", default-features = false }
-
 # In-house crates and Nix utilities
 cognos = "1.0.1"
 evix   = { version = "2.1.0", features = [ "flake" ] }

@@ -18,7 +18,6 @@ futures.workspace           = true
 getrandom.workspace         = true
 hmac.workspace              = true
 jiff.workspace              = true
-jsonwebtoken.workspace      = true
 ldap3.workspace             = true
 moka.workspace              = true
 reqwest.workspace           = true

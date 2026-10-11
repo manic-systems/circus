@@ -8,6 +8,7 @@ pub mod db;
 pub mod error;
 pub mod gc_roots;
 pub mod glob;
+pub mod jwt;
 pub mod log_storage;
 pub mod migrate;
 pub mod migrate_cli;

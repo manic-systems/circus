@@ -23,7 +23,6 @@ deadpool-postgres.workspace   = true
 futures.workspace             = true
 gix.workspace                 = true
 jiff.workspace                = true
-jsonwebtoken.workspace        = true
 nix.workspace                 = true
 num_enum.workspace            = true
 regex.workspace               = true

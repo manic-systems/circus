@@ -8,9 +8,16 @@
 
 use std::{collections::HashMap, time::Duration};
 
+use circus_common::jwt::{
+  Algorithm,
+  Jwk,
+  JwkSet,
+  Validation,
+  decode,
+  decode_header,
+};
 use circus_config::RpcOidcConfig;
 use color_eyre::eyre::{Context as _, bail, eyre};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
 use tokio::{sync::Mutex, time::Instant};
 
@@ -45,20 +52,6 @@ struct GitHubClaims {
 #[derive(Deserialize)]
 struct OidcDiscovery {
   jwks_uri: String,
-}
-
-#[derive(Deserialize)]
-struct JwkSet {
-  keys: Vec<Jwk>,
-}
-
-#[derive(Deserialize, Clone)]
-struct Jwk {
-  kid: String,
-  #[serde(default)]
-  kty: String,
-  n:   String,
-  e:   String,
 }
 
 #[derive(Default)]
@@ -123,17 +116,14 @@ impl OidcVerifier {
     }
     let kid = header.kid.ok_or_else(|| eyre!("JWT has no kid"))?;
     let jwk = self.jwk_for_kid(&kid).await?;
-    let key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
-      .context("build decoding key from JWK")?;
 
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[self.issuer.as_str()]);
-    validation.set_audience(&self.audiences);
-    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-
-    let data =
-      decode::<GitHubClaims>(token, &key, &validation).context("verify JWT")?;
-    let claims = data.claims;
+    let validation = Validation {
+      issuer:    &self.issuer,
+      audiences: &self.audiences,
+      required:  &["exp", "iss", "aud", "sub"],
+    };
+    let claims: GitHubClaims =
+      decode(token, &jwk, &validation).context("verify JWT")?;
 
     if !self
       .allowed_repositories
@@ -221,8 +211,8 @@ impl OidcVerifier {
     let keys = set
       .keys
       .into_iter()
-      .filter(|k| k.kty.is_empty() || k.kty == "RSA")
-      .map(|k| (k.kid.clone(), k))
+      .filter(|key| key.kty == "RSA")
+      .filter_map(|key| Some((key.kid.clone()?, key)))
       .collect();
     let mut cache = self.cache.lock().await;
     cache.keys = keys;
