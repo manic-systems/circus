@@ -9,17 +9,16 @@ use axum::{
   routing::get,
 };
 use axum_extra::extract::cookie::CookieJar;
-use circus_common::{CiError, audit::Actor, models::User, repo};
+use circus_common::{
+  CiError,
+  audit::Actor,
+  jwt::{JwkSet, Validation, decode, decode_header},
+  models::User,
+  repo,
+};
 use circus_config::OidcProviderConfig;
 use circus_http::{RequestExt as _, ResponseExt as _};
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use jsonwebtoken::{
-  DecodingKey,
-  Validation,
-  decode,
-  decode_header,
-  jwk::{JwkSet, PublicKeyUse},
-};
 use moka::sync::Cache;
 use reqwest::{Client as HttpClient, header::ACCEPT};
 use serde::{
@@ -407,7 +406,7 @@ async fn verify_id_token(
   let header = decode_header(id_token).map_err(LoginError::invalid)?;
   let jwks: JwkSet = get_json(&provider.http, &provider.jwks_uri, None).await?;
   let jwk = match &header.kid {
-    Some(kid) => jwks.find(kid),
+    Some(kid) => jwks.keys.iter().find(|jwk| jwk.kid.as_ref() == Some(kid)),
     None => {
       match jwks.keys.as_slice() {
         [only] => Some(only),
@@ -415,17 +414,17 @@ async fn verify_id_token(
       }
     },
   }
-  .filter(|jwk| jwk.common.public_key_use != Some(PublicKeyUse::Encryption))
+  .filter(|jwk| jwk.key_use.as_deref() != Some("enc"))
   .ok_or_else(|| LoginError::invalid("no signing key matches the ID token"))?;
-  let key = DecodingKey::from_jwk(jwk).map_err(LoginError::invalid)?;
 
-  let mut validation = Validation::new(header.alg);
-  validation.set_issuer(&[&provider.issuer]);
-  validation.set_audience(&[client_id]);
-  validation.set_required_spec_claims(&["exp", "iat", "iss", "aud", "sub"]);
-  let claims = decode::<IdTokenClaims>(id_token, &key, &validation)
-    .map_err(LoginError::invalid)?
-    .claims;
+  let audiences = [client_id.to_owned()];
+  let validation = Validation {
+    issuer:    &provider.issuer,
+    audiences: &audiences,
+    required:  &["exp", "iat", "iss", "aud", "sub"],
+  };
+  let claims = decode::<IdTokenClaims>(id_token, jwk, &validation)
+    .map_err(LoginError::invalid)?;
 
   if claims.nonce.as_deref() != Some(nonce) {
     return Err(LoginError::invalid("ID token nonce does not match"));
