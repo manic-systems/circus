@@ -25,7 +25,6 @@ futures.workspace             = true
 gix.workspace                 = true
 jiff.workspace                = true
 nix.workspace                 = true
-num_enum.workspace            = true
 regex.workspace               = true
 ring.workspace                = true
 rustls.workspace              = true

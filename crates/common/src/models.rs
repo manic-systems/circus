@@ -403,17 +403,7 @@ impl Build {
   }
 }
 
-#[derive(
-  Debug,
-  Clone,
-  Copy,
-  Serialize,
-  Deserialize,
-  PartialEq,
-  Eq,
-  num_enum::IntoPrimitive,
-  num_enum::TryFromPrimitive,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[repr(i32)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildStatus {
@@ -477,22 +467,6 @@ impl BuildStatus {
     )
   }
 
-  /// # Returns
-  ///
-  /// Returns the database integer representation of this status.
-  /// Note: This uses an internal numbering scheme (0-14), not Hydra exit codes.
-  #[must_use]
-  pub fn as_i32(&self) -> i32 {
-    (*self).into()
-  }
-
-  /// Converts a database integer to `BuildStatus`.
-  /// This is the inverse of `as_i32()` for reading from the database.
-  #[must_use]
-  pub fn from_i32(code: i32) -> Option<Self> {
-    Self::try_from(code).ok()
-  }
-
   #[must_use]
   pub const fn as_db_str(self) -> &'static str {
     match self {
@@ -515,8 +489,6 @@ impl BuildStatus {
   }
 
   /// Converts a Hydra-compatible exit code to a `BuildStatus`.
-  /// Note: These codes follow Hydra's conventions and differ from
-  /// `as_i32/from_i32`.
   #[must_use]
   pub const fn from_exit_code(exit_code: i32) -> Self {
     match exit_code {
@@ -608,37 +580,7 @@ impl std::fmt::Display for BuildStatus {
 
 #[cfg(test)]
 mod build_status_tests {
-  use super::{BuildStatus, EvaluationStatus};
-
-  #[test]
-  fn build_status_i32_round_trips() {
-    for (code, status) in [
-      (0, BuildStatus::Pending),
-      (1, BuildStatus::Running),
-      (2, BuildStatus::Succeeded),
-      (3, BuildStatus::Failed),
-      (4, BuildStatus::DependencyFailed),
-      (5, BuildStatus::Aborted),
-      (6, BuildStatus::Cancelled),
-      (7, BuildStatus::FailedWithOutput),
-      (8, BuildStatus::Timeout),
-      (9, BuildStatus::CachedFailure),
-      (10, BuildStatus::UnsupportedSystem),
-      (11, BuildStatus::LogLimitExceeded),
-      (12, BuildStatus::NarSizeLimitExceeded),
-      (13, BuildStatus::NonDeterministic),
-      (14, BuildStatus::OomKilled),
-    ] {
-      assert_eq!(status.as_i32(), code);
-      assert_eq!(BuildStatus::from_i32(code), Some(status));
-    }
-  }
-
-  #[test]
-  fn build_status_from_i32_preserves_unknown_fallback() {
-    assert_eq!(BuildStatus::from_i32(-1), None);
-    assert_eq!(BuildStatus::from_i32(15), None);
-  }
+  use super::EvaluationStatus;
 
   #[test]
   fn timed_out_status_uses_database_spelling() {
