@@ -37,7 +37,6 @@ async-compression = { version = "0.4.50", default-features = false, features = [
   "gzip",
 ] }
 axum = "0.8.9"
-axum-extra = { version = "0.12.6", features = [ "cookie" ] }
 blake3 = "1.8.7"
 bstr = "1.13.1"
 bytes = "1.12.1"
@@ -107,7 +106,6 @@ sysinfo = { version = "0.39.6", default-features = false, features = [ "system" 
 tar = "0.4.46"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-time = "0.3.55"
 tokio = { version = "1.53.2", features = [ "full" ] }
 tokio-postgres = { version = "0.7.18", features = [ "with-jiff-0_2", "with-uuid-1", "with-serde_json-1" ] }
 tokio-postgres-rustls = "0.14.0"

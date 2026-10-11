@@ -4,11 +4,10 @@ use axum::{
   Extension,
   Router,
   extract::{Path, Query, State, rejection::QueryRejection},
-  http::{StatusCode, header::SET_COOKIE},
+  http::{HeaderMap, StatusCode, header::SET_COOKIE},
   response::{AppendHeaders, IntoResponse, Redirect, Response},
   routing::get,
 };
-use axum_extra::extract::cookie::CookieJar;
 use circus_common::{
   CiError,
   audit::Actor,
@@ -38,6 +37,7 @@ use crate::{
     OIDC_FLOW_COOKIE,
     USER_SESSION_MAX_AGE_SECS,
     clear_oidc_flow_cookie,
+    cookie_value,
     oauth_user_session_cookie,
     oidc_flow_cookie,
     oidc_provider_cookie,
@@ -284,10 +284,11 @@ impl LinkGrant {
 }
 
 impl LoginFlow {
-  fn from_cookie(jar: &CookieJar) -> Result<Self, LoginError> {
-    let cookie = jar.get(OIDC_FLOW_COOKIE).ok_or(LoginError::InvalidState)?;
+  fn from_cookie(headers: &HeaderMap) -> Result<Self, LoginError> {
+    let cookie = cookie_value(headers, OIDC_FLOW_COOKIE)
+      .ok_or(LoginError::InvalidState)?;
     let json = BASE64URL_NOPAD
-      .decode(cookie.value().as_bytes())
+      .decode(cookie.as_bytes())
       .map_err(|_| LoginError::InvalidState)?;
     serde_json::from_slice(&json).map_err(|_| LoginError::InvalidState)
   }
@@ -570,7 +571,7 @@ async fn start_login(
 async fn complete_login(
   state: &AppState,
   provider: &str,
-  jar: &CookieJar,
+  headers: &HeaderMap,
   params: Result<Query<CallbackParams>, QueryRejection>,
 ) -> Result<Response, LoginError> {
   let config = state
@@ -580,7 +581,7 @@ async fn complete_login(
     .get(provider)
     .ok_or(LoginError::UnknownProvider)?;
   let Query(params) = params.map_err(|_| LoginError::InvalidState)?;
-  let flow = LoginFlow::from_cookie(jar)?;
+  let flow = LoginFlow::from_cookie(headers)?;
   let expected = flow.state.as_str().as_bytes();
   let received = params.state.as_str().as_bytes();
 
@@ -867,10 +868,10 @@ async fn oidc_callback(
   State(state): State<AppState>,
   Extension(LoginPage(login_page)): Extension<LoginPage>,
   Path(provider): Path<String>,
-  jar: CookieJar,
+  headers: HeaderMap,
   params: Result<Query<CallbackParams>, QueryRejection>,
 ) -> Response {
-  match complete_login(&state, &provider, &jar, params).await {
+  match complete_login(&state, &provider, &headers, params).await {
     Ok(response) => response,
     Err(error) => login_failure(&state, &provider, error, login_page).await,
   }
