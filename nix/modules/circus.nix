@@ -411,6 +411,11 @@ in {
       description = "The circus queue runner package.";
     };
 
+    remoteCachePackage = mkOption {
+      type = package;
+      description = "The circus remote cache package.";
+    };
+
     migratePackage = mkOption {
       type = package;
       description = "The circus migration CLI package.";
@@ -450,6 +455,7 @@ in {
     server.enable = mkEnableOption "circus server (REST API)";
     evaluator.enable = mkEnableOption "circus evaluator (Git polling and nix evaluation)";
     queueRunner.enable = mkEnableOption "circus queue runner (build dispatch)";
+    remoteCache.enable = mkEnableOption "circus remote cache (REAPI action cache and CAS)";
   };
 
   config = mkIf cfg.enable {
@@ -710,6 +716,49 @@ in {
           };
 
           environment.CIRCUS_CONFIG_FILE = "${runnerFiles.config}";
+        };
+
+        circus-remote-cache = mkIf cfg.remoteCache.enable {
+          description = "circus Remote Cache";
+          wantedBy = ["multi-user.target"];
+          wants = ["network-online.target"];
+          after = ["network-online.target"];
+
+          serviceConfig = {
+            ExecStart = getExe' cfg.remoteCachePackage "circus-remote-cache";
+            Restart = "on-failure";
+            RestartSec = 5;
+            User = "circus";
+            Group = "circus";
+            StateDirectory = "circus";
+            WorkingDirectory = "/var/lib/circus";
+            # A busy CAS keeps many uploads and reads open at once.
+            LimitNOFILE = 65536;
+
+            # Hardening
+            CapabilityBoundingSet = [""];
+            LockPersonality = true;
+            MemoryDenyWriteExecute = true;
+            NoNewPrivileges = true;
+            PrivateDevices = true;
+            PrivateTmp = true;
+            ProtectClock = true;
+            ProtectControlGroups = true;
+            ProtectHome = true;
+            ProtectHostname = true;
+            ProtectKernelLogs = true;
+            ProtectKernelModules = true;
+            ProtectKernelTunables = true;
+            ProtectSystem = "strict";
+            RestrictAddressFamilies = ["AF_INET" "AF_INET6" "AF_UNIX"];
+            RestrictNamespaces = true;
+            RestrictRealtime = true;
+            RestrictSUIDSGID = true;
+            SystemCallArchitectures = "native";
+            SystemCallFilter = ["@system-service" "~@privileged"];
+          };
+
+          environment.CIRCUS_CONFIG_FILE = "${settingsFile}";
         };
       };
     };
