@@ -6,12 +6,7 @@ license.workspace    = true
 repository.workspace = true
 description          = "Shared type definitions for Circus"
 
-[features]
-clap    = [ "dep:clap" ]
-default = [  ]
-
 [dependencies]
-clap            = { workspace = true, optional = true }
 regex.workspace = true
 serde.workspace = true
 

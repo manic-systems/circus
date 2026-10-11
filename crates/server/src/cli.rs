@@ -3,8 +3,8 @@ use std::{ffi::OsString, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use circus_common::Database;
 use circus_config::Config;
-use clap::Parser;
 use misstep::ResultExt as _;
+use pound::Parse;
 use tokio::net::TcpListener;
 
 use crate::{
@@ -14,31 +14,34 @@ use crate::{
   state::{AppState, NixStore},
 };
 
-#[derive(Parser)]
-#[command(name = "circus-server")]
-#[command(about = "CI Server - Web API and UI")]
+/// CI Server - Web API and UI
+#[derive(Parse)]
+#[pound(name = "circus-server")]
 struct Cli {
-  #[arg(short, long)]
+  /// Config file.
+  #[pound(short, long, env = "CIRCUS_CONFIG_FILE", value_name = "FILE")]
   config: Option<PathBuf>,
 
-  #[arg(short = 'H', long)]
+  /// Address to bind. Overrides `[server].host`.
+  #[pound(short = 'H', long)]
   host: Option<String>,
 
-  #[arg(short, long)]
+  /// Port to bind. Overrides `[server].port`.
+  #[pound(short, long)]
   port: Option<u16>,
 
   /// Run API/public routes only; do not mount bundled dashboard HTML or
   /// assets.
-  #[arg(long, conflicts_with = "ui")]
+  #[pound(long, conflicts_with = ui)]
   headless: bool,
 
   /// Force mounting the bundled dashboard UI even if config disables it.
-  #[arg(long)]
+  #[pound(long)]
   ui: bool,
 
   /// Write the dashboard's browser assets into this directory and exit. The
   /// asset sources only exist where the binary was built.
-  #[arg(long, value_name = "DIR", hide = true)]
+  #[pound(long, value_name = "DIR", hidden, exclusive)]
   bundle_assets: Option<PathBuf>,
 }
 
@@ -105,7 +108,8 @@ where
   I: IntoIterator<Item = T>,
   T: Into<OsString> + Clone,
 {
-  let cli = Cli::parse_from(args);
+  let args = circus_config::cli_args(args)?;
+  let cli = Cli::parse_from(args.iter().map(String::as_str));
 
   if let Some(dir) = cli.bundle_assets {
     let binary = std::fs::read(std::env::current_exe()?)?;

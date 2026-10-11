@@ -1,8 +1,9 @@
 use std::ffi::OsString;
 
-use clap::Parser;
 use misstep::Result;
+use pound::Parse;
 use serde_json::{Map, Value, json};
+use uuid::Uuid;
 
 use crate::{
   client::ApiClient,
@@ -13,7 +14,6 @@ use crate::{
     Command,
     EvaluationCommand,
     JobsetCommand,
-    LogCommand,
     NewsCommand,
     ProjectCommand,
   },
@@ -47,14 +47,10 @@ pub async fn run() -> Result<()> {
 /// Returns an error when argument parsing, API requests, or output rendering
 /// fail.
 pub async fn run_from(args: Vec<OsString>) -> Result<()> {
-  let cli = Cli::parse_from(args);
-  let base_url = cli
-    .url
-    .or_else(|| std::env::var("CIRCUS_URL").ok())
-    .unwrap_or_else(|| "http://localhost:3000".to_string());
-  let api_key = cli.api_key.or_else(|| std::env::var("CIRCUS_API_KEY").ok());
+  let args = circus_config::cli_args(args)?;
+  let cli = Cli::parse_from(args.iter().map(String::as_str));
   let runner = CommandRunner {
-    api:         ApiClient::new(&base_url, api_key)?,
+    api:         ApiClient::new(cli.url, cli.api_key)?,
     json_output: cli.json,
   };
 
@@ -74,7 +70,7 @@ impl CommandRunner {
       Command::Jobsets { command } => self.jobsets(command).await,
       Command::Builds { command } => self.builds(command).await,
       Command::Queue => self.queue().await,
-      Command::Logs { command } => self.logs(command).await,
+      Command::Log { build_id } => self.log(build_id).await,
       Command::Search { query, limit } => self.search(&query, limit).await,
       Command::Channels { command } => self.channels(command).await,
       Command::News { command } => self.news(command).await,
@@ -124,16 +120,10 @@ impl CommandRunner {
 
   async fn projects(&self, command: ProjectCommand) -> Result<()> {
     match command {
-      ProjectCommand::List { limit, offset } => {
+      ProjectCommand::List { page } => {
         let response = self
           .api
-          .get(
-            &with_query("api/v1/projects", &[
-              ("limit", limit.to_string()),
-              ("offset", offset.to_string()),
-            ]),
-            false,
-          )
+          .get(&with_query("api/v1/projects", &page.query()), false)
           .await?;
         if self.json_output {
           return print_json(&response);
@@ -194,18 +184,14 @@ impl CommandRunner {
 
   async fn jobsets(&self, command: JobsetCommand) -> Result<()> {
     match command {
-      JobsetCommand::List {
-        project_id,
-        limit,
-        offset,
-      } => {
+      JobsetCommand::List { project_id, page } => {
         let response = self
           .api
           .get(
-            &with_query(&format!("api/v1/projects/{project_id}/jobsets"), &[
-              ("limit", limit.to_string()),
-              ("offset", offset.to_string()),
-            ]),
+            &with_query(
+              &format!("api/v1/projects/{project_id}/jobsets"),
+              &page.query(),
+            ),
             false,
           )
           .await?;
@@ -248,11 +234,8 @@ impl CommandRunner {
         insert_optional_bool(&mut body, "flake_mode", flake_mode);
         insert_optional_i32(&mut body, "check_interval", check_interval);
         insert_optional_bool(&mut body, "only_build_latest", only_build_latest);
-        if let Some(path_filters) = path_filter {
-          body.insert(
-            "path_filters".to_string(),
-            serde_json::json!(path_filters),
-          );
+        if !path_filter.is_empty() {
+          body.insert("path_filters".to_string(), json!(path_filter));
         }
         let response = self
           .api
@@ -337,12 +320,14 @@ impl CommandRunner {
         status,
         system,
         job_name,
-        limit,
-        offset,
+        page,
       } => {
-        let mut params =
-          vec![("limit", limit.to_string()), ("offset", offset.to_string())];
-        push_optional(&mut params, "status", status);
+        let mut params = page.query();
+        push_optional(
+          &mut params,
+          "status",
+          status.map(|status| status.as_db_str().to_owned()),
+        );
         push_optional(&mut params, "system", system);
         push_optional(&mut params, "job_name", job_name);
         let response = self
@@ -356,15 +341,16 @@ impl CommandRunner {
         print_page(&response);
       },
       BuildCommand::Cancel { id } => {
-        self.build_action(&id, "cancel", "Cancelled").await?;
+        self.build_action(id, "cancel", "Cancelled").await?;
       },
       BuildCommand::Restart { id } => {
-        self.build_action(&id, "restart", "Restarted").await?;
+        self.build_action(id, "restart", "Restarted").await?;
       },
       BuildCommand::Bump { id } => {
-        self.build_action(&id, "bump", "Bumped").await?;
+        self.build_action(id, "bump", "Bumped").await?;
       },
-      BuildCommand::Keep { id, value } => {
+      BuildCommand::Keep { id, clear } => {
+        let value = !clear;
         let response = self
           .api
           .put(&format!("api/v1/builds/{id}/keep/{value}"), json!({}), true)
@@ -381,7 +367,7 @@ impl CommandRunner {
 
   async fn build_action(
     &self,
-    id: &str,
+    id: Uuid,
     action: &str,
     label: &str,
   ) -> Result<()> {
@@ -422,19 +408,15 @@ impl CommandRunner {
     Ok(())
   }
 
-  async fn logs(&self, command: LogCommand) -> Result<()> {
-    match command {
-      LogCommand::Show { build_id } => {
-        let response = self
-          .api
-          .get(&format!("api/v1/builds/{build_id}/log"), false)
-          .await?;
-        if self.json_output {
-          return print_json(&response);
-        }
-        println!("{}", field(&response, "body"));
-      },
+  async fn log(&self, build_id: Uuid) -> Result<()> {
+    let response = self
+      .api
+      .get(&format!("api/v1/builds/{build_id}/log"), false)
+      .await?;
+    if self.json_output {
+      return print_json(&response);
     }
+    println!("{}", field(&response, "body"));
     Ok(())
   }
 
@@ -567,13 +549,19 @@ impl CommandRunner {
       EvaluationCommand::List {
         jobset_id,
         status,
-        limit,
-        offset,
+        page,
       } => {
-        let mut params =
-          vec![("limit", limit.to_string()), ("offset", offset.to_string())];
-        push_optional(&mut params, "jobset_id", jobset_id);
-        push_optional(&mut params, "status", status);
+        let mut params = page.query();
+        push_optional(
+          &mut params,
+          "jobset_id",
+          jobset_id.map(|id| id.to_string()),
+        );
+        push_optional(
+          &mut params,
+          "status",
+          status.map(|status| status.as_db_str().to_owned()),
+        );
         let response = self
           .api
           .get(&with_query("api/v1/evaluations", &params), false)
@@ -607,7 +595,7 @@ impl CommandRunner {
         pr_action,
       } => {
         let mut body = Map::new();
-        body.insert("jobset_id".to_string(), Value::String(jobset_id));
+        body.insert("jobset_id".to_string(), json!(jobset_id));
         body.insert("commit_hash".to_string(), Value::String(commit_hash));
         insert_optional_i32(&mut body, "pr_number", pr_number);
         insert_optional(&mut body, "pr_head_branch", pr_head_branch);

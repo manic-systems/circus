@@ -1,6 +1,6 @@
 //! Agent configuration loaded from TOML + environment.
 //!
-//! Lookup order (first wins): `--config` flag, `$CIRCUS_AGENT_CONFIG`,
+//! The CLI passes `--config` or `$CIRCUS_AGENT_CONFIG`, falling back to
 //! `/etc/circus-agent.toml`. Environment overrides with prefix
 //! `CIRCUS_AGENT__` and `__` as a path separator.
 
@@ -184,16 +184,15 @@ const fn default_true() -> bool {
 
 impl AgentConfig {
   fn chosen_path(path: Option<&Path>) -> (PathBuf, bool) {
-    let env_path = std::env::var("CIRCUS_AGENT_CONFIG").ok().map(PathBuf::from);
-    let explicit = path.is_some() || env_path.is_some();
-    let chosen = path
-      .map(Path::to_path_buf)
-      .or(env_path)
-      .unwrap_or_else(|| PathBuf::from("/etc/circus-agent.toml"));
+    let explicit = path.is_some();
+    let chosen = path.map_or_else(
+      || PathBuf::from("/etc/circus-agent.toml"),
+      Path::to_path_buf,
+    );
     (chosen, explicit)
   }
 
-  /// Load from explicit path, env var, or the default location.
+  /// Load from an explicit path or the default location.
   ///
   /// # Errors
   ///

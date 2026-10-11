@@ -42,6 +42,9 @@ exceptions = [
     "EUPL-1.2",
   ], crate = "pound-derive" },
   { allow = [
+    "EUPL-1.2",
+  ], crate = "pound-derive-impl" },
+  { allow = [
     "GPL-3.0-only",
   ], crate = "dix-diff" },
 ]

@@ -2,20 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use pound::Parse;
 use tracing::info;
 
-const DEFAULT_MIGRATIONS_DIR: &str = "crates/migrations/migrations";
-
-#[derive(Debug, Parser)]
-#[command(name = "circusctl migrate")]
-#[command(about = "Database migration commands for circusctl")]
-pub struct Cli {
-  #[command(subcommand)]
-  pub command: Commands,
-}
-
-#[derive(Debug, Subcommand)]
+/// Database migration commands for circusctl
+#[derive(Debug, Parse)]
+#[pound(name = "circusctl migrate")]
 pub enum Commands {
   /// Run all pending migrations
   Up {
@@ -30,24 +22,13 @@ pub enum Commands {
   /// Create a new migration file
   Create {
     /// Migration name (`snake_case`, becomes part of the filename)
-    #[arg(required = true)]
     name:       String,
     /// Directory to write the migration file into. Defaults to
     /// `crates/migrations/migrations` so the command stays useful when
     /// invoked from the workspace root.
-    #[arg(long, default_value = DEFAULT_MIGRATIONS_DIR)]
+    #[pound(long, default = "crates/migrations/migrations")]
     output_dir: PathBuf,
   },
-}
-
-/// Execute the CLI command.
-///
-/// # Errors
-///
-/// Returns error if command execution fails.
-pub async fn run() -> misstep::Result<()> {
-  let cli = Cli::parse();
-  run_command(cli.command).await
 }
 
 /// Execute a parsed migration command.
@@ -151,16 +132,14 @@ pub fn create_migration(
   reason = "Fine in tests"
 )]
 mod tests {
-  use clap::Parser;
+  use pound::Parse;
 
   use super::*;
 
   #[test]
   fn cli_parses_up_with_url() {
-    let cli =
-      Cli::try_parse_from(["circusctl migrate", "up", "postgres://x/y"])
-        .unwrap();
-    match cli.command {
+    let command = Commands::try_parse_from(["up", "postgres://x/y"]).unwrap();
+    match command {
       Commands::Up { database_url } => {
         assert_eq!(database_url, "postgres://x/y");
       },
@@ -170,20 +149,18 @@ mod tests {
 
   #[test]
   fn cli_parses_validate_with_url() {
-    let cli =
-      Cli::try_parse_from(["circusctl migrate", "validate", "postgres://x/y"])
-        .unwrap();
-    assert!(matches!(cli.command, Commands::Validate { .. }));
+    let command =
+      Commands::try_parse_from(["validate", "postgres://x/y"]).unwrap();
+    assert!(matches!(command, Commands::Validate { .. }));
   }
 
   #[test]
   fn cli_parses_create_with_default_output_dir() {
-    let cli =
-      Cli::try_parse_from(["circusctl migrate", "create", "add_foo"]).unwrap();
-    match cli.command {
+    let command = Commands::try_parse_from(["create", "add_foo"]).unwrap();
+    match command {
       Commands::Create { name, output_dir } => {
         assert_eq!(name, "add_foo");
-        assert_eq!(output_dir, PathBuf::from(DEFAULT_MIGRATIONS_DIR));
+        assert_eq!(output_dir, PathBuf::from("crates/migrations/migrations"));
       },
       _ => panic!("expected Create subcommand"),
     }
@@ -191,15 +168,14 @@ mod tests {
 
   #[test]
   fn cli_parses_create_with_custom_output_dir() {
-    let cli = Cli::try_parse_from([
-      "circusctl migrate",
+    let command = Commands::try_parse_from([
       "create",
       "add_foo",
       "--output-dir",
       "/tmp/mig",
     ])
     .unwrap();
-    match cli.command {
+    match command {
       Commands::Create { output_dir, .. } => {
         assert_eq!(output_dir, PathBuf::from("/tmp/mig"));
       },
@@ -209,13 +185,13 @@ mod tests {
 
   #[test]
   fn cli_rejects_missing_subcommand() {
-    let err = Cli::try_parse_from(["circusctl migrate"]).unwrap_err();
+    let err = Commands::try_parse_from([]).unwrap_err();
     assert!(!err.to_string().is_empty());
   }
 
   #[test]
   fn cli_rejects_up_without_url() {
-    let err = Cli::try_parse_from(["circusctl migrate", "up"]).unwrap_err();
+    let err = Commands::try_parse_from(["up"]).unwrap_err();
     assert!(!err.to_string().is_empty());
   }
 

@@ -667,8 +667,8 @@ $ circusctl builds restart <build-id>
 $ circusctl builds bump <build-id>
 
 # Whether to pin a build to survive future garbage collections.
-$ circusctl builds keep <build-id> --value true
-$ circusctl builds keep <build-id> --value false
+$ circusctl builds keep <build-id>
+$ circusctl builds keep <build-id> --clear
 ```
 
 `bump` only applies to builds still in `pending` state. Each call adds `10` to
@@ -700,9 +700,8 @@ whose target is a kept product path.
 Admins can inspect retained outputs from the dashboard's **Administration** page
 under **Pinned Build Outputs**. The table shows the build, output name, store
 path, and recorded GC root. Use **Unpin Build** there, or run
-`circusctl
-builds keep <build-id> --value false`, to make all outputs for that
-build eligible for normal GC cleanup again after their roots age out.
+`circusctl builds keep <build-id> --clear`, to make all outputs for that build
+eligible for normal GC cleanup again after their roots age out.
 
 The same data is available through the admin API:
 
