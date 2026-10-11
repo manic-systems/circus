@@ -58,7 +58,7 @@ pub fn run() -> Result<()> {
   #![expect(clippy::print_stdout, reason = "xtask CLI output is intentional")]
   let root = workspace_root()?;
   let routes_dir = root.join("crates/server/src/routes");
-  let spec = openapi_document();
+  let spec = openapi_document()?;
   let documented = documented_paths(&spec);
 
   let mut registered = BTreeSet::new();
@@ -79,7 +79,10 @@ pub fn run() -> Result<()> {
   if !missing_in_openapi.is_empty() || !stale_openapi.is_empty() {
     let mut msg = String::from("OpenAPI drift detected.\n");
     if !missing_in_openapi.is_empty() {
-      msg.push_str("\nRoutes registered but not documented in openapi.rs:\n");
+      msg.push_str(
+        "\nRoutes registered but not documented in \
+         crates/server/openapi.json:\n",
+      );
       for route in &missing_in_openapi {
         let _ = writeln!(msg, "  - {route}");
       }
@@ -93,7 +96,7 @@ pub fn run() -> Result<()> {
       }
     }
     msg.push_str(
-      "\nFix by updating the utoipa OpenAPI document and the route module \
+      "\nFix by updating crates/server/openapi.json and the route module \
        together.\n",
     );
     bail!("{msg}");
@@ -107,8 +110,9 @@ pub fn run() -> Result<()> {
   Ok(())
 }
 
-pub fn openapi_document() -> OpenApi {
-  circus_server::routes::openapi::document()
+pub fn openapi_document() -> Result<OpenApi> {
+  serde_json::from_str(circus_server::routes::openapi::DOCUMENT)
+    .context("crates/server/openapi.json is not a valid OpenAPI document")
 }
 
 fn documented_paths(spec: &OpenApi) -> BTreeSet<String> {

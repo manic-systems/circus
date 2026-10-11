@@ -10,6 +10,7 @@ on:
       - ".github/workflows/api-docs.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "crates/server/openapi.json"
       - "crates/server/src/routes/**"
       - "crates/server/tests/openapi_drift.rs"
       - "crates/xtask/Cargo.toml"
