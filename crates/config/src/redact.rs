@@ -168,13 +168,15 @@ const SECRET_KEYS: &[&str] = &[
   "webhook_url",
 ];
 
+const PLACEHOLDER: &str = "***";
+
 /// Replace secret values in a serialized config with `"***"`.
 pub fn redact_secrets(value: &mut toml::Value) {
   match value {
     toml::Value::Table(table) => {
       for (key, val) in table.iter_mut() {
         if SECRET_KEYS.contains(&key.as_str()) {
-          *val = toml::Value::String("***".into());
+          *val = toml::Value::String(PLACEHOLDER.into());
         } else {
           redact_secrets(val);
         }
@@ -188,8 +190,82 @@ pub fn redact_secrets(value: &mut toml::Value) {
     toml::Value::String(s)
       if s.starts_with("postgresql://") || s.starts_with("postgres://") =>
     {
-      *s = "***".into();
+      *s = PLACEHOLDER.into();
     },
     _ => {},
   }
+}
+
+/// Undoes [`redact_secrets`] on an edited copy of `current`, putting back
+/// each secret still left as `"***"`.
+///
+/// # Errors
+///
+/// Names the first placeholder with nothing to restore, such as a new key, a
+/// renamed array entry, or an array entry matching no single original.
+pub fn restore_secrets(
+  edited: &mut toml::Value,
+  current: &toml::Value,
+) -> Result<(), String> {
+  restore_at(edited, Some(current), "")
+}
+
+fn restore_at(
+  edited: &mut toml::Value,
+  current: Option<&toml::Value>,
+  path: &str,
+) -> Result<(), String> {
+  match edited {
+    toml::Value::String(text) if text == PLACEHOLDER => {
+      match current {
+        Some(original @ toml::Value::String(_)) => {
+          *edited = original.clone();
+          Ok(())
+        },
+        _ => Err(format!("{path} is still the {PLACEHOLDER} placeholder")),
+      }
+    },
+    toml::Value::Table(table) => {
+      for (key, value) in table.iter_mut() {
+        let original = current.and_then(|current| current.get(key));
+        let child = if path.is_empty() {
+          key.clone()
+        } else {
+          format!("{path}.{key}")
+        };
+        restore_at(value, original, &child)?;
+      }
+      Ok(())
+    },
+    toml::Value::Array(items) => {
+      let originals = current.and_then(toml::Value::as_array);
+      for (index, item) in items.iter_mut().enumerate() {
+        let original = {
+          let mut matches = originals
+            .into_iter()
+            .flatten()
+            .filter(|original| same_entry(item, original));
+          matches.next().filter(|_| matches.next().is_none())
+        };
+        restore_at(item, original, &format!("{path}[{index}]"))?;
+      }
+      Ok(())
+    },
+    _ => Ok(()),
+  }
+}
+
+/// Array entries can be reordered or removed, so an entry must not inherit
+/// the secret of whichever entry used to sit at its index.
+fn same_entry(edited: &toml::Value, original: &toml::Value) -> bool {
+  const IDENTITY: [&str; 2] = ["name", "username"];
+  if IDENTITY.iter().any(|key| original.get(key).is_some()) {
+    return IDENTITY
+      .iter()
+      .all(|key| edited.get(key) == original.get(key));
+  }
+
+  let mut redacted = original.clone();
+  redact_secrets(&mut redacted);
+  *edited == redacted
 }
