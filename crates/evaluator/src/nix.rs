@@ -560,7 +560,8 @@ async fn resolve_drv(
   }
 
   let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
-  parse_derivation_show(&json)
+  let store_dir = circus_nix::derivation::store_dir().await.ok()?;
+  parse_derivation_show(store_dir, &json)
 }
 
 /// Legacy (non-flake) evaluation: import the nix expression file and evaluate
@@ -708,7 +709,10 @@ struct ShownDerivation {
   input_drvs: Option<HashMap<String, serde_json::Value>>,
 }
 
-fn parse_derivation_show(value: &serde_json::Value) -> Option<ShownDerivation> {
+fn parse_derivation_show(
+  store_dir: &Path,
+  value: &serde_json::Value,
+) -> Option<ShownDerivation> {
   // Newer nix derivation show wraps output as
   // {"derivations": {<drv>: {...}}, "version": N}; older nix keys the
   // drv paths directly at the top level.
@@ -718,43 +722,11 @@ fn parse_derivation_show(value: &serde_json::Value) -> Option<ShownDerivation> {
     .or_else(|| value.as_object())?;
   let (drv_path, drv_val) = derivations.iter().next()?;
 
-  let system = drv_val
-    .get("system")
-    .and_then(|v| v.as_str())
-    .map(std::string::ToString::to_string);
-
-  let outputs = drv_val
-    .get("outputs")
-    .and_then(serde_json::Value::as_object)
-    .map(|map| {
-      map
-        .iter()
-        .filter_map(|(name, output)| {
-          output
-            .get("path")
-            .or_else(|| output.get("outPath"))
-            .and_then(|v| v.as_str())
-            .map(|path| (name.clone(), path.to_string()))
-        })
-        .collect::<HashMap<_, _>>()
-    })
-    .filter(|map| !map.is_empty());
-
-  let input_drvs = drv_val.get("inputDrvs").and_then(|v| {
-    serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone()).ok()
-  });
-
-  let drv_path = if drv_path.starts_with("/nix/store/") {
-    drv_path.clone()
-  } else {
-    format!("/nix/store/{drv_path}")
-  };
-
   Some(ShownDerivation {
-    drv_path,
-    system,
-    outputs,
-    input_drvs,
+    drv_path:   circus_nix::derivation::store_path(store_dir, drv_path),
+    system:     circus_nix::derivation::drv_system(drv_val),
+    outputs:    circus_nix::derivation::drv_outputs(store_dir, drv_val),
+    input_drvs: circus_nix::derivation::drv_input_drvs(store_dir, drv_val),
   })
 }
 
@@ -869,7 +841,7 @@ mod meta_tests {
       "version": 3
     });
 
-    let shown = parse_derivation_show(&v);
+    let shown = parse_derivation_show(Path::new("/nix/store"), &v);
     assert!(shown.is_some());
     let Some(shown) = shown else {
       return;
@@ -1001,7 +973,7 @@ mod meta_tests {
       "version": 3
     });
 
-    let shown = parse_derivation_show(&v);
+    let shown = parse_derivation_show(Path::new("/nix/store"), &v);
     assert!(shown.is_some());
     let Some(shown) = shown else {
       return;
@@ -1044,7 +1016,7 @@ mod meta_tests {
       }
     });
 
-    let shown = parse_derivation_show(&v);
+    let shown = parse_derivation_show(Path::new("/nix/store"), &v);
     assert!(shown.is_some());
     let Some(shown) = shown else {
       return;

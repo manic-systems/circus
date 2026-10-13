@@ -48,6 +48,7 @@ struct DerivationInfo {
 }
 
 fn parse_derivation_infos(
+  store_dir: &Path,
   value: &serde_json::Value,
 ) -> HashMap<String, DerivationInfo> {
   let Some(derivations) = value
@@ -61,35 +62,11 @@ fn parse_derivation_infos(
   derivations
     .iter()
     .map(|(drv_path, drv_val)| {
-      let drv_path = if drv_path.starts_with("/nix/store/") {
-        drv_path.clone()
-      } else {
-        format!("/nix/store/{drv_path}")
-      };
-      let system = drv_val
-        .get("system")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned);
-      let outputs = drv_val
-        .get("outputs")
-        .and_then(serde_json::Value::as_object)
-        .map(|map| {
-          map
-            .iter()
-            .filter_map(|(name, output)| {
-              output
-                .get("path")
-                .or_else(|| output.get("outPath"))
-                .and_then(serde_json::Value::as_str)
-                .map(|path| (name.clone(), path.to_string()))
-            })
-            .collect::<HashMap<_, _>>()
-        })
-        .filter(|map| !map.is_empty());
-      let input_drvs = drv_val.get("inputDrvs").and_then(|v| {
-        serde_json::from_value::<HashMap<String, serde_json::Value>>(v.clone())
-          .ok()
-      });
+      let drv_path = circus_nix::derivation::store_path(store_dir, drv_path);
+      let system = circus_nix::derivation::drv_system(drv_val);
+      let outputs = circus_nix::derivation::drv_outputs(store_dir, drv_val);
+      let input_drvs =
+        circus_nix::derivation::drv_input_drvs(store_dir, drv_val);
       let required_features =
         circus_nix::derivation::drv_required_features(drv_val);
 
@@ -110,6 +87,15 @@ async fn show_recursive_derivations(
   if drv_paths.is_empty() {
     return HashMap::new();
   }
+
+  let store_dir = match circus_nix::derivation::store_dir().await {
+    Ok(dir) => dir,
+    Err(error) => {
+      tracing::warn!(%error, "failed to read the nix store directory");
+      return HashMap::new();
+    },
+  };
+
   let mut command = Command::new("nix");
   command
     .arg("derivation")
@@ -133,7 +119,7 @@ async fn show_recursive_derivations(
     return HashMap::new();
   }
   serde_json::from_slice::<serde_json::Value>(&output.stdout)
-    .map(|value| parse_derivation_infos(&value))
+    .map(|value| parse_derivation_infos(store_dir, &value))
     .unwrap_or_default()
 }
 

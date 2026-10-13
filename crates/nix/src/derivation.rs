@@ -1,8 +1,12 @@
-//! Read `requiredSystemFeatures` out of `nix derivation show` output.
+//! Read `requiredSystemFeatures`, outputs, and input derivations out of
+//! `nix derivation show` output.
 
-use std::collections::BTreeSet;
+use std::{
+  collections::{BTreeSet, HashMap},
+  path::{Path, PathBuf},
+};
 
-use tokio::process::Command;
+use tokio::{process::Command, sync::OnceCell};
 
 use crate::{Error, Result};
 
@@ -108,6 +112,107 @@ pub fn drv_required_features(drv: &serde_json::Value) -> Vec<String> {
   out.into_iter().collect()
 }
 
+/// Store directory of the local Nix. Derivation show format v3 and later print
+/// store paths as basenames, so the directory has to come from Nix itself.
+///
+/// # Errors
+///
+/// Returns [`Error::Eval`] when nix cannot be run or prints no directory.
+pub async fn store_dir() -> Result<&'static Path> {
+  static STORE_DIR: OnceCell<PathBuf> = OnceCell::const_new();
+
+  STORE_DIR
+    .get_or_try_init(|| {
+      async {
+        let out = Command::new("nix")
+          .args([
+            "--extra-experimental-features",
+            "nix-command",
+            "eval",
+            "--raw",
+            "--expr",
+            "builtins.storeDir",
+          ])
+          .kill_on_drop(true)
+          .output()
+          .await
+          .map_err(|e| Error::Eval(format!("failed to run nix eval: {e}")))?;
+
+        let dir = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !out.status.success() || !dir.starts_with('/') {
+          return Err(Error::Eval(format!(
+            "could not read the nix store directory: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+          )));
+        }
+
+        Ok(PathBuf::from(dir))
+      }
+    })
+    .await
+    .map(PathBuf::as_path)
+}
+
+/// Absolute store path for a path printed by `nix derivation show`, which may
+/// be a basename.
+#[must_use]
+pub fn store_path(store_dir: &Path, path: &str) -> String {
+  if path.starts_with('/') {
+    path.to_owned()
+  } else {
+    store_dir.join(path).to_string_lossy().into_owned()
+  }
+}
+
+/// System a single derivation value builds for.
+#[must_use]
+pub fn drv_system(drv: &serde_json::Value) -> Option<String> {
+  drv
+    .get("system")
+    .and_then(serde_json::Value::as_str)
+    .map(str::to_owned)
+}
+
+/// Output paths of a single derivation value, keyed by output name. Floating
+/// content-addressed outputs have no path until they are built, so they are
+/// left out.
+#[must_use]
+pub fn drv_outputs(
+  store_dir: &Path,
+  drv: &serde_json::Value,
+) -> Option<HashMap<String, String>> {
+  let outputs = drv
+    .get("outputs")?
+    .as_object()?
+    .iter()
+    .filter_map(|(name, output)| {
+      output
+        .get("path")
+        .or_else(|| output.get("outPath"))
+        .and_then(serde_json::Value::as_str)
+        .map(|path| (name.clone(), store_path(store_dir, path)))
+    })
+    .collect::<HashMap<_, _>>();
+  (!outputs.is_empty()).then_some(outputs)
+}
+
+/// Input derivations of a single derivation value, keyed by store path, read
+/// from `inputDrvs` or `inputs.drvs`.
+#[must_use]
+pub fn drv_input_drvs(
+  store_dir: &Path,
+  drv: &serde_json::Value,
+) -> Option<HashMap<String, serde_json::Value>> {
+  let inputs = drv
+    .get("inputDrvs")
+    .or_else(|| drv.get("inputs")?.get("drvs"))?
+    .as_object()?
+    .iter()
+    .map(|(path, outputs)| (store_path(store_dir, path), outputs.clone()))
+    .collect::<HashMap<_, _>>();
+  (!inputs.is_empty()).then_some(inputs)
+}
+
 /// Construct the canonical `nix derivation show` command used to inspect
 /// required system features.
 #[must_use]
@@ -198,5 +303,21 @@ mod tests {
       "nixos-test",
       "uid-range"
     ]);
+  }
+
+  #[test]
+  fn reads_basename_inputs_and_outputs() {
+    let drv = json!({
+      "inputs": { "drvs": { "aaa-leaf.drv": ["out"] }, "srcs": [] },
+      "outputs": { "out": { "path": "bbb-hidden" } }
+    });
+    let store_dir = Path::new("/custom/store");
+
+    let inputs = drv_input_drvs(store_dir, &drv).expect("input drvs");
+    assert!(inputs.contains_key("/custom/store/aaa-leaf.drv"));
+    assert_eq!(
+      drv_outputs(store_dir, &drv).expect("outputs")["out"],
+      "/custom/store/bbb-hidden"
+    );
   }
 }
