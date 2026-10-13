@@ -991,6 +991,7 @@ pub(super) async fn news_delete(
   }
   if let Err(e) = circus_common::repo::news::delete(&state.pool, id).await {
     tracing::warn!(id = %id, "Failed to delete news item: {e}");
+    return Redirect::to("/news?error=delete").into_response();
   }
   Redirect::to("/news").into_response()
 }
@@ -1013,6 +1014,7 @@ pub(super) async fn starred_delete(
       .await
   {
     tracing::warn!(id = %id, "Failed to unstar job: {e}");
+    return Redirect::to("/starred?error=delete").into_response();
   }
   Redirect::to("/starred").into_response()
 }

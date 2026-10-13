@@ -14,6 +14,7 @@ use topcoat::{
     error::{bad_request, internal_server_error, not_found},
     page,
     path_param,
+    query_params,
     request,
   },
   view::{View, component, view},
@@ -284,10 +285,21 @@ async fn channel_page(cx: &Cx) -> Result<impl View> {
   })
 }
 
+/// `?error=delete` after a delete post that failed.
+#[query_params(error = bad_request)]
+struct DeleteQuery {
+  error: Option<String>,
+}
+
+fn delete_failed(cx: &Cx) -> Result<bool> {
+  Ok(query_params::<DeleteQuery>(cx)?.error.as_deref() == Some("delete"))
+}
+
 #[page("/news")]
 async fn news_page(cx: &Cx) -> Result<impl View> {
   let viewer = viewer(cx, DashboardPage::News).await?;
   let state = app_context::<AppState>(cx);
+  let failed = delete_failed(cx)?;
   let items = circus_common::repo::news::list(&state.pool, 50, 0)
     .await
     .unwrap_or_default();
@@ -297,6 +309,9 @@ async fn news_page(cx: &Cx) -> Result<impl View> {
   Ok(view! {
     document(title: "News", viewer: &viewer,
       <h1>"News"</h1>
+      if failed {
+        <div class="flash-message flash-error">"The news item could not be deleted."</div>
+      }
       if is_admin {
         <section class="panel">
           <div class="panel-header">
@@ -435,6 +450,7 @@ async fn starred_jobs(
 async fn starred_page(cx: &Cx) -> Result<impl View> {
   let viewer = viewer(cx, DashboardPage::Starred).await?;
   let state = app_context::<AppState>(cx);
+  let failed = delete_failed(cx)?;
   let jobs = match viewer.viewer_user_id {
     Some(user) => Some(starred_jobs(state, &viewer, user).await),
     None => None,
@@ -444,6 +460,9 @@ async fn starred_page(cx: &Cx) -> Result<impl View> {
   Ok(view! {
     document(title: "Starred Jobs", viewer: &viewer,
       <h1>"Starred Jobs"</h1>
+      if failed {
+        <div class="flash-message flash-error">"The job could not be unstarred."</div>
+      }
       match jobs {
         None => {
           <div class="empty">
