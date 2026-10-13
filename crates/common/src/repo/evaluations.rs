@@ -575,19 +575,23 @@ pub async fn discard_filtered_running(pool: &PgPool, id: Uuid) -> Result<bool> {
   Ok(q::discard_filtered_running().bind(&client, &id).await? == 1)
 }
 
-/// Cancel an evaluation that has not reached a terminal state.
+/// Cancel an evaluation that has not reached a terminal state, along with its
+/// unfinished builds.
 ///
 /// # Errors
 ///
 /// Returns an error if the database query fails.
 pub async fn cancel(pool: &PgPool, id: Uuid) -> Result<Option<Evaluation>> {
-  let client = pool.get().await?;
-  q::cancel()
-    .bind(&client, &id)
-    .opt()
-    .await?
-    .map(Evaluation::try_from)
-    .transpose()
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+  let Some(row) = q::cancel().bind(&tx, &id).opt().await? else {
+    return Ok(None);
+  };
+  q::cancel_unfinished_builds()
+    .bind(&tx, &"evaluation cancelled", &id)
+    .await?;
+  tx.commit().await?;
+  Evaluation::try_from(row).map(Some)
 }
 
 /// List source evaluations in `source_scope` that are running or still have
@@ -631,9 +635,9 @@ pub async fn cancel_with_builds(
   Ok(())
 }
 
-/// Requeue a cancelled, failed, or timed-out evaluation after discarding its
-/// stale builds. A disabled jobset rejects the restart; a retained one-shot
-/// jobset is re-enabled for its new attempt.
+/// Requeue a cancelled, failed, or timed-out evaluation, keeping its running
+/// and succeeded builds for the new attempt. A disabled jobset rejects the
+/// restart, and a retained one-shot jobset is re-enabled.
 ///
 /// # Errors
 ///

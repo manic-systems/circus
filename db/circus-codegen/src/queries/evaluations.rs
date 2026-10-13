@@ -2419,7 +2419,10 @@ impl RestartRequeueStmt {
 }
 pub struct RestartDeleteBuildsStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn restart_delete_builds() -> RestartDeleteBuildsStmt {
-    RestartDeleteBuildsStmt("DELETE FROM builds WHERE evaluation_id = $1", None)
+    RestartDeleteBuildsStmt(
+        "DELETE FROM builds WHERE evaluation_id = $1 AND status NOT IN ('running', 'succeeded')",
+        None,
+    )
 }
 impl RestartDeleteBuildsStmt {
     pub async fn prepare<'a, C: GenericClient>(

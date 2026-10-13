@@ -6,7 +6,13 @@ use futures::StreamExt as _;
 use tokio::{process::Command, sync::watch};
 use tokio_util::sync::CancellationToken;
 
-use super::{EvalProgress, EvalResult, nix_job_from_derivation};
+use super::{
+  EvalProgress,
+  EvalResult,
+  JobSink,
+  build_stream_closed,
+  nix_job_from_derivation,
+};
 
 const MAX_REPORTED_ERRORS: usize = 3;
 const MAX_REPORTED_ERROR_CHARS: usize = 1024;
@@ -100,7 +106,8 @@ impl From<&EvaluatorConfig> for NixEvalPolicy {
   }
 }
 
-/// Drive an evix evaluation to completion, collecting jobs and per-job errors.
+/// Drive an evix evaluation to completion, sending each job to `jobs` as it is
+/// discovered and collecting per-job errors.
 ///
 /// evix exposes a blocking API backed by worker subprocesses, so it runs on a
 /// blocking task. `timeout` is enforced by setting evix's cancellation flag,
@@ -108,8 +115,8 @@ impl From<&EvaluatorConfig> for NixEvalPolicy {
 ///
 /// # Returns
 ///
-/// The discovered [`NixJob`]s and the count of jobs that failed to evaluate
-/// individually (non-fatal per-attribute errors).
+/// How many jobs were sent and how many failed to evaluate individually
+/// (non-fatal per-attribute errors).
 ///
 /// # Errors
 ///
@@ -122,6 +129,7 @@ pub(super) async fn run_eval(
   description: &'static str,
   cancel: &CancellationToken,
   progress: &watch::Sender<EvalProgress>,
+  jobs: &JobSink,
 ) -> Result<EvalResult> {
   // evix rejects a zero item timeout instead of treating it as a timeout, so
   // enforce an immediate timeout here rather than letting the session start.
@@ -141,7 +149,7 @@ pub(super) async fn run_eval(
 
   let collect = async {
     let mut events = session.stream();
-    let mut jobs = Vec::new();
+    let mut job_count = 0usize;
     let mut error_count = 0usize;
     let mut errors = Vec::new();
     // evix emits exactly one event per attribute it visits, the root
@@ -162,7 +170,10 @@ pub(super) async fn run_eval(
 
       match event {
         evix::Event::Derivation(drv) => {
-          jobs.push(nix_job_from_derivation(&drv));
+          jobs
+            .send(nix_job_from_derivation(&drv))
+            .map_err(|_| build_stream_closed())?;
+          job_count += 1;
         },
         evix::Event::Error(err) => {
           tracing::warn!(job = %err.attr, "evix reported error: {}", err.error);
@@ -175,7 +186,7 @@ pub(super) async fn run_eval(
       }
     }
     Ok::<EvalResult, CiError>(EvalResult {
-      jobs,
+      job_count,
       error_count,
       errors,
     })
@@ -191,7 +202,7 @@ pub(super) async fn run_eval(
           "{description} evix reported errors for some jobs"
         );
       }
-      if result.jobs.is_empty() {
+      if result.job_count == 0 {
         return Err(CiError::NixEval(empty_evaluation_error(
           result.error_count,
           &result.errors,

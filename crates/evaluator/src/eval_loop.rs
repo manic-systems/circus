@@ -12,6 +12,7 @@ use circus_common::{
   error::{CiError, check_disk_space},
   models::{
     ActiveJobset,
+    Build,
     CreateEvaluation,
     CreateJobset,
     Evaluation,
@@ -27,16 +28,24 @@ use circus_config::{DeclarativeJobset, EvaluatorConfig, NotificationsConfig};
 use color_eyre::eyre::Context;
 use futures::stream::{self, StreamExt};
 use jiff::Timestamp;
-use tokio::sync::{Notify, watch};
+use tokio::{
+  sync::{Notify, mpsc, watch},
+  time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-  builds::{compute_inputs_hash, create_builds_from_eval},
+  builds::{BuildStream, compute_inputs_hash},
   evaluation_state::{ExistingEvaluationClaim, claim_existing},
-  nix::EvalProgress,
+  memory::MemoryLimit,
+  nix::{EvalProgress, NixJob},
 };
+
+const BATCH_MIN_JOBS: usize = 256;
+const BATCH_MAX_JOBS: usize = 4096;
+const BATCH_WINDOW: Duration = Duration::from_secs(5);
 
 /// Main evaluator loop. Polls jobsets and runs nix evaluations.
 ///
@@ -561,6 +570,57 @@ async fn run_nix_and_record_builds(
     return Ok(());
   }
 
+  let allowed_systems = circus_common::systems::restrict_to_jobset(
+    circus_common::systems::resolve_allowed_systems(pool, config).await,
+    jobset.systems.as_deref(),
+  );
+  let mut stream = BuildStream::open(
+    pool,
+    eval.id,
+    MemoryLimit::from(config),
+    allowed_systems.as_ref(),
+  )
+  .await?;
+  let project = repo::projects::get(pool, jobset.project_id)
+    .await
+    .inspect_err(|error| {
+      tracing::warn!(
+        project_id = %jobset.project_id,
+        "Failed to fetch project for build notifications: {error}"
+      );
+    })
+    .ok();
+  let notify = async |builds: Vec<Build>| {
+    let Some(project) = &project else {
+      return;
+    };
+    for build in builds.iter().filter(|build| !build.is_aggregate) {
+      // A dependency build that finished before a job adopted it only ever
+      // sent the internal completion, which skips job-level channels.
+      if build.status.is_finished() {
+        circus_notification::dispatch_build_finished(
+          Some(pool),
+          build,
+          project,
+          &eval.commit_hash,
+          notifications_config,
+          notification_secret_key,
+        )
+        .await;
+      } else if notifications_config.enable_retry_queue {
+        circus_notification::dispatch_build_created(
+          pool,
+          build,
+          project,
+          &eval.commit_hash,
+          notifications_config,
+          notification_secret_key,
+        )
+        .await;
+      }
+    }
+  };
+
   let cancel = CancellationToken::new();
   let watcher = tokio::spawn(watch_evaluation_cancellation(
     pool.clone(),
@@ -568,7 +628,8 @@ async fn run_nix_and_record_builds(
     cancel.clone(),
   ));
   let (progress_tx, progress_rx) = watch::channel(EvalProgress::default());
-  let (result, (), ()) = tokio::join!(
+  let (jobs_tx, jobs_rx) = mpsc::unbounded_channel();
+  let (result, (), (), streamed) = tokio::join!(
     async {
       let result = crate::nix::evaluate(
         repo_path,
@@ -581,77 +642,45 @@ async fn run_nix_and_record_builds(
         inputs,
         &cancel,
         &progress_tx,
+        &jobs_tx,
         None,
       )
       .await;
+      drop(jobs_tx);
       cancel.cancel();
       result
     },
     watch_branch_history(pool, jobset, eval, config, &cancel),
     record_progress(pool, eval.id, progress_rx, &cancel),
+    stream_builds(&mut stream, jobs_rx, &cancel, notify),
   );
   if let Err(error) = watcher.await {
     tracing::warn!(eval_id = %eval.id, "Evaluation cancellation watcher stopped: {error}");
   }
 
+  if !streamed? {
+    tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
+    return Ok(());
+  }
+
   match result {
     Ok(eval_result) => {
-      tracing::debug!(jobset = %jobset.name, job_count = eval_result.jobs.len(), "Nix evaluation returned");
       tracing::info!(
           jobset = %jobset.name,
-          count = eval_result.jobs.len(),
+          count = eval_result.job_count,
           errors = eval_result.error_count,
           "Evaluation discovered jobs"
       );
 
-      let allowed_systems = circus_common::systems::restrict_to_jobset(
-        circus_common::systems::resolve_allowed_systems(pool, config).await,
-        jobset.systems.as_deref(),
-      );
-      if !create_builds_from_eval(
-        pool,
-        eval.id,
-        &eval_result,
-        crate::memory::MemoryLimit::from(config),
-        allowed_systems.as_ref(),
-      )
-      .await?
-      {
+      if !stream.complete().await? {
         tracing::info!(eval_id = %eval.id, "Evaluation was cancelled");
         return Ok(());
       }
 
-      if notifications_config.enable_retry_queue {
-        if let Ok(project) = repo::projects::get(pool, jobset.project_id).await
-        {
-          if let Ok(builds) =
-            repo::builds::list_for_evaluation(pool, eval.id).await
-          {
-            for build in builds {
-              if !build.is_aggregate {
-                circus_notification::dispatch_build_created(
-                  pool,
-                  &build,
-                  &project,
-                  &eval.commit_hash,
-                  notifications_config,
-                  notification_secret_key,
-                )
-                .await;
-              }
-            }
-          } else {
-            tracing::warn!(
-              eval_id = %eval.id,
-              "Failed to fetch builds for pending notifications"
-            );
-          }
-        } else {
-          tracing::warn!(
-            project_id = %jobset.project_id,
-            "Failed to fetch project for pending notifications"
-          );
-        }
+      if let Err(error) =
+        repo::channels::auto_promote_if_complete(pool, jobset.id, eval.id).await
+      {
+        tracing::warn!(eval_id = %eval.id, "Failed to auto-promote channels: {error}");
       }
     },
     Err(e) => {
@@ -673,6 +702,54 @@ async fn run_nix_and_record_builds(
   }
 
   Ok(())
+}
+
+/// Feed discovered jobs to `stream` in batches until evaluation ends.
+///
+/// # Returns
+///
+/// `false` once the evaluation stopped running, after cancelling it.
+async fn stream_builds(
+  stream: &mut BuildStream<'_>,
+  mut jobs: mpsc::UnboundedReceiver<NixJob>,
+  cancel: &CancellationToken,
+  notify: impl AsyncFn(Vec<Build>),
+) -> color_eyre::Result<bool> {
+  let mut open = true;
+  while open {
+    let mut batch = Vec::new();
+    if jobs.recv_many(&mut batch, BATCH_MAX_JOBS).await == 0 {
+      break;
+    }
+
+    let flush_at = Instant::now() + BATCH_WINDOW;
+    while batch.len() < BATCH_MIN_JOBS {
+      let room = BATCH_MAX_JOBS - batch.len();
+      match tokio::time::timeout_at(flush_at, jobs.recv_many(&mut batch, room))
+        .await
+      {
+        Ok(0) => {
+          open = false;
+          break;
+        },
+        Ok(_) => {},
+        Err(_elapsed) => break,
+      }
+    }
+
+    match stream.insert(batch).await {
+      Ok(Some(builds)) => notify(builds).await,
+      Ok(None) => {
+        cancel.cancel();
+        return Ok(false);
+      },
+      Err(error) => {
+        cancel.cancel();
+        return Err(error);
+      },
+    }
+  }
+  Ok(true)
 }
 
 async fn watch_evaluation_cancellation(

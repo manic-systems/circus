@@ -1,5 +1,5 @@
 use std::{
-  collections::{HashMap, HashSet, VecDeque},
+  collections::{HashMap, HashSet},
   future,
   path::Path,
   time::Duration,
@@ -7,7 +7,13 @@ use std::{
 
 use circus_common::{
   PgPool,
-  models::{CreateBuild, EvaluationStatus, JobsetInput},
+  models::{
+    Build,
+    CreateBuild,
+    DEPENDENCY_JOB_PREFIX,
+    EvaluationStatus,
+    JobsetInput,
+  },
   repo,
   systems::system_allowed,
 };
@@ -16,7 +22,7 @@ use futures::stream::{self, StreamExt};
 use tokio::process::Command;
 use uuid::Uuid;
 
-use crate::memory::MemoryLimit;
+use crate::{memory::MemoryLimit, nix::NixJob};
 
 async fn read_required_features(
   drv_path: &str,
@@ -80,58 +86,61 @@ fn parse_derivation_infos(
     .collect()
 }
 
-async fn show_recursive_derivations(
+async fn show_derivations(
   drv_paths: &[String],
   memory_limit: MemoryLimit,
 ) -> HashMap<String, DerivationInfo> {
-  if drv_paths.is_empty() {
-    return HashMap::new();
-  }
-
+  let mut derivations = HashMap::new();
   let store_dir = match circus_nix::derivation::store_dir().await {
     Ok(dir) => dir,
     Err(error) => {
       tracing::warn!(%error, "failed to read the nix store directory");
-      return HashMap::new();
+      return derivations;
     },
   };
 
-  let mut command = Command::new("nix");
-  command
-    .arg("derivation")
-    .arg("show")
-    .arg("--recursive")
-    .args(drv_paths)
-    .kill_on_drop(true);
-  if let Err(error) = memory_limit.apply_to(&mut command) {
-    tracing::warn!(%error, "failed to apply evaluator memory limit");
-    return HashMap::new();
+  for chunk in drv_paths.chunks(1024) {
+    let mut command = Command::new("nix");
+    command
+      .args(["derivation", "show"])
+      .args(chunk)
+      .kill_on_drop(true);
+    if let Err(error) = memory_limit.apply_to(&mut command) {
+      tracing::warn!(%error, "failed to apply evaluator memory limit");
+      return derivations;
+    }
+    let output = match command.output().await {
+      Ok(output) => output,
+      Err(error) => {
+        tracing::warn!(%error, "failed to run nix derivation show");
+        continue;
+      },
+    };
+    if !output.status.success() {
+      tracing::warn!(
+        stderr = %String::from_utf8_lossy(&output.stderr),
+        "nix derivation show failed"
+      );
+      continue;
+    }
+    if let Ok(value) =
+      serde_json::from_slice::<serde_json::Value>(&output.stdout)
+    {
+      derivations.extend(parse_derivation_infos(store_dir, &value));
+    }
   }
-  let output = command.output().await;
-  let Ok(output) = output else {
-    return HashMap::new();
-  };
-  if !output.status.success() {
-    tracing::warn!(
-      stderr = %String::from_utf8_lossy(&output.stderr),
-      "nix derivation show --recursive failed"
-    );
-    return HashMap::new();
-  }
-  serde_json::from_slice::<serde_json::Value>(&output.stdout)
-    .map(|value| parse_derivation_infos(store_dir, &value))
-    .unwrap_or_default()
+  derivations
 }
 
 /// Outputs neither in the local store nor on a substituter. Paths the checks
 /// cannot vouch for are treated as invalid so the derivation still gets
 /// enqueued.
-async fn invalid_output_paths(
-  derivations: &HashMap<String, DerivationInfo>,
+async fn invalid_output_paths<'a>(
+  derivations: impl Iterator<Item = &'a DerivationInfo>,
+  substituters: &[String],
   memory_limit: MemoryLimit,
 ) -> HashSet<String> {
   let paths = derivations
-    .values()
     .filter_map(|info| info.outputs.as_ref())
     .flat_map(|outputs| outputs.values().cloned())
     .collect::<HashSet<String>>()
@@ -162,8 +171,7 @@ async fn invalid_output_paths(
     }
   }
 
-  let substituters = http_substituters(memory_limit).await;
-  for path in substitutable(&invalid, &substituters).await {
+  for path in substitutable(&invalid, substituters).await {
     invalid.remove(&path);
   }
   invalid
@@ -268,63 +276,7 @@ fn dependency_job_name(drv_path: &str) -> String {
     .and_then(|name| name.to_str())
     .unwrap_or(drv_path)
     .trim_end_matches(".drv");
-  format!("{}{basename}", circus_common::models::DEPENDENCY_JOB_PREFIX)
-}
-
-async fn expand_derivation_graph(
-  jobs: &[crate::nix::NixJob],
-  memory_limit: MemoryLimit,
-) -> (Vec<crate::nix::NixJob>, HashMap<String, DerivationInfo>) {
-  let top_level_drvs = jobs
-    .iter()
-    .map(|job| job.drv_path.clone())
-    .collect::<Vec<_>>();
-  let derivations =
-    show_recursive_derivations(&top_level_drvs, memory_limit).await;
-  if derivations.is_empty() {
-    return (jobs.to_vec(), derivations);
-  }
-  let invalid_outputs = invalid_output_paths(&derivations, memory_limit).await;
-
-  let mut expanded = jobs.to_vec();
-  let mut included = expanded
-    .iter()
-    .map(|job| job.drv_path.clone())
-    .collect::<HashSet<_>>();
-  let mut queued = VecDeque::new();
-  for job in jobs {
-    if let Some(input_drvs) = &job.input_drvs {
-      queued.extend(input_drvs.keys().cloned());
-    }
-  }
-
-  while let Some(drv_path) = queued.pop_front() {
-    if included.contains(&drv_path) {
-      continue;
-    }
-    let Some(info) = derivations.get(&drv_path) else {
-      continue;
-    };
-    if !should_enqueue_derivation(info, &invalid_outputs) {
-      continue;
-    }
-
-    included.insert(drv_path.clone());
-    if let Some(input_drvs) = &info.input_drvs {
-      queued.extend(input_drvs.keys().cloned());
-    }
-    expanded.push(crate::nix::NixJob {
-      name: dependency_job_name(&drv_path),
-      drv_path,
-      system: info.system.clone(),
-      outputs: info.outputs.clone(),
-      input_drvs: info.input_drvs.clone(),
-      constituents: None,
-      meta: crate::nix::NixMeta::default(),
-    });
-  }
-
-  (expanded, derivations)
+  format!("{DEPENDENCY_JOB_PREFIX}{basename}")
 }
 
 /// Detect whether a derivation is a fixed-output derivation from the output
@@ -357,7 +309,7 @@ fn detect_fod(drv_path: &str) -> (bool, Option<String>) {
 /// job's own build id rather than the drv-keyed map, which only retains the
 /// last build per drv.
 fn resolve_dependency_pairs(
-  jobs: &[crate::nix::NixJob],
+  jobs: &[NixJob],
   build_ids: &[Uuid],
   drv_to_build: &HashMap<String, Uuid>,
   name_to_build: &HashMap<String, Uuid>,
@@ -390,115 +342,326 @@ fn resolve_dependency_pairs(
   pairs
 }
 
-/// Create build records and finish the evaluation while it is still running.
-pub(crate) async fn create_builds_from_eval(
-  pool: &PgPool,
-  eval_id: Uuid,
-  eval_result: &crate::nix::EvalResult,
-  memory_limit: MemoryLimit,
-  allowed_systems: Option<&HashSet<String>>,
-) -> color_eyre::Result<bool> {
-  let mut drv_to_build: HashMap<String, Uuid> = HashMap::new();
-  let mut name_to_build: HashMap<String, Uuid> = HashMap::new();
-  let named_jobs = eval_result
-    .jobs
-    .iter()
-    .filter(|job| system_allowed(job.system.as_deref(), allowed_systems))
-    .cloned()
-    .collect::<Vec<_>>();
-  let (expanded, derivations) =
-    expand_derivation_graph(&named_jobs, memory_limit).await;
-  let expanded_len = expanded.len();
-  let jobs = expanded
-    .into_iter()
-    .filter(|job| system_allowed(job.system.as_deref(), allowed_systems))
-    .collect::<Vec<_>>();
-  let dropped =
-    (eval_result.jobs.len() - named_jobs.len()) + (expanded_len - jobs.len());
-  if dropped > 0 {
-    tracing::info!(
-      dropped,
-      "Dropped jobs for systems outside evaluator.systems"
+/// Records an evaluation's builds batch by batch while it is still running.
+///
+/// Each batch commits together with every dependency build and edge it needs,
+/// so the queue runner never sees a build before the edges that hold it back.
+/// Aggregates wait for [`BuildStream::complete`] because their constituents can
+/// arrive in any later batch.
+pub(crate) struct BuildStream<'a> {
+  pool:            &'a PgPool,
+  eval_id:         Uuid,
+  memory_limit:    MemoryLimit,
+  allowed_systems: Option<&'a HashSet<String>>,
+  drv_to_build:    HashMap<String, Uuid>,
+  name_to_build:   HashMap<String, Uuid>,
+  name_to_drv:     HashMap<String, String>,
+  dependencies:    HashMap<String, Uuid>,
+  present:         HashSet<String>,
+  touched:         HashSet<Uuid>,
+  substituters:    Vec<String>,
+  aggregates:      Vec<NixJob>,
+  dropped:         usize,
+}
+
+impl<'a> BuildStream<'a> {
+  /// An orphaned evaluation re-runs under the same id, so builds its earlier
+  /// attempt recorded are picked up instead of inserted again.
+  pub(crate) async fn open(
+    pool: &'a PgPool,
+    eval_id: Uuid,
+    memory_limit: MemoryLimit,
+    allowed_systems: Option<&'a HashSet<String>>,
+  ) -> color_eyre::Result<Self> {
+    let mut drv_to_build = HashMap::new();
+    let mut name_to_build = HashMap::new();
+    let mut name_to_drv = HashMap::new();
+    let mut dependencies = HashMap::new();
+    for build in repo::builds::list_for_evaluation(pool, eval_id).await? {
+      if build.job_name.starts_with(DEPENDENCY_JOB_PREFIX) {
+        dependencies.insert(build.drv_path.clone(), build.id);
+      }
+      drv_to_build.insert(build.drv_path.clone(), build.id);
+      name_to_build.insert(build.job_name.clone(), build.id);
+      name_to_drv.insert(build.job_name, build.drv_path);
+    }
+
+    Ok(Self {
+      pool,
+      eval_id,
+      memory_limit,
+      allowed_systems,
+      drv_to_build,
+      name_to_build,
+      name_to_drv,
+      dependencies,
+      present: HashSet::new(),
+      touched: HashSet::new(),
+      substituters: http_substituters(memory_limit).await,
+      aggregates: Vec::new(),
+      dropped: 0,
+    })
+  }
+
+  /// Record a batch of jobs.
+  ///
+  /// # Returns
+  ///
+  /// The builds created, or `None` once the evaluation is no longer running.
+  pub(crate) async fn insert(
+    &mut self,
+    jobs: Vec<NixJob>,
+  ) -> color_eyre::Result<Option<Vec<Build>>> {
+    let jobs = self.allowed(jobs);
+    let (aggregates, jobs): (Vec<_>, Vec<_>) =
+      jobs.into_iter().partition(|job| job.constituents.is_some());
+    self.aggregates.extend(aggregates);
+    self.persist(jobs, false).await
+  }
+
+  /// Record the aggregates and mark the evaluation completed.
+  ///
+  /// # Returns
+  ///
+  /// `false` if the evaluation stopped running first.
+  pub(crate) async fn complete(mut self) -> color_eyre::Result<bool> {
+    let aggregates = std::mem::take(&mut self.aggregates);
+    let completed = self.persist(aggregates, true).await?.is_some();
+    if self.dropped > 0 {
+      tracing::info!(
+        dropped = self.dropped,
+        "Dropped jobs for systems outside evaluator.systems"
+      );
+    }
+    Ok(completed)
+  }
+
+  fn allowed(&mut self, jobs: Vec<NixJob>) -> Vec<NixJob> {
+    let total = jobs.len();
+    let jobs = jobs
+      .into_iter()
+      .filter(|job| system_allowed(job.system.as_deref(), self.allowed_systems))
+      .collect::<Vec<_>>();
+    self.dropped += total - jobs.len();
+    jobs
+  }
+
+  async fn expand(
+    &mut self,
+    jobs: Vec<NixJob>,
+  ) -> (Vec<NixJob>, HashMap<String, DerivationInfo>) {
+    let top_level_drvs = jobs
+      .iter()
+      .map(|job| job.drv_path.clone())
+      .collect::<Vec<_>>();
+    let mut derivations =
+      show_derivations(&top_level_drvs, self.memory_limit).await;
+    let mut included = top_level_drvs.into_iter().collect::<HashSet<_>>();
+    let mut frontier = jobs
+      .iter()
+      .filter_map(|job| job.input_drvs.as_ref())
+      .flat_map(|input_drvs| input_drvs.keys().cloned())
+      .collect::<Vec<_>>();
+    let mut expanded = jobs;
+
+    loop {
+      frontier.retain(|drv_path| {
+        !included.contains(drv_path)
+          && !self.drv_to_build.contains_key(drv_path)
+          && !self.present.contains(drv_path)
+      });
+      frontier.sort_unstable();
+      frontier.dedup();
+      if frontier.is_empty() {
+        break;
+      }
+
+      let shown = show_derivations(&frontier, self.memory_limit).await;
+      let invalid_outputs = invalid_output_paths(
+        shown.values(),
+        &self.substituters,
+        self.memory_limit,
+      )
+      .await;
+      let mut next = Vec::new();
+      for drv_path in std::mem::take(&mut frontier) {
+        let Some(info) = shown.get(&drv_path) else {
+          continue;
+        };
+        if !should_enqueue_derivation(info, &invalid_outputs) {
+          self.present.insert(drv_path);
+          continue;
+        }
+
+        included.insert(drv_path.clone());
+        if let Some(input_drvs) = &info.input_drvs {
+          next.extend(input_drvs.keys().cloned());
+        }
+        expanded.push(NixJob {
+          name: dependency_job_name(&drv_path),
+          drv_path,
+          system: info.system.clone(),
+          outputs: info.outputs.clone(),
+          input_drvs: info.input_drvs.clone(),
+          constituents: None,
+          meta: crate::nix::NixMeta::default(),
+        });
+      }
+      derivations.extend(shown);
+      frontier = next;
+    }
+
+    (expanded, derivations)
+  }
+
+  async fn persist(
+    &mut self,
+    jobs: Vec<NixJob>,
+    finish: bool,
+  ) -> color_eyre::Result<Option<Vec<Build>>> {
+    // A restart keeps running and succeeded builds, which only stand in for a
+    // job whose derivation is unchanged.
+    let mut stale = Vec::new();
+    let jobs = jobs
+      .into_iter()
+      .filter(|job| {
+        let Some(&id) = self.name_to_build.get(&job.name) else {
+          return true;
+        };
+        if self.name_to_drv.get(&job.name) == Some(&job.drv_path) {
+          self.touched.insert(id);
+          return false;
+        }
+        stale.push(id);
+        true
+      })
+      .collect::<Vec<_>>();
+    let (expanded, derivations) = self.expand(jobs).await;
+    let jobs = self.allowed(expanded);
+
+    let mut builds = Vec::with_capacity(jobs.len());
+    for job in &jobs {
+      let outputs_json = job
+        .outputs
+        .as_ref()
+        .map(|o| serde_json::to_value(o).unwrap_or_default());
+      let constituents_json = job
+        .constituents
+        .as_ref()
+        .map(|c| serde_json::to_value(c).unwrap_or_default());
+      let is_aggregate = job.constituents.is_some();
+
+      let (is_fod, fod_hash) = detect_fod(&job.drv_path);
+      let required_features = match derivations.get(&job.drv_path) {
+        Some(info) => info.required_features.clone(),
+        None => read_required_features(&job.drv_path, self.memory_limit).await,
+      };
+      builds.push(CreateBuild {
+        evaluation_id: self.eval_id,
+        job_name: job.name.clone(),
+        drv_path: job.drv_path.clone(),
+        system: job.system.clone(),
+        outputs: outputs_json,
+        is_aggregate: Some(is_aggregate),
+        constituents: constituents_json,
+        is_fod: Some(is_fod),
+        fod_hash,
+        meta_description: job.meta.description.clone(),
+        meta_license: job.meta.license.clone(),
+        meta_homepage: job.meta.homepage.clone(),
+        meta_maintainers: job.meta.maintainers.clone(),
+        required_features,
+      });
+    }
+
+    let mut client = self.pool.get().await?;
+    let tx = client.transaction().await?;
+    if !repo::evaluations::lock_running(&tx, self.eval_id).await? {
+      return Ok(None);
+    }
+
+    for &id in &stale {
+      repo::builds::delete_in_transaction(&tx, id).await?;
+    }
+    self
+      .drv_to_build
+      .retain(|_, build_id| !stale.contains(build_id));
+    self
+      .dependencies
+      .retain(|_, build_id| !stale.contains(build_id));
+
+    let mut created = Vec::with_capacity(builds.len());
+    let mut build_ids = Vec::with_capacity(builds.len());
+    let mut adopted_ids = HashSet::new();
+    for build in builds {
+      let adopted = if build.job_name.starts_with(DEPENDENCY_JOB_PREFIX)
+        || build.is_aggregate == Some(true)
+      {
+        None
+      } else {
+        self.dependencies.remove(&build.drv_path)
+      };
+      let build = match adopted {
+        Some(id) => {
+          adopted_ids.insert(id);
+          repo::builds::adopt_dependency_in_transaction(&tx, id, &build).await?
+        },
+        None => repo::builds::create_in_transaction(&tx, build).await?,
+      };
+      if build.job_name.starts_with(DEPENDENCY_JOB_PREFIX) {
+        self.dependencies.insert(build.drv_path.clone(), build.id);
+      }
+      self.drv_to_build.insert(build.drv_path.clone(), build.id);
+      self.name_to_build.insert(build.job_name.clone(), build.id);
+      self
+        .name_to_drv
+        .insert(build.job_name.clone(), build.drv_path.clone());
+      self.touched.insert(build.id);
+      build_ids.push(build.id);
+      created.push(build);
+    }
+
+    let pairs = resolve_dependency_pairs(
+      &jobs,
+      &build_ids,
+      &self.drv_to_build,
+      &self.name_to_build,
     );
+    for (build_id, dep_build_id) in pairs
+      .into_iter()
+      .filter(|(build_id, _)| !adopted_ids.contains(build_id))
+    {
+      repo::build_dependencies::create_in_transaction(
+        &tx,
+        build_id,
+        dep_build_id,
+      )
+      .await?;
+    }
+
+    if finish {
+      // A restart keeps builds the new attempt may no longer want.
+      let kept = self.touched.iter().copied().collect::<Vec<_>>();
+      repo::builds::delete_unreached_in_transaction(&tx, self.eval_id, &kept)
+        .await?;
+
+      let finished = repo::evaluations::finish_running_in_transaction(
+        &tx,
+        self.eval_id,
+        EvaluationStatus::Completed,
+        None,
+      )
+      .await?;
+      if !finished {
+        return Err(color_eyre::eyre::eyre!(
+          "evaluation {} lost its running state while locked",
+          self.eval_id
+        ));
+      }
+    }
+    tx.commit().await?;
+    Ok(Some(created))
   }
-  let mut builds = Vec::with_capacity(jobs.len());
-
-  for job in &jobs {
-    let outputs_json = job
-      .outputs
-      .as_ref()
-      .map(|o| serde_json::to_value(o).unwrap_or_default());
-    let constituents_json = job
-      .constituents
-      .as_ref()
-      .map(|c| serde_json::to_value(c).unwrap_or_default());
-    let is_aggregate = job.constituents.is_some();
-
-    let (is_fod, fod_hash) = detect_fod(&job.drv_path);
-    let required_features = match derivations.get(&job.drv_path) {
-      Some(info) => info.required_features.clone(),
-      None => read_required_features(&job.drv_path, memory_limit).await,
-    };
-    builds.push(CreateBuild {
-      evaluation_id: eval_id,
-      job_name: job.name.clone(),
-      drv_path: job.drv_path.clone(),
-      system: job.system.clone(),
-      outputs: outputs_json,
-      is_aggregate: Some(is_aggregate),
-      constituents: constituents_json,
-      is_fod: Some(is_fod),
-      fod_hash,
-      meta_description: job.meta.description.clone(),
-      meta_license: job.meta.license.clone(),
-      meta_homepage: job.meta.homepage.clone(),
-      meta_maintainers: job.meta.maintainers.clone(),
-      required_features,
-    });
-  }
-
-  let mut client = pool.get().await?;
-  let tx = client.transaction().await?;
-  if !repo::evaluations::lock_running(&tx, eval_id).await? {
-    return Ok(false);
-  }
-
-  let mut build_ids = Vec::with_capacity(jobs.len());
-  for build in builds {
-    let drv_path = build.drv_path.clone();
-    let job_name = build.job_name.clone();
-    let id = repo::builds::create_in_transaction(&tx, build).await?.id;
-
-    drv_to_build.insert(drv_path, id);
-    name_to_build.insert(job_name, id);
-    build_ids.push(id);
-  }
-
-  for (build_id, dep_build_id) in
-    resolve_dependency_pairs(&jobs, &build_ids, &drv_to_build, &name_to_build)
-  {
-    repo::build_dependencies::create_in_transaction(
-      &tx,
-      build_id,
-      dep_build_id,
-    )
-    .await?;
-  }
-
-  if !repo::evaluations::finish_running_in_transaction(
-    &tx,
-    eval_id,
-    EvaluationStatus::Completed,
-    None,
-  )
-  .await?
-  {
-    return Err(color_eyre::eyre::eyre!(
-      "evaluation {eval_id} lost its running state while locked"
-    ));
-  }
-  tx.commit().await?;
-  Ok(true)
 }
 
 /// Compute a deterministic hash over the commit and all jobset inputs.
@@ -532,10 +695,23 @@ pub(crate) fn compute_inputs_hash(
 mod tests {
   use std::collections::HashMap;
 
+  use circus_common::{
+    PgPool,
+    models::{
+      BinaryCacheUpstreams,
+      CreateBuild,
+      CreateProject,
+      EvaluationStatus,
+    },
+    repo,
+  };
   use uuid::Uuid;
 
-  use super::resolve_dependency_pairs;
-  use crate::nix::{NixJob, NixMeta};
+  use super::{BuildStream, resolve_dependency_pairs};
+  use crate::{
+    memory::MemoryLimit,
+    nix::{NixJob, NixMeta},
+  };
 
   fn job(name: &str, drv_path: &str, input_drvs: &[&str]) -> NixJob {
     NixJob {
@@ -587,5 +763,172 @@ mod tests {
       (build_ids[0], build_ids[2]),
       (build_ids[1], build_ids[2]),
     ]);
+  }
+
+  fn drv(name: &str) -> String {
+    format!("/nix/store/{}-{name}.drv", Uuid::new_v4().simple())
+  }
+
+  /// A running evaluation on a fresh database, or `None` without
+  /// `TEST_DATABASE_URL`.
+  async fn running_evaluation() -> Option<(PgPool, Uuid)> {
+    let url = std::env::var("TEST_DATABASE_URL").ok()?;
+    circus_migrations::run_migrations(&url)
+      .await
+      .expect("migration failed");
+    let pool = circus_common::build_pool(&url, 5).expect("failed to connect");
+
+    let project = repo::projects::create(&pool, CreateProject {
+      name:            format!("stream-{}", Uuid::new_v4().simple()),
+      description:     None,
+      repository_url:  "https://github.com/test/stream".to_owned(),
+      cache_enabled:   false,
+      cache_url:       None,
+      cache_upstreams: BinaryCacheUpstreams::default(),
+    })
+    .await
+    .expect("create project");
+
+    let row = pool
+      .get()
+      .await
+      .expect("pool client")
+      .query_one(
+        "WITH jobset AS (
+           INSERT INTO jobsets (project_id, name, nix_expression)
+           VALUES ($1, 'stream', 'packages')
+           RETURNING id
+         )
+         INSERT INTO evaluations (jobset_id, commit_hash, status)
+         SELECT id, 'stream', 'running' FROM jobset
+         RETURNING id",
+        &[&project.id],
+      )
+      .await
+      .expect("create evaluation");
+
+    Some((pool, row.get(0)))
+  }
+
+  async fn open(pool: &PgPool, eval_id: Uuid) -> BuildStream<'_> {
+    BuildStream::open(pool, eval_id, MemoryLimit::new(None), None)
+      .await
+      .expect("open stream")
+  }
+
+  async fn seed(
+    pool: &PgPool,
+    eval_id: Uuid,
+    name: &str,
+    drv_path: &str,
+  ) -> Uuid {
+    repo::builds::create(pool, CreateBuild {
+      evaluation_id: eval_id,
+      job_name: name.to_owned(),
+      drv_path: drv_path.to_owned(),
+      ..Default::default()
+    })
+    .await
+    .expect("seed build")
+    .id
+  }
+
+  #[tokio::test]
+  async fn later_batches_depend_on_earlier_ones() {
+    let Some((pool, eval_id)) = running_evaluation().await else {
+      return;
+    };
+    let lib = drv("lib");
+    let mut stream = open(&pool, eval_id).await;
+
+    let first = stream.insert(vec![job("lib", &lib, &[])]).await;
+    let lib_id = first.expect("insert").expect("running")[0].id;
+    let second = stream
+      .insert(vec![job("app", &drv("app"), &[&lib])])
+      .await
+      .expect("insert")
+      .expect("running");
+
+    let deps = repo::build_dependencies::list_for_build(&pool, second[0].id)
+      .await
+      .expect("list deps");
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].dependency_build_id, lib_id);
+  }
+
+  #[tokio::test]
+  async fn restart_keeps_only_builds_the_new_attempt_reaches() {
+    let Some((pool, eval_id)) = running_evaluation().await else {
+      return;
+    };
+    let lib = drv("lib");
+    let kept = seed(&pool, eval_id, "lib", &lib).await;
+    let kept_dep = seed(&pool, eval_id, "drv:dep", &drv("dep")).await;
+    repo::build_dependencies::create(&pool, kept, kept_dep)
+      .await
+      .expect("seed edge");
+    let stale = seed(&pool, eval_id, "app", &drv("app")).await;
+    let dropped = seed(&pool, eval_id, "removed", &drv("removed")).await;
+    let app = drv("app");
+    let mut stream = open(&pool, eval_id).await;
+
+    let created = stream
+      .insert(vec![job("lib", &lib, &[]), job("app", &app, &[])])
+      .await
+      .expect("insert")
+      .expect("running");
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].drv_path, app);
+    assert!(stream.complete().await.expect("complete"));
+
+    let ids = repo::builds::list_for_evaluation(&pool, eval_id)
+      .await
+      .expect("list builds")
+      .into_iter()
+      .map(|build| build.id)
+      .collect::<Vec<_>>();
+    assert!(ids.contains(&kept));
+    assert!(ids.contains(&kept_dep));
+    assert!(!ids.contains(&stale));
+    assert!(!ids.contains(&dropped));
+  }
+
+  #[tokio::test]
+  async fn aggregates_wait_for_completion() {
+    let Some((pool, eval_id)) = running_evaluation().await else {
+      return;
+    };
+    let mut stream = open(&pool, eval_id).await;
+    let aggregate = NixJob {
+      constituents: Some(vec!["a".to_owned()]),
+      ..job("all", &drv("all"), &[])
+    };
+
+    let created = stream
+      .insert(vec![aggregate, job("a", &drv("a"), &[])])
+      .await
+      .expect("insert")
+      .expect("running");
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].job_name, "a");
+
+    assert!(stream.complete().await.expect("complete"));
+
+    let builds = repo::builds::list_for_evaluation(&pool, eval_id)
+      .await
+      .expect("list builds");
+    let all = builds
+      .iter()
+      .find(|build| build.job_name == "all")
+      .expect("aggregate created");
+    let deps = repo::build_dependencies::list_for_build(&pool, all.id)
+      .await
+      .expect("list deps");
+    assert_eq!(deps[0].dependency_build_id, created[0].id);
+
+    let evaluation = repo::evaluations::get(&pool, eval_id)
+      .await
+      .expect("get evaluation");
+    assert_eq!(evaluation.status, EvaluationStatus::Completed);
   }
 }

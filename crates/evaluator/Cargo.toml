@@ -33,7 +33,8 @@ circus-nix.workspace          = true
 circus-notification.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
+circus-migrations.workspace = true
+tempfile.workspace          = true
 
 [lints]
 workspace = true
