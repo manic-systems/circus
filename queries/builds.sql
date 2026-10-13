@@ -13,6 +13,14 @@ VALUES (
 )
 RETURNING *;
 
+--! adopt_dependency (meta_description?, meta_license?, meta_homepage?, meta_maintainers?) : BuildRow
+UPDATE builds
+SET job_name = :job_name, meta_description = :meta_description,
+    meta_license = :meta_license, meta_homepage = :meta_homepage,
+    meta_maintainers = :meta_maintainers
+WHERE id = :id
+RETURNING *;
+
 --! get_completed_by_drv_path : BuildRow
 SELECT * FROM builds
 WHERE drv_path = :drv_path AND status = 'succeeded'
@@ -252,8 +260,12 @@ WHERE (:evaluation_id::uuid IS NULL OR evaluation_id = :evaluation_id)
   AND (:job_name::text IS NULL OR job_name ILIKE '%' || :job_name || '%');
 
 --! get_cancelled_among
-SELECT id FROM builds
-WHERE id = ANY(:build_ids) AND status = 'cancelled';
+SELECT requested.id
+FROM unnest(:build_ids::uuid[]) AS requested (id)
+WHERE NOT EXISTS (
+  SELECT 1 FROM builds b
+  WHERE b.id = requested.id AND b.status <> 'cancelled'
+);
 
 --! cancel : BuildRow
 UPDATE builds
@@ -330,6 +342,18 @@ ORDER BY b.created_at;
 
 --! delete
 DELETE FROM builds WHERE id = :id;
+
+--! delete_unreached
+WITH RECURSIVE reached (id) AS (
+  SELECT unnest(:kept::uuid[])
+  UNION
+  SELECT bd.dependency_build_id
+  FROM build_dependencies bd
+  JOIN reached r ON bd.build_id = r.id
+)
+DELETE FROM builds
+WHERE evaluation_id = :evaluation_id
+  AND id NOT IN (SELECT id FROM reached);
 
 --! broke_in : (build_id, commit_hash, commit_subject?, last_success_build_id, last_success_commit)
 -- Only multi-ref jobsets keep separate branch histories. Manual, interval, and

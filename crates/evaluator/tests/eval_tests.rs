@@ -10,7 +10,7 @@ use std::{fs, path::Path, process::Command, time::Duration};
 
 use circus_config::EvaluatorConfig;
 use tempfile::TempDir;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 fn git_stage(dir: &Path) -> String {
@@ -78,6 +78,7 @@ async fn eval_minimal_flake_returns_one_job() {
   .unwrap();
   let commit = git_stage(dir.path());
 
+  let (jobs_tx, mut jobs_rx) = mpsc::unbounded_channel();
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
     dir.path().to_str().unwrap(),
@@ -89,16 +90,19 @@ async fn eval_minimal_flake_returns_one_job() {
     &[],
     &CancellationToken::new(),
     &watch::Sender::default(),
+    &jobs_tx,
     Some(worker_exe()),
   )
   .await
   .expect("evaluation should succeed");
+  drop(jobs_tx);
+  let mut jobs = Vec::new();
+  jobs_rx.recv_many(&mut jobs, usize::MAX).await;
 
   assert_eq!(result.error_count, 0, "no attribute errors expected");
   assert!(
-    result.jobs.iter().any(|job| job.name.contains(".test")),
-    "root evaluation should contain the test job: {:?}",
-    result.jobs
+    jobs.iter().any(|job| job.name.contains(".test")),
+    "root evaluation should contain the test job: {jobs:?}"
   );
 }
 
@@ -126,6 +130,7 @@ async fn eval_captures_per_attribute_errors_without_failing_fatally() {
   .unwrap();
   let commit = git_stage(dir.path());
 
+  let (jobs_tx, mut jobs_rx) = mpsc::unbounded_channel();
   let result = circus_evaluator::nix::evaluate(
     dir.path(),
     dir.path().to_str().unwrap(),
@@ -137,16 +142,16 @@ async fn eval_captures_per_attribute_errors_without_failing_fatally() {
     &[],
     &CancellationToken::new(),
     &watch::Sender::default(),
+    &jobs_tx,
     Some(worker_exe()),
   )
   .await
   .expect("fatal eval error not expected for per-attribute throws");
+  drop(jobs_tx);
+  let mut jobs = Vec::new();
+  jobs_rx.recv_many(&mut jobs, usize::MAX).await;
 
-  assert_eq!(
-    result.jobs.len(),
-    1,
-    "only the good package should be reported"
-  );
+  assert_eq!(jobs.len(), 1, "only the good package should be reported");
   assert!(
     result.error_count > 0,
     "broken attribute must be reported as an error"
@@ -172,6 +177,7 @@ async fn eval_fatal_parse_error_returns_cierror_nixeval() {
     &[],
     &CancellationToken::new(),
     &watch::Sender::default(),
+    &mpsc::unbounded_channel().0,
     Some(worker_exe()),
   )
   .await;
@@ -219,6 +225,7 @@ async fn eval_zero_timeout_returns_cierror_timeout() {
     &[],
     &CancellationToken::new(),
     &watch::Sender::default(),
+    &mpsc::unbounded_channel().0,
     Some(worker_exe()),
   )
   .await;

@@ -2,7 +2,11 @@ use std::{collections::HashMap, path::Path, time::Duration};
 
 use circus_common::{CiError, InputType, error::Result, models::JobsetInput};
 use circus_config::EvaluatorConfig;
-use tokio::{process::Command, sync::watch, time::Instant};
+use tokio::{
+  process::Command,
+  sync::{mpsc, watch},
+  time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 
 mod eval_command;
@@ -164,10 +168,14 @@ fn parse_meta(v: Option<&serde_json::Value>) -> NixMeta {
   }
 }
 
-/// Result of evaluating nix expressions.
+/// Receives each job as soon as evaluation discovers it.
+pub type JobSink = mpsc::UnboundedSender<NixJob>;
+
+/// Outcome of evaluating nix expressions. The jobs themselves went to the
+/// [`JobSink`].
 #[derive(Debug)]
 pub struct EvalResult {
-  pub jobs:        Vec<NixJob>,
+  pub job_count:   usize,
   pub error_count: usize,
   /// A bounded sample of attribute failures, retained so an evaluation that
   /// produced no jobs can report the cause to its operator.
@@ -208,6 +216,7 @@ pub async fn evaluate(
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
   progress: &watch::Sender<EvalProgress>,
+  jobs: &JobSink,
   worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   // Validate nix expression before constructing any commands
@@ -235,6 +244,7 @@ pub async fn evaluate(
       inputs,
       cancel,
       progress,
+      jobs,
       worker_exe,
     )
     .await
@@ -247,10 +257,15 @@ pub async fn evaluate(
       inputs,
       cancel,
       progress,
+      jobs,
       worker_exe,
     )
     .await
   }
+}
+
+fn build_stream_closed() -> CiError {
+  CiError::NixEval("build recording stopped during evaluation".to_string())
 }
 
 fn normalize_flake_expression(expression: &str) -> &str {
@@ -362,11 +377,12 @@ async fn evaluate_flake(
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
   progress: &watch::Sender<EvalProgress>,
+  jobs: &JobSink,
   worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   if nix_expression == "nixosConfigurations" {
     return evaluate_all_nixos_configs(
-      repo_path, source, timeout, config, inputs, cancel,
+      repo_path, source, timeout, config, inputs, cancel, jobs,
     )
     .await;
   }
@@ -431,8 +447,15 @@ async fn evaluate_flake(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, remaining, "flake", cancel, progress)
-    .await
+  eval_command::run_eval(
+    evix_config,
+    remaining,
+    "flake",
+    cancel,
+    progress,
+    jobs,
+  )
+  .await
 }
 
 /// Resolve all toplevels in one nix eval.
@@ -443,6 +466,7 @@ async fn evaluate_all_nixos_configs(
   config: &EvaluatorConfig,
   _inputs: &[JobsetInput],
   cancel: &CancellationToken,
+  jobs: &JobSink,
 ) -> Result<EvalResult> {
   let flake_ref = format!("{}#nixosConfigurations", source.flake_ref);
 
@@ -499,7 +523,7 @@ async fn evaluate_all_nixos_configs(
     "Discovered nixosConfigurations toplevels"
   );
 
-  let mut jobs = Vec::new();
+  let mut job_count = 0;
   for (name, eval_path) in entries {
     let drv_ref = format!(
       "{}#nixosConfigurations.{name}.config.system.build.toplevel",
@@ -524,19 +548,22 @@ async fn evaluate_all_nixos_configs(
       continue;
     };
 
-    jobs.push(NixJob {
-      name,
-      drv_path,
-      system,
-      outputs,
-      input_drvs,
-      constituents: None,
-      meta: NixMeta::default(),
-    });
+    jobs
+      .send(NixJob {
+        name,
+        drv_path,
+        system,
+        outputs,
+        input_drvs,
+        constituents: None,
+        meta: NixMeta::default(),
+      })
+      .map_err(|_| build_stream_closed())?;
+    job_count += 1;
   }
 
   Ok(EvalResult {
-    jobs,
+    job_count,
     error_count: 0,
     errors: Vec::new(),
   })
@@ -575,6 +602,7 @@ async fn evaluate_legacy(
   inputs: &[JobsetInput],
   cancel: &CancellationToken,
   progress: &watch::Sender<EvalProgress>,
+  jobs: &JobSink,
   worker_exe: Option<&Path>,
 ) -> Result<EvalResult> {
   let repo_path = repo_path.canonicalize().map_err(|e| {
@@ -645,7 +673,8 @@ async fn evaluate_legacy(
     ..evix::Config::default()
   };
 
-  eval_command::run_eval(evix_config, timeout, "legacy", cancel, progress).await
+  eval_command::run_eval(evix_config, timeout, "legacy", cancel, progress, jobs)
+    .await
 }
 
 /// Recursively flatten a nix eval --json value into (`attr_path`, `drv_path`)

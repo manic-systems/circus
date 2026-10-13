@@ -310,6 +310,13 @@ async fn composite_operations_work_with_one_pool_connection() {
         None,
       )
       .await?;
+      repo::evaluations::update_status(
+        &pool,
+        evaluation.id,
+        EvaluationStatus::Completed,
+        None,
+      )
+      .await?;
       repo::channels::auto_promote_if_complete(&pool, jobset.id, evaluation.id)
         .await?;
 

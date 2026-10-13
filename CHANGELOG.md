@@ -16,6 +16,12 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 - Dashboard OIDC login with named providers, group access rules, and global role
   mappings.
 
+### Changed
+
+- Builds are queued while their evaluation is still running, in batches as jobs
+  are discovered. An evaluation that fails or times out keeps the builds it
+  already queued, but its aggregate jobs are not created.
+
 ### Fixed
 
 - The sign-in button on private dashboard pages now opens the login page, so

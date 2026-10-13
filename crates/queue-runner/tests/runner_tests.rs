@@ -833,6 +833,15 @@ async fn test_get_cancelled_among() {
     .expect("no cancelled");
   assert!(none_cancelled.is_empty());
 
+  let deleted = uuid::Uuid::new_v4();
+  let gone = circus_common::repo::builds::get_cancelled_among(&pool, &[
+    build_pending.id,
+    deleted,
+  ])
+  .await
+  .expect("deleted build");
+  assert_eq!(gone, vec![deleted]);
+
   // Clean up
   let _ = circus_common::repo::projects::delete(&pool, project.id).await;
 }

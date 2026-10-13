@@ -89,12 +89,14 @@ SELECT
   COUNT(*) AS total,
   COUNT(*) FILTER (
     WHERE
-      status = 'succeeded'
+      b.status = 'succeeded'
   ) AS completed
 FROM
-  builds
+  builds b
+  JOIN evaluations e ON e.id = b.evaluation_id
 WHERE
-  evaluation_id =:evaluation_id;
+  b.evaluation_id =:evaluation_id
+  AND e.status = 'completed';
 
 --! auto_promote_channels : ChannelRow
 SELECT

@@ -733,6 +733,7 @@ version = "0.14.0"
 dependencies = [
  "circus-common",
  "circus-config",
+ "circus-migrations",
  "circus-nix",
  "circus-notification",
  "clap",

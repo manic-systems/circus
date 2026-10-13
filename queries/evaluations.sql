@@ -206,7 +206,8 @@ WHERE e.id = :id AND e.jobset_id = j.id
 RETURNING e.*;
 
 --! restart_delete_builds
-DELETE FROM builds WHERE evaluation_id = :id;
+DELETE FROM builds
+WHERE evaluation_id = :id AND status NOT IN ('running', 'succeeded');
 
 --! restart_reenable_one_shot
 UPDATE jobsets SET enabled = true

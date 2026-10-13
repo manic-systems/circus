@@ -31,6 +31,21 @@ pub struct CreateParams<
     pub required_features: T12,
 }
 #[derive(Debug)]
+pub struct AdoptDependencyParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+    T5: crate::StringSql,
+> {
+    pub job_name: T1,
+    pub meta_description: Option<T2>,
+    pub meta_license: Option<T3>,
+    pub meta_homepage: Option<T4>,
+    pub meta_maintainers: Option<T5>,
+    pub id: uuid::Uuid,
+}
+#[derive(Debug)]
 pub struct ListForJobsetEvaluationsParams<T1: crate::ArraySql<Item = uuid::Uuid>> {
     pub jobset_id: uuid::Uuid,
     pub evaluation_ids: T1,
@@ -126,6 +141,11 @@ pub struct SetBuilderParams {
 pub struct SetAgentParams {
     pub machine_id: uuid::Uuid,
     pub id: uuid::Uuid,
+}
+#[derive(Debug)]
+pub struct DeleteUnreachedParams<T1: crate::ArraySql<Item = uuid::Uuid>> {
+    pub kept: T1,
+    pub evaluation_id: uuid::Uuid,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct JobHistoryParams {
@@ -1139,6 +1159,132 @@ impl<
             &params.meta_homepage,
             &params.meta_maintainers,
             &params.required_features,
+        )
+    }
+}
+pub struct AdoptDependencyStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn adopt_dependency() -> AdoptDependencyStmt {
+    AdoptDependencyStmt(
+        "UPDATE builds SET job_name = $1, meta_description = $2, meta_license = $3, meta_homepage = $4, meta_maintainers = $5 WHERE id = $6 RETURNING *",
+        None,
+    )
+}
+impl AdoptDependencyStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+        T4: crate::StringSql,
+        T5: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        job_name: &'a T1,
+        meta_description: &'a Option<T2>,
+        meta_license: &'a Option<T3>,
+        meta_homepage: &'a Option<T4>,
+        meta_maintainers: &'a Option<T5>,
+        id: &'a uuid::Uuid,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 6> {
+        BuildRowQuery {
+            client,
+            params: [
+                job_name,
+                meta_description,
+                meta_license,
+                meta_homepage,
+                meta_maintainers,
+                id,
+            ],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<BuildRowBorrowed, tokio_postgres::Error> {
+                    Ok(BuildRowBorrowed {
+                        id: row.try_get(0)?,
+                        evaluation_id: row.try_get(1)?,
+                        job_name: row.try_get(2)?,
+                        drv_path: row.try_get(3)?,
+                        status: row.try_get(4)?,
+                        started_at: row.try_get(5)?,
+                        completed_at: row.try_get(6)?,
+                        log_path: row.try_get(7)?,
+                        build_output_path: row.try_get(8)?,
+                        error_message: row.try_get(9)?,
+                        priority: row.try_get(10)?,
+                        retry_count: row.try_get(11)?,
+                        max_retries: row.try_get(12)?,
+                        notification_pending_since: row.try_get(13)?,
+                        outputs: row.try_get(14)?,
+                        is_aggregate: row.try_get(15)?,
+                        constituents: row.try_get(16)?,
+                        builder_id: row.try_get(17)?,
+                        signed: row.try_get(18)?,
+                        system: row.try_get(19)?,
+                        keep: row.try_get(20)?,
+                        created_at: row.try_get(21)?,
+                        is_fod: row.try_get(22)?,
+                        fod_hash: row.try_get(23)?,
+                        meta_description: row.try_get(24)?,
+                        meta_license: row.try_get(25)?,
+                        meta_homepage: row.try_get(26)?,
+                        meta_maintainers: row.try_get(27)?,
+                        required_features: row.try_get(28)?,
+                        agent_machine_id: row.try_get(29)?,
+                        started_notified_at: row.try_get(30)?,
+                        effective_features: row.try_get(31)?,
+                        agent_losses: row.try_get(32)?,
+                        closure_size: row.try_get(33)?,
+                    })
+                },
+            mapper: |it| BuildRow::from(it),
+        }
+    }
+}
+impl<
+    'c,
+    'a,
+    's,
+    C: GenericClient,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::StringSql,
+    T5: crate::StringSql,
+>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        AdoptDependencyParams<T1, T2, T3, T4, T5>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 6>,
+        C,
+    > for AdoptDependencyStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a AdoptDependencyParams<T1, T2, T3, T4, T5>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 6> {
+        self.bind(
+            client,
+            &params.job_name,
+            &params.meta_description,
+            &params.meta_license,
+            &params.meta_homepage,
+            &params.meta_maintainers,
+            &params.id,
         )
     }
 }
@@ -2800,7 +2946,7 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::StringSql, T2: crate::StringSql, T
 pub struct GetCancelledAmongStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn get_cancelled_among() -> GetCancelledAmongStmt {
     GetCancelledAmongStmt(
-        "SELECT id FROM builds WHERE id = ANY($1) AND status = 'cancelled'",
+        "SELECT requested.id FROM unnest($1::uuid[]) AS requested (id) WHERE NOT EXISTS ( SELECT 1 FROM builds b WHERE b.id = requested.id AND b.status <> 'cancelled' )",
         None,
     )
 }
@@ -3569,6 +3715,52 @@ impl DeleteStmt {
         id: &'a uuid::Uuid,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[id]).await
+    }
+}
+pub struct DeleteUnreachedStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn delete_unreached() -> DeleteUnreachedStmt {
+    DeleteUnreachedStmt(
+        "WITH RECURSIVE reached (id) AS ( SELECT unnest($1::uuid[]) UNION SELECT bd.dependency_build_id FROM build_dependencies bd JOIN reached r ON bd.build_id = r.id ) DELETE FROM builds WHERE evaluation_id = $2 AND id NOT IN (SELECT id FROM reached)",
+        None,
+    )
+}
+impl DeleteUnreachedStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::ArraySql<Item = uuid::Uuid>>(
+        &'s self,
+        client: &'c C,
+        kept: &'a T1,
+        evaluation_id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[kept, evaluation_id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::ArraySql<Item = uuid::Uuid>>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        DeleteUnreachedParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for DeleteUnreachedStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a DeleteUnreachedParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.kept, &params.evaluation_id))
     }
 }
 pub struct BrokeInStmt(&'static str, Option<tokio_postgres::Statement>);

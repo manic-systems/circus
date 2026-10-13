@@ -129,6 +129,63 @@ async fn create_with<C: GenericClient>(
   Build::try_from(row)
 }
 
+/// Delete a build within an existing transaction.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn delete_in_transaction(
+  tx: &DbTransaction<'_>,
+  id: Uuid,
+) -> Result<()> {
+  q::delete().bind(tx, &id).await?;
+  Ok(())
+}
+
+/// Delete an evaluation's builds that neither appear in `kept` nor are a
+/// dependency of one, within an existing transaction.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn delete_unreached_in_transaction(
+  tx: &DbTransaction<'_>,
+  evaluation_id: Uuid,
+  kept: &[Uuid],
+) -> Result<u64> {
+  Ok(
+    q::delete_unreached()
+      .bind(tx, &kept, &evaluation_id)
+      .await?,
+  )
+}
+
+/// Give a dependency build the name and metadata of the job that turned out to
+/// share its derivation.
+///
+/// # Errors
+///
+/// Returns error if database query fails.
+pub async fn adopt_dependency_in_transaction(
+  tx: &DbTransaction<'_>,
+  id: Uuid,
+  input: &CreateBuild,
+) -> Result<Build> {
+  let row = q::adopt_dependency()
+    .bind(
+      tx,
+      &input.job_name,
+      &input.meta_description,
+      &input.meta_license,
+      &input.meta_homepage,
+      &input.meta_maintainers,
+      &id,
+    )
+    .one()
+    .await?;
+  Build::try_from(row)
+}
+
 /// Find a succeeded build by derivation path (for build result caching).
 ///
 /// # Errors
@@ -755,8 +812,8 @@ pub async fn count_filtered(
   )
 }
 
-/// Return the subset of the given build IDs whose status is 'cancelled'.
-/// Used by the cancel-checker loop to detect builds cancelled while running.
+/// Return the subset of the given build IDs that were cancelled or deleted.
+/// Used by the cancel-checker loop to stop builds that no longer should run.
 ///
 /// # Errors
 ///
