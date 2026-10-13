@@ -9,12 +9,13 @@ use axum::{
 use circus_common::models::User;
 use circus_config::PageAccessLevel;
 use topcoat::{
+  Error,
   Result,
   context::{Cx, app_context},
   router::{
     Slot,
     StatusCode,
-    error::{UnauthorizedError, see_other, unauthorized},
+    error::{UnauthorizedError, forbidden, see_other, unauthorized},
     layout,
     request,
   },
@@ -83,7 +84,7 @@ pub async fn viewer(cx: &Cx, page: DashboardPage) -> Result<DashboardContext> {
   if allowed(cx, &viewer, page) {
     Ok(viewer)
   } else if viewer.is_authenticated {
-    Err(see_other("/").into())
+    Err(turn_away(cx, &viewer))
   } else {
     Err(unauthorized().into())
   }
@@ -100,9 +101,19 @@ pub async fn shard_viewer(
   if allowed(cx, &viewer, page) {
     Ok(viewer)
   } else if viewer.is_authenticated {
-    Err(see_other("/").into())
+    Err(turn_away(cx, &viewer))
   } else {
     Err(see_other("/login").into())
+  }
+}
+
+/// Sends a signed-in viewer home, unless home is closed to them too and
+/// redirecting would loop.
+fn turn_away(cx: &Cx, viewer: &DashboardContext) -> Error {
+  if allowed(cx, viewer, DashboardPage::Home) {
+    see_other("/").into()
+  } else {
+    forbidden().into()
   }
 }
 
@@ -133,7 +144,7 @@ pub async fn admin_session(cx: &Cx) -> Result<(DashboardContext, Extensions)> {
   if viewer.is_admin {
     Ok((viewer, session))
   } else if viewer.is_authenticated {
-    Err(see_other("/").into())
+    Err(turn_away(cx, &viewer))
   } else {
     Err(see_other(login_href(cx)).into())
   }
