@@ -13,7 +13,7 @@ pub use circus_types::BinaryCacheUpstream;
 pub(crate) use env::{apply_env_vars, parse_env_value, set_nested};
 #[cfg(test)] pub(crate) use load::deep_merge;
 pub use queue::*;
-pub use redact::redact_secrets;
+pub use redact::{redact_secrets, restore_secrets};
 pub use structs::*;
 
 /// Resolve the public substituter URL for a per-project cache.

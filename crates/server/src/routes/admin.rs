@@ -288,23 +288,40 @@ pub async fn write_config_file(
     ));
   }
 
-  let parsed = circus_config::Config::from_toml_with_defaults(contents)
-    .map_err(|e| {
-      circus_common::CiError::Validation(format!(
-        "Invalid TOML configuration: {e}"
-      ))
-    })?;
+  let Some(path) = config_file_path() else {
+    return Err(circus_common::CiError::Forbidden(
+      "CIRCUS_CONFIG_FILE is not set; no config file is available".to_string(),
+    ));
+  };
+  let invalid = |e: &dyn std::fmt::Display| {
+    circus_common::CiError::Validation(format!(
+      "Invalid TOML configuration: {e}"
+    ))
+  };
+
+  let mut edited =
+    toml::from_str::<toml::Value>(contents).map_err(|e| invalid(&e))?;
+  let on_disk = match tokio::fs::read_to_string(&path).await {
+    Ok(on_disk) => on_disk,
+    Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+    Err(error) => return Err(circus_common::CiError::Io(error)),
+  };
+  let current = circus_config::Config::from_toml_with_defaults(&on_disk)
+    .ok()
+    .and_then(|config| toml::Value::try_from(&config).ok())
+    .unwrap_or_else(|| toml::Value::Table(toml::Table::new()));
+  circus_config::restore_secrets(&mut edited, &current)
+    .map_err(circus_common::CiError::Validation)?;
+  let restored = toml::to_string(&edited).map_err(|e| invalid(&e))?;
+
+  let parsed = circus_config::Config::from_toml_with_defaults(&restored)
+    .map_err(|e| invalid(&e))?;
   let rendered = toml::to_string_pretty(&parsed).map_err(|e| {
     circus_common::CiError::Internal(format!(
       "Failed to render configuration: {e}"
     ))
   })?;
 
-  let Some(path) = config_file_path() else {
-    return Err(circus_common::CiError::Forbidden(
-      "CIRCUS_CONFIG_FILE is not set; no config file is available".to_string(),
-    ));
-  };
   let tmp_path = path.with_extension("toml.tmp");
   tokio::fs::write(&tmp_path, &rendered)
     .await
