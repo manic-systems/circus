@@ -80,6 +80,7 @@ async fn listen_loop(
   };
 
   tracing::info!(channels = ?channels, "PG LISTEN subscribed");
+  wakeup.notify_one();
 
   while rx.recv().await.is_some() {
     // notify_one deposits a permit so notifications arriving while the daemon
