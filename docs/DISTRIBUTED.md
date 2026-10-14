@@ -152,16 +152,19 @@ struct AgentInfo {
 The flow is as follows
 
 1. Agent dials TCP (optionally wraps in TLS), starts a capnp-rpc system with no
-   bootstrap. Calls `runner.register(info, builder)` and keeps the returned
+   bootstrap. If it's using a join token and has no saved session yet, it calls
+   `runner.join(info)` first to get a machine ID and session token from the
+   runner. Then it calls `runner.register(info, builder)` and keeps the returned
    `session` capability for heartbeats.
 2. Runner authenticates registration. A bearer token must match the
-   `[queue_runner.rpc].auth_tokens` entry for the agent's machine ID and name.
-   Agents not listed there can authenticate with a JWT through
-   `[queue_runner.rpc.oidc]`, checked against the issuer JWKS, accepted
-   audiences, and repository allowlist.
+   `[queue_runner.rpc].auth_tokens` entry for the agent's machine ID and name,
+   or the session token `join` issued for that agent. Agents not listed there
+   can authenticate with a JWT through `[queue_runner.rpc.oidc]`, checked
+   against the issuer JWKS, accepted audiences, and repository allowlist.
 3. Runner records the agent in `AgentPool`, retains the `Builder` capability,
    marks the row in `builder_sessions` as live, and stores whether the session
-   is ephemeral and whether it authenticated through `token` or `oidc`.
+   is ephemeral and whether it authenticated through `token`, `session`, or
+   `oidc`.
 4. WorkerPool dequeues a build. The scheduler picks an agent based on `systems`,
    `mandatoryFeatures`, current load, speed factor and PSI thresholds. It calls
    `builder.assign(job, log, result, output)`. Promise pipelining means the
@@ -259,6 +262,10 @@ machine_id = "7e6c8022-95e8-4f99-8513-7d177f6a0241"
 name       = "build-01"
 # SHA-256 hex digest of this agent's bearer token.
 token_hash = "262874f756ad802d196aa14479fa20f252f9de5924fa51082b8556df31b7dad7"
+
+[[queue_runner.rpc.join_tokens]]
+name       = "lab" # recorded on every agent that joins with this token
+token_hash = "b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c"
 
 [queue_runner.rpc.oidc]
 issuer               = "https://token.actions.githubusercontent.com"
@@ -415,6 +422,30 @@ runner configuration before starting the agent.
 
 ### Agent lifecycle and services
 
+Agents can share a join token by setting `agent.join_token` (or
+`CIRCUS_AGENT_JOIN_TOKEN`) in place of `auth_token`. On first start, the agent
+calls `join` and the runner mints a machine ID and session token for it, storing
+only the token's digest. The agent writes both to `agent.session_file`
+(`<work_dir>/session`, mode `0600`) and uses them to `register` from then on, so
+the shared join token can enroll new machines but never reuse an existing
+agent's machine ID.
+
+If an agent loses its session file, it calls `join` again. It can reclaim its
+old name if the previous session joined with the same token and is currently
+offline, which revokes the old identity. Moving existing hosts off static bearer
+tokens works the same way. Replace their `auth_tokens` entries with a
+`join_tokens` entry and switch the agents to `join_token`, and each host will
+take back its name once the old session disconnects.
+
+You can revoke a joined agent with
+`circusctl admin builders revoke <machine_id>`, the Revoke button in the admin
+dashboard, or `POST /api/v1/admin/builders/sessions/{machine_id}/revoke`. If the
+agent is connected, the runner drops it immediately and rejects future
+registrations with that session token. Deleting `session_file` on the host lets
+it re-enroll. Removing a `join_tokens` entry cuts off every agent that joined
+through it, while changing its `token_hash` under the same name only stops new
+joins.
+
 CI builders authenticate with OIDC and run with `agent.ephemeral` or
 `--ephemeral`. An ephemeral agent makes up a fresh machine ID, can append a
 unique suffix to its name, and exits after one session instead of reconnecting,
@@ -453,11 +484,13 @@ systems such as `aarch64-darwin`. The flake exposes
 }
 ```
 
-The launchd module renders `authTokenFile` into a private runtime config so the
-token never enters the Nix store. The token file must be readable by the daemon
-user, which defaults to `_circus-agent`. The module also appends that user to
-Nix `trusted-users` when nix-darwin manages Nix. With `nix.enable = false`,
-whatever owns `/etc/nix/nix.conf` needs the same trust setting added by hand.
+When using a join token, both the NixOS and nix-darwin modules take
+`joinTokenFile` instead of `authTokenFile`. The launchd module renders the token
+file into a private runtime config so the token never enters the Nix store. The
+token file must be readable by the daemon user, which defaults to
+`_circus-agent`. The module also appends that user to Nix `trusted-users` when
+nix-darwin manages Nix. With `nix.enable = false`, whatever owns
+`/etc/nix/nix.conf` needs the same trust setting added by hand.
 
 Load average and memory are reported the same way on Linux and macOS. PSI has no
 macOS equivalent, so pressure fields stay zero on Darwin and the scheduler falls
@@ -629,6 +662,14 @@ Operational notes:
   token, and the runner compares digests in constant time and checks both
   identity fields. Config validation rejects malformed digests, repeated UUIDs
   or names, and a token shared between agents.
+- Join tokens on `join`. A `[queue_runner.rpc].join_tokens` entry only enrolls
+  new identities. The runner generates the machine UUID and a 256-bit session
+  token, returns the token once, and stores its SHA-256 digest. A joining agent
+  cannot take a name that is still listed in `auth_tokens`, in use by a
+  connected agent, or previously enrolled under a different join token. If an
+  agent's `auth_tokens` entry has been removed, its name can be reclaimed once
+  it disconnects. Revoking a session rejects future `register` calls and drops
+  any live connection through a Postgres notification.
 - OIDC authentication on `register` when `[queue_runner.rpc.oidc]` is set. The
   runner verifies the issuer, JWKS signature, expiry, accepted audience,
   subject, workflow/ref constraints, and repository allowlist before accepting

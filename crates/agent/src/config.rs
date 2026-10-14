@@ -33,6 +33,17 @@ pub struct Agent {
   #[serde(default)]
   pub auth_token: String,
 
+  /// Shared token traded once for a runner-issued machine ID and session
+  /// token, which are then kept in [`Self::session_file`]. Set this or
+  /// [`Self::auth_token`].
+  #[serde(default)]
+  pub join_token: String,
+
+  /// Where a joined agent keeps its machine ID and session token. Defaults
+  /// to `<work_dir>/session`. Delete it to join again under a new identity.
+  #[serde(default)]
+  pub session_file: Option<PathBuf>,
+
   /// Nix systems this agent can build. Must match what the host's Nix
   /// would emit for `currentSystem` plus any cross-systems wired up via
   /// binfmt.
@@ -106,6 +117,36 @@ pub struct Agent {
   /// runners such as GitHub Actions.
   #[serde(default)]
   pub ephemeral: Option<EphemeralConfig>,
+}
+
+impl Agent {
+  /// Exactly one of [`Self::auth_token`] and [`Self::join_token`] must be set.
+  ///
+  /// # Errors
+  ///
+  /// Describes the missing or conflicting credential.
+  pub fn check_credentials(&self) -> Result<()> {
+    match (self.auth_token.is_empty(), self.join_token.is_empty()) {
+      (false, true) | (true, false) => Ok(()),
+      (true, true) => {
+        bail!(
+          "no credentials: set CIRCUS_AGENT_TOKEN or agent.auth_token, or \
+           CIRCUS_AGENT_JOIN_TOKEN or agent.join_token"
+        )
+      },
+      (false, false) => {
+        bail!("set either an auth token or a join token, not both")
+      },
+    }
+  }
+
+  #[must_use]
+  pub fn session_path(&self) -> PathBuf {
+    self
+      .session_file
+      .clone()
+      .unwrap_or_else(|| self.work_dir.join("session"))
+  }
 }
 
 /// Lifecycle bounds for an ephemeral (single-session) agent. In-flight builds
@@ -212,9 +253,10 @@ impl AgentConfig {
     if let Ok(token) = std::env::var("CIRCUS_AGENT_TOKEN") {
       parsed.agent.auth_token = token;
     }
-    if parsed.agent.auth_token.is_empty() {
-      bail!("no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token");
+    if let Ok(token) = std::env::var("CIRCUS_AGENT_JOIN_TOKEN") {
+      parsed.agent.join_token = token;
     }
+    parsed.agent.check_credentials()?;
 
     Ok(parsed)
   }

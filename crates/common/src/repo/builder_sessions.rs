@@ -13,8 +13,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-  db::PgPool,
+  db::{PgPool, is_unique_violation},
   error::{CiError, Result},
+  models::AuthKind,
+  pg_notify,
 };
 
 /// One row in `builder_sessions`.
@@ -50,8 +52,13 @@ pub struct BuilderSession {
   /// Single-session CI runner that never reconnects (see
   /// `prune_stale_ephemeral`).
   pub ephemeral:            bool,
-  /// How the agent authenticated on register: `"token"` or `"oidc"`.
+  /// How the agent authenticated on register: `"token"`, `"session"`, or
+  /// `"oidc"`.
   pub auth_kind:            String,
+  /// Name of the join token a `"session"` agent registered through.
+  pub join_token:           Option<String>,
+  /// Set once the identity is revoked, which also frees its name.
+  pub revoked_at:           Option<Timestamp>,
   pub created_at:           Timestamp,
   pub updated_at:           Timestamp,
 }
@@ -88,6 +95,8 @@ impl From<q::BuilderSessionRow> for BuilderSession {
       disabled_until:       r.disabled_until,
       ephemeral:            r.ephemeral,
       auth_kind:            r.auth_kind,
+      join_token:           r.join_token,
+      revoked_at:           r.revoked_at,
       created_at:           r.created_at,
       updated_at:           r.updated_at,
     }
@@ -134,6 +143,139 @@ pub async fn get(pool: &PgPool, machine_id: Uuid) -> Result<BuilderSession> {
     .ok_or_else(|| {
       CiError::NotFound(format!("Builder session {machine_id} not found"))
     })
+}
+
+/// The live session whose token hashes to `session_token_hash`.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn get_by_session_hash(
+  pool: &PgPool,
+  session_token_hash: &[u8; 32],
+) -> Result<Option<BuilderSession>> {
+  let client = pool.get().await?;
+  Ok(
+    q::get_by_session_hash()
+      .bind(&client, &session_token_hash.as_slice())
+      .opt()
+      .await?
+      .map(BuilderSession::from),
+  )
+}
+
+/// An agent asking a join token for a fresh identity.
+pub struct Join<'a> {
+  pub machine_id:         Uuid,
+  pub name:               &'a str,
+  pub hostname:           &'a str,
+  pub proto_version:      &'a str,
+  pub join_token:         &'a str,
+  pub session_token_hash: &'a [u8; 32],
+}
+
+/// Record a joined identity. An offline holder of the name is revoked when it
+/// joined through the same token, or when it used a bearer token that
+/// `is_configured` no longer lists, so agents moving off a removed token can
+/// join under their old names.
+///
+/// # Errors
+///
+/// [`CiError::Conflict`] when another identity holds the name, otherwise the
+/// underlying database error.
+pub async fn join(
+  pool: &PgPool,
+  join: Join<'_>,
+  is_connected: impl Fn(Uuid) -> bool,
+  is_configured: impl Fn(Uuid) -> bool,
+) -> Result<()> {
+  let mut client = pool.get().await?;
+  let tx = client.transaction().await?;
+
+  if let Some(holder) = q::active_by_name().bind(&tx, &join.name).opt().await? {
+    let auth_kind = holder.auth_kind.parse::<AuthKind>().map_err(|error| {
+      CiError::Internal(format!(
+        "builder session {} has {error}",
+        holder.machine_id
+      ))
+    })?;
+    let replaceable = match auth_kind {
+      AuthKind::Session => {
+        holder.join_token.as_deref() == Some(join.join_token)
+      },
+      AuthKind::Token => !is_configured(holder.machine_id),
+      AuthKind::Oidc => false,
+    };
+    if !replaceable || is_connected(holder.machine_id) {
+      return Err(CiError::Conflict(format!(
+        "agent name {} is in use",
+        join.name
+      )));
+    }
+
+    q::retire().bind(&tx, &holder.machine_id).await?;
+  }
+
+  q::create_joined()
+    .bind(
+      &tx,
+      &join.machine_id,
+      &join.name,
+      &join.hostname,
+      &join.proto_version,
+      &join.session_token_hash.as_slice(),
+      &join.join_token,
+    )
+    .await
+    .map_err(|error| {
+      if is_unique_violation(&error) {
+        CiError::Conflict(format!("agent name {} is in use", join.name))
+      } else {
+        CiError::Database(error)
+      }
+    })?;
+  tx.commit().await?;
+  Ok(())
+}
+
+/// Revoke a joined identity so its session token stops working.
+///
+/// # Errors
+///
+/// [`CiError::NotFound`] for an unknown machine, [`CiError::Validation`] for an
+/// identity owned by config or an OIDC issuer, otherwise the underlying
+/// database error.
+pub async fn revoke(pool: &PgPool, machine_id: Uuid) -> Result<()> {
+  let client = pool.get().await?;
+  if q::revoke().bind(&client, &machine_id).await? == 1 {
+    return pg_notify::notify(pool, pg_notify::CHANNEL_AGENT_REVOKED).await;
+  }
+
+  let session = get(pool, machine_id).await?;
+  if session.revoked_at.is_some() {
+    return Err(CiError::Conflict(format!(
+      "builder session {machine_id} is already revoked"
+    )));
+  }
+
+  Err(CiError::Validation(format!(
+    "builder session {machine_id} authenticates with {} credentials, which \
+     only its configuration can revoke",
+    session.auth_kind
+  )))
+}
+
+/// The machines among `machine_ids` whose identity was revoked.
+///
+/// # Errors
+///
+/// Returns the underlying database error.
+pub async fn revoked_among(
+  pool: &PgPool,
+  machine_ids: &[Uuid],
+) -> Result<Vec<Uuid>> {
+  let client = pool.get().await?;
+  Ok(q::revoked_among().bind(&client, &machine_ids).all().await?)
 }
 
 /// How a reported build result counts against the agent that ran it.
@@ -265,7 +407,17 @@ pub async fn register(
       &session.ephemeral,
       &session.auth_kind,
     )
-    .await?;
+    .await
+    .map_err(|error| {
+      if is_unique_violation(&error) {
+        CiError::Conflict(format!(
+          "agent name {} is held by another agent",
+          session.name
+        ))
+      } else {
+        CiError::Database(error)
+      }
+    })?;
 
   if updated == 0 {
     return Err(CiError::Validation(

@@ -17,6 +17,9 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
   mappings.
 - Jobsets can set `build_timeout` in seconds to override
   `queue_runner.build_timeout` for their builds.
+- Agents can join with a shared `[queue_runner.rpc].join_tokens` token. The
+  runner mints each agent its own machine ID and session token, and admins can
+  revoke joined agents from the CLI, API or dashboard.
 
 ### Changed
 

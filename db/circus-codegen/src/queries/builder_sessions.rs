@@ -26,6 +26,21 @@ pub struct RegisterParams<
     pub ephemeral: bool,
     pub auth_kind: T10,
 }
+#[derive(Debug)]
+pub struct CreateJoinedParams<
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::BytesSql,
+    T5: crate::StringSql,
+> {
+    pub machine_id: uuid::Uuid,
+    pub name: T1,
+    pub hostname: T2,
+    pub proto_version: T3,
+    pub session_token_hash: T4,
+    pub join_token: T5,
+}
 #[derive(Clone, Copy, Debug)]
 pub struct HeartbeatParams {
     pub load1: f32,
@@ -70,11 +85,13 @@ pub struct BuilderSessionRow {
     pub builds_failed: i64,
     pub consecutive_failures: i32,
     pub disabled_until: Option<jiff::Timestamp>,
-    pub auth_token_hash: Option<String>,
     pub created_at: jiff::Timestamp,
     pub updated_at: jiff::Timestamp,
     pub ephemeral: bool,
     pub auth_kind: String,
+    pub session_token_hash: Option<Vec<u8>>,
+    pub join_token: Option<String>,
+    pub revoked_at: Option<jiff::Timestamp>,
 }
 pub struct BuilderSessionRowBorrowed<'a> {
     pub machine_id: uuid::Uuid,
@@ -104,11 +121,13 @@ pub struct BuilderSessionRowBorrowed<'a> {
     pub builds_failed: i64,
     pub consecutive_failures: i32,
     pub disabled_until: Option<jiff::Timestamp>,
-    pub auth_token_hash: Option<&'a str>,
     pub created_at: jiff::Timestamp,
     pub updated_at: jiff::Timestamp,
     pub ephemeral: bool,
     pub auth_kind: &'a str,
+    pub session_token_hash: Option<&'a [u8]>,
+    pub join_token: Option<&'a str>,
+    pub revoked_at: Option<jiff::Timestamp>,
 }
 impl<'a> From<BuilderSessionRowBorrowed<'a>> for BuilderSessionRow {
     fn from(
@@ -140,11 +159,13 @@ impl<'a> From<BuilderSessionRowBorrowed<'a>> for BuilderSessionRow {
             builds_failed,
             consecutive_failures,
             disabled_until,
-            auth_token_hash,
             created_at,
             updated_at,
             ephemeral,
             auth_kind,
+            session_token_hash,
+            join_token,
+            revoked_at,
         }: BuilderSessionRowBorrowed<'a>,
     ) -> Self {
         Self {
@@ -175,11 +196,13 @@ impl<'a> From<BuilderSessionRowBorrowed<'a>> for BuilderSessionRow {
             builds_failed,
             consecutive_failures,
             disabled_until,
-            auth_token_hash: auth_token_hash.map(|v| v.into()),
             created_at,
             updated_at,
             ephemeral,
             auth_kind: auth_kind.into(),
+            session_token_hash: session_token_hash.map(|v| v.into()),
+            join_token: join_token.map(|v| v.into()),
+            revoked_at,
         }
     }
 }
@@ -316,6 +339,70 @@ where
         Ok(mapped)
     }
 }
+pub struct UuidUuidQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<uuid::Uuid, tokio_postgres::Error>,
+    mapper: fn(uuid::Uuid) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> UuidUuidQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(uuid::Uuid) -> R) -> UuidUuidQuery<'c, 'a, 's, C, R, N> {
+        UuidUuidQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
 pub struct ListStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list() -> ListStmt {
     ListStmt(
@@ -371,11 +458,13 @@ impl ListStmt {
                     builds_failed: row.try_get(24)?,
                     consecutive_failures: row.try_get(25)?,
                     disabled_until: row.try_get(26)?,
-                    auth_token_hash: row.try_get(27)?,
-                    created_at: row.try_get(28)?,
-                    updated_at: row.try_get(29)?,
-                    ephemeral: row.try_get(30)?,
-                    auth_kind: row.try_get(31)?,
+                    created_at: row.try_get(27)?,
+                    updated_at: row.try_get(28)?,
+                    ephemeral: row.try_get(29)?,
+                    auth_kind: row.try_get(30)?,
+                    session_token_hash: row.try_get(31)?,
+                    join_token: row.try_get(32)?,
+                    revoked_at: row.try_get(33)?,
                 })
             },
             mapper: |it| BuilderSessionRow::from(it),
@@ -437,11 +526,13 @@ impl ListConnectedStmt {
                     builds_failed: row.try_get(24)?,
                     consecutive_failures: row.try_get(25)?,
                     disabled_until: row.try_get(26)?,
-                    auth_token_hash: row.try_get(27)?,
-                    created_at: row.try_get(28)?,
-                    updated_at: row.try_get(29)?,
-                    ephemeral: row.try_get(30)?,
-                    auth_kind: row.try_get(31)?,
+                    created_at: row.try_get(27)?,
+                    updated_at: row.try_get(28)?,
+                    ephemeral: row.try_get(29)?,
+                    auth_kind: row.try_get(30)?,
+                    session_token_hash: row.try_get(31)?,
+                    join_token: row.try_get(32)?,
+                    revoked_at: row.try_get(33)?,
                 })
             },
             mapper: |it| BuilderSessionRow::from(it),
@@ -501,11 +592,13 @@ impl GetStmt {
                     builds_failed: row.try_get(24)?,
                     consecutive_failures: row.try_get(25)?,
                     disabled_until: row.try_get(26)?,
-                    auth_token_hash: row.try_get(27)?,
-                    created_at: row.try_get(28)?,
-                    updated_at: row.try_get(29)?,
-                    ephemeral: row.try_get(30)?,
-                    auth_kind: row.try_get(31)?,
+                    created_at: row.try_get(27)?,
+                    updated_at: row.try_get(28)?,
+                    ephemeral: row.try_get(29)?,
+                    auth_kind: row.try_get(30)?,
+                    session_token_hash: row.try_get(31)?,
+                    join_token: row.try_get(32)?,
+                    revoked_at: row.try_get(33)?,
                 })
             },
             mapper: |it| BuilderSessionRow::from(it),
@@ -659,7 +752,7 @@ impl ResetAllConnectedStmt {
 pub struct RegisterStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn register() -> RegisterStmt {
     RegisterStmt(
-        "INSERT INTO builder_sessions ( machine_id, name, hostname, systems, supported_features, mandatory_features, speed_factor, cpu_count, max_jobs, proto_version, ephemeral, auth_kind, connected, last_seen, updated_at ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, NOW(), NOW() ) ON CONFLICT (machine_id) DO UPDATE SET name = EXCLUDED.name, hostname = EXCLUDED.hostname, systems = EXCLUDED.systems, supported_features = EXCLUDED.supported_features, mandatory_features = EXCLUDED.mandatory_features, speed_factor = EXCLUDED.speed_factor, cpu_count = EXCLUDED.cpu_count, max_jobs = EXCLUDED.max_jobs, proto_version = EXCLUDED.proto_version, ephemeral = EXCLUDED.ephemeral, auth_kind = EXCLUDED.auth_kind, connected = TRUE, last_seen = NOW(), updated_at = NOW() WHERE builder_sessions.auth_kind = EXCLUDED.auth_kind",
+        "INSERT INTO builder_sessions ( machine_id, name, hostname, systems, supported_features, mandatory_features, speed_factor, cpu_count, max_jobs, proto_version, ephemeral, auth_kind, connected, last_seen, updated_at ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, NOW(), NOW() ) ON CONFLICT (machine_id) DO UPDATE SET name = EXCLUDED.name, hostname = EXCLUDED.hostname, systems = EXCLUDED.systems, supported_features = EXCLUDED.supported_features, mandatory_features = EXCLUDED.mandatory_features, speed_factor = EXCLUDED.speed_factor, cpu_count = EXCLUDED.cpu_count, max_jobs = EXCLUDED.max_jobs, proto_version = EXCLUDED.proto_version, ephemeral = EXCLUDED.ephemeral, auth_kind = EXCLUDED.auth_kind, connected = TRUE, last_seen = NOW(), revoked_at = NULL, updated_at = NOW() WHERE builder_sessions.auth_kind = EXCLUDED.auth_kind AND ( builder_sessions.revoked_at IS NULL OR EXCLUDED.auth_kind = 'token' )",
         None,
     )
 }
@@ -770,6 +863,308 @@ impl<
             &params.ephemeral,
             &params.auth_kind,
         ))
+    }
+}
+pub struct CreateJoinedStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn create_joined() -> CreateJoinedStmt {
+    CreateJoinedStmt(
+        "INSERT INTO builder_sessions ( machine_id, name, hostname, proto_version, auth_kind, session_token_hash, join_token, connected ) VALUES ( $1, $2, $3, $4, 'session', $5, $6, FALSE )",
+        None,
+    )
+}
+impl CreateJoinedStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<
+        'c,
+        'a,
+        's,
+        C: GenericClient,
+        T1: crate::StringSql,
+        T2: crate::StringSql,
+        T3: crate::StringSql,
+        T4: crate::BytesSql,
+        T5: crate::StringSql,
+    >(
+        &'s self,
+        client: &'c C,
+        machine_id: &'a uuid::Uuid,
+        name: &'a T1,
+        hostname: &'a T2,
+        proto_version: &'a T3,
+        session_token_hash: &'a T4,
+        join_token: &'a T5,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(
+                self.0,
+                &[
+                    machine_id,
+                    name,
+                    hostname,
+                    proto_version,
+                    session_token_hash,
+                    join_token,
+                ],
+            )
+            .await
+    }
+}
+impl<
+    'a,
+    C: GenericClient + Send + Sync,
+    T1: crate::StringSql,
+    T2: crate::StringSql,
+    T3: crate::StringSql,
+    T4: crate::BytesSql,
+    T5: crate::StringSql,
+>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        CreateJoinedParams<T1, T2, T3, T4, T5>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for CreateJoinedStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a CreateJoinedParams<T1, T2, T3, T4, T5>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.machine_id,
+            &params.name,
+            &params.hostname,
+            &params.proto_version,
+            &params.session_token_hash,
+            &params.join_token,
+        ))
+    }
+}
+pub struct GetBySessionHashStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn get_by_session_hash() -> GetBySessionHashStmt {
+    GetBySessionHashStmt(
+        "SELECT * FROM builder_sessions WHERE session_token_hash = $1 AND revoked_at IS NULL",
+        None,
+    )
+}
+impl GetBySessionHashStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::BytesSql>(
+        &'s self,
+        client: &'c C,
+        session_token_hash: &'a T1,
+    ) -> BuilderSessionRowQuery<'c, 'a, 's, C, BuilderSessionRow, 1> {
+        BuilderSessionRowQuery {
+            client,
+            params: [session_token_hash],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |
+                row: &tokio_postgres::Row,
+            | -> Result<BuilderSessionRowBorrowed, tokio_postgres::Error> {
+                Ok(BuilderSessionRowBorrowed {
+                    machine_id: row.try_get(0)?,
+                    name: row.try_get(1)?,
+                    hostname: row.try_get(2)?,
+                    systems: row.try_get(3)?,
+                    supported_features: row.try_get(4)?,
+                    mandatory_features: row.try_get(5)?,
+                    speed_factor: row.try_get(6)?,
+                    cpu_count: row.try_get(7)?,
+                    max_jobs: row.try_get(8)?,
+                    proto_version: row.try_get(9)?,
+                    last_seen: row.try_get(10)?,
+                    current_jobs: row.try_get(11)?,
+                    load1: row.try_get(12)?,
+                    load5: row.try_get(13)?,
+                    load15: row.try_get(14)?,
+                    mem_total: row.try_get(15)?,
+                    mem_used: row.try_get(16)?,
+                    store_free: row.try_get(17)?,
+                    build_dir_free: row.try_get(18)?,
+                    cpu_psi_avg10: row.try_get(19)?,
+                    mem_psi_avg10: row.try_get(20)?,
+                    io_psi_avg10: row.try_get(21)?,
+                    connected: row.try_get(22)?,
+                    builds_succeeded: row.try_get(23)?,
+                    builds_failed: row.try_get(24)?,
+                    consecutive_failures: row.try_get(25)?,
+                    disabled_until: row.try_get(26)?,
+                    created_at: row.try_get(27)?,
+                    updated_at: row.try_get(28)?,
+                    ephemeral: row.try_get(29)?,
+                    auth_kind: row.try_get(30)?,
+                    session_token_hash: row.try_get(31)?,
+                    join_token: row.try_get(32)?,
+                    revoked_at: row.try_get(33)?,
+                })
+            },
+            mapper: |it| BuilderSessionRow::from(it),
+        }
+    }
+}
+pub struct ActiveByNameStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn active_by_name() -> ActiveByNameStmt {
+    ActiveByNameStmt(
+        "SELECT * FROM builder_sessions WHERE name = $1 AND revoked_at IS NULL FOR UPDATE",
+        None,
+    )
+}
+impl ActiveByNameStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        name: &'a T1,
+    ) -> BuilderSessionRowQuery<'c, 'a, 's, C, BuilderSessionRow, 1> {
+        BuilderSessionRowQuery {
+            client,
+            params: [name],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |
+                row: &tokio_postgres::Row,
+            | -> Result<BuilderSessionRowBorrowed, tokio_postgres::Error> {
+                Ok(BuilderSessionRowBorrowed {
+                    machine_id: row.try_get(0)?,
+                    name: row.try_get(1)?,
+                    hostname: row.try_get(2)?,
+                    systems: row.try_get(3)?,
+                    supported_features: row.try_get(4)?,
+                    mandatory_features: row.try_get(5)?,
+                    speed_factor: row.try_get(6)?,
+                    cpu_count: row.try_get(7)?,
+                    max_jobs: row.try_get(8)?,
+                    proto_version: row.try_get(9)?,
+                    last_seen: row.try_get(10)?,
+                    current_jobs: row.try_get(11)?,
+                    load1: row.try_get(12)?,
+                    load5: row.try_get(13)?,
+                    load15: row.try_get(14)?,
+                    mem_total: row.try_get(15)?,
+                    mem_used: row.try_get(16)?,
+                    store_free: row.try_get(17)?,
+                    build_dir_free: row.try_get(18)?,
+                    cpu_psi_avg10: row.try_get(19)?,
+                    mem_psi_avg10: row.try_get(20)?,
+                    io_psi_avg10: row.try_get(21)?,
+                    connected: row.try_get(22)?,
+                    builds_succeeded: row.try_get(23)?,
+                    builds_failed: row.try_get(24)?,
+                    consecutive_failures: row.try_get(25)?,
+                    disabled_until: row.try_get(26)?,
+                    created_at: row.try_get(27)?,
+                    updated_at: row.try_get(28)?,
+                    ephemeral: row.try_get(29)?,
+                    auth_kind: row.try_get(30)?,
+                    session_token_hash: row.try_get(31)?,
+                    join_token: row.try_get(32)?,
+                    revoked_at: row.try_get(33)?,
+                })
+            },
+            mapper: |it| BuilderSessionRow::from(it),
+        }
+    }
+}
+pub struct RevokeStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn revoke() -> RevokeStmt {
+    RevokeStmt(
+        "UPDATE builder_sessions SET revoked_at = NOW(), session_token_hash = NULL, connected = FALSE, updated_at = NOW() WHERE machine_id = $1 AND auth_kind = 'session' AND revoked_at IS NULL",
+        None,
+    )
+}
+impl RevokeStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        machine_id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[machine_id]).await
+    }
+}
+pub struct RetireStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn retire() -> RetireStmt {
+    RetireStmt(
+        "UPDATE builder_sessions SET revoked_at = NOW(), session_token_hash = NULL, connected = FALSE, updated_at = NOW() WHERE machine_id = $1 AND revoked_at IS NULL",
+        None,
+    )
+}
+impl RetireStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        machine_id: &'a uuid::Uuid,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[machine_id]).await
+    }
+}
+pub struct RevokedAmongStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn revoked_among() -> RevokedAmongStmt {
+    RevokedAmongStmt(
+        "SELECT machine_id FROM builder_sessions WHERE machine_id = ANY ($1) AND revoked_at IS NOT NULL",
+        None,
+    )
+}
+impl RevokedAmongStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::ArraySql<Item = uuid::Uuid>>(
+        &'s self,
+        client: &'c C,
+        machine_ids: &'a T1,
+    ) -> UuidUuidQuery<'c, 'a, 's, C, uuid::Uuid, 1> {
+        UuidUuidQuery {
+            client,
+            params: [machine_ids],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row| Ok(row.try_get(0)?),
+            mapper: |it| it,
+        }
     }
 }
 pub struct MarkDisconnectedStmt(&'static str, Option<tokio_postgres::Statement>);

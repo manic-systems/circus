@@ -12,6 +12,7 @@ use circus_common::{
   database::Database,
   gc_roots,
   log_storage::PARTIAL_LOG_PREFIX,
+  models::AuthKind,
   repo,
 };
 use circus_config::{
@@ -262,6 +263,7 @@ where
       () = notification_retry_loop(db.pool().clone(), Arc::clone(&hot_config)) => {}
       () = sighup_loop(Arc::clone(&hot_config), config_path) => {}
       () = heartbeat_loop(db.pool().clone(), qr_config.poll_interval) => {}
+      () = revoked_agents_loop(&database_url, db.pool().clone(), Arc::clone(&agent_pool)) => {}
       error = rpc_thread_failure(rpc_failure) => {
           tracing::error!("Agent RPC listener died, exiting so systemd restarts the runner: {error}");
           rpc_error = Some(error);
@@ -287,6 +289,49 @@ where
   db.close();
 
   rpc_error.map_or(Ok(()), Err)
+}
+
+/// Drops live connections whose joined identity an operator revoked.
+async fn revoked_agents_loop(
+  database_url: &str,
+  pool: circus_common::PgPool,
+  agents: Arc<AgentPool>,
+) {
+  let revoked = Arc::new(tokio::sync::Notify::new());
+  circus_common::pg_notify::spawn_listener(
+    database_url,
+    &[circus_common::pg_notify::CHANNEL_AGENT_REVOKED],
+    Arc::clone(&revoked),
+  );
+
+  #[expect(
+    clippy::infinite_loop,
+    reason = "intentional background listener loop"
+  )]
+  loop {
+    revoked.notified().await;
+    let joined = agents
+      .snapshot_all()
+      .into_iter()
+      .filter(|agent| agent.auth_kind == AuthKind::Session)
+      .map(|agent| agent.machine_id)
+      .collect::<Vec<_>>();
+    if joined.is_empty() {
+      continue;
+    }
+
+    match repo::builder_sessions::revoked_among(&pool, &joined).await {
+      Ok(machine_ids) => {
+        for machine_id in machine_ids {
+          if let Some(agent) = agents.get(&machine_id) {
+            tracing::info!(name = %agent.name, %machine_id, "dropping revoked agent");
+            agent.closed.cancel();
+          }
+        }
+      },
+      Err(error) => tracing::warn!("Failed to check revoked agents: {error}"),
+    }
+  }
 }
 
 async fn rpc_thread_failure(

@@ -11,13 +11,22 @@
   settingsFormat = pkgs.formats.toml {};
 
   cfg = config.services.circus-agent;
+  joining = cfg.joinTokenFile != null;
+  tokenFile =
+    if joining
+    then cfg.joinTokenFile
+    else cfg.authTokenFile;
+  tokenKey =
+    if joining
+    then "join_token"
+    else "auth_token";
 
   nixBin =
     if config.nix.enable
     then "${config.nix.package}/bin"
     else "/nix/var/nix/profiles/default/bin";
   configTemplate = settingsFormat.generate "circus-agent.toml" (recursiveUpdate cfg.settings {
-    agent.auth_token = "@CIRCUS_AGENT_AUTH_TOKEN@";
+    agent.${tokenKey} = "@CIRCUS_AGENT_AUTH_TOKEN@";
     tracing.show_timestamps = false;
   });
   runtimeConfig = "${toString cfg.settings.agent.work_dir}/circus-agent.runtime.toml";
@@ -26,7 +35,7 @@
     set -eu
     umask 077
     install -d -m 0750 ${lib.escapeShellArg (toString cfg.settings.agent.work_dir)}
-    ${pkgs.jq}/bin/jq -Rrs --rawfile tok ${lib.escapeShellArg (toString cfg.authTokenFile)} \
+    ${pkgs.jq}/bin/jq -Rrs --rawfile tok ${lib.escapeShellArg (toString tokenFile)} \
       '($tok | sub("\\s+$"; "") | @json) as $j | gsub("\"@CIRCUS_AGENT_AUTH_TOKEN@\""; $j)' \
       ${configTemplate} > ${lib.escapeShellArg runtimeConfig}
     chmod 0600 ${lib.escapeShellArg runtimeConfig}
