@@ -34,6 +34,16 @@ pub struct Agent {
   #[serde(default)]
   pub auth_token: String,
 
+  /// Shared token traded once for a runner-issued machine ID and session
+  /// token, which are then kept in `session_file`. Set this or `auth_token`.
+  #[serde(default)]
+  pub join_token: String,
+
+  /// Where a joined agent keeps its machine ID and session token. Defaults
+  /// to `<work_dir>/session`. Delete it to join again under a new identity.
+  #[serde(default)]
+  pub session_file: Option<PathBuf>,
+
   /// Nix systems this agent can build. Must match what the host's Nix
   /// would emit for `currentSystem` plus any cross-systems wired up via
   /// binfmt.
@@ -141,6 +151,37 @@ const fn read_only_by_default() -> bool {
   true
 }
 
+impl Agent {
+  /// Exactly one of `auth_token` and `join_token` must be set.
+  ///
+  /// # Errors
+  ///
+  /// Describes the missing or conflicting credential.
+  pub fn check_credentials(&self) -> Result<(), String> {
+    match (self.auth_token.is_empty(), self.join_token.is_empty()) {
+      (false, true) | (true, false) => Ok(()),
+      (true, true) => {
+        Err(
+          "no credentials: set CIRCUS_AGENT_TOKEN or agent.auth_token, or \
+           CIRCUS_AGENT_JOIN_TOKEN or agent.join_token"
+            .into(),
+        )
+      },
+      (false, false) => {
+        Err("set either an auth token or a join token, not both".into())
+      },
+    }
+  }
+
+  #[must_use]
+  pub fn session_path(&self) -> PathBuf {
+    self
+      .session_file
+      .clone()
+      .unwrap_or_else(|| self.work_dir.join("session"))
+  }
+}
+
 /// Lifecycle bounds for an ephemeral (single-session) agent. In-flight builds
 /// drain before exit; the runner's orphan sweeper recovers anything still
 /// running if the CI host dies first.
@@ -246,11 +287,13 @@ impl AgentConfig {
     if let Ok(token) = std::env::var("CIRCUS_AGENT_TOKEN") {
       parsed.agent.auth_token = token;
     }
-    if parsed.agent.auth_token.is_empty() {
-      return Err(config::ConfigError::Message(
-        "no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token".into(),
-      ));
+    if let Ok(token) = std::env::var("CIRCUS_AGENT_JOIN_TOKEN") {
+      parsed.agent.join_token = token;
     }
+    parsed
+      .agent
+      .check_credentials()
+      .map_err(config::ConfigError::Message)?;
 
     Ok(parsed)
   }

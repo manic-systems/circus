@@ -867,6 +867,7 @@ dependencies = [
  "data-encoding",
  "dix-diff",
  "futures",
+ "getrandom 0.4.3",
  "jiff",
  "jsonwebtoken",
  "parking_lot",

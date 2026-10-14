@@ -25,6 +25,7 @@ dashmap.workspace           = true
 data-encoding.workspace     = true
 dix-diff.workspace          = true
 futures.workspace           = true
+getrandom.workspace         = true
 jiff.workspace              = true
 jsonwebtoken.workspace      = true
 parking_lot.workspace       = true

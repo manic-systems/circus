@@ -287,6 +287,8 @@ pub(super) enum BuilderCommand {
   },
   /// Show one builder agent session by machine id.
   Session { machine_id: String },
+  /// Revoke a joined builder agent and drop its live connection.
+  Revoke { machine_id: String },
 }
 
 #[derive(Subcommand)]

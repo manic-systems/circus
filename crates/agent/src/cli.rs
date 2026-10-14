@@ -3,11 +3,15 @@
 //! Reads config, resolves the persistent machine ID, then loops on
 //! `session::run_once` with backoff between connection attempts.
 
-use std::{ffi::OsString, path::PathBuf, time::Duration};
+use std::{
+  ffi::OsString,
+  path::{Path, PathBuf},
+  time::Duration,
+};
 
 use circus_logs::init_tracing;
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::{Result, bail, eyre};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use uuid::Uuid;
 
 use crate::{
@@ -144,16 +148,24 @@ where
   }
   session::validate_effect_transport(&cfg.agent)?;
   tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
+  let joining = !cfg.agent.join_token.is_empty();
+  if joining && ephemeral {
+    bail!("ephemeral agents authenticate with OIDC, not a join token");
+  }
 
-  let machine_id = resolve_machine_id(&cfg, ephemeral)?;
+  let machine_id = if joining {
+    None
+  } else {
+    Some(resolve_machine_id(&cfg, ephemeral)?)
+  };
 
   // Uniquify the shared name so concurrent CI runs don't collide.
   if let Some(eph) = &cfg.agent.ephemeral
     && eph.unique_name
+    && let Some(machine_id) = machine_id
   {
     cfg.agent.name = unique_ephemeral_name(&cfg.agent.name, machine_id);
   }
-  tracing::info!(machine_id = %machine_id, name = %cfg.agent.name, "agent identity resolved");
 
   if cfg.agent.rootless {
     if let Some(dir) = &cfg.agent.rootless_data_dir {
@@ -181,9 +193,74 @@ where
     .build()?;
   let local = tokio::task::LocalSet::new();
 
-  rt.block_on(
-    local.run_until(async move { run_supervisor(cfg.agent, machine_id).await }),
-  )
+  rt.block_on(local.run_until(async move {
+    let mut agent = cfg.agent;
+    let machine_id = match machine_id {
+      Some(machine_id) => machine_id,
+      None => joined_identity(&mut agent).await?,
+    };
+    tracing::info!(%machine_id, name = %agent.name, "agent identity resolved");
+    run_supervisor(agent, machine_id).await
+  }))
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct SessionFile {
+  machine_id: Uuid,
+  token:      String,
+}
+
+/// Read the joined identity, joining the runner first when there is none yet.
+async fn joined_identity(cfg: &mut Agent) -> Result<Uuid> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
+  let path = cfg.session_path();
+  let session = match std::fs::read(&path) {
+    Ok(bytes) => {
+      serde_json::from_slice::<SessionFile>(&bytes).wrap_err_with(|| {
+        format!("{} is unreadable, delete it to join again", path.display())
+      })?
+    },
+    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+      let backoff = Duration::from_secs(cfg.reconnect_delay_secs.max(1));
+      let (machine_id, token) = loop {
+        match session::join(cfg).await {
+          Ok(joined) => break joined,
+          Err(e) => tracing::warn!(error = %e, "join failed; retrying"),
+        }
+        tokio::time::sleep(backoff).await;
+      };
+      let session = SessionFile { machine_id, token };
+      write_session(&path, &session)?;
+      tracing::info!(%machine_id, path = %path.display(), "joined runner");
+      session
+    },
+    Err(error) => {
+      return Err(error).wrap_err_with(|| format!("read {}", path.display()));
+    },
+  };
+
+  cfg.auth_token = session.token;
+  Ok(session.machine_id)
+}
+
+fn write_session(path: &Path, session: &SessionFile) -> Result<()> {
+  let dir = path
+    .parent()
+    .filter(|dir| !dir.as_os_str().is_empty())
+    .unwrap_or_else(|| Path::new("."));
+  std::fs::create_dir_all(dir)
+    .wrap_err_with(|| format!("create {}", dir.display()))?;
+  let mut file = tempfile::NamedTempFile::new_in(dir).wrap_err_with(|| {
+    format!("create a temporary file in {}", dir.display())
+  })?;
+  serde_json::to_writer(&mut file, session)?;
+  file
+    .persist(path)
+    .wrap_err_with(|| format!("write {}", path.display()))?;
+  Ok(())
 }
 
 fn load_config(cli: &Cli) -> Result<AgentConfig> {
@@ -192,9 +269,10 @@ fn load_config(cli: &Cli) -> Result<AgentConfig> {
     None => inline_config(cli)?,
   };
   apply_cli_overrides(&mut cfg.agent, cli);
-  if cfg.agent.auth_token.is_empty() {
-    bail!("no auth token: set CIRCUS_AGENT_TOKEN or agent.auth_token");
-  }
+  cfg
+    .agent
+    .check_credentials()
+    .map_err(|error| eyre!(error))?;
   Ok(cfg)
 }
 
@@ -210,14 +288,13 @@ fn inline_config(cli: &Cli) -> Result<AgentConfig> {
   if cli.systems.is_empty() {
     bail!("at least one --system is required without a config file");
   }
-  let auth_token = std::env::var("CIRCUS_AGENT_TOKEN").map_err(|_| {
-    eyre!("CIRCUS_AGENT_TOKEN is required without a config file")
-  })?;
   Ok(AgentConfig {
     agent:   Agent {
       name,
       runner_url,
-      auth_token,
+      auth_token: std::env::var("CIRCUS_AGENT_TOKEN").unwrap_or_default(),
+      join_token: std::env::var("CIRCUS_AGENT_JOIN_TOKEN").unwrap_or_default(),
+      session_file: None,
       systems: cli.systems.clone(),
       supported_features: cli.supported_features.clone(),
       mandatory_features: cli.mandatory_features.clone(),

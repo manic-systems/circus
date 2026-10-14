@@ -64,6 +64,30 @@ async fn get_builder_session(
   Ok(Json(session))
 }
 
+async fn revoke_builder_session(
+  auth: RequireAdmin,
+  State(state): State<AppState>,
+  Path(machine_id): Path<Uuid>,
+) -> Result<Json<circus_common::repo::builder_sessions::BuilderSession>, ApiError>
+{
+  circus_common::repo::builder_sessions::revoke(&state.pool, machine_id)
+    .await?;
+
+  crate::audit::record_for_key(
+    &state.pool,
+    &auth.0,
+    "BUILDER_SESSION_REVOKE",
+    Some("builder_session"),
+    Some(&machine_id.to_string()),
+    serde_json::Value::Null,
+  )
+  .await;
+
+  let session =
+    circus_common::repo::builder_sessions::get(&state.pool, machine_id).await?;
+  Ok(Json(session))
+}
+
 async fn system_status(
   _auth: RequireAdmin,
   State(state): State<AppState>,
@@ -679,6 +703,10 @@ pub fn router() -> Router<AppState> {
     .route(
       "/admin/builders/sessions/{machine_id}",
       get(get_builder_session),
+    )
+    .route(
+      "/admin/builders/sessions/{machine_id}/revoke",
+      post(revoke_builder_session),
     )
     .route("/admin/system", get(system_status))
     .route(

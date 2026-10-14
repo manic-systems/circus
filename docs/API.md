@@ -27,6 +27,7 @@ webhooks, health, metrics, and cache routes live outside that API key gate.
 | GET | `/api/v1/admin/builders/sessions` | List all persistent builder agent sessions (connected + historical) | 200 |
 | GET | `/api/v1/admin/builders/sessions/connected` | List currently-connected builder agents | 200 |
 | GET | `/api/v1/admin/builders/sessions/{machine_id}` | Get a single builder agent session by its stable machine_id | 200, 404 |
+| POST | `/api/v1/admin/builders/sessions/{machine_id}/revoke` | Revoke a joined builder agent and drop its live connection | 200, 400, 404, 409 |
 | GET | `/api/v1/admin/caches` | List binary caches (global + per-project) with storage and last-hour request counts | 200 |
 | GET | `/api/v1/admin/caches/{name}` | Binary cache detail: substituter URL, public key, nix.conf snippet, storage, last-hour traffic | 200, 404 |
 | GET | `/api/v1/admin/caches/{name}/nars` | Filtered, paginated NAR inventory for a cache | 200 |

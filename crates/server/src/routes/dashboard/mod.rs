@@ -85,6 +85,10 @@ pub fn router(live: TowerService) -> Router<AppState> {
     .route("/admin", get_service(live.clone()))
     .route("/admin/api-keys", post_service(live.clone()))
     .route("/admin/api-keys/{id}/delete", post(admin::api_key_delete))
+    .route(
+      "/admin/agents/{machine_id}/revoke",
+      post(admin::agent_revoke),
+    )
     .route("/admin/config", post_service(live.clone()))
     .route(
       "/admin/notification-tasks/{id}/retry",

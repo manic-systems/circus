@@ -205,6 +205,10 @@ pub struct RpcConfig {
   #[serde(default)]
   pub auth_tokens: Vec<RpcAgentToken>,
 
+  /// Shared tokens an agent trades for a runner-issued session token.
+  #[serde(default)]
+  pub join_tokens: Vec<RpcJoinToken>,
+
   /// Hard cap on concurrent connections; serves as a flood guard.
   #[serde(default = "default_max_rpc_conns")]
   pub max_connections: usize,
@@ -246,6 +250,14 @@ pub struct RpcConfig {
 #[serde(deny_unknown_fields)]
 pub struct RpcAgentToken {
   pub machine_id: Uuid,
+  pub name:       String,
+  pub token_hash: TokenHash,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcJoinToken {
+  /// Recorded on every agent that joins with this token.
   pub name:       String,
   pub token_hash: TokenHash,
 }

@@ -776,6 +776,16 @@ fn document_value() -> Value {
             "404": { "description": "No session with that machine_id" }
           } }
       },
+      "/admin/builders/sessions/{machine_id}/revoke": {
+        "post": { "summary": "Revoke a joined builder agent and drop its live connection",
+          "parameters": [{ "name": "machine_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+          "responses": {
+            "200": { "description": "The revoked BuilderSession" },
+            "400": { "description": "The agent authenticates with configured or OIDC credentials" },
+            "404": { "description": "No session with that machine_id" },
+            "409": { "description": "Already revoked" }
+          } }
+      },
       "/admin/config": {
         "get": { "summary": "Read the server config file",
           "responses": { "200": { "description": "Raw config body",

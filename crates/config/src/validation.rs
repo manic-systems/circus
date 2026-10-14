@@ -361,6 +361,29 @@ impl Config {
         }
       }
 
+      let mut join_names = HashSet::new();
+      for join in &rpc.join_tokens {
+        if join.name.trim().is_empty()
+          || join.name.chars().any(char::is_control)
+        {
+          bail!(
+            "queue_runner.rpc.join_tokens requires a nonempty name without \
+             control characters"
+          );
+        }
+
+        if !join_names.insert(&join.name) {
+          bail!("queue_runner.rpc.join_tokens repeats a name");
+        }
+
+        if !token_hashes.insert(join.token_hash) {
+          bail!(
+            "queue_runner.rpc.join_tokens reuses a token from another join \
+             token or auth_tokens entry"
+          );
+        }
+      }
+
       if let Some(oidc) = rpc.oidc.as_ref() {
         if !oidc.issuer.starts_with("https://") {
           bail!("queue_runner.rpc.oidc.issuer must be an https URL");
@@ -398,13 +421,15 @@ impl Config {
         bail!("queue_runner.rpc.tls.require_client_cert needs client_ca");
       }
       if rpc.tls.is_none()
-        && (rpc.oidc.is_some() || !rpc.auth_tokens.is_empty())
+        && (rpc.oidc.is_some()
+          || !rpc.auth_tokens.is_empty()
+          || !rpc.join_tokens.is_empty())
       {
         if !rpc.allow_plaintext {
           bail!(
-            "queue_runner.rpc.tls is required when auth_tokens or oidc are \
-             set. Set queue_runner.rpc.allow_plaintext = true to accept \
-             credentials over plain TCP on a trusted network."
+            "queue_runner.rpc.tls is required when auth_tokens, join_tokens, \
+             or oidc are set. Set queue_runner.rpc.allow_plaintext = true to \
+             accept credentials over plain TCP on a trusted network."
           );
         }
         tracing::warn!(
