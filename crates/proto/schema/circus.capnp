@@ -15,7 +15,7 @@ interface Runner {
   # Identify, authenticate, and hand the runner a callback `Builder`
   # capability for receiving work. Returns a session capability used for
   # outbound traffic from the agent (heartbeats).
-  register @0 (info :AgentInfo, builder :Builder) -> (session :AgentSession);
+  register @0 (info :AgentInfo, builder :Builder) -> (session :AgentSession, machineId :Text);
 
   # Identify the running runner. Used by the agent to refuse to talk to an
   # incompatible peer before sending sensitive info on `register`.
@@ -106,7 +106,7 @@ interface ResultSink {
 struct AgentInfo {
   hostname           @0  :Text;
   name               @1  :Text;       # operator-assigned agent name
-  machineId          @2  :Text;       # UUIDv4 generated on first start
+  machineId          @2  :Text;       # empty for OIDC agents, the runner mints one
   systems            @3  :List(Text); # nix systems advertised
   supportedFeatures  @4  :List(Text);
   mandatoryFeatures  @5  :List(Text);
