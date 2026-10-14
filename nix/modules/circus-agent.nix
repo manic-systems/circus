@@ -9,8 +9,17 @@
   settingsFormat = pkgs.formats.toml {};
 
   cfg = config.services.circus-agent;
+  joining = cfg.joinTokenFile != null;
+  tokenFile =
+    if joining
+    then cfg.joinTokenFile
+    else cfg.authTokenFile;
+  tokenKey =
+    if joining
+    then "join_token"
+    else "auth_token";
   configFile = settingsFormat.generate "circus-agent.toml" (recursiveUpdate cfg.settings {
-    agent.auth_token = "@CIRCUS_AGENT_AUTH_TOKEN@";
+    agent.${tokenKey} = "@CIRCUS_AGENT_AUTH_TOKEN@";
     tracing.show_timestamps = false;
   });
 in {
@@ -47,7 +56,7 @@ in {
 
         # Render the auth token into a runtime config that is private to
         # this unit. The token never lands in the Nix store.
-        LoadCredential = "auth_token:${cfg.authTokenFile}";
+        LoadCredential = "auth_token:${tokenFile}";
         ExecStartPre = pkgs.writeShellScript "circus-agent-render-config" ''
           set -eu
           token="$(cat "$CREDENTIALS_DIRECTORY/auth_token")"

@@ -73,6 +73,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (45, "0045_build_closure_diffs"),
   (53, "0053_user_identities"),
   (54, "0054_build_priority_notify"),
+  (55, "0055_agent_join_tokens"),
 ];
 
 /// Runs all migrations, creating the database first if it doesn't exist.

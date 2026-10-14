@@ -61,6 +61,7 @@ pub use circus_capnp::{
   builder,
   drv_sink,
   heartbeat,
+  join_info,
   log_sink,
   nar_info,
   output_info,

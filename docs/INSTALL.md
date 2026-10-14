@@ -247,6 +247,7 @@ configuration or the Nix store.
 | `queue_runner`       | `local_features`                                       | none                                                | System features available on local builds                                 |
 | `queue_runner`       | `rpc.bind`                                             | none                                                | Cap'n Proto RPC listen address                                            |
 | `queue_runner`       | `rpc.auth_tokens`                                      | `[]`                                                | Bearer token digests bound to agent UUIDs and names                       |
+| `queue_runner`       | `rpc.join_tokens`                                      | `[]`                                                | Named join token digests that let agents register new identities          |
 | `queue_runner`       | `rpc.max_connections`                                  | `256`                                               | Maximum concurrent agent connections                                      |
 | `queue_runner`       | `rpc.max_connections_per_ip`                           | `32`                                                | Maximum concurrent connections per address                                |
 | `queue_runner`       | `rpc.presign_expiry_secs`                              | `3600`                                              | Presigned URL expiry (seconds)                                            |
@@ -1013,7 +1014,9 @@ agent-side settings most relevant to distributed and ephemeral builders:
 | ------- | ----------------------------- | ----------------------- | ----------------------------------------------------------------- |
 | `agent` | `name`                        | required                | Operator-assigned agent name                                      |
 | `agent` | `runner_url`                  | required                | `circus://` or `circus+tls://` runner endpoint                    |
-| `agent` | `auth_token`                  | required                | Bearer token or OIDC JWT; may be supplied by `CIRCUS_AGENT_TOKEN` |
+| `agent` | `auth_token`                  | none                    | Bearer token or OIDC JWT; may be supplied by `CIRCUS_AGENT_TOKEN` |
+| `agent` | `join_token`                  | none                    | Join token, may be supplied by `CIRCUS_AGENT_JOIN_TOKEN`          |
+| `agent` | `session_file`                | `<work_dir>/session`    | Machine ID and session token saved after joining                  |
 | `agent` | `systems`                     | required                | Nix systems advertised by the agent                               |
 | `agent` | `supported_features`          | `[]`                    | Build features the agent can satisfy                              |
 | `agent` | `mandatory_features`          | `[]`                    | Features every assigned build must require                        |
