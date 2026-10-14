@@ -36,6 +36,12 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
   as one registers or frees a build slot, instead of staying queued behind the
   local workers.
 
+### Changed
+
+- The queue runner now mints the machine ID of OIDC agents. Ephemeral agents and
+  the runner must be upgraded together, since each rejects the other's older
+  version at registration.
+
 ## 0.14.0
 
 ### Added
