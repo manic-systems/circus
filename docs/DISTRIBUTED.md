@@ -438,9 +438,9 @@ agent is disconnected at once and stays out, and deleting its session file lets
 it join again.
 
 CI builders authenticate with OIDC and run with `agent.ephemeral` or
-`--ephemeral`. An ephemeral agent makes up a fresh machine ID, can append a
-unique suffix to its name, and exits after one session instead of reconnecting,
-draining in-flight work first.
+`--ephemeral`. An ephemeral agent sends no machine ID and the runner mints a
+fresh one on `register`. It can append a unique suffix to its name, and exits
+after one session instead of reconnecting, draining in-flight work first.
 
 ```toml
 [agent.ephemeral]
@@ -497,11 +497,11 @@ If you have a setup already, existing clusters keep working. To migrate a host:
 
 `--ephemeral` enables the table with defaults when the config file does not
 contain `[agent.ephemeral]`. When `unique_name = true`, the agent appends a
-suffix based on `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, and a short slice of the
-fresh machine ID; outside GitHub Actions it appends only the machine-ID slice.
-The final name is truncated to the protocol limit, so concurrent CI jobs can use
-the same configured base name without colliding in `builder_sessions`. The
-lifecycle limits are deliberately drain-oriented:
+suffix based on `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, and a short random slice;
+outside GitHub Actions it appends only the random slice. The final name is
+truncated to the protocol limit, so concurrent CI jobs can use the same
+configured base name without colliding in `builder_sessions`. The lifecycle
+limits are deliberately drain-oriented:
 
 - `max_builds` is checked after the agent is idle, so a build already assigned
   is allowed to finish before the agent exits.
@@ -663,11 +663,11 @@ Operational notes:
 - OIDC authentication on `register` when `[queue_runner.rpc.oidc]` is set. The
   runner verifies the issuer, JWKS signature, expiry, accepted audience,
   subject, workflow/ref constraints, and repository allowlist before accepting
-  the session. An OIDC agent cannot take the UUID or name of a token agent, or
-  the UUID of a live agent from another repository or subject, and a machine
-  cannot switch between token and OIDC auth. Ephemeral agents must use OIDC,
-  since a bearer token is bound to one machine ID. The verified repository is
-  stored with the live session for scheduling decisions.
+  the session. The runner mints the machine UUID of every OIDC agent and rejects
+  one that brings its own. An OIDC agent cannot take the name of a token agent,
+  and a machine cannot switch between token and OIDC auth. Ephemeral agents must
+  use OIDC, since a bearer token is bound to one machine ID. The verified
+  repository is stored with the live session for scheduling decisions.
 - Optional mTLS via `tokio-rustls`. Cert + key live under
   `[queue_runner.rpc].tls`, and setting `client_ca` attaches a
   `WebPkiClientVerifier` for any client cert an agent presents. Agents may still
