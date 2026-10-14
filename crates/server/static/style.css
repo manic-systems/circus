@@ -1053,28 +1053,31 @@ table {
   min-width: 64rem;
 }
 .agents-col-name {
-  width: 16%;
+  width: 14%;
 }
 .agents-col-host {
-  width: 18%;
+  width: 13%;
 }
 .agents-col-systems {
-  width: 18%;
+  width: 14%;
 }
 .agents-col-jobs {
-  width: 8%;
+  width: 6%;
 }
 .agents-col-status {
-  width: 12%;
+  width: 11%;
 }
 .agents-col-succeeded {
   width: 9%;
 }
 .agents-col-failed {
-  width: 8%;
+  width: 7%;
 }
 .agents-col-last-seen {
-  width: 11%;
+  width: 16%;
+}
+.agents-col-actions {
+  width: 10%;
 }
 th,
 td {

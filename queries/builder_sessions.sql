@@ -1,4 +1,4 @@
---: BuilderSessionRow(last_seen?, load1?, load5?, load15?, mem_total?, mem_used?, store_free?, build_dir_free?, cpu_psi_avg10?, mem_psi_avg10?, io_psi_avg10?, disabled_until?, auth_token_hash?)
+--: BuilderSessionRow(last_seen?, load1?, load5?, load15?, mem_total?, mem_used?, store_free?, build_dir_free?, cpu_psi_avg10?, mem_psi_avg10?, io_psi_avg10?, disabled_until?, session_token_hash?, join_token?, revoked_at?)
 --! list : BuilderSessionRow
 SELECT
   *
@@ -117,9 +117,75 @@ SET
   auth_kind = EXCLUDED.auth_kind,
   connected = TRUE,
   last_seen = NOW(),
+  revoked_at = NULL,
   updated_at = NOW()
 WHERE
-  builder_sessions.auth_kind = EXCLUDED.auth_kind;
+  builder_sessions.auth_kind = EXCLUDED.auth_kind
+  AND (
+    builder_sessions.revoked_at IS NULL
+    OR EXCLUDED.auth_kind = 'token'
+  );
+
+--! create_joined
+INSERT INTO builder_sessions (
+  machine_id, name, hostname, proto_version, auth_kind, session_token_hash,
+  join_token, connected
+)
+VALUES (
+  :machine_id, :name, :hostname, :proto_version, 'session',
+  :session_token_hash, :join_token, FALSE
+);
+
+--! get_by_session_hash : BuilderSessionRow
+SELECT
+  *
+FROM
+  builder_sessions
+WHERE
+  session_token_hash = :session_token_hash
+  AND revoked_at IS NULL;
+
+--! active_by_name : BuilderSessionRow
+SELECT
+  *
+FROM
+  builder_sessions
+WHERE
+  name = :name
+  AND revoked_at IS NULL
+FOR UPDATE;
+
+--! revoke
+UPDATE builder_sessions
+SET
+  revoked_at = NOW(),
+  session_token_hash = NULL,
+  connected = FALSE,
+  updated_at = NOW()
+WHERE
+  machine_id = :machine_id
+  AND auth_kind = 'session'
+  AND revoked_at IS NULL;
+
+--! retire
+UPDATE builder_sessions
+SET
+  revoked_at = NOW(),
+  session_token_hash = NULL,
+  connected = FALSE,
+  updated_at = NOW()
+WHERE
+  machine_id = :machine_id
+  AND revoked_at IS NULL;
+
+--! revoked_among
+SELECT
+  machine_id
+FROM
+  builder_sessions
+WHERE
+  machine_id = ANY (:machine_ids)
+  AND revoked_at IS NOT NULL;
 
 --! mark_disconnected
 UPDATE builder_sessions

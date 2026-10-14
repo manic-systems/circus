@@ -310,6 +310,8 @@ pub(super) enum BuilderCommand {
   },
   /// Show one builder agent session.
   Session { machine_id: Uuid },
+  /// Revoke a joined builder agent and drop its live connection.
+  Revoke { machine_id: Uuid },
 }
 
 #[derive(Parse)]

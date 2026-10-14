@@ -73,6 +73,7 @@ const MIGRATIONS: &[Migration] = migrations![
   (45, "0045_build_closure_diffs"),
   (53, "0053_user_identities"),
   (54, "0054_build_priority_notify"),
+  (55, "0055_agent_join_tokens"),
   (56, "0056_jobset_build_timeout"),
 ];
 
