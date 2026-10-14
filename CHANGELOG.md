@@ -24,6 +24,12 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 - The sign-in button on private dashboard pages now opens the login page, so
   OIDC providers are offered there too.
 
+### Changed
+
+- The queue runner now mints the machine ID of OIDC agents. Ephemeral agents and
+  the runner must be upgraded together, since each rejects the other's older
+  version at registration.
+
 ## 0.14.0
 
 ### Added

@@ -153,18 +153,17 @@ where
     bail!("ephemeral agents authenticate with OIDC, not a join token");
   }
 
-  let machine_id = if joining {
+  let machine_id = if joining || ephemeral {
     None
   } else {
-    Some(resolve_machine_id(&cfg, ephemeral)?)
+    Some(resolve_machine_id(&cfg)?)
   };
 
   // Uniquify the shared name so concurrent CI runs don't collide.
   if let Some(eph) = &cfg.agent.ephemeral
     && eph.unique_name
-    && let Some(machine_id) = machine_id
   {
-    cfg.agent.name = unique_ephemeral_name(&cfg.agent.name, machine_id);
+    cfg.agent.name = unique_ephemeral_name(&cfg.agent.name, Uuid::new_v4());
   }
 
   if cfg.agent.rootless {
@@ -196,10 +195,12 @@ where
   rt.block_on(local.run_until(async move {
     let mut agent = cfg.agent;
     let machine_id = match machine_id {
-      Some(machine_id) => machine_id,
-      None => joined_identity(&mut agent).await?,
+      None if joining => Some(joined_identity(&mut agent).await?),
+      machine_id => machine_id,
     };
-    tracing::info!(%machine_id, name = %agent.name, "agent identity resolved");
+    if let Some(machine_id) = machine_id {
+      tracing::info!(%machine_id, name = %agent.name, "agent identity resolved");
+    }
     run_supervisor(agent, machine_id).await
   }))
 }
@@ -348,7 +349,7 @@ fn apply_cli_overrides(agent: &mut Agent, cli: &Cli) {
   }
 }
 
-async fn run_supervisor(cfg: Agent, machine_id: Uuid) -> Result<()> {
+async fn run_supervisor(cfg: Agent, machine_id: Option<Uuid>) -> Result<()> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -368,7 +369,10 @@ async fn run_supervisor(cfg: Agent, machine_id: Uuid) -> Result<()> {
   reconnect_forever(&cfg, machine_id).await
 }
 
-async fn reconnect_forever(cfg: &Agent, machine_id: Uuid) -> Result<()> {
+async fn reconnect_forever(
+  cfg: &Agent,
+  machine_id: Option<Uuid>,
+) -> Result<()> {
   #![expect(clippy::infinite_loop, reason = "intentional reconnect loop")]
   #![expect(
     clippy::future_not_send,
@@ -389,11 +393,8 @@ async fn reconnect_forever(cfg: &Agent, machine_id: Uuid) -> Result<()> {
 }
 
 /// Resolve the machine ID: persistent agents read/init the ID file (identity
-/// survives reconnects); ephemeral agents mint a fresh, unpersisted ID.
-fn resolve_machine_id(cfg: &AgentConfig, ephemeral: bool) -> Result<Uuid> {
-  if ephemeral {
-    return Ok(Uuid::new_v4());
-  }
+/// survives reconnects).
+fn resolve_machine_id(cfg: &AgentConfig) -> Result<Uuid> {
   let path = cfg
     .agent
     .machine_id_file
@@ -413,11 +414,11 @@ fn resolve_machine_id(cfg: &AgentConfig, ephemeral: bool) -> Result<Uuid> {
 }
 
 /// Cluster-unique name for an ephemeral run: GitHub run identifiers (for
-/// traceability) plus a slice of the random machine ID (for uniqueness).
-fn unique_ephemeral_name(base: &str, machine_id: Uuid) -> String {
+/// traceability) plus a random slice (for uniqueness).
+fn unique_ephemeral_name(base: &str, nonce: Uuid) -> String {
   const MAX: usize = 128;
 
-  let short = &machine_id.simple().to_string()[..8];
+  let short = &nonce.simple().to_string()[..8];
   let suffix = match (
     std::env::var("GITHUB_RUN_ID").ok(),
     std::env::var("GITHUB_RUN_ATTEMPT").ok(),
