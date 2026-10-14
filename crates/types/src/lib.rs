@@ -131,6 +131,7 @@ impl FromStr for ProjectRole {
 #[serde(rename_all = "lowercase")]
 pub enum AuthKind {
   Token,
+  Session,
   Oidc,
 }
 
@@ -139,6 +140,7 @@ impl AuthKind {
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Token => "token",
+      Self::Session => "session",
       Self::Oidc => "oidc",
     }
   }
@@ -156,6 +158,7 @@ impl FromStr for AuthKind {
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
       "token" => Ok(Self::Token),
+      "session" => Ok(Self::Session),
       "oidc" => Ok(Self::Oidc),
       _ => Err(format!("invalid auth kind '{s}'")),
     }

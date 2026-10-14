@@ -15,6 +15,9 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 
 - Dashboard OIDC login with named providers, group access rules, and global role
   mappings.
+- Agents can join with a shared `[queue_runner.rpc].join_tokens` token. The
+  runner mints each agent its own machine ID and session token, and admins can
+  revoke joined agents from the CLI, API or dashboard.
 
 ### Changed
 

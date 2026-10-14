@@ -31,6 +31,10 @@ pub async fn notify(pool: &PgPool, channel: &str) -> crate::error::Result<()> {
 /// dashboard. The queue runner's GC loop wakes and runs a forced cycle.
 pub const CHANNEL_GC_REQUESTED: &str = "circus_gc_requested";
 
+/// Channel emitted when an operator revokes a joined agent. The queue runner
+/// drops any connection the revoked identity still holds.
+pub const CHANNEL_AGENT_REVOKED: &str = "circus_agent_revoked";
+
 /// Spawns a background task that listens on the given PG channels and signals
 /// `wakeup` on each notification. Uses `notify_one` so a notification arriving
 /// while the daemon is mid-cycle still wakes the next `.notified()` await.

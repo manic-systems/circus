@@ -1,10 +1,12 @@
 {
+  config,
   pkgs,
   lib,
   ...
 }: let
+  inherit (lib.modules) mkIf;
   inherit (lib.options) mkOption mkEnableOption;
-  inherit (lib.types) listOf package str path ints submodule;
+  inherit (lib.types) listOf nullOr package str path ints submodule;
   settingsFormat = pkgs.formats.toml {};
 in {
   options.services.circus-agent = {
@@ -16,11 +18,22 @@ in {
     };
 
     authTokenFile = mkOption {
-      type = path;
+      type = nullOr path;
+      default = null;
       description = ''
         Path to a file containing the bearer token. The token is rendered
         into a runtime config private to the service and never lands in
-        the Nix store.
+        the Nix store. Set this or `joinTokenFile`.
+      '';
+    };
+
+    joinTokenFile = mkOption {
+      type = nullOr path;
+      default = null;
+      description = ''
+        Path to a file containing a join token. On first start the agent
+        trades it for a runner-issued machine ID and session token, kept in
+        `<work_dir>/session`. Set this or `authTokenFile`.
       '';
     };
 
@@ -102,9 +115,18 @@ in {
       };
       default = {};
       description = ''
-        `circus-agent.toml` as a Nix attribute set. The bearer token is
-        intentionally not represented here; use `authTokenFile`.
+        `circus-agent.toml` as a Nix attribute set. Tokens are intentionally
+        not represented here; use `authTokenFile` or `joinTokenFile`.
       '';
     };
+  };
+
+  config = mkIf config.services.circus-agent.enable {
+    assertions = [
+      {
+        assertion = (config.services.circus-agent.authTokenFile == null) != (config.services.circus-agent.joinTokenFile == null);
+        message = "services.circus-agent needs exactly one of authTokenFile and joinTokenFile.";
+      }
+    ];
   };
 }

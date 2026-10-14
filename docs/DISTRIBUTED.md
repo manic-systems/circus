@@ -152,16 +152,20 @@ struct AgentInfo {
 The flow is as follows
 
 1. Agent dials TCP (optionally wraps in TLS), starts a capnp-rpc system with no
-   bootstrap. Calls `runner.register(info, builder)` and keeps the returned
-   `session` capability for heartbeats.
+   bootstrap. An agent configured with a join token and no saved session first
+   calls `runner.join(info)`, which returns a runner-minted machine ID and
+   session token. It then calls `runner.register(info, builder)` and keeps the
+   returned `session` capability for heartbeats.
 2. Runner authenticates registration. A bearer token must match the
-   `[queue_runner.rpc].auth_tokens` entry for the agent's machine ID and name.
-   Agents not listed there can authenticate with a JWT through
-   `[queue_runner.rpc.oidc]`, checked against the issuer JWKS, accepted
-   audiences, and repository allowlist.
+   `[queue_runner.rpc].auth_tokens` entry for the agent's machine ID and name,
+   or the session token issued to that machine ID and name by `join`. Agents not
+   listed there can authenticate with a JWT through `[queue_runner.rpc.oidc]`,
+   checked against the issuer JWKS, accepted audiences, and repository
+   allowlist.
 3. Runner records the agent in `AgentPool`, retains the `Builder` capability,
    marks the row in `builder_sessions` as live, and stores whether the session
-   is ephemeral and whether it authenticated through `token` or `oidc`.
+   is ephemeral and whether it authenticated through `token`, `session` or
+   `oidc`.
 4. WorkerPool dequeues a build. The scheduler picks an agent based on `systems`,
    `mandatoryFeatures`, current load, speed factor and PSI thresholds. It calls
    `builder.assign(job, log, result, output)`. Promise pipelining means the
@@ -259,6 +263,10 @@ machine_id = "7e6c8022-95e8-4f99-8513-7d177f6a0241"
 name       = "build-01"
 # SHA-256 hex digest of this agent's bearer token.
 token_hash = "262874f756ad802d196aa14479fa20f252f9de5924fa51082b8556df31b7dad7"
+
+[[queue_runner.rpc.join_tokens]]
+name       = "lab" # recorded on every agent that joins with this token
+token_hash = "b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c"
 
 [queue_runner.rpc.oidc]
 issuer               = "https://token.actions.githubusercontent.com"
@@ -415,6 +423,20 @@ runner configuration before starting the agent.
 
 ### Agent lifecycle and services
 
+A fleet can share a join token instead. Set `agent.join_token` (or
+`CIRCUS_AGENT_JOIN_TOKEN`) in place of `auth_token`. On first start the agent
+calls `join`, and the runner mints a machine ID and session token, storing only
+the token's digest. The agent saves both to `agent.session_file`
+(`<work_dir>/session`, mode 0600) and registers with them from then on, so a
+join token can add agents but never become an existing one. If the session file
+is lost, the agent joins again and may take over its old name only when the
+previous holder joined through the same join token and is offline. That previous
+identity is revoked. Revoke a joined agent with
+`circusctl admin builders revoke <machine_id>`, the Revoke button on the admin
+dashboard, or `POST /api/v1/admin/builders/sessions/{machine_id}/revoke`. A live
+agent is disconnected at once and stays out, and deleting its session file lets
+it join again.
+
 CI builders authenticate with OIDC and run with `agent.ephemeral` or
 `--ephemeral`. An ephemeral agent makes up a fresh machine ID, can append a
 unique suffix to its name, and exits after one session instead of reconnecting,
@@ -453,11 +475,13 @@ systems such as `aarch64-darwin`. The flake exposes
 }
 ```
 
-The launchd module renders `authTokenFile` into a private runtime config so the
-token never enters the Nix store. The token file must be readable by the daemon
-user, which defaults to `_circus-agent`. The module also appends that user to
-Nix `trusted-users` when nix-darwin manages Nix. With `nix.enable = false`,
-whatever owns `/etc/nix/nix.conf` needs the same trust setting added by hand.
+Both modules take `joinTokenFile` in place of `authTokenFile` for join-token
+agents. The launchd module renders the token file into a private runtime config
+so the token never enters the Nix store. The token file must be readable by the
+daemon user, which defaults to `_circus-agent`. The module also appends that
+user to Nix `trusted-users` when nix-darwin manages Nix. With
+`nix.enable = false`, whatever owns `/etc/nix/nix.conf` needs the same trust
+setting added by hand.
 
 Load average and memory are reported the same way on Linux and macOS. PSI has no
 macOS equivalent, so pressure fields stay zero on Darwin and the scheduler falls
@@ -629,6 +653,13 @@ Operational notes:
   token, and the runner compares digests in constant time and checks both
   identity fields. Config validation rejects malformed digests, repeated UUIDs
   or names, and a token shared between agents.
+- Join tokens on `join`. A `[queue_runner.rpc].join_tokens` entry can only
+  create new identities. The runner picks the machine UUID and a 256-bit session
+  token, returns the token once and stores its SHA-256 digest. A joining agent
+  cannot claim a name bound in `auth_tokens`, a name held by a connected agent,
+  or a name first joined through a different join token. Revoked sessions are
+  rejected on `register`, and revocation disconnects the live agent through a
+  Postgres notification.
 - OIDC authentication on `register` when `[queue_runner.rpc.oidc]` is set. The
   runner verifies the issuer, JWKS signature, expiry, accepted audience,
   subject, workflow/ref constraints, and repository allowlist before accepting

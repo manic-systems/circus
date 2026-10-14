@@ -137,6 +137,58 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
   Ok(())
 }
 
+/// Trade the configured join token for a runner-issued machine ID and session
+/// token.
+///
+/// # Errors
+///
+/// Network or RPC errors, or the runner refusing the join.
+#[expect(
+  clippy::future_not_send,
+  reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+)]
+pub async fn join(cfg: &Agent) -> color_eyre::Result<(Uuid, String)> {
+  let endpoint = Endpoint::from_config(cfg)?;
+  let mut rpc = endpoint.dial().await?;
+  let runner_cap: runner::Client =
+    rpc.bootstrap(rpc_twoparty_capnp::Side::Server);
+  let disconnector = rpc.get_disconnector();
+  let rpc_join = tokio::task::spawn_local(async move {
+    if let Err(e) = rpc.await {
+      tracing::warn!("rpc system ended: {e}");
+    }
+  });
+
+  let joined = async {
+    verify_runner_version(&runner_cap).await?;
+    let mut req = runner_cap.join_request();
+    {
+      let mut info = req.get().init_info();
+      info.set_hostname(read_hostname().as_str());
+      info.set_name(cfg.name.as_str());
+      info.set_proto_version(PROTO_VERSION);
+      info.set_join_token(cfg.join_token.as_str());
+    }
+    let response = req.send().promise.await.map_err(|error| {
+      if error.kind == capnp::ErrorKind::Unimplemented {
+        eyre!("runner does not support join tokens")
+      } else {
+        eyre!("join: {error}")
+      }
+    })?;
+    let payload = response.get().context("join response")?;
+    let machine_id = Uuid::parse_str(payload.get_machine_id()?.to_str()?)
+      .context("runner returned an invalid machine ID")?;
+    let token = payload.get_session_token()?.to_str()?.to_owned();
+    Ok::<_, color_eyre::Report>((machine_id, token))
+  }
+  .await;
+
+  let _ = tokio::time::timeout(DISCONNECT_GRACE, disconnector).await;
+  rpc_join.abort();
+  joined
+}
+
 /// Wait for in-flight builds to finish before disconnecting (new work is
 /// already refused). Bounded; anything still running when the grace expires is
 /// recovered by the runner's orphan sweeper.

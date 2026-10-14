@@ -258,6 +258,20 @@ impl CommandRunner {
         }
         print_builder_sessions(&response);
       },
+      BuilderCommand::Revoke { machine_id } => {
+        let response = self
+          .api
+          .post(
+            &format!("api/v1/admin/builders/sessions/{machine_id}/revoke"),
+            json!({}),
+            true,
+          )
+          .await?;
+        if self.json_output {
+          return print_json(&response);
+        }
+        println!("Revoked builder {machine_id}");
+      },
     }
     Ok(())
   }

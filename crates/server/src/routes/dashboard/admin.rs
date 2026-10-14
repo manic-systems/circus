@@ -15,6 +15,7 @@ use axum::{
 };
 use circus_common::{
   models::{
+    AuthKind,
     CreateNotificationConfig,
     CreateUser,
     NotificationType,
@@ -54,6 +55,7 @@ pub(super) struct AdminParams {
   pub(super) created:      Option<Uuid>,
   pub(super) config:       Option<String>,
   pub(super) task:         Option<String>,
+  pub(super) agent:        Option<String>,
   pub(super) unpinned:     Option<String>,
   pub(super) failed_paths: Option<String>,
   pub(super) deleted:      Option<i64>,
@@ -71,6 +73,8 @@ pub(super) struct AgentView {
   pub(super) builds_succeeded: i64,
   pub(super) builds_failed:    i64,
   pub(super) last_seen:        Option<Timestamp>,
+  /// Joined through a join token, so an admin can revoke it.
+  pub(super) revocable:        bool,
 }
 
 pub(super) struct NotificationTaskView {
@@ -312,6 +316,7 @@ pub(super) async fn load_overview(
     .unwrap_or_else(|| agent_sort.default_direction());
   let mut agents = raw_sessions
     .into_iter()
+    .filter(|s| s.revoked_at.is_none())
     .map(|s| {
       AgentView {
         machine_id:       s.machine_id,
@@ -324,6 +329,7 @@ pub(super) async fn load_overview(
         builds_succeeded: s.builds_succeeded,
         builds_failed:    s.builds_failed,
         last_seen:        s.last_seen,
+        revocable:        s.auth_kind == AuthKind::Session.as_str(),
       }
     })
     .collect::<Vec<AgentView>>();
@@ -483,6 +489,38 @@ pub(super) async fn api_key_delete(
   )
   .await;
   Redirect::to("/admin?key=deleted").into_response()
+}
+
+/// Revoke a joined agent from the admin page.
+pub(super) async fn agent_revoke(
+  State(state): State<AppState>,
+  Path(machine_id): Path<Uuid>,
+  ctx: DashboardContext,
+  extensions: axum::http::Extensions,
+  Form(form): Form<CsrfOnlyForm>,
+) -> Response {
+  if !ctx.is_admin {
+    return StatusCode::FORBIDDEN.into_response();
+  }
+  if let Err(e) = ctx.check_csrf(&form.csrf_token) {
+    return e.into_response();
+  }
+  if let Err(e) =
+    circus_common::repo::builder_sessions::revoke(&state.pool, machine_id).await
+  {
+    tracing::error!(%machine_id, "failed to revoke agent: {e}");
+    return Redirect::to("/admin?agent=error#agents").into_response();
+  }
+  crate::audit::record_action(
+    &state.pool,
+    &extensions,
+    "BUILDER_SESSION_REVOKE",
+    Some("builder_session"),
+    Some(&machine_id.to_string()),
+    serde_json::Value::Null,
+  )
+  .await;
+  Redirect::to("/admin?agent=revoked#agents").into_response()
 }
 
 /// Requeue a failed notification task.
