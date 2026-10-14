@@ -11,6 +11,7 @@
 //!    completion is reported via the `result` sink the runner passed in.
 
 use std::{
+  cell::OnceCell,
   collections::HashMap,
   fmt::Write,
   path::{Path, PathBuf},
@@ -65,7 +66,10 @@ use crate::{
   clippy::future_not_send,
   reason = "capnp futures are not Send; agent uses a single-threaded runtime"
 )]
-pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> misstep::Result<()> {
+pub async fn run_once(
+  cfg: &Agent,
+  machine_id: Option<Uuid>,
+) -> misstep::Result<()> {
   let endpoint = Endpoint::from_config(cfg)?;
   let mut rpc = endpoint.dial().await?;
 
@@ -78,16 +82,22 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> misstep::Result<()> {
     .as_ref()
     .map(|e| Arc::new(Lifecycle::new(e.max_builds)));
 
-  let local_builder: builder::Client = capnp_rpc::new_client(BuilderImpl::new(
+  let builder_impl = BuilderImpl::new(
     cfg.max_jobs,
     cfg.cores,
-    machine_id,
     runner_cap.clone(),
     endpoint,
     cfg.rootless,
     cfg.work_dir.clone(),
     lifecycle.clone(),
-  ));
+  );
+  let builder_inner = Arc::clone(&builder_impl.inner);
+  if let Some(machine_id) = machine_id {
+    builder_inner
+      .machine_id
+      .get_or_init(|| machine_id.to_string());
+  }
+  let local_builder: builder::Client = capnp_rpc::new_client(builder_impl);
 
   let mut rpc_join = tokio::task::spawn_local(async move {
     if let Err(e) = rpc.await {
@@ -96,8 +106,17 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> misstep::Result<()> {
   });
 
   verify_runner_version(&runner_cap).await?;
-  let session = register(&runner_cap, cfg, machine_id, local_builder).await?;
-  tracing::info!("registered with runner");
+  let (session, assigned) =
+    register(&runner_cap, cfg, machine_id, local_builder).await?;
+  if let Some(expected) = machine_id
+    && expected != assigned
+  {
+    bail!("runner registered machine {assigned}, expected {expected}");
+  }
+  builder_inner
+    .machine_id
+    .get_or_init(|| assigned.to_string());
+  tracing::info!(machine_id = %assigned, "registered with runner");
 
   let mut heartbeat_join = spawn_heartbeat(
     session,
@@ -316,9 +335,9 @@ async fn verify_runner_version(
 async fn register(
   runner_cap: &runner::Client,
   cfg: &Agent,
-  machine_id: Uuid,
+  machine_id: Option<Uuid>,
   local_builder: builder::Client,
-) -> misstep::Result<agent_session::Client> {
+) -> misstep::Result<(agent_session::Client, Uuid)> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
@@ -328,15 +347,29 @@ async fn register(
   fill_info(params.reborrow().init_info(), cfg, machine_id);
   params.set_builder(local_builder);
   let response = req.send().promise.await.context("register")?;
-  let session = response.get().context("register response")?.get_session()?;
-  Ok(session)
+  let payload = response.get().context("register response")?;
+  let reply = payload.get_machine_id()?.to_str()?;
+  // Runners that predate minted IDs leave the result empty.
+  let assigned = match machine_id {
+    Some(sent) if reply.is_empty() => sent,
+    _ => {
+      Uuid::parse_str(reply).context("runner sent a malformed machine ID")?
+    },
+  };
+  Ok((payload.get_session()?, assigned))
 }
 
-fn fill_info(mut info: agent_info::Builder<'_>, cfg: &Agent, machine_id: Uuid) {
+fn fill_info(
+  mut info: agent_info::Builder<'_>,
+  cfg: &Agent,
+  machine_id: Option<Uuid>,
+) {
   let hostname = read_hostname();
   info.set_hostname(hostname.as_str());
   info.set_name(cfg.name.as_str());
-  info.set_machine_id(machine_id.to_string().as_str());
+  if let Some(machine_id) = machine_id {
+    info.set_machine_id(machine_id.to_string().as_str());
+  }
   info.set_speed_factor(cfg.speed_factor);
   info.set_cpu_count(num_cpus() as u32);
   info.set_max_jobs(cfg.max_jobs);
@@ -603,7 +636,9 @@ struct BuilderImpl {
 struct BuilderInner {
   max_jobs:   u32,
   cores:      u32,
-  machine_id: String,
+  /// Set before [`register`] when the agent knows its ID, otherwise once the
+  /// runner returns the ID it minted.
+  machine_id: OnceCell<String>,
   /// Runner capability, used to request presigned URLs and notify the
   /// runner of upload completion. Cloning a capnp client is cheap.
   runner_cap: runner::Client,
@@ -629,7 +664,6 @@ impl BuilderImpl {
   fn new(
     max_jobs: u32,
     cores: u32,
-    machine_id: Uuid,
     runner_cap: runner::Client,
     endpoint: Endpoint,
     rootless: bool,
@@ -640,7 +674,7 @@ impl BuilderImpl {
       inner: Arc::new(BuilderInner {
         max_jobs,
         cores,
-        machine_id: machine_id.to_string(),
+        machine_id: OnceCell::new(),
         runner_cap,
         endpoint,
         running: Mutex::new(HashMap::new()),
@@ -709,6 +743,12 @@ impl builder::Server for BuilderImpl {
         None
       };
 
+      let Some(machine_id) = inner.machine_id.get().cloned() else {
+        return Err(capnp::Error::failed(
+          "assignment arrived before registration finished".into(),
+        ));
+      };
+
       // Draining: refuse like the max-jobs case so the runner reschedules.
       if inner.lifecycle.as_ref().is_some_and(|l| l.is_draining()) {
         return Err(capnp::Error::failed(
@@ -759,7 +799,7 @@ impl builder::Server for BuilderImpl {
           },
           build::DrvFetch {
             runner_cap: &inner_for_task.runner_cap,
-            machine_id: &inner_for_task.machine_id,
+            machine_id: &machine_id,
             build_id:   &build_id_str,
           },
           log,
@@ -778,7 +818,7 @@ impl builder::Server for BuilderImpl {
         {
           match crate::upload::upload_all(
             &inner_for_task.runner_cap,
-            &inner_for_task.machine_id,
+            &machine_id,
             &build_id_str,
             &compression,
             &local.outputs,

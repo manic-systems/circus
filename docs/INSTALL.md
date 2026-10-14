@@ -1043,8 +1043,8 @@ agent-side settings most relevant to distributed and ephemeral builders:
 ### Ephemeral GitHub Actions Agents
 
 Ephemeral agents are short-lived `circus-agent` processes intended for CI
-runners. They mint a fresh machine ID, register once, drain any assigned work,
-and exit instead of reconnecting. Enable the mode with
+runners. The runner assigns each a fresh machine ID, they register once, drain
+any assigned work, and exit instead of reconnecting. Enable the mode with
 `circus-agent
 --ephemeral` or by adding `[agent.ephemeral]` to the agent config.
 

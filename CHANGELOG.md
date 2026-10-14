@@ -28,6 +28,9 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
   already queued, but its aggregate jobs are not created.
 - Project URLs, email channels included, can no longer reach internal addresses.
   Allowlist them in `[outbound] allow_internal`.
+- The queue runner now mints the machine ID of OIDC agents. Ephemeral agents and
+  the runner must be upgraded together, since each rejects the other's older
+  version at registration.
 
 ### Fixed
 

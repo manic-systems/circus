@@ -620,8 +620,14 @@ impl runner::Server for RunnerImpl {
       let builder_cap: builder::Client = pr.get_builder()?;
 
       let machine_id_str = info.get_machine_id()?.to_str()?;
-      let machine_id = Uuid::parse_str(machine_id_str)
-        .map_err(|e| capnp::Error::failed(format!("bad machine_id: {e}")))?;
+      let claimed =
+        if machine_id_str.is_empty() {
+          None
+        } else {
+          Some(Uuid::parse_str(machine_id_str).map_err(|e| {
+            capnp::Error::failed(format!("bad machine_id: {e}"))
+          })?)
+        };
       let name = info.get_name()?.to_str()?.to_owned();
       let hostname = info.get_hostname()?.to_str()?.to_owned();
       validate_text_len("agent.name", &name, 1, limits::MAX_AGENT_NAME_LEN)?;
@@ -652,7 +658,7 @@ impl runner::Server for RunnerImpl {
       });
       let configured = credential.is_some()
         || cfg.auth_tokens.iter().any(|credential| {
-          credential.machine_id == machine_id || credential.name == name
+          claimed == Some(credential.machine_id) || credential.name == name
         });
       let session = if configured {
         None
@@ -678,41 +684,53 @@ impl runner::Server for RunnerImpl {
           "the join token this session came from was removed".into(),
         ));
       }
+      if (credential.is_some() || session.is_some()) && info.get_ephemeral() {
+        tracing::warn!(%name, "ephemeral agent presented a bearer token");
+        return Err(capnp::Error::failed(
+          "ephemeral agents must authenticate with OIDC, since a bearer token \
+           is bound to one machine ID"
+            .into(),
+        ));
+      }
 
-      let (auth_kind, oidc_identity) = if credential.is_some_and(|credential| {
-        credential.machine_id == machine_id && credential.name == name
-      }) || session.as_ref().is_some_and(
-        |session| session.machine_id == machine_id && session.name == name,
-      ) {
-        if info.get_ephemeral() {
-          tracing::warn!(%name, "ephemeral agent presented a bearer token");
-          return Err(capnp::Error::failed(
-            "ephemeral agents must authenticate with OIDC, since a bearer \
-             token is bound to one machine ID"
-              .into(),
-          ));
-        }
-
+      let bound = credential
+        .map(|credential| (credential.machine_id, credential.name.as_str()))
+        .or_else(|| {
+          session
+            .as_ref()
+            .map(|session| (session.machine_id, session.name.as_str()))
+        })
+        .filter(|&(id, bound_name)| claimed == Some(id) && bound_name == name)
+        .map(|(id, _)| id);
+      let (auth_kind, oidc_identity, machine_id) = if let Some(machine_id) =
+        bound
+      {
         let kind = if session.is_some() {
           AuthKind::Session
         } else {
           AuthKind::Token
         };
-        (kind, None)
+        (kind, None, machine_id)
       } else if let Some(session) = &session {
-        tracing::warn!(%machine_id, %name, "session belongs to another agent");
+        tracing::warn!(?claimed, %name, "session belongs to another agent");
         return Err(capnp::Error::failed(format!(
           "this session belongs to agent {} ({})",
           session.name, session.machine_id
         )));
       } else if configured {
-        tracing::warn!(%machine_id, %name, "credentials do not match the agent identity");
+        tracing::warn!(?claimed, %name, "credentials do not match the agent identity");
         return Err(capnp::Error::failed("auth failed".into()));
       } else if let Some(verifier) = cfg.oidc.as_ref() {
         match verifier.verify(token).await {
           Ok(id) => {
+            if claimed.is_some() {
+              return Err(capnp::Error::failed(
+                "OIDC agents take their machine ID from the runner".into(),
+              ));
+            }
+
             tracing::info!(name = %name, repository = %id.repository, subject = %id.subject, "agent authenticated via OIDC");
-            (AuthKind::Oidc, Some(id))
+            (AuthKind::Oidc, Some(id), Uuid::new_v4())
           },
           Err(e) => {
             tracing::warn!(name = %name, "OIDC auth failed: {e}");
@@ -860,7 +878,9 @@ impl runner::Server for RunnerImpl {
       };
       let session_cap: agent_session::Client =
         capnp_rpc::new_client(session_impl);
-      results.get().set_session(session_cap);
+      let mut result = results.get();
+      result.set_session(session_cap);
+      result.set_machine_id(machine_id.to_string().as_str());
       Ok(())
     })
   }
