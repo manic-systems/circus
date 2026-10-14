@@ -237,6 +237,8 @@ scheduler reads from that cache.
 
 Single queue-runner, multiple agents:
 
+<!--markdownlint-disable MD013-->
+
 ```toml
 # circus.toml on the queue-runner host
 [queue_runner]
@@ -309,6 +311,8 @@ pin_cn              = true                                 # CN must equal agent
 require_client_cert = false                                # true opts into strict mTLS
 ```
 
+<!--markdownlint-enable MD013-->
+
 > [!NOTE]
 > Agent uploads store NARs in S3 and persist the corresponding narinfo in the
 > database. Cache consumers still use the Circus `/nix-cache/` URL; NAR
@@ -336,6 +340,10 @@ ca_file   = "/etc/circus/tls/runner.ca.crt" # required: trusts the runner cert
 cert_file = "/etc/circus/tls/build-01.crt"  # optional: client identity (mTLS)
 key_file  = "/etc/circus/tls/build-01.key"  # omit cert_file + key_file for token-only
 ```
+
+> [!TIP]
+> See the relevant [certificate setup section](#tls-certificates) on how to
+> create your certificates, and sample configuration.
 
 Each persistent agent needs its own random token and a matching runner entry.
 The entry's UUID is the agent's `<work_dir>/machine_id`, so either copy the one
@@ -418,6 +426,67 @@ Disconnected ephemeral rows are marked `connected = false` like persistent
 agents, then pruned by the queue-runner after the ephemeral session TTL.
 In-flight builds that are lost with the CI VM are recovered by the normal orphan
 reset and returned to `pending`.
+
+### TLS certificates
+
+Circus reads TLS material from PEM files; it does not create or rotate it. For a
+small private cluster, one internal CA can issue the runner server certificate
+and each agent's client certificate:
+
+- Keep `ca.key` offline or in a secret store. Both sides need only the public
+  `ca.crt`.
+- Issue the runner certificate with a SAN or CN matching the host in
+  `circus+tls://`.
+- For mTLS, issue one client certificate per agent. With `pin_cn = true`, use
+  the agent's name as the client certificate CN.
+- Store each private key only on its own host.
+
+Example with OpenSSL:
+
+```sh
+# CA (keep ca.key in a secret store)
+$ openssl req -x509 -new -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -keyout ca.key -out ca.crt -subj "/CN=circus-internal-ca"
+
+# runner server cert (SAN must match runner_url host)
+$ openssl req -new -newkey rsa:2048 -nodes \
+  -keyout runner.key -out runner.csr \
+  -subj "/CN=runner.internal" \
+  -addext "subjectAltName=DNS:runner.internal"
+$ openssl x509 -req -in runner.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out runner.crt -days 825 -sha256 -copy_extensions copy
+
+# agent client cert (repeat per agent; CN must equal agent.name)
+$ openssl req -new -newkey rsa:2048 -nodes \
+  -keyout build-01.key -out build-01.csr \
+  -subj "/CN=build-01"
+$ openssl x509 -req -in build-01.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out build-01.crt -days 825 -sha256
+```
+
+Then configure those files. A strict mTLS deployment uses:
+
+```toml
+# runner
+[queue_runner.rpc.tls]
+cert_file           = "/var/lib/circus/tls/runner.crt"
+key_file            = "/var/lib/circus/tls/runner.key"
+client_ca           = "/var/lib/circus/tls/ca.crt"    # enables client-cert verification
+require_client_cert = true                            # strict mTLS
+pin_cn              = true
+
+# agent
+[agent.tls]
+ca_file   = "/etc/circus/tls/ca.crt"       # trusts the runner certificate
+cert_file = "/etc/circus/tls/build-01.crt" # optional mTLS identity
+key_file  = "/etc/circus/tls/build-01.key"
+```
+
+Distribute public certificates (`ca.crt`, `runner.crt`, and client certificates)
+with normal configuration or deployment tools. Move private keys through a
+secret manager (e.g., `sops` or agenix) or another encrypted channel, and
+restrict their file permissions. For token-only TLS, omit client certificate
+files and set `require_client_cert = false`.
 
 ## GitHub Actions Ephemeral Pool
 
