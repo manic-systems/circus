@@ -9,6 +9,15 @@
   settingsFormat = pkgs.formats.toml {};
 
   cfg = config.services.circus-agent;
+  joining = cfg.joinTokenFile != null;
+  tokenFile =
+    if joining
+    then cfg.joinTokenFile
+    else cfg.authTokenFile;
+  tokenKey =
+    if joining
+    then "join_token"
+    else "auth_token";
   effectsEnabled =
     cfg.settings.agent ? effects || cfg.effectsSecretsFile != null;
   effectsSecretsPathComponents =
@@ -18,7 +27,7 @@
   generatedSettings =
     recursiveUpdate
     {
-      agent.auth_token = "@CIRCUS_AGENT_AUTH_TOKEN@";
+      agent.${tokenKey} = "@CIRCUS_AGENT_AUTH_TOKEN@";
       tracing.show_timestamps = false;
     }
     (optionalAttrs (cfg.effectsSecretsFile != null) {
@@ -87,7 +96,7 @@ in {
           # Render the auth token into a runtime config that is private to
           # this unit. The token never lands in the Nix store.
           LoadCredential =
-            ["auth_token:${cfg.authTokenFile}"]
+            ["auth_token:${tokenFile}"]
             ++ lib.optional (cfg.effectsSecretsFile != null)
             "effects_secrets:${cfg.effectsSecretsFile}";
           ExecStartPre = pkgs.writeShellScript "circus-agent-render-config" ''

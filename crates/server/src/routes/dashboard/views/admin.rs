@@ -70,6 +70,7 @@ struct Notices {
   new_key:      Option<String>,
   config:       Option<Flash>,
   tasks:        Option<Flash>,
+  agents:       Option<Flash>,
 }
 
 impl Notices {
@@ -106,6 +107,11 @@ impl Notices {
       Some("error") => Some(Flash::error("Failed to delete key")),
       _ => None,
     };
+    let agents = match params.agent.as_deref() {
+      Some("revoked") => Some(Flash::success("Agent revoked.")),
+      Some("error") => Some(Flash::error("Failed to revoke agent")),
+      _ => None,
+    };
     let tasks = match params.task.as_deref() {
       Some("retried") => Some(Flash::success("Notification task requeued.")),
       Some("error") => Some(Flash::error("Failed to retry notification task")),
@@ -124,6 +130,7 @@ impl Notices {
         )
       }),
       tasks,
+      agents,
     }
   }
 }
@@ -609,6 +616,7 @@ async fn admin_view(
 
       <section class="panel" id="agents">
         <div class="panel-header"><h2>"Agents"</h2></div>
+        flash(notice: notices.agents)
         if overview.agents.is_empty() {
           empty(
             title: "No agents registered",
@@ -626,6 +634,7 @@ async fn admin_view(
                 <col class="agents-col-succeeded">
                 <col class="agents-col-failed">
                 <col class="agents-col-last-seen">
+                <col class="agents-col-actions">
               </colgroup>
               <thead>
                 <tr>
@@ -640,6 +649,7 @@ async fn admin_view(
                       </a>
                     </th>
                   }
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -663,6 +673,22 @@ async fn admin_view(
                       match agent.last_seen {
                         Some(at) => local_time(at: at, zone: false),
                         None => "Never",
+                      }
+                    </td>
+                    <td class="row-actions">
+                      if agent.revocable {
+                        <form
+                          method="POST"
+                          action=(format!("/admin/agents/{}/revoke", agent.machine_id))
+                          class="inline-form"
+                        >
+                          csrf(token: token)
+                          confirm_button(
+                            prompt: "Revoke this agent? It disconnects and must join again with a fresh session.",
+                            class: "btn btn-small btn-danger",
+                            label: "Revoke",
+                          )
+                        </form>
                       }
                     </td>
                   </tr>

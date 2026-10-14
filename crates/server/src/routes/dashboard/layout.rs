@@ -25,7 +25,7 @@ use topcoat::{
 use super::shared::{DashboardContext, DashboardPage, UiTemplateConfig};
 use crate::{auth_middleware::session_extensions, state::AppState};
 
-const STYLESHEET: &str = "/static/style.css?v=graphite-dashboard-v25";
+const STYLESHEET: &str = "/static/style.css?v=graphite-dashboard-v26";
 
 struct NavLink {
   href:  &'static str,

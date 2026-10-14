@@ -43,6 +43,11 @@ interface Runner {
   # Hand back a build's `OutputSink` on this connection, so a large output
   # closure gets its own TCP flow. `token` is `BuildAssignment.outputToken`.
   openOutputSink @5 (buildId :Text, token :Text) -> (sink :OutputSink);
+
+  # Trade a shared join token for a machine ID and session token minted by
+  # the runner. The agent stores both and presents the session token as
+  # `AgentInfo.authToken` on every later `register`.
+  join @6 (info :JoinInfo) -> (machineId :Text, sessionToken :Text);
 }
 
 # Capability the agent passes to the runner during register. The runner calls
@@ -112,6 +117,13 @@ struct AgentInfo {
   authToken          @10 :Text;       # bearer; runner compares to a hash
   ephemeral          @11 :Bool;       # single-session agent (CI runner); never reconnects
   effects            @12 :Bool;       # opts in to running post-build effects
+}
+
+struct JoinInfo {
+  hostname     @0 :Text;
+  name         @1 :Text;
+  protoVersion @2 :Text;
+  joinToken    @3 :Text;
 }
 
 struct Heartbeat {

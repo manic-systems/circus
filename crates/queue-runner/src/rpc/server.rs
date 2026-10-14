@@ -20,7 +20,7 @@ use std::{
 use capnp::capability::Promise;
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
 use circus_common::{BuildStatus, PgPool, models::AuthKind, repo};
-use circus_config::{RpcAgentToken, RpcConfig};
+use circus_config::{RpcAgentToken, RpcConfig, RpcJoinToken, TokenHash};
 use circus_proto::{
   PROTO_VERSION,
   agent_session,
@@ -111,6 +111,8 @@ pub struct ServerConfig {
   pub bind:               SocketAddr,
   /// Bearer credentials bound to a machine ID and agent name.
   pub auth_tokens:        Vec<RpcAgentToken>,
+  /// Shared tokens that mint a machine ID and session token on `join`.
+  pub join_tokens:        Vec<RpcJoinToken>,
   pub max_connections:    usize,
   pub max_conns_per_ip:   usize,
   /// Optional TLS. `None` means plain TCP.
@@ -211,6 +213,7 @@ impl ServerConfig {
     Ok(Self {
       bind,
       auth_tokens: cfg.auth_tokens.clone(),
+      join_tokens: cfg.join_tokens.clone(),
       max_connections: cfg.max_connections,
       max_conns_per_ip: cfg.max_connections_per_ip,
       tls,
@@ -624,24 +627,48 @@ impl runner::Server for RunnerImpl {
       )?;
       // Bearer token first (cheap, constant-time); fall through to OIDC so a
       // JWT presented in the same field is verified against the issuer's JWKS.
-      let credential = token_credential(&cfg.auth_tokens, token);
-      let (auth_kind, oidc_identity) = if credential.is_some_and(|credential| {
-        credential.machine_id == machine_id && credential.name == name
-      }) {
-        (AuthKind::Token, None)
-      } else if credential.is_some() && info.get_ephemeral() {
-        tracing::warn!(%name, "ephemeral agent presented a bearer token");
-        return Err(capnp::Error::failed(
-          "ephemeral agents must authenticate with OIDC, since a bearer token \
-           is bound to one machine ID"
-            .into(),
-        ));
-      } else if credential.is_some()
+      let credential = matching_token(&cfg.auth_tokens, token, |credential| {
+        &credential.token_hash
+      });
+      let configured = credential.is_some()
         || cfg.auth_tokens.iter().any(|credential| {
           credential.machine_id == machine_id || credential.name == name
-        })
-      {
-        tracing::warn!(%machine_id, %name, "credentials do not match the configured agent identity");
+        });
+      let session = if configured {
+        None
+      } else {
+        repo::builder_sessions::get_by_session_hash(
+          &db_pool,
+          &Sha256::digest(token.as_bytes()).into(),
+        )
+        .await
+        .map_err(|error| {
+          tracing::warn!(%name, "session lookup failed: {error}");
+          capnp::Error::failed("auth failed".into())
+        })?
+      };
+      let (auth_kind, oidc_identity) = if credential.is_some_and(|credential| {
+        credential.machine_id == machine_id && credential.name == name
+      }) || session.as_ref().is_some_and(
+        |session| session.machine_id == machine_id && session.name == name,
+      ) {
+        if info.get_ephemeral() {
+          tracing::warn!(%name, "ephemeral agent presented a bearer token");
+          return Err(capnp::Error::failed(
+            "ephemeral agents must authenticate with OIDC, since a bearer \
+             token is bound to one machine ID"
+              .into(),
+          ));
+        }
+
+        let kind = if session.is_some() {
+          AuthKind::Session
+        } else {
+          AuthKind::Token
+        };
+        (kind, None)
+      } else if configured || session.is_some() {
+        tracing::warn!(%machine_id, %name, "credentials do not match the agent identity");
         return Err(capnp::Error::failed("auth failed".into()));
       } else if let Some(verifier) = cfg.oidc.as_ref() {
         match verifier.verify(token).await {
@@ -659,21 +686,7 @@ impl runner::Server for RunnerImpl {
         return Err(capnp::Error::failed("auth failed".into()));
       };
 
-      if cfg.tls.as_ref().is_some_and(|t| t.pin_cn) && peer_cert.presented {
-        match peer_cert.name.as_deref() {
-          Some(cert_name) if cert_name == name => {},
-          Some(cert_name) => {
-            tracing::warn!(name = %name, cert_name, "cert name does not match agent name");
-            return Err(capnp::Error::failed("cert/name mismatch".into()));
-          },
-          None => {
-            tracing::warn!(name = %name, "client cert has no name to pin");
-            return Err(capnp::Error::failed(
-              "client cert has no pinned name".into(),
-            ));
-          },
-        }
-      }
+      check_pinned_name(&cfg, &peer_cert, &name)?;
 
       let systems = read_bounded_text_list(
         info.get_systems()?,
@@ -832,6 +845,106 @@ impl runner::Server for RunnerImpl {
       let session_cap: agent_session::Client =
         capnp_rpc::new_client(session_impl);
       results.get().set_session(session_cap);
+      Ok(())
+    })
+  }
+
+  fn join(
+    self: capnp::capability::Rc<Self>,
+    params: runner::JoinParams,
+    mut results: runner::JoinResults,
+  ) -> Promise<(), capnp::Error> {
+    let cfg = Arc::clone(&self.cfg);
+    let pool = Arc::clone(&self.pool);
+    let db_pool = self.db_pool.clone();
+    let peer_cert = self.peer_cert.clone();
+    Promise::from_future(async move {
+      let info = params.get()?.get_info()?;
+      let name = info.get_name()?.to_str()?.to_owned();
+      let hostname = info.get_hostname()?.to_str()?.to_owned();
+      validate_text_len("agent.name", &name, 1, limits::MAX_AGENT_NAME_LEN)?;
+      validate_text_len(
+        "agent.hostname",
+        &hostname,
+        1,
+        limits::MAX_HOSTNAME_LEN,
+      )?;
+
+      let proto = info.get_proto_version()?.to_str()?;
+      if proto != PROTO_VERSION {
+        return Err(capnp::Error::failed(format!(
+          "proto mismatch: agent={proto} runner={PROTO_VERSION}"
+        )));
+      }
+
+      let token = info.get_join_token()?.to_str()?;
+      validate_text_len(
+        "agent.join_token",
+        token,
+        1,
+        limits::MAX_AUTH_TOKEN_LEN,
+      )?;
+      let Some(join_token) =
+        matching_token(&cfg.join_tokens, token, |join| &join.token_hash)
+      else {
+        tracing::warn!(%name, "bad join token from agent");
+        return Err(capnp::Error::failed("auth failed".into()));
+      };
+
+      if cfg
+        .auth_tokens
+        .iter()
+        .any(|credential| credential.name == name)
+      {
+        tracing::warn!(%name, "join requested a name bound to auth_tokens");
+        return Err(capnp::Error::failed(format!(
+          "agent name {name} is in use"
+        )));
+      }
+      check_pinned_name(&cfg, &peer_cert, &name)?;
+
+      let mut secret = [0u8; 32];
+      getrandom::fill(&mut secret).map_err(|error| {
+        capnp::Error::failed(format!(
+          "session token generation failed: {error}"
+        ))
+      })?;
+      let session_token = data_encoding::HEXLOWER.encode(&secret);
+      let machine_id = Uuid::new_v4();
+
+      repo::builder_sessions::join(
+        &db_pool,
+        repo::builder_sessions::Join {
+          machine_id,
+          name: &name,
+          hostname: &hostname,
+          proto_version: PROTO_VERSION,
+          join_token: &join_token.name,
+          session_token_hash: &Sha256::digest(session_token.as_bytes()).into(),
+        },
+        |holder| pool.get(&holder).is_some(),
+        |holder| {
+          cfg
+            .auth_tokens
+            .iter()
+            .any(|credential| credential.machine_id == holder)
+        },
+      )
+      .await
+      .map_err(|error| {
+        tracing::warn!(%name, join_token = %join_token.name, "join rejected: {error}");
+        match error {
+          circus_common::CiError::Conflict(message) => {
+            capnp::Error::failed(message)
+          },
+          _ => capnp::Error::failed("join failed".into()),
+        }
+      })?;
+      tracing::info!(%name, join_token = %join_token.name, %machine_id, "agent joined");
+
+      let mut r = results.get();
+      r.set_machine_id(machine_id.to_string());
+      r.set_session_token(&session_token);
       Ok(())
     })
   }
@@ -1958,18 +2071,44 @@ fn validate_upload_compression(compression: &str) -> Result<(), capnp::Error> {
 }
 
 /// Compares against every entry so timing does not reveal which one matched.
-fn token_credential<'cfg>(
-  allowed: &'cfg [RpcAgentToken],
+fn matching_token<'cfg, T>(
+  allowed: &'cfg [T],
   token: &str,
-) -> Option<&'cfg RpcAgentToken> {
+  hash: fn(&T) -> &TokenHash,
+) -> Option<&'cfg T> {
   let digest = Sha256::digest(token.as_bytes());
   let mut matched = None;
-  for credential in allowed {
-    if bool::from(credential.token_hash.as_bytes().ct_eq(&digest[..])) {
-      matched = Some(credential);
+  for entry in allowed {
+    if bool::from(hash(entry).as_bytes().ct_eq(&digest[..])) {
+      matched = Some(entry);
     }
   }
   matched
+}
+
+/// With `pin_cn`, a presented client certificate must name the agent.
+fn check_pinned_name(
+  cfg: &ServerConfig,
+  peer_cert: &PeerCertIdentity,
+  name: &str,
+) -> Result<(), capnp::Error> {
+  if !cfg.tls.as_ref().is_some_and(|tls| tls.pin_cn) || !peer_cert.presented {
+    return Ok(());
+  }
+
+  match peer_cert.name.as_deref() {
+    Some(cert_name) if cert_name == name => Ok(()),
+    Some(cert_name) => {
+      tracing::warn!(%name, cert_name, "cert name does not match agent name");
+      Err(capnp::Error::failed("cert/name mismatch".into()))
+    },
+    None => {
+      tracing::warn!(%name, "client cert has no name to pin");
+      Err(capnp::Error::failed(
+        "client cert has no pinned name".into(),
+      ))
+    },
+  }
 }
 
 #[cfg(test)]
@@ -2015,7 +2154,7 @@ mod tests {
   }
 
   #[test]
-  fn token_credential_finds_the_matching_entry() {
+  fn matching_token_finds_the_matching_entry() {
     let token = "correct horse battery staple";
     let credential = RpcAgentToken {
       machine_id: Uuid::new_v4(),
@@ -2023,8 +2162,10 @@ mod tests {
       token_hash: <[u8; 32]>::from(Sha256::digest(token.as_bytes())).into(),
     };
     let allowed = [credential];
-    assert!(token_credential(&allowed, token).is_some());
-    assert!(token_credential(&allowed, "other").is_none());
+    let hash: fn(&RpcAgentToken) -> &TokenHash =
+      |credential| &credential.token_hash;
+    assert!(matching_token(&allowed, token, hash).is_some());
+    assert!(matching_token(&allowed, "other", hash).is_none());
   }
 
   #[test]
