@@ -287,7 +287,7 @@ configuration or the Nix store.
 | `gc`                 | `max_age_days`                                         | `30`                                                | Remove GC roots older than N days                                         |
 | `gc`                 | `cleanup_interval`                                     | `3600`                                              | GC cleanup interval (seconds)                                             |
 | `logs`               | `log_dir`                                              | `/var/lib/circus/logs`                              | Build log storage directory                                               |
-| `logs`               | `compress`                                             | `false`                                             | Compress stored logs                                                      |
+| `logs`               | `compress`                                             | `false`                                             | Store completed logs as zstd `.log.zst`                                   |
 | `cache`              | `enabled`                                              | `true`                                              | Serve a Nix binary cache at `/nix-cache/`                                 |
 | `cache`              | `secret_key_file`                                      | none                                                | Deprecated; outputs are signed via `[signing]`                            |
 | `cache`              | `cache_url`                                            | none                                                | Public cache URL for channel manifests                                    |

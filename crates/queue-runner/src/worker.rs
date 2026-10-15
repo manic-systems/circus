@@ -1156,30 +1156,26 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
   };
 
   // Initialize log storage
-  let log_storage = LogStorage::new(log_config.log_dir.clone()).ok();
+  let log_storage =
+    LogStorage::new(log_config.log_dir.clone(), log_config.compress).ok();
 
   match result {
     Ok(build_result) => {
-      // Write build log (rename active log to final)
-      let log_path = if let Some(ref storage) = log_storage {
-        let final_path = storage.log_path(&build.id);
-        if live_log_path.exists() {
-          if let Err(e) = fs::rename(&live_log_path, &final_path).await {
-            tracing::warn!(build_id = %build.id, "Failed to rename build log: {e}");
-          }
+      let log_path = if let Some(storage) = &log_storage {
+        let result = if live_log_path.exists() {
+          storage.finalize_log(&build.id).await
         } else {
-          match storage.write_log(
-            &build.id,
-            &build_result.stdout,
-            &build_result.stderr,
-          ) {
-            Ok(_) => {},
-            Err(e) => {
-              tracing::warn!(build_id = %build.id, "Failed to write build log: {e}");
-            },
-          }
+          storage
+            .write_log(&build.id, &build_result.stdout, &build_result.stderr)
+            .await
+        };
+        match result {
+          Ok(path) => Some(path.to_string_lossy().into_owned()),
+          Err(e) => {
+            tracing::warn!(build_id = %build.id, "Failed to store build log: {e}");
+            None
+          },
         }
-        Some(final_path.to_string_lossy().to_string())
       } else {
         None
       };
@@ -1446,12 +1442,17 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
     Err(e) => {
       let msg = e.to_string();
 
-      // Write error log
-      if let Some(ref storage) = log_storage
-        && let Err(e) = storage.write_log(&build.id, "", &msg)
-      {
-        tracing::warn!(build_id = %build.id, "Failed to write error log: {e}");
-      }
+      let log_path = if let Some(storage) = &log_storage {
+        match storage.write_log(&build.id, "", &msg).await {
+          Ok(path) => Some(path.to_string_lossy().into_owned()),
+          Err(e) => {
+            tracing::warn!(build_id = %build.id, "Failed to write error log: {e}");
+            None
+          },
+        }
+      } else {
+        None
+      };
       if let Err(e) = fs::remove_file(&live_log_path).await {
         tracing::debug!(build_id = %build.id, "Failed to remove failed live log: {e}");
       }
@@ -1460,7 +1461,7 @@ async fn run_build(ctx: BuildContext, build: &Build) -> color_eyre::Result<()> {
         pool,
         build.id,
         BuildStatus::Failed,
-        None,
+        log_path.as_deref(),
         None,
         Some(&msg),
       )

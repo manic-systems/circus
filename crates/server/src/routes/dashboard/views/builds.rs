@@ -2,7 +2,10 @@
 
 use std::{collections::HashMap, path::Path};
 
-use circus_common::models::{BuildProduct, NewsItem};
+use circus_common::{
+  log_storage::read_log_file,
+  models::{BuildProduct, NewsItem},
+};
 use topcoat::{
   Result,
   context::{Cx, app_context},
@@ -1281,10 +1284,7 @@ async fn build_log_page(cx: &Cx) -> Result<impl View> {
   )
   .await
   .ok_or_not_found()?;
-  let raw = tokio::fs::read_to_string(path)
-    .await
-    .ok()
-    .ok_or_not_found()?;
+  let raw = read_log_file(&path).await.ok().ok_or_not_found()?;
   let log = parse_build_log(&raw);
   let build = build_view(&build);
   let title = format!("Log {}", build.job_name);

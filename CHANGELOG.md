@@ -20,6 +20,9 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 
 - The sign-in button on private dashboard pages now opens the login page, so
   OIDC providers are offered there too.
+- `logs.compress` previously had no effect. When it is set, completed build logs
+  are now stored as zstd `.log.zst` files. Logs written before the setting
+  changed stay readable.
 
 ## 0.14.0
 

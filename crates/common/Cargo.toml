@@ -8,6 +8,7 @@ description          = "Shared models and utilities for Circus"
 
 [dependencies]
 argon2.workspace              = true
+async-compression.workspace   = true
 circus-binary-cache.workspace = true
 circus-codegen.workspace      = true
 circus-config.workspace       = true

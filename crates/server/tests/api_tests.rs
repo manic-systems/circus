@@ -2809,3 +2809,101 @@ async fn test_admin_caches_forbidden_for_non_admin() {
     .unwrap();
   assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn test_zstd_finalized_log_waits_for_terminal_status() {
+  use std::time::Duration;
+
+  use circus_common::{BuildStatus, log_storage::LogStorage, repo::builds};
+  use circus_config::Config;
+  use futures::StreamExt;
+  use tempfile::tempdir;
+  use tokio::time::timeout;
+  use uuid::Uuid;
+
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project_id = create_test_project(&pool).await;
+  let row = pool
+    .get()
+    .await
+    .unwrap()
+    .query_one(
+      "WITH jobset AS (
+         INSERT INTO jobsets (project_id, name, nix_expression)
+         VALUES ($1, 'log-stream', 'packages')
+         RETURNING id
+       ), evaluation AS (
+         INSERT INTO evaluations (jobset_id, commit_hash, status)
+         SELECT id, 'log-stream', 'running' FROM jobset
+         RETURNING id
+       )
+       INSERT INTO builds (evaluation_id, job_name, drv_path, status)
+       SELECT id, 'log-stream', '/nix/store/log-stream.drv', 'running'
+       FROM evaluation
+       RETURNING id",
+      &[&project_id],
+    )
+    .await
+    .unwrap();
+
+  let id: Uuid = row.get(0);
+
+  let logs = tempdir().unwrap();
+  let storage = LogStorage::new(logs.path().to_path_buf(), true).unwrap();
+  let path = storage
+    .write_log(&id, "completed compiler output", "")
+    .await
+    .unwrap();
+
+  let mut config = Config::default();
+  config.ui.enabled = false;
+  config.server.require_api_key_for_reads = false;
+  config.logs.log_dir = logs.path().to_path_buf();
+  config.logs.compress = false;
+
+  let response = build_app_with_config(pool.clone(), &config)
+    .oneshot(
+      Request::builder()
+        .uri(format!("/api/v1/builds/{id}/log/stream"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let mut stream = response.into_body().into_data_stream();
+
+  let mut next_event = async |secs| {
+    let chunk = timeout(Duration::from_secs(secs), stream.next())
+      .await
+      .ok()?;
+    Some(String::from_utf8(chunk.unwrap().unwrap().to_vec()).unwrap())
+  };
+
+  let first = next_event(5).await.unwrap();
+  assert!(first.contains("data: completed compiler output"));
+  // Cover at least one status poll, not just the initial output event.
+  assert_eq!(next_event(4).await, None);
+
+  assert!(builds::requeue(&pool, id).await.unwrap().is_some());
+  assert_eq!(next_event(4).await, None);
+
+  let completed = builds::complete(
+    &pool,
+    id,
+    BuildStatus::Succeeded,
+    path.to_str(),
+    None,
+    None,
+  )
+  .await
+  .unwrap();
+
+  assert!(completed.is_some());
+  assert!(next_event(5).await.unwrap().contains("event: done"));
+}

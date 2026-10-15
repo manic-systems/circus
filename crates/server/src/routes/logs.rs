@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
+use async_compression::tokio::bufread::ZstdDecoder;
 use axum::{
   Router,
   extract::{Path, State},
@@ -12,11 +13,17 @@ use axum::{
   },
   routing::get,
 };
-use circus_common::{PgPool, models::BuildStatus};
+use circus_common::{
+  CiError,
+  PgPool,
+  log_storage::{LogStorage, read_log_file},
+  models::BuildStatus,
+};
 use futures::StreamExt;
 use tokio::{
-  io::{AsyncBufReadExt, BufReader},
+  io::{AsyncBufRead, AsyncBufReadExt, BufReader},
   sync::mpsc::{Sender, error::SendError},
+  time::sleep,
 };
 use uuid::Uuid;
 
@@ -48,12 +55,22 @@ async fn get_build_log(
 ) -> Result<Response, ApiError> {
   get_visible_build(&state, id, &extensions).await?;
 
-  let log_storage = circus_common::log_storage::LogStorage::new(
+  let log_storage = LogStorage::new(
     state.config.logs.log_dir.clone(),
+    state.config.logs.compress,
   )
-  .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
+  .map_err(|e| ApiError(CiError::Io(e)))?;
 
-  let path = log_storage.log_path(&id);
+  let Some(path) = log_storage
+    .find_log_path(&id)
+    .await
+    .map_err(|e| ApiError(CiError::Io(e)))?
+  else {
+    return Ok(
+      (StatusCode::NOT_FOUND, "No log available for this build")
+        .into_response(),
+    );
+  };
   let Some(path) =
     crate::routes::canonical_log_file(&state.config.logs.log_dir, &path).await
   else {
@@ -63,7 +80,7 @@ async fn get_build_log(
     );
   };
 
-  match tokio::fs::read_to_string(path).await {
+  match read_log_file(&path).await {
     Ok(content) => {
       Ok(
         (
@@ -74,7 +91,7 @@ async fn get_build_log(
           .into_response(),
       )
     },
-    Err(e) => Err(ApiError(circus_common::CiError::Io(e))),
+    Err(e) => Err(ApiError(CiError::Io(e))),
   }
 }
 
@@ -88,18 +105,16 @@ async fn stream_build_log(
 > {
   let build = get_visible_build(&state, id, &extensions).await?;
 
-  let log_storage = circus_common::log_storage::LogStorage::new(
+  let log_storage = LogStorage::new(
     state.config.logs.log_dir.clone(),
+    state.config.logs.compress,
   )
-  .map_err(|e| ApiError(circus_common::CiError::Io(e)))?;
+  .map_err(|e| ApiError(CiError::Io(e)))?;
 
-  let active_path = log_storage.log_path_for_active(&id);
-  let final_path = log_storage.log_path(&id);
   let (tx, mut rx) = tokio::sync::mpsc::channel(16);
   tokio::spawn(follow_log(
     tx,
-    active_path,
-    final_path,
+    log_storage,
     state.config.logs.log_dir.clone(),
     state.pool.clone(),
     build.id,
@@ -113,32 +128,37 @@ async fn stream_build_log(
 /// cannot be read.
 async fn follow_log(
   tx: Sender<Event>,
-  active_path: PathBuf,
-  final_path: PathBuf,
+  log_storage: LogStorage,
   log_dir: PathBuf,
   pool: PgPool,
   build_id: Uuid,
 ) -> Result<(), SendError<Event>> {
-  if !active_path.exists() && !final_path.exists() {
-    let mut found = false;
-    for _ in 0..30 {
-      tokio::time::sleep(Duration::from_secs(1)).await;
-      if active_path.exists() || final_path.exists() {
-        found = true;
-        break;
-      }
+  let active_path = log_storage.log_path_for_active(&build_id);
+  let mut path = None;
+  for attempt in 0..=30 {
+    if active_path.exists() {
+      path = Some(active_path.clone());
+      break;
     }
-    if !found {
-      return tx
-        .send(Event::default().data("No log file available"))
-        .await;
+    match log_storage.find_log_path(&build_id).await {
+      Ok(Some(final_path)) => {
+        path = Some(final_path);
+        break;
+      },
+      Ok(None) => {},
+      Err(error) => {
+        tracing::warn!(%build_id, %error, "Failed to locate build log");
+        break;
+      },
+    }
+    if attempt < 30 {
+      sleep(Duration::from_secs(1)).await;
     }
   }
-
-  let path = if active_path.exists() {
-    active_path
-  } else {
-    final_path
+  let Some(path) = path else {
+    return tx
+      .send(Event::default().data("No log file available"))
+      .await;
   };
   let Some(path) = crate::routes::canonical_log_file(&log_dir, &path).await
   else {
@@ -152,7 +172,21 @@ async fn follow_log(
       .await;
   };
 
-  let mut reader = BufReader::new(file);
+  let reader = BufReader::new(file);
+  if path.extension().is_some_and(|extension| extension == "zst") {
+    follow_reader(tx, BufReader::new(ZstdDecoder::new(reader)), pool, build_id)
+      .await
+  } else {
+    follow_reader(tx, reader, pool, build_id).await
+  }
+}
+
+async fn follow_reader(
+  tx: Sender<Event>,
+  mut reader: impl AsyncBufRead + Unpin,
+  pool: PgPool,
+  build_id: Uuid,
+) -> Result<(), SendError<Event>> {
   let mut line = String::new();
   let mut consecutive_empty = 0u32;
 

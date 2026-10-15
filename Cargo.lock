@@ -675,6 +675,7 @@ name = "circus-common"
 version = "0.14.0"
 dependencies = [
  "argon2",
+ "async-compression",
  "circus-binary-cache",
  "circus-codegen",
  "circus-config",
@@ -911,6 +912,7 @@ dependencies = [
  "sha2 0.11.0",
  "subtle",
  "tar",
+ "tempfile",
  "thiserror",
  "time",
  "tokio",

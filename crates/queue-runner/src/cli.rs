@@ -8,7 +8,12 @@ use std::{
   time::Duration,
 };
 
-use circus_common::{database::Database, gc_roots, repo};
+use circus_common::{
+  database::Database,
+  gc_roots,
+  log_storage::PARTIAL_LOG_PREFIX,
+  repo,
+};
 use circus_config::{
   CacheGcConfig,
   CacheUploadConfig,
@@ -453,9 +458,11 @@ fn run_rpc_thread(
 async fn cleanup_stale_logs(log_dir: &Path) {
   if let Ok(mut entries) = tokio::fs::read_dir(log_dir).await {
     while let Ok(Some(entry)) = entries.next_entry().await {
-      if entry.file_name().to_string_lossy().ends_with(".active.log") {
+      let file_name = entry.file_name();
+      let name = file_name.to_string_lossy();
+      if name.ends_with(".active.log") || name.starts_with(PARTIAL_LOG_PREFIX) {
         let _ = tokio::fs::remove_file(entry.path()).await;
-        tracing::info!("Removed stale active log: {}", entry.path().display());
+        tracing::info!("Removed stale log: {}", entry.path().display());
       }
     }
   }
