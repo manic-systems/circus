@@ -186,6 +186,10 @@ pub struct RpcConfig {
   #[serde(default = "default_max_rpc_conns")]
   pub max_connections: usize,
 
+  /// Cap on concurrent connections from one address. IPv6 counts per /64.
+  #[serde(default = "default_max_rpc_conns_per_ip")]
+  pub max_connections_per_ip: usize,
+
   /// Lifetime of every minted presigned PUT URL.
   #[serde(default = "default_presign_expiry_secs")]
   pub presign_expiry_secs: u64,
@@ -333,6 +337,10 @@ pub struct RpcTlsConfig {
 
 const fn default_max_rpc_conns() -> usize {
   256
+}
+
+const fn default_max_rpc_conns_per_ip() -> usize {
+  32
 }
 
 const fn default_heartbeat_ttl_secs() -> u64 {

@@ -242,6 +242,9 @@ impl Config {
       if rpc.max_connections == 0 {
         bail!("queue_runner.rpc.max_connections must be greater than 0");
       }
+      if rpc.max_connections_per_ip == 0 {
+        bail!("queue_runner.rpc.max_connections_per_ip must be greater than 0");
+      }
       if rpc.heartbeat_ttl_secs == 0 {
         bail!("queue_runner.rpc.heartbeat_ttl_secs must be greater than 0");
       }
