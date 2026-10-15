@@ -247,11 +247,12 @@ work_dir      = "/var/lib/circus/queue-runner"
 psi_threshold = 80.0 # 0..100, advisory; null disables
 
 [queue_runner.rpc]
-bind               = "0.0.0.0:8443"
-max_connections    = 256
-heartbeat_ttl_secs = 60
-cache_substituter  = "https://ci.example.org/nix-cache/"
-cache_public_key   = "circus-cache:..."
+bind                   = "0.0.0.0:8443"
+max_connections        = 256
+max_connections_per_ip = 32
+heartbeat_ttl_secs     = 60
+cache_substituter      = "https://ci.example.org/nix-cache/"
+cache_public_key       = "circus-cache:..."
 
 [[queue_runner.rpc.auth_tokens]]
 machine_id = "7e6c8022-95e8-4f99-8513-7d177f6a0241"

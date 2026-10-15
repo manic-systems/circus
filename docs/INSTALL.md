@@ -248,6 +248,7 @@ configuration or the Nix store.
 | `queue_runner`       | `rpc.bind`                                             | none                                                | Cap'n Proto RPC listen address                                            |
 | `queue_runner`       | `rpc.auth_tokens`                                      | `[]`                                                | Bearer token digests bound to agent UUIDs and names                       |
 | `queue_runner`       | `rpc.max_connections`                                  | `256`                                               | Maximum concurrent agent connections                                      |
+| `queue_runner`       | `rpc.max_connections_per_ip`                           | `32`                                                | Maximum concurrent connections per address                                |
 | `queue_runner`       | `rpc.presign_expiry_secs`                              | `3600`                                              | Presigned URL expiry (seconds)                                            |
 | `queue_runner`       | `rpc.tls`                                              | none                                                | TLS configuration for RPC endpoint                                        |
 | `queue_runner`       | `rpc.heartbeat_ttl_secs`                               | `60`                                                | Agent heartbeat TTL before marking unavailable                            |
