@@ -21,7 +21,7 @@ use circus_common::{
 use circus_config::BuilderSchedulingStrategy;
 use tokio::{
   process::Command,
-  sync::{OwnedSemaphorePermit, oneshot},
+  sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, oneshot},
   time::sleep,
 };
 
@@ -32,6 +32,7 @@ use crate::{
     AgentPool,
     AgentSnapshot,
     pool::{
+      AGENT_CAPACITY_CHANGED,
       AgentMeta,
       DispatchCommand,
       DispatchResult,
@@ -258,36 +259,89 @@ pub async fn reserve_venue(
   build: &Build,
   system: Option<&str>,
 ) -> Option<ExecutionReservation> {
-  if let Some(system) = system
-    && let Some((meta, snap, slot)) =
-      select_and_reserve_agent(ctx, build, system).await
-  {
-    return Some(ExecutionReservation::Agent {
-      meta,
-      snap: Box::new(snap),
-      slot,
-    });
-  }
+  static AGENT_RECHECK: Mutex<()> = Mutex::const_new(());
 
   let features = build.scheduling_features();
-  if !ctx.runner_caps.supports(system, features) {
+  let local = ctx
+    .runner_caps
+    .supports(system, features)
+    .then(|| Arc::clone(&ctx.worker_semaphore));
+  let venue = wait_for_venue(
+    &AGENT_CAPACITY_CHANGED,
+    &AGENT_RECHECK,
+    || {
+      async move {
+        let (meta, snap, slot) =
+          select_and_reserve_agent(ctx, build, system?).await?;
+        Some(ExecutionReservation::Agent {
+          meta,
+          snap: Box::new(snap),
+          slot,
+        })
+      }
+    },
+    local,
+    ExecutionReservation::Runner,
+  )
+  .await;
+  if venue.is_none() {
     tracing::debug!(
       build_id = %build.id,
       ?features,
       "no capable venue; leaving build pending"
     );
-    return None;
   }
+  venue
+}
 
+/// Re-checks hold `recheck` so one freed slot doesn't send every parked build
+/// to the database at once.
+async fn wait_for_venue<T, F: Future<Output = Option<T>>>(
+  capacity_changed: &Notify,
+  recheck: &Mutex<()>,
+  mut try_agent: impl FnMut() -> F,
+  local: Option<Arc<Semaphore>>,
+  runner: impl FnOnce(OwnedSemaphorePermit) -> T,
+) -> Option<T> {
+  // Created once so the build keeps its FIFO place in the semaphore queue.
   #[expect(
     clippy::expect_used,
     reason = "the worker semaphore is never closed, so acquire never errors"
   )]
-  let permit = Arc::clone(&ctx.worker_semaphore)
-    .acquire_owned()
-    .await
-    .expect("worker semaphore is never closed");
-  Some(ExecutionReservation::Runner(permit))
+  let permit = async move {
+    Some(
+      local?
+        .acquire_owned()
+        .await
+        .expect("worker semaphore is never closed"),
+    )
+  };
+  tokio::pin!(permit);
+  let mut parked = false;
+  loop {
+    // Created before the agent check: `notify_waiters` reaches a `Notified`
+    // from creation, so a release in between is not lost.
+    let notified = capacity_changed.notified();
+    tokio::pin!(notified);
+
+    let turn = if parked {
+      Some(recheck.lock().await)
+    } else {
+      None
+    };
+    let agent = try_agent().await;
+    drop(turn);
+    if agent.is_some() {
+      return agent;
+    }
+
+    parked = true;
+    tokio::select! {
+      biased;
+      permit = &mut permit => return permit.map(runner),
+      () = &mut notified => {},
+    }
+  }
 }
 
 async fn select_and_reserve_agent(
@@ -645,7 +699,7 @@ pub(crate) async fn try_read_drv_outputs(
 
 #[cfg(test)]
 mod tests {
-  use std::collections::HashSet;
+  use std::{collections::HashSet, sync::Arc, time::Duration};
 
   use circus_common::models::{
     AuthKind,
@@ -654,6 +708,10 @@ mod tests {
     JobsetTriggerMode,
   };
   use jiff::Timestamp;
+  use tokio::{
+    sync::{Mutex, Notify, Semaphore},
+    time::timeout,
+  };
   use uuid::Uuid;
 
   use super::{
@@ -662,6 +720,7 @@ mod tests {
     github_repository_slug,
     is_trusted_ref_evaluation,
     supports_required_features,
+    wait_for_venue,
   };
   use crate::rpc::pool::HeartbeatSnapshot;
 
@@ -879,5 +938,38 @@ mod tests {
       github_repository_slug("https://example.com/owner/repo"),
       None
     );
+  }
+
+  #[derive(Debug)]
+  enum Venue {
+    Agent,
+    Local,
+  }
+
+  #[tokio::test]
+  async fn capacity_announced_during_agent_check_is_not_lost() {
+    let notify = Notify::new();
+    let mut checks = 0;
+    let venue = timeout(
+      Duration::from_secs(5),
+      wait_for_venue(
+        &notify,
+        &Mutex::new(()),
+        || {
+          checks += 1;
+          let found = checks > 1;
+          // Simulates a slot release racing the first, failed check.
+          if !found {
+            notify.notify_waiters();
+          }
+          async move { found.then_some(Venue::Agent) }
+        },
+        Some(Arc::new(Semaphore::new(0))),
+        |_| Venue::Local,
+      ),
+    )
+    .await
+    .expect("timed out");
+    assert!(matches!(venue, Some(Venue::Agent)), "{venue:?}");
   }
 }

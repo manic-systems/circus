@@ -23,12 +23,15 @@ use std::{
 };
 
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Upper bound on an agent's advertised `max_jobs`.
 pub const MAX_AGENT_MAX_JOBS: u32 = 670;
+
+/// Fired when an agent registers or frees a build slot.
+pub static AGENT_CAPACITY_CHANGED: Notify = Notify::const_new();
 
 /// One command queued from the scheduler to a connected agent.
 pub struct DispatchCommand {
@@ -231,6 +234,7 @@ pub struct SlotGuard {
 impl Drop for SlotGuard {
   fn drop(&mut self) {
     self.meta.current_jobs.fetch_sub(1, Ordering::AcqRel);
+    AGENT_CAPACITY_CHANGED.notify_waiters();
   }
 }
 
@@ -345,7 +349,9 @@ impl Reservation<'_> {
   /// Publish the session, returning the live one it replaced.
   #[must_use]
   pub fn insert(self, meta: Arc<AgentMeta>) -> Option<Arc<AgentMeta>> {
-    self.pool.inner.write().insert(self.machine_id, meta)
+    let previous = self.pool.inner.write().insert(self.machine_id, meta);
+    AGENT_CAPACITY_CHANGED.notify_waiters();
+    previous
   }
 }
 

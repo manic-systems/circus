@@ -23,6 +23,9 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 - `logs.compress` previously had no effect. When it is set, completed build logs
   are now stored as zstd `.log.zst` files. Logs written before the setting
   changed stay readable.
+- Builds waiting for a free local worker now move to a connected agent as soon
+  as one registers or frees a build slot, instead of staying queued behind the
+  local workers.
 
 ## 0.14.0
 
