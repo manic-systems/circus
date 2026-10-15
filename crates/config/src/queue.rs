@@ -213,6 +213,10 @@ pub struct RpcConfig {
   #[serde(default = "default_max_rpc_conns")]
   pub max_connections: usize,
 
+  /// Per-address cap, IPv6 grouped by /64. Raise it when more agents share a NAT.
+  #[serde(default = "default_max_rpc_conns_per_ip")]
+  pub max_connections_per_ip: usize,
+
   /// Lifetime of every minted presigned PUT URL.
   #[serde(default = "default_presign_expiry_secs")]
   pub presign_expiry_secs: u64,
@@ -372,6 +376,10 @@ pub struct RpcTlsConfig {
 
 const fn default_max_rpc_conns() -> usize {
   256
+}
+
+const fn default_max_rpc_conns_per_ip() -> usize {
+  32
 }
 
 const fn default_heartbeat_ttl_secs() -> u64 {

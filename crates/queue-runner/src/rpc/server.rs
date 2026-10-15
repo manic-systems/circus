@@ -9,9 +9,12 @@
 //! [`super::pool::AgentMeta`].
 
 use std::{
+  cell::RefCell,
   collections::HashMap,
-  net::SocketAddr,
+  net::{IpAddr, SocketAddr},
+  rc::Rc,
   sync::{Arc, Weak},
+  time::Duration,
 };
 
 use capnp::capability::Promise;
@@ -32,6 +35,7 @@ use circus_proto::{
 };
 use color_eyre::eyre::Context as _;
 use sha2::{Digest as _, Sha256};
+use socket2::{SockRef, TcpKeepalive};
 use subtle::ConstantTimeEq as _;
 use tokio::{
   net::TcpListener,
@@ -55,6 +59,54 @@ use super::{
 };
 use crate::rpc::pool::MAX_AGENT_MAX_JOBS;
 
+/// How long a connection may hold a `max_connections` slot before it has
+/// registered. A join connection closes well inside this.
+const REGISTER_DEADLINE: Duration = Duration::from_secs(30);
+
+/// A connection's share of `max_connections_per_ip`, released on drop.
+struct PeerSlot {
+  counts: Rc<RefCell<HashMap<IpAddr, usize>>>,
+  ip:     IpAddr,
+}
+
+impl PeerSlot {
+  fn acquire(
+    counts: &Rc<RefCell<HashMap<IpAddr, usize>>>,
+    addr: IpAddr,
+    limit: usize,
+  ) -> Option<Self> {
+    // A single IPv6 host usually owns a whole /64.
+    let ip = match addr.to_canonical() {
+      IpAddr::V6(v6) => {
+        IpAddr::V6((u128::from(v6) & !u128::from(u64::MAX)).into())
+      },
+      v4 @ IpAddr::V4(_) => v4,
+    };
+    let mut map = counts.borrow_mut();
+    let count = map.entry(ip).or_default();
+    if *count >= limit {
+      return None;
+    }
+    *count += 1;
+    Some(Self {
+      counts: Rc::clone(counts),
+      ip,
+    })
+  }
+}
+
+impl Drop for PeerSlot {
+  fn drop(&mut self) {
+    let mut map = self.counts.borrow_mut();
+    if let Some(count) = map.get_mut(&self.ip) {
+      *count -= 1;
+      if *count == 0 {
+        map.remove(&self.ip);
+      }
+    }
+  }
+}
+
 #[derive(Clone)]
 pub struct ServerConfig {
   pub bind:               SocketAddr,
@@ -63,6 +115,7 @@ pub struct ServerConfig {
   /// Shared tokens that mint a machine ID and session token on `join`.
   pub join_tokens:        Vec<RpcJoinToken>,
   pub max_connections:    usize,
+  pub max_conns_per_ip:   usize,
   /// Optional TLS. `None` means plain TCP.
   pub tls:                Option<TlsState>,
   /// Optional S3 presigner. `None` disables the presigned-upload path;
@@ -163,6 +216,7 @@ impl ServerConfig {
       auth_tokens: cfg.auth_tokens.clone(),
       join_tokens: cfg.join_tokens.clone(),
       max_connections: cfg.max_connections,
+      max_conns_per_ip: cfg.max_connections_per_ip,
       tls,
       presigner: None,
       presign_expiry: std::time::Duration::from_secs(cfg.presign_expiry_secs),
@@ -231,6 +285,7 @@ impl ServerConfig {
 /// # Errors
 ///
 /// Returns the underlying error if the listener cannot be bound.
+#[expect(clippy::future_not_send, reason = "LocalSet accept loop")]
 pub async fn serve(
   cfg: ServerConfig,
   pool: Arc<AgentPool>,
@@ -251,6 +306,7 @@ pub async fn serve(
 
   let cfg = Arc::new(cfg);
   let connection_permits = Arc::new(Semaphore::new(cfg.max_connections));
+  let peer_counts = Rc::new(RefCell::new(HashMap::new()));
   #[expect(clippy::infinite_loop, reason = "intentional accept loop")]
   loop {
     let (socket, peer) = match listener.accept().await {
@@ -260,11 +316,21 @@ pub async fn serve(
         continue;
       },
     };
+    let Some(peer_slot) =
+      PeerSlot::acquire(&peer_counts, peer.ip(), cfg.max_conns_per_ip)
+    else {
+      tracing::warn!(
+        ?peer,
+        "rpc connection rejected: too many from this address"
+      );
+      continue;
+    };
     let pool = Arc::clone(&pool);
     let db_pool = db_pool.clone();
     let cfg = Arc::clone(&cfg);
     let permits = Arc::clone(&connection_permits);
     tokio::task::spawn_local(async move {
+      let _peer_slot = peer_slot;
       let Ok(_permit) = permits.try_acquire_owned() else {
         tracing::warn!(
           ?peer,
@@ -301,9 +367,39 @@ async fn serve_one(
   let _ = socket.set_nodelay(true);
   tracing::info!(?peer, "incoming rpc connection");
 
+  // Without keepalive a vanished agent holds its slot until the kernel gives
+  // up on the socket, which takes hours.
+  let keepalive = TcpKeepalive::new()
+    .with_time(Duration::from_secs(60))
+    .with_interval(Duration::from_secs(10))
+    .with_retries(3);
+
+  if let Err(e) = SockRef::from(&socket).set_tcp_keepalive(&keepalive) {
+    tracing::warn!(?peer, "failed to enable tcp keepalive: {e}");
+  }
+
   let registered_machine: Arc<parking_lot::Mutex<Option<RegisteredAgent>>> =
     Arc::new(parking_lot::Mutex::new(None));
   let closed = CancellationToken::new();
+
+  tokio::task::spawn_local({
+    let slot = Arc::downgrade(&registered_machine);
+    let deadline_closed = closed.clone();
+    async move {
+      tokio::select! {
+        () = tokio::time::sleep(REGISTER_DEADLINE) => {},
+        () = deadline_closed.cancelled() => return,
+      }
+      let unregistered = slot
+        .upgrade()
+        .is_some_and(|machine| machine.lock().is_none());
+      if unregistered {
+        tracing::debug!(?peer, "closing rpc connection that never registered");
+        deadline_closed.cancel();
+      }
+    }
+  });
+
   let rpc_result = run_rpc(
     socket,
     Arc::clone(&cfg),
@@ -355,7 +451,10 @@ async fn run_rpc(
   closed: CancellationToken,
 ) -> color_eyre::Result<()> {
   if let Some(tls) = cfg.tls.as_ref() {
-    let stream = tls.acceptor.clone().accept(socket).await?;
+    let stream = tokio::select! {
+      stream = tls.acceptor.clone().accept(socket) => stream?,
+      () = closed.cancelled() => return Ok(()),
+    };
     let peer_cert = extract_peer_cert_identity(&stream);
     let (rh, wh) = tokio::io::split(stream);
     let network = twoparty::VatNetwork::new(
