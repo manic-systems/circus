@@ -115,6 +115,13 @@ where
   let ephemeral = cfg.agent.ephemeral.is_some();
   tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
 
+  std::fs::create_dir_all(&cfg.agent.work_dir).map_err(|e| {
+    eyre!(
+      "work_dir {} couldn't be created: {e}",
+      cfg.agent.work_dir.display()
+    )
+  })?;
+
   let machine_id = resolve_machine_id(&cfg, ephemeral)?;
 
   // Uniquify the shared name so concurrent CI runs don't collide.

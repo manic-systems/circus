@@ -7,9 +7,9 @@
 //!    and CA.
 //! 2. Ask the runner for a presigned PUT URL via `Runner.requestPresignedUrls`.
 //! 3. Stream `nix-store --dump` through an in-process compressor (zstd, xz, or
-//!    gzip from `async-compression`) directly into the PUT body while a
-//!    `HashingReader` tracks the on-the-wire SHA-256 and length. The NAR is
-//!    never buffered in agent memory.
+//!    gzip from `async-compression`) into a tempfile while a `HashingReader`
+//!    tracks the on-the-wire SHA-256 and length, then PUT the file with an
+//!    explicit Content-Length. The NAR is never buffered in agent memory.
 //! 4. Tell the runner via `Runner.notifyUploadComplete` with the final
 //!    `NarInfo` so it can persist + sign.
 //!
@@ -18,6 +18,8 @@
 //! Hydra's behaviour.
 
 use std::{
+  io::SeekFrom,
+  path::Path,
   pin::Pin,
   process::Stdio,
   sync::{
@@ -37,7 +39,7 @@ use color_eyre::eyre::{Context as _, bail, eyre};
 use data_encoding::HEXLOWER;
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
-use tokio::io::{AsyncRead, BufReader, ReadBuf};
+use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf};
 use tokio_util::io::ReaderStream;
 
 use crate::{build::ResolvedOutput, sandbox::NixTool};
@@ -74,6 +76,7 @@ pub async fn upload_all(
   compression: &str,
   outputs: &[ResolvedOutput],
   rootless: bool,
+  work_dir: &Path,
 ) -> color_eyre::Result<UploadStats> {
   #![expect(
     clippy::future_not_send,
@@ -129,7 +132,7 @@ pub async fn upload_all(
       failures.push((meta.store_path.clone(), slot.error.clone()));
       continue;
     }
-    match upload_one(&http, meta, slot, compression, rootless).await {
+    match upload_one(&http, meta, slot, compression, rootless, work_dir).await {
       Ok(uploaded) => {
         if let Err(e) = notify_complete(
           runner_cap,
@@ -226,10 +229,10 @@ async fn upload_one(
   slot: &PresignSlot,
   compression: &str,
   rootless: bool,
+  work_dir: &Path,
 ) -> color_eyre::Result<UploadedBytes> {
   // Spawn `nix-store --dump <path>` and keep its stdout as a streaming
-  // AsyncRead. The PUT body reads from it on demand, so the NAR is
-  // never materialised in agent memory.
+  // AsyncRead.
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
   cmd
     .arg("--dump")
@@ -254,21 +257,46 @@ async fn upload_one(
     other => bail!("unsupported compression: {other}"),
   };
 
-  // Tee the compressed bytes through a hasher + counter while reqwest
-  // pulls them. parking_lot::Mutex gives us sync access from poll_read
+  // Tee the compressed bytes through a hasher + counter while they're copied
+  // into the spool. parking_lot::Mutex gives us sync access from poll_read
   // without an await point.
   let hasher = Arc::new(Mutex::new(Sha256::new()));
   let counter = Arc::new(AtomicU64::new(0));
-  let reader = HashingReader {
+  let mut reader = HashingReader {
     inner:   encoded,
     hasher:  Arc::clone(&hasher),
     counter: Arc::clone(&counter),
   };
-  let stream = ReaderStream::with_capacity(reader, 64 * 1024);
+
+  // Spool the compressed NAR to a tempfile first, as presigned S3
+  // URLs need a Content-Length header. S3 and R2 reject
+  // uploads missing the header with 411 MissingContentLength.
+  let mut spool = tokio::fs::File::from_std(
+    tempfile::tempfile_in(work_dir).context("create upload spool file")?,
+  );
+  tokio::io::copy(&mut reader, &mut spool)
+    .await
+    .with_context(|| format!("spool NAR for {}", meta.store_path))?;
+  spool.flush().await.context("flush upload spool file")?;
+  drop(reader);
+
+  // Drain the child. nix-store --dump on success returns 0 after EOF.
+  let child_status = dump.wait().await?;
+  if !child_status.success() {
+    bail!("nix-store --dump exited with {child_status}");
+  }
+
+  let file_size = counter.load(Ordering::Acquire);
+  spool
+    .seek(SeekFrom::Start(0))
+    .await
+    .context("rewind upload spool file")?;
+  let stream = ReaderStream::with_capacity(spool, 64 * 1024);
   let body = reqwest::Body::wrap_stream(stream);
 
   let resp = http
     .put(&slot.nar_url)
+    .header(reqwest::header::CONTENT_LENGTH, file_size)
     .body(body)
     .send()
     .await
@@ -277,12 +305,6 @@ async fn upload_one(
   if !status.is_success() {
     let text = resp.text().await.unwrap_or_default();
     bail!("S3 PUT returned {status}: {text}");
-  }
-
-  // Drain the child. nix-store --dump on success returns 0 after EOF.
-  let child_status = dump.wait().await?;
-  if !child_status.success() {
-    bail!("nix-store --dump exited with {child_status}");
   }
 
   // Finalise the rolling hash. `Mutex::into_inner` only works on the
@@ -295,7 +317,7 @@ async fn upload_one(
   };
   Ok(UploadedBytes {
     file_hash: format!("sha256:{}", HEXLOWER.encode(&final_hash)),
-    file_size: counter.load(Ordering::Acquire),
+    file_size,
   })
 }
 

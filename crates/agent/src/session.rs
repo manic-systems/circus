@@ -85,6 +85,7 @@ pub async fn run_once(cfg: &Agent, machine_id: Uuid) -> color_eyre::Result<()> {
     runner_cap.clone(),
     endpoint,
     cfg.rootless,
+    cfg.work_dir.clone(),
     lifecycle.clone(),
   ));
 
@@ -562,6 +563,8 @@ struct BuilderInner {
   running:    Mutex<HashMap<Uuid, CancellationToken>>,
   /// Indicates whether the builder will use rootless, sandboxed Nix.
   rootless:   bool,
+  /// Agent work directory, used for transient build state.
+  work_dir:   PathBuf,
   /// Ephemeral session lifecycle; `None` for persistent agents.
   lifecycle:  Option<Arc<Lifecycle>>,
 }
@@ -580,6 +583,7 @@ impl BuilderImpl {
     runner_cap: runner::Client,
     endpoint: Endpoint,
     rootless: bool,
+    work_dir: PathBuf,
     lifecycle: Option<Arc<Lifecycle>>,
   ) -> Self {
     Self {
@@ -591,6 +595,7 @@ impl BuilderImpl {
         endpoint,
         running: Mutex::new(HashMap::new()),
         rootless,
+        work_dir,
         lifecycle,
       }),
     }
@@ -728,6 +733,7 @@ impl builder::Server for BuilderImpl {
             &compression,
             &local.outputs,
             inner_for_task.rootless,
+            &inner_for_task.work_dir,
           )
           .await
           {
