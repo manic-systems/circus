@@ -10,11 +10,12 @@ mod channel;
 mod event;
 
 use std::{
-  sync::OnceLock,
+  borrow::Cow,
+  sync::LazyLock,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub use channel::NotificationChannel;
+pub use channel::{NotificationChannel, Origin};
 use circus_common::{
   PgPool,
   models::{Build, BuildStatus, NotificationType, Project},
@@ -23,22 +24,26 @@ use circus_common::{
 use circus_config::NotificationsConfig;
 pub use event::BuildEvent;
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
-/// Shared HTTP client for all notification dispatches.
-/// Avoids recreating connection pools on every build completion. A bounded
-/// timeout keeps a misbehaving webhook target from pinning a worker
-/// indefinitely; the retry queue handles transient timeouts via its own
-/// backoff.
-pub(crate) fn http_client() -> &'static reqwest::Client {
-  static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-  CLIENT.get_or_init(|| {
-    reqwest::Client::builder()
-      .connect_timeout(Duration::from_secs(10))
-      .timeout(Duration::from_secs(30))
-      .build()
-      .unwrap_or_else(|_| reqwest::Client::new())
-  })
+static INSTANCE_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+  circus_http::api()
+    .build()
+    .expect("build notification HTTP client")
+});
+static PROJECT_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+  circus_http::public_only(circus_http::api())
+    .build()
+    .expect("build notification HTTP client")
+});
+
+/// The shared client for channels of `origin`.
+pub(crate) fn http_client(origin: Origin) -> &'static reqwest::Client {
+  match origin {
+    Origin::Instance => &INSTANCE_HTTP,
+    Origin::Project => &PROJECT_HTTP,
+  }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -127,9 +132,9 @@ async fn resolve_channels(
   commit_hash: &str,
   config: &NotificationsConfig,
   encryption_key: Option<&str>,
-) -> Vec<NotificationChannel> {
+) -> Vec<(NotificationChannel, Origin)> {
   let event = BuildEvent::from_build(build, project, commit_hash);
-  let mut channels: Vec<NotificationChannel> = Vec::new();
+  let mut channels = Vec::new();
   let mut configured_types: Vec<NotificationType> = Vec::new();
 
   // Per-project channels (decrypted from the database).
@@ -141,10 +146,11 @@ async fn resolve_channels(
             row.notification_type,
             &row.config,
             encryption_key,
+            Origin::Project,
           ) {
             Ok(channel) => {
               configured_types.push(channel.notification_type());
-              channels.push(channel);
+              channels.push((channel, Origin::Project));
             },
             Err(e) => {
               warn!(
@@ -168,7 +174,7 @@ async fn resolve_channels(
   // Global fallback for any channel kind the project did not configure.
   for channel in global_fallback_channels(config, &event) {
     if !configured_types.contains(&channel.notification_type()) {
-      channels.push(channel);
+      channels.push((channel, Origin::Instance));
     }
   }
 
@@ -269,7 +275,7 @@ async fn dispatch(
     );
   }
 
-  for channel in &channels {
+  for (channel, origin) in &channels {
     if commit_status_only && !channel.is_commit_status() {
       continue;
     }
@@ -282,6 +288,7 @@ async fn dispatch(
         enqueue(
           pool,
           channel,
+          *origin,
           &event,
           config.max_retry_attempts,
           encryption_key,
@@ -304,7 +311,7 @@ async fn dispatch(
           }
         }
 
-        if let Err(e) = channel.deliver(&event).await {
+        if let Err(e) = channel.deliver(&event, *origin).await {
           error!(
               build_id = %build.id,
               notification_type = %channel.notification_type(),
@@ -321,7 +328,7 @@ async fn dispatch(
           );
         }
 
-        if let Err(e) = channel.deliver(&event).await {
+        if let Err(e) = channel.deliver(&event, *origin).await {
           error!(
               build_id = %build.id,
               notification_type = %channel.notification_type(),
@@ -333,10 +340,21 @@ async fn dispatch(
   }
 }
 
+/// A retry-queue task's payload, with the channel's secrets encrypted.
+#[derive(Serialize, Deserialize)]
+struct TaskPayload<'a> {
+  channel: serde_json::Value,
+  // Tasks queued before `origin` existed get the stricter guard.
+  #[serde(default)]
+  origin:  Origin,
+  event:   Cow<'a, BuildEvent>,
+}
+
 /// Serialize a channel + event into a retry-queue task (secrets re-encrypted).
 async fn enqueue(
   pool: &PgPool,
   channel: &NotificationChannel,
+  origin: Origin,
   event: &BuildEvent,
   max_attempts: i32,
   encryption_key: Option<&str>,
@@ -348,11 +366,18 @@ async fn enqueue(
       return;
     },
   };
-  let payload = serde_json::json!({
-    "notification_type": notification_type,
-    "channel": stored,
-    "event": event,
-  });
+  let payload = TaskPayload {
+    channel: stored,
+    origin,
+    event: Cow::Borrowed(event),
+  };
+  let payload = match serde_json::to_value(payload) {
+    Ok(payload) => payload,
+    Err(e) => {
+      error!("Failed to serialize notification for queue: {e}");
+      return;
+    },
+  };
   if let Err(e) = repo::notification_tasks::create(
     pool,
     notification_type,
@@ -457,41 +482,34 @@ pub async fn process_notification_task(
   task: &circus_common::models::NotificationTask,
   encryption_key: Option<&str>,
 ) -> Result<(), String> {
-  let payload = &task.payload;
+  let payload = TaskPayload::deserialize(&task.payload)
+    .map_err(|e| format!("Invalid notification task payload: {e}"))?;
+  let channel = NotificationChannel::from_stored(
+    task.notification_type,
+    &payload.channel,
+    encryption_key,
+    payload.origin,
+  )
+  .map_err(|e| format!("Invalid stored notification channel: {e}"))?;
+  let event = payload.event;
 
-  // Current payload format: { notification_type, channel, event }.
-  if let (Some(channel_cfg), Some(event)) =
-    (payload.get("channel"), payload.get("event"))
-  {
-    let channel = NotificationChannel::from_stored(
-      task.notification_type,
-      channel_cfg,
-      encryption_key,
-    )
-    .map_err(|e| format!("Invalid stored notification channel: {e}"))?;
-    let event: BuildEvent = serde_json::from_value(event.clone())
-      .map_err(|e| format!("Invalid stored build event: {e}"))?;
-    if event.is_dependency() {
-      return Ok(());
-    }
-    if channel.is_commit_status()
-      && stale_commit_status_event(pool, &event).await?
-    {
-      info!(
-        build_id = %event.build_id,
-        notification_type = %task.notification_type,
-        status = ?event.status,
-        "Skipping stale commit status notification"
-      );
-      return Ok(());
-    }
-    return channel.deliver(&event).await;
+  if event.is_dependency() {
+    return Ok(());
   }
 
-  Err(format!(
-    "Unrecognized notification task payload for type '{}'",
-    task.notification_type
-  ))
+  if channel.is_commit_status()
+    && stale_commit_status_event(pool, &event).await?
+  {
+    info!(
+      build_id = %event.build_id,
+      notification_type = %task.notification_type,
+      status = ?event.status,
+      "Skipping stale commit status notification"
+    );
+    return Ok(());
+  }
+
+  channel.deliver(&event, payload.origin).await
 }
 
 const fn status_rank(status: BuildStatus) -> u8 {
@@ -540,6 +558,7 @@ pub fn encrypt_declarative_notifications(
         notification.notification_type,
         &notification.config,
         encryption_key,
+        Origin::Project,
       )?;
     }
   }

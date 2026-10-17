@@ -818,6 +818,8 @@ version = "0.14.0"
 dependencies = [
  "circus-common",
  "circus-config",
+ "circus-http",
+ "circus-logs",
  "data-encoding",
  "hmac 0.13.0",
  "lettre",

@@ -55,14 +55,12 @@ fn validate_repository_url(url: &str) -> Result<(), String> {
   Ok(())
 }
 
-/// SSRF guard for outbound webhook URLs (Slack, generic webhooks, ...).
-/// Rejects schemes other than http/https, internal hostnames, and cloud
-/// metadata endpoints.
+/// An http(s) URL of sane length, for URLs the instance admin configures.
 ///
 /// # Errors
 ///
 /// Returns the reason string if the URL is rejected.
-pub fn validate_webhook_url(url: &str) -> Result<(), String> {
+pub fn validate_http_url(url: &str) -> Result<(), String> {
   if url.is_empty() {
     return Err("URL cannot be empty".to_string());
   }
@@ -73,9 +71,20 @@ pub fn validate_webhook_url(url: &str) -> Result<(), String> {
     return Err("URL must include a scheme".to_string());
   };
   match scheme.to_ascii_lowercase().as_str() {
-    "http" | "https" => {},
-    other => return Err(format!("URL scheme '{other}' is not allowed")),
+    "http" | "https" => Ok(()),
+    other => Err(format!("URL scheme '{other}' is not allowed")),
   }
+}
+
+/// SSRF guard for outbound webhook URLs (Slack, generic webhooks, ...).
+/// Rejects schemes other than http/https, internal hostnames, and cloud
+/// metadata endpoints.
+///
+/// # Errors
+///
+/// Returns the reason string if the URL is rejected.
+pub fn validate_webhook_url(url: &str) -> Result<(), String> {
+  validate_http_url(url)?;
   if let Some(host) = extract_host_from_url(url)
     && is_internal_host(&host)
   {

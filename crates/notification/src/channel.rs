@@ -19,9 +19,14 @@ use circus_common::{
   crypto::{decrypt_secret, encrypt_secret},
   error::{CiError, Result as CiResult},
   models::NotificationType,
-  validate::validate_https_webhook_url,
+  validate::{
+    validate_http_url,
+    validate_https_webhook_url,
+    validate_webhook_url,
+  },
 };
 use circus_config::EmailConfig;
+use circus_http::guard::is_internal_host;
 use data_encoding::HEXLOWER;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -134,6 +139,18 @@ impl Debug for SlackChannel {
   }
 }
 
+/// Who configured a channel. Project channels, declarative ones included,
+/// cannot reach internal addresses.
+#[derive(
+  Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+  Instance,
+  #[default]
+  Project,
+}
+
 /// Delivery behavior shared by every channel kind. Implemented per concrete
 /// channel struct; [`NotificationChannel`] dispatches by value (no `dyn`).
 trait Notifier {
@@ -144,11 +161,15 @@ trait Notifier {
 
   /// Deliver the notification. Returns a human-readable error on failure so the
   /// retry queue can record `last_error`.
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String>;
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String>;
 }
 
 trait StoredChannel: Clone + Serialize + DeserializeOwned {
-  fn validate_stored(&self) -> CiResult<()> {
+  fn validate_stored(&self, _origin: Origin) -> CiResult<()> {
     Ok(())
   }
 
@@ -161,6 +182,7 @@ fn from_stored_channel<T: StoredChannel>(
   notification_type: NotificationType,
   config: &serde_json::Value,
   key: Option<&str>,
+  origin: Origin,
 ) -> CiResult<T> {
   let mut channel: T = serde_json::from_value(config.clone()).map_err(|e| {
     CiError::Validation(format!(
@@ -168,7 +190,7 @@ fn from_stored_channel<T: StoredChannel>(
     ))
   })?;
   channel.decrypt_secrets(key)?;
-  channel.validate_stored()?;
+  channel.validate_stored(origin)?;
   Ok(channel)
 }
 
@@ -225,14 +247,18 @@ impl NotificationChannel {
   /// # Errors
   ///
   /// Returns a human-readable error string when delivery fails.
-  pub async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  pub async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
     match self {
-      Self::Webhook(c) => c.deliver(event).await,
-      Self::GithubStatus(c) => c.deliver(event).await,
-      Self::GiteaStatus(c) => c.deliver(event).await,
-      Self::GitlabStatus(c) => c.deliver(event).await,
-      Self::Slack(c) => c.deliver(event).await,
-      Self::Email(c) => c.deliver(event).await,
+      Self::Webhook(c) => c.deliver(event, origin).await,
+      Self::GithubStatus(c) => c.deliver(event, origin).await,
+      Self::GiteaStatus(c) => c.deliver(event, origin).await,
+      Self::GitlabStatus(c) => c.deliver(event, origin).await,
+      Self::Slack(c) => c.deliver(event, origin).await,
+      Self::Email(c) => c.deliver(event, origin).await,
     }
   }
 
@@ -247,6 +273,7 @@ impl NotificationChannel {
     notification_type: NotificationType,
     config: &serde_json::Value,
     key: Option<&str>,
+    origin: Origin,
   ) -> CiResult<Self> {
     match notification_type {
       NotificationType::Webhook => {
@@ -254,6 +281,7 @@ impl NotificationChannel {
           notification_type,
           config,
           key,
+          origin,
         )?))
       },
       NotificationType::GithubStatus => {
@@ -261,6 +289,7 @@ impl NotificationChannel {
           notification_type,
           config,
           key,
+          origin,
         )?))
       },
       NotificationType::GiteaStatus | NotificationType::ForgejoStatus => {
@@ -268,6 +297,7 @@ impl NotificationChannel {
           notification_type,
           config,
           key,
+          origin,
         )?))
       },
       NotificationType::GitlabStatus => {
@@ -275,6 +305,7 @@ impl NotificationChannel {
           notification_type,
           config,
           key,
+          origin,
         )?))
       },
       NotificationType::Slack => {
@@ -282,6 +313,7 @@ impl NotificationChannel {
           notification_type,
           config,
           key,
+          origin,
         )?))
       },
       NotificationType::Email => {
@@ -289,6 +321,7 @@ impl NotificationChannel {
           notification_type,
           config,
           key,
+          origin,
         )?))
       },
     }
@@ -326,18 +359,19 @@ impl NotificationChannel {
     notification_type: NotificationType,
     config: &serde_json::Value,
     key: Option<&str>,
+    origin: Origin,
   ) -> CiResult<serde_json::Value> {
     // Round-trip through the typed channel: from_stored validates and treats
     // already-encrypted values as plaintext (decrypt is a no-op without the
     // v1: prefix), then to_stored encrypts. Idempotent on re-sync.
-    let channel = Self::from_stored(notification_type, config, key)?;
+    let channel = Self::from_stored(notification_type, config, key, origin)?;
     Ok(channel.to_stored(key)?.1)
   }
 }
 
 impl StoredChannel for WebhookChannel {
-  fn validate_stored(&self) -> CiResult<()> {
-    validate_https_webhook_url(&self.url).map_err(CiError::Validation)
+  fn validate_stored(&self, origin: Origin) -> CiResult<()> {
+    validate_url(&self.url, origin, validate_https_webhook_url)
   }
 
   fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
@@ -380,6 +414,10 @@ impl StoredChannel for GithubStatusChannel {
 }
 
 impl StoredChannel for GiteaStatusChannel {
+  fn validate_stored(&self, origin: Origin) -> CiResult<()> {
+    validate_url(&self.base_url, origin, validate_webhook_url)
+  }
+
   fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
     self.token = encrypt_secret(&self.token, key)?;
     Ok(())
@@ -392,6 +430,10 @@ impl StoredChannel for GiteaStatusChannel {
 }
 
 impl StoredChannel for GitlabStatusChannel {
+  fn validate_stored(&self, origin: Origin) -> CiResult<()> {
+    validate_url(&self.base_url, origin, validate_webhook_url)
+  }
+
   fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
     self.token = encrypt_secret(&self.token, key)?;
     Ok(())
@@ -404,8 +446,8 @@ impl StoredChannel for GitlabStatusChannel {
 }
 
 impl StoredChannel for SlackChannel {
-  fn validate_stored(&self) -> CiResult<()> {
-    validate_https_webhook_url(&self.webhook_url).map_err(CiError::Validation)
+  fn validate_stored(&self, origin: Origin) -> CiResult<()> {
+    validate_url(&self.webhook_url, origin, validate_https_webhook_url)
   }
 
   fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
@@ -420,6 +462,17 @@ impl StoredChannel for SlackChannel {
 }
 
 impl StoredChannel for EmailConfig {
+  fn validate_stored(&self, origin: Origin) -> CiResult<()> {
+    if origin == Origin::Project && is_internal_host(&self.smtp_host) {
+      return Err(CiError::Validation(format!(
+        "SMTP host {} is internal",
+        self.smtp_host
+      )));
+    }
+
+    Ok(())
+  }
+
   fn encrypt_secrets(&mut self, key: Option<&str>) -> CiResult<()> {
     self.smtp_password = self
       .smtp_password
@@ -437,6 +490,18 @@ impl StoredChannel for EmailConfig {
       .transpose()?;
     Ok(())
   }
+}
+
+fn validate_url(
+  url: &str,
+  origin: Origin,
+  project_guard: fn(&str) -> Result<(), String>,
+) -> CiResult<()> {
+  match origin {
+    Origin::Instance => validate_http_url(url),
+    Origin::Project => project_guard(url),
+  }
+  .map_err(CiError::Validation)
 }
 
 /// Compute the `sha256=<hex>` HMAC signature of a webhook body.
@@ -475,9 +540,13 @@ mod tests {
 
     // Encrypt for storage: url stays plaintext, secret/header values become
     // ciphertext.
-    let stored =
-      NotificationChannel::encrypt_into_stored(nt("webhook"), &config, KEY)
-        .unwrap();
+    let stored = NotificationChannel::encrypt_into_stored(
+      nt("webhook"),
+      &config,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap();
     assert_eq!(stored["url"], "https://hooks.example.com/ci");
     assert_ne!(stored["secret"], "super-secret");
     assert!(stored["secret"].as_str().unwrap().starts_with("v1:"));
@@ -489,8 +558,13 @@ mod tests {
     );
 
     // Load back: secrets are decrypted to their original plaintext.
-    let channel =
-      NotificationChannel::from_stored(nt("webhook"), &stored, KEY).unwrap();
+    let channel = NotificationChannel::from_stored(
+      nt("webhook"),
+      &stored,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap();
     let NotificationChannel::Webhook(webhook) = channel else {
       panic!("expected webhook channel");
     };
@@ -511,14 +585,23 @@ mod tests {
       nt("github_status"),
       &config,
       KEY,
+      Origin::Project,
     )
     .unwrap();
-    let twice =
-      NotificationChannel::encrypt_into_stored(nt("github_status"), &once, KEY)
-        .unwrap();
-    let channel =
-      NotificationChannel::from_stored(nt("github_status"), &twice, KEY)
-        .unwrap();
+    let twice = NotificationChannel::encrypt_into_stored(
+      nt("github_status"),
+      &once,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap();
+    let channel = NotificationChannel::from_stored(
+      nt("github_status"),
+      &twice,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap();
     let NotificationChannel::GithubStatus(gh) = channel else {
       panic!("expected github status channel");
     };
@@ -532,17 +615,26 @@ mod tests {
       "on_failure_only": true,
     });
 
-    let stored =
-      NotificationChannel::encrypt_into_stored(nt("slack"), &config, KEY)
-        .unwrap();
+    let stored = NotificationChannel::encrypt_into_stored(
+      nt("slack"),
+      &config,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap();
     assert_ne!(
       stored["webhook_url"],
       "https://hooks.slack.com/services/T/B/secret"
     );
     assert!(stored["webhook_url"].as_str().unwrap().starts_with("v1:"));
 
-    let channel =
-      NotificationChannel::from_stored(nt("slack"), &stored, KEY).unwrap();
+    let channel = NotificationChannel::from_stored(
+      nt("slack"),
+      &stored,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap();
     let NotificationChannel::Slack(slack) = channel else {
       panic!("expected slack channel");
     };
@@ -556,8 +648,13 @@ mod tests {
   #[test]
   fn webhook_rejects_plaintext_http() {
     let config = serde_json::json!({ "url": "http://hooks.example.com/ci" });
-    let err = NotificationChannel::from_stored(nt("webhook"), &config, KEY)
-      .unwrap_err();
+    let err = NotificationChannel::from_stored(
+      nt("webhook"),
+      &config,
+      KEY,
+      Origin::Project,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("https"), "got: {err}");
   }
 
@@ -565,7 +662,13 @@ mod tests {
   fn webhook_rejects_internal_host() {
     let config = serde_json::json!({ "url": "https://169.254.169.254/latest" });
     assert!(
-      NotificationChannel::from_stored(nt("webhook"), &config, KEY).is_err()
+      NotificationChannel::from_stored(
+        nt("webhook"),
+        &config,
+        KEY,
+        Origin::Project
+      )
+      .is_err()
     );
   }
 
@@ -574,7 +677,13 @@ mod tests {
     let config =
       serde_json::json!({ "webhook_url": "https://localhost/services/x" });
     assert!(
-      NotificationChannel::from_stored(nt("slack"), &config, KEY).is_err()
+      NotificationChannel::from_stored(
+        nt("slack"),
+        &config,
+        KEY,
+        Origin::Project
+      )
+      .is_err()
     );
   }
 

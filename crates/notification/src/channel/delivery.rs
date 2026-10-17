@@ -1,12 +1,18 @@
 use circus_config::EmailConfig;
+use circus_http::{RequestExt as _, ResponseExt as _, guard::resolve_public};
+use circus_logs::ErrorChain;
 use lettre::{
   AsyncSmtpTransport,
   AsyncTransport,
   Message,
   Tokio1Executor,
   message::{Mailbox, header::ContentType},
-  transport::smtp::authentication::Credentials,
+  transport::smtp::{
+    authentication::Credentials,
+    client::{Tls, TlsParameters},
+  },
 };
+use reqwest::StatusCode;
 use tracing::{info, warn};
 
 use super::{
@@ -14,6 +20,7 @@ use super::{
   GithubStatusChannel,
   GitlabStatusChannel,
   Notifier,
+  Origin,
   RESERVED_HEADERS,
   SIGNATURE_HEADER,
   SlackChannel,
@@ -22,7 +29,6 @@ use super::{
 };
 use crate::{
   BuildEvent,
-  http_client,
   parse_gitea_repo,
   parse_github_repo,
   parse_gitlab_project,
@@ -33,7 +39,12 @@ impl Notifier for WebhookChannel {
     !self.on_failure_only || event.is_failure()
   }
 
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
+    let http = crate::http_client(origin);
     let payload = serde_json::json!({
       "build_id":     event.build_id,
       "build_status": event.generic_status(),
@@ -47,7 +58,7 @@ impl Notifier for WebhookChannel {
     let body = serde_json::to_vec(&payload)
       .map_err(|e| format!("Failed to serialize webhook payload: {e}"))?;
 
-    let mut req = http_client()
+    let mut req = http
       .post(&self.url)
       .header("Content-Type", "application/json");
 
@@ -65,17 +76,13 @@ impl Notifier for WebhookChannel {
       req = req.header(name, value);
     }
 
-    let resp = req
+    req
       .body(body)
-      .send()
+      .send_checked()
       .await
-      .map_err(|e| format!("Webhook request failed: {e}"))?;
-    if resp.status().is_success() {
-      info!(build_id = %event.build_id, "Webhook notification sent");
-      Ok(())
-    } else {
-      Err(format!("Webhook returned status: {}", resp.status()))
-    }
+      .map_err(|e| format!("Webhook failed: {}", ErrorChain(&e)))?;
+    info!(build_id = %event.build_id, "Webhook notification sent");
+    Ok(())
   }
 }
 
@@ -84,7 +91,12 @@ impl Notifier for GithubStatusChannel {
     true
   }
 
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
+    let http = crate::http_client(origin);
     let (owner, repo) =
       parse_github_repo(&event.project_url).ok_or_else(|| {
         format!("Cannot parse GitHub repo from {}", event.project_url)
@@ -100,23 +112,17 @@ impl Notifier for GithubStatusChannel {
       "context": format!("circus/{}", event.job_name),
     });
 
-    let resp = http_client()
+    let resp = http
       .post(&url)
-      .header("Authorization", format!("token {}", self.token))
-      .header("User-Agent", "circus")
+      .bearer_auth(&self.token)
       .header("Accept", "application/vnd.github+json")
+      .header("X-GitHub-Api-Version", circus_http::GITHUB_API_VERSION)
       .json(&body)
-      .send()
+      .send_checked()
       .await
-      .map_err(|e| format!("GitHub API request failed: {e}"))?;
-
-    let status = resp.status();
+      .map_err(|e| format!("GitHub status failed: {}", ErrorChain(&e)))?;
     let rate_limit =
       super::super::extract_rate_limit_from_headers(resp.headers());
-    if !status.is_success() {
-      let text = resp.text().await.unwrap_or_default();
-      return Err(format!("GitHub API returned {status}: {text}"));
-    }
     info!(build_id = %event.build_id, "Set GitHub commit status: {state}");
     super::super::apply_github_rate_limit(rate_limit).await;
     Ok(())
@@ -128,7 +134,12 @@ impl Notifier for GiteaStatusChannel {
     true
   }
 
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
+    let http = crate::http_client(origin);
     let (owner, repo) = parse_gitea_repo(&event.project_url, &self.base_url)
       .ok_or_else(|| {
         format!("Cannot parse Gitea repo from {}", event.project_url)
@@ -145,21 +156,15 @@ impl Notifier for GiteaStatusChannel {
       "context": format!("circus/{}", event.job_name),
     });
 
-    let resp = http_client()
+    http
       .post(&url)
       .header("Authorization", format!("token {}", self.token))
       .json(&body)
-      .send()
+      .send_checked()
       .await
-      .map_err(|e| format!("Gitea API request failed: {e}"))?;
-    if resp.status().is_success() {
-      info!(build_id = %event.build_id, "Set Gitea commit status: {state}");
-      Ok(())
-    } else {
-      let status = resp.status();
-      let text = resp.text().await.unwrap_or_default();
-      Err(format!("Gitea API returned {status}: {text}"))
-    }
+      .map_err(|e| format!("Gitea status failed: {}", ErrorChain(&e)))?;
+    info!(build_id = %event.build_id, "Set Gitea commit status: {state}");
+    Ok(())
   }
 }
 
@@ -168,7 +173,12 @@ impl Notifier for GitlabStatusChannel {
     true
   }
 
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
+    let http = crate::http_client(origin);
     let project_path = parse_gitlab_project(&event.project_url, &self.base_url)
       .ok_or_else(|| {
         format!("Cannot parse GitLab project from {}", event.project_url)
@@ -187,21 +197,15 @@ impl Notifier for GitlabStatusChannel {
       "name": format!("circus/{}", event.job_name),
     });
 
-    let resp = http_client()
+    http
       .post(&url)
       .header("PRIVATE-TOKEN", &self.token)
       .json(&body)
-      .send()
+      .send_checked()
       .await
-      .map_err(|e| format!("GitLab API request failed: {e}"))?;
-    if resp.status().is_success() {
-      info!(build_id = %event.build_id, "Set GitLab commit status: {state}");
-      Ok(())
-    } else {
-      let status = resp.status();
-      let text = resp.text().await.unwrap_or_default();
-      Err(format!("GitLab API returned {status}: {text}"))
-    }
+      .map_err(|e| format!("GitLab status failed: {}", ErrorChain(&e)))?;
+    info!(build_id = %event.build_id, "Set GitLab commit status: {state}");
+    Ok(())
   }
 }
 
@@ -210,7 +214,12 @@ impl Notifier for SlackChannel {
     !self.on_failure_only || event.is_failure()
   }
 
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
+    let http = crate::http_client(origin);
     let status = event.generic_status();
     let body = serde_json::json!({
       "text": format!("CI: {} - {status}", event.job_name),
@@ -226,13 +235,14 @@ impl Notifier for SlackChannel {
       }],
     });
 
-    let resp = http_client()
+    let resp = http
       .post(&self.webhook_url)
       .json(&body)
-      .send()
+      .send_redacted()
       .await
-      .map_err(|e| format!("Slack webhook request failed: {e}"))?;
-    if resp.status().as_u16() == 429 {
+      .map_err(slack_failed)?;
+
+    if resp.status() == StatusCode::TOO_MANY_REQUESTS {
       let retry = resp
         .headers()
         .get("retry-after")
@@ -240,12 +250,25 @@ impl Notifier for SlackChannel {
         .unwrap_or("60");
       return Err(format!("Slack rate limited; retry-after={retry}"));
     }
-    if resp.status().is_success() {
-      info!(build_id = %event.build_id, "Slack notification sent");
-      Ok(())
-    } else {
-      Err(format!("Slack returned status: {}", resp.status()))
-    }
+
+    resp.checked().await.map_err(slack_failed)?;
+    info!(build_id = %event.build_id, "Slack notification sent");
+    Ok(())
+  }
+}
+
+/// The webhook URL is itself the Slack credential, so the error leaves it out.
+fn slack_failed(error: circus_http::Error) -> String {
+  match error {
+    circus_http::Error::Status { status, body, .. } => {
+      format!("Slack returned {status}: {body}")
+    },
+    other => {
+      std::error::Error::source(&other).map_or_else(
+        || "Slack webhook failed".to_owned(),
+        |cause| format!("Slack webhook failed: {}", ErrorChain(cause)),
+      )
+    },
   }
 }
 
@@ -254,7 +277,11 @@ impl Notifier for EmailConfig {
     !self.on_failure_only || event.is_failure()
   }
 
-  async fn deliver(&self, event: &BuildEvent) -> Result<(), String> {
+  async fn deliver(
+    &self,
+    event: &BuildEvent,
+    origin: Origin,
+  ) -> Result<(), String> {
     let status = event.email_status();
     let subject = format!(
       "[circus] {status} - {} ({})",
@@ -275,21 +302,57 @@ impl Notifier for EmailConfig {
       format!("Invalid from address '{}': {e}", self.from_address)
     })?;
 
-    let mailer = if self.tls {
-      AsyncSmtpTransport::<Tokio1Executor>::relay(&self.smtp_host)
-        .map_err(|e| format!("Failed to create SMTP transport: {e}"))?
-    } else {
-      AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.smtp_host)
-    }
-    .port(self.smtp_port);
-    let mailer = if let (Some(user), Some(pass)) =
-      (&self.smtp_user, &self.smtp_password)
-    {
-      mailer.credentials(Credentials::new(user.clone(), pass.clone()))
-    } else {
-      mailer
-    }
-    .build();
+    let transport = |server: String| {
+      let mailer =
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(server)
+          .port(self.smtp_port);
+      let mailer = if self.tls {
+        let tls = TlsParameters::new(self.smtp_host.clone())
+          .map_err(|e| format!("Failed to create SMTP transport: {e}"))?;
+        mailer.tls(Tls::Wrapper(tls))
+      } else {
+        mailer
+      };
+      let mailer = if let (Some(user), Some(pass)) =
+        (&self.smtp_user, &self.smtp_password)
+      {
+        mailer.credentials(Credentials::new(user.clone(), pass.clone()))
+      } else {
+        mailer
+      };
+
+      Ok::<_, String>(mailer.build())
+    };
+
+    // lettre resolves the host itself, so project channels connect to an
+    // address checked here and keep the name for TLS.
+    let mailer = match origin {
+      Origin::Instance => transport(self.smtp_host.clone())?,
+      Origin::Project => {
+        let addrs = resolve_public(&self.smtp_host, self.smtp_port)
+          .await
+          .map_err(|e| format!("Failed to resolve SMTP host: {e}"))?;
+        let mut last_error = String::new();
+        let mut reachable = None;
+
+        for addr in addrs {
+          let mailer = transport(addr.ip().to_string())?;
+
+          match mailer.test_connection().await {
+            Ok(true) => {
+              reachable = Some(mailer);
+              break;
+            },
+            Ok(false) => last_error = format!("{addr} did not answer NOOP"),
+            Err(e) => last_error = format!("{addr}: {e}"),
+          }
+        }
+
+        reachable.ok_or_else(|| {
+          format!("Failed to connect to SMTP host: {last_error}")
+        })?
+      },
+    };
 
     for to_addr in &self.to_addresses {
       let to: Mailbox = match to_addr.parse() {
