@@ -13,6 +13,7 @@ pub struct BinaryCacheUpstream {
   pub public_key: Option<String>,
 }
 
+pub mod net;
 pub mod validation;
 
 #[derive(

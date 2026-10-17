@@ -12,6 +12,7 @@ async-compression.workspace   = true
 circus-binary-cache.workspace = true
 circus-codegen.workspace      = true
 circus-config.workspace       = true
+circus-http.workspace         = true
 circus-logs.workspace         = true
 circus-migrations.workspace   = true
 circus-nix.workspace          = true

@@ -1,7 +1,29 @@
 //! Logging configuration and initialization for Circus daemons.
 
+use std::{
+  error::Error,
+  fmt::{Display, Formatter, Result as FmtResult},
+};
+
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::{EnvFilter, fmt};
+
+/// Displays an error and its sources, joined with `: `.
+pub struct ErrorChain<'a>(pub &'a dyn Error);
+
+impl Display for ErrorChain<'_> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+    write!(f, "{}", self.0)?;
+    let mut source = self.0.source();
+
+    while let Some(cause) = source {
+      write!(f, ": {cause}")?;
+      source = cause.source();
+    }
+
+    Ok(())
+  }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

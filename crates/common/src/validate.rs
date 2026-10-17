@@ -1,7 +1,6 @@
 //! Input validation helpers
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
+use circus_http::guard::is_internal_host;
 use circus_types::validation as shared_validation;
 
 pub(crate) mod path_filter;
@@ -11,67 +10,10 @@ use path_filter::{validate_path_filter_policy, validate_path_filters};
 /// Schemes considered insecure for repository URLs.
 const INSECURE_SCHEMES: &[&str] = &["file", "http"];
 
-/// Known internal/metadata IP ranges and hostnames to block for SSRF
-/// protection.
-const INTERNAL_HOSTS: &[&str] = &[
-  "169.254.169.254", // AWS/GCP metadata
-  "metadata.google.internal",
-  "100.100.100.200", // Alibaba metadata
-];
-
 fn extract_host_from_url(url: &str) -> Option<String> {
   url::Url::parse(url)
     .ok()
     .and_then(|u| u.host_str().map(str::to_lowercase))
-}
-
-fn is_internal_host(raw_host: &str) -> bool {
-  // DNS ignores case and a trailing root dot.
-  let lowered = raw_host
-    .trim_matches(['[', ']'])
-    .trim_end_matches('.')
-    .to_ascii_lowercase();
-  let host = lowered.as_str();
-  if INTERNAL_HOSTS.contains(&host)
-    || host == "localhost"
-    || host.ends_with(".localhost")
-    || host.ends_with(".internal")
-  {
-    return true;
-  }
-
-  let Ok(ip) = host.parse::<IpAddr>() else {
-    return false;
-  };
-
-  match ip {
-    IpAddr::V4(v4) => is_internal_ipv4(v4),
-    IpAddr::V6(v6) => {
-      v6.is_loopback()
-        || v6.is_unspecified()
-        || v6.is_multicast()
-        || is_unique_local_ipv6(v6)
-        || is_link_local_ipv6(v6)
-        || v6.to_ipv4_mapped().is_some_and(is_internal_ipv4)
-    },
-  }
-}
-
-const fn is_internal_ipv4(ip: Ipv4Addr) -> bool {
-  ip.is_private()
-    || ip.is_loopback()
-    || ip.is_link_local()
-    || ip.is_unspecified()
-    || ip.is_broadcast()
-    || ip.is_multicast()
-}
-
-const fn is_unique_local_ipv6(ip: Ipv6Addr) -> bool {
-  (ip.segments()[0] & 0xFE00) == 0xFC00
-}
-
-const fn is_link_local_ipv6(ip: Ipv6Addr) -> bool {
-  (ip.segments()[0] & 0xFFC0) == 0xFE80
 }
 
 /// Trait for validating request DTOs before persisting.
