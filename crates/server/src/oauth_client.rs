@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use circus_http::{RequestExt as _, ResponseExt as _};
 use data_encoding::BASE64URL_NOPAD;
 use reqwest::{
   Client,
@@ -52,7 +53,7 @@ pub enum ClientAuth {
 #[derive(Debug, thiserror::Error)]
 pub enum TokenError {
   #[error("token request failed")]
-  Request(#[source] reqwest::Error),
+  Request(#[source] circus_http::Error),
   #[error("token endpoint rejected the code with {error}")]
   Rejected {
     error:       String,
@@ -115,11 +116,14 @@ impl AuthCodeClient {
   ) -> Result<T, TokenError> {
     let response = self
       .token_request(http, code, pkce_verifier)
-      .send()
+      .send_redacted()
       .await
       .map_err(TokenError::Request)?;
     let status = response.status();
-    let body = response.bytes().await.map_err(TokenError::Request)?;
+    let body = response
+      .bytes_capped(circus_http::JSON_LIMIT)
+      .await
+      .map_err(TokenError::Request)?;
     let token = status
       .is_success()
       .then(|| serde_json::from_slice::<T>(&body));

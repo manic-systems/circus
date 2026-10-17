@@ -10,6 +10,8 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use circus_common::{models::UserType, repo};
 use circus_config::GitHubOAuthConfig;
+use circus_http::{RequestExt as _, ResponseExt as _};
+use circus_logs::ErrorChain;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 use url::Url;
@@ -133,52 +135,39 @@ async fn github_callback(
     )));
   }
 
-  let http_client = reqwest::Client::builder()
-    .redirect(reqwest::redirect::Policy::none())
-    .build()
-    .map_err(|e| {
-      ApiError(circus_common::CiError::Internal(format!(
-        "Failed to create HTTP client: {e}"
-      )))
-    })?;
   let token: GitHubTokenResponse = build_github_client(config)
-    .exchange(&http_client, &params.code, None)
+    .exchange(&state.http_client, &params.code, None)
     .await
     .map_err(|e| {
       ApiError(circus_common::CiError::Internal(format!(
-        "Token exchange failed: {e}"
+        "Token exchange failed: {}",
+        ErrorChain(&e)
       )))
     })?;
   let access_token = token.access_token;
 
-  // Fetch user info from GitHub using shared HTTP client
-  let user_response = state
-    .http_client
-    .get("https://api.github.com/user")
-    .header("Authorization", format!("Bearer {access_token}"))
-    .header("User-Agent", "circus")
-    .header("Accept", "application/vnd.github+json")
-    .send()
+  let github_api = |path: &str| {
+    state
+      .http_client
+      .get(format!("https://api.github.com{path}"))
+      .bearer_auth(&access_token)
+      .header("Accept", "application/vnd.github+json")
+      .header("X-GitHub-Api-Version", circus_http::GITHUB_API_VERSION)
+  };
+  let internal = |e: circus_http::Error| {
+    ApiError(circus_common::CiError::Internal(format!(
+      "GitHub API request failed: {}",
+      ErrorChain(&e)
+    )))
+  };
+
+  let user_info: GitHubUserResponse = github_api("/user")
+    .send_checked()
     .await
-    .map_err(|e| {
-      ApiError(circus_common::CiError::Internal(format!(
-        "GitHub API request failed: {e}"
-      )))
-    })?;
-
-  if !user_response.status().is_success() {
-    return Err(ApiError(circus_common::CiError::Internal(format!(
-      "GitHub API returned status: {}",
-      user_response.status()
-    ))));
-  }
-
-  let user_info: GitHubUserResponse =
-    user_response.json().await.map_err(|e| {
-      ApiError(circus_common::CiError::Internal(format!(
-        "Failed to parse GitHub user: {e}"
-      )))
-    })?;
+    .map_err(internal)?
+    .json_capped(circus_http::JSON_LIMIT)
+    .await
+    .map_err(internal)?;
   tracing::debug!(
     github_id = user_info.id,
     github_login = %user_info.login,
@@ -186,34 +175,13 @@ async fn github_callback(
     "GitHub OAuth user profile"
   );
 
-  // Fetch user emails
-  let emails_response = state
-    .http_client
-    .get("https://api.github.com/user/emails")
-    .header("Authorization", format!("Bearer {access_token}"))
-    .header("User-Agent", "circus")
-    .header("Accept", "application/vnd.github+json")
-    .send()
+  let emails: Vec<GitHubEmailResponse> = github_api("/user/emails")
+    .send_checked()
     .await
-    .map_err(|e| {
-      ApiError(circus_common::CiError::Internal(format!(
-        "GitHub emails API failed: {e}"
-      )))
-    })?;
-
-  if !emails_response.status().is_success() {
-    return Err(ApiError(circus_common::CiError::Internal(format!(
-      "GitHub emails API returned status: {}",
-      emails_response.status()
-    ))));
-  }
-
-  let emails: Vec<GitHubEmailResponse> =
-    emails_response.json().await.map_err(|e| {
-      ApiError(circus_common::CiError::Internal(format!(
-        "Failed to parse GitHub emails: {e}"
-      )))
-    })?;
+    .map_err(internal)?
+    .json_capped(circus_http::JSON_LIMIT)
+    .await
+    .map_err(internal)?;
 
   let primary_email = emails
     .iter()

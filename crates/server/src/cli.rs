@@ -204,7 +204,9 @@ pub async fn serve(config: Config, bind_addr: &str) -> color_eyre::Result<()> {
     config: config.clone(),
     sessions: Arc::new(dashmap::DashMap::new()),
     narinfo_cache: AppState::new_narinfo_cache(),
-    http_client: reqwest::Client::new(),
+    http_client: circus_http::api()
+      .build()
+      .wrap_err("building the HTTP client")?,
     csrf_secret: Arc::new(csrf_secret),
     email_regex,
     cache_traffic: Arc::new(dashmap::DashMap::new()),

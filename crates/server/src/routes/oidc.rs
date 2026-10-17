@@ -11,6 +11,7 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use circus_common::{CiError, audit::Actor, models::User, repo};
 use circus_config::OidcProviderConfig;
+use circus_http::{RequestExt as _, ResponseExt as _};
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use jsonwebtoken::{
   DecodingKey,
@@ -20,7 +21,7 @@ use jsonwebtoken::{
   jwk::{JwkSet, PublicKeyUse},
 };
 use moka::sync::Cache;
-use reqwest::{Client as HttpClient, header::ACCEPT, redirect::Policy};
+use reqwest::{Client as HttpClient, header::ACCEPT};
 use serde::{
   Deserialize,
   Serialize,
@@ -325,21 +326,17 @@ async fn get_json<T: DeserializeOwned>(
     request = request.bearer_auth(token);
   }
 
-  let body = request
-    .send()
+  request
+    .send_checked()
     .await
-    .and_then(reqwest::Response::error_for_status)
     .map_err(LoginError::unavailable)?
-    .bytes()
+    .json_capped(circus_http::JSON_LIMIT)
     .await
-    .map_err(LoginError::unavailable)?;
-  serde_json::from_slice(&body).map_err(LoginError::unavailable)
+    .map_err(LoginError::unavailable)
 }
 
 async fn discover(config: &OidcProviderConfig) -> Result<Provider, LoginError> {
-  let http = HttpClient::builder()
-    .redirect(Policy::none())
-    .timeout(Duration::from_secs(30))
+  let http = circus_http::api()
     .build()
     .map_err(LoginError::unavailable)?;
   let url = format!(

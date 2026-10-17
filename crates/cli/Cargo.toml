@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 circus-common.workspace = true
+circus-http.workspace   = true
 clap.workspace          = true
 color-eyre.workspace    = true
 comfy-table.workspace   = true

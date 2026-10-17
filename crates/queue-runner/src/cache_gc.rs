@@ -2,12 +2,12 @@ use std::{future::pending, sync::Arc, time::Duration};
 
 use circus_common::{PgPool, repo::narinfo_cache};
 use circus_config::{CacheGcConfig, CacheUploadConfig};
+use circus_http::RequestExt as _;
 use futures::{StreamExt as _, stream};
 use jiff::{SignedDuration, Timestamp};
 
 const DELETE_CONCURRENCY: usize = 8;
 const DELETE_URL_LIFETIME: Duration = Duration::from_mins(5);
-const DELETE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn run(
   config: CacheGcConfig,
@@ -30,8 +30,7 @@ pub async fn run(
     return pending().await;
   };
   let presigner = Arc::new(presigner);
-  let client = match reqwest::Client::builder().timeout(DELETE_TIMEOUT).build()
-  {
+  let client = match circus_http::api().build() {
     Ok(client) => client,
     Err(error) => {
       tracing::error!(%error, "Failed to initialize the cache GC HTTP client");
@@ -116,25 +115,15 @@ async fn delete_object(
     DELETE_URL_LIFETIME,
     jiff::Timestamp::now(),
   );
-  match client.delete(url).send().await {
-    Ok(response)
-      if response.status().is_success()
-        || response.status() == reqwest::StatusCode::NOT_FOUND =>
-    {
+  match client.delete(url).send_checked().await {
+    Ok(_) => Some(candidate),
+    Err(error) if error.status() == Some(reqwest::StatusCode::NOT_FOUND) => {
       Some(candidate)
-    },
-    Ok(response) => {
-      tracing::warn!(
-        store_path = %candidate.store_path,
-        status = %response.status(),
-        "Failed to delete cache object"
-      );
-      None
     },
     Err(error) => {
       tracing::warn!(
         store_path = %candidate.store_path,
-        %error,
+        error = %circus_logs::ErrorChain(&error),
         "Failed to delete cache object"
       );
       None

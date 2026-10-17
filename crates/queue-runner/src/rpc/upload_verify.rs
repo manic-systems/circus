@@ -3,6 +3,7 @@ use std::{
   pin::Pin,
   sync::{
     Arc,
+    LazyLock,
     atomic::{AtomicU64, Ordering},
   },
   task::{Context, Poll},
@@ -11,6 +12,7 @@ use std::{
 
 use async_compression::tokio::bufread::{GzipDecoder, XzDecoder, ZstdDecoder};
 use circus_binary_cache::{archive::NarEvent, parse_nar};
+use circus_http::RequestExt as _;
 use color_eyre::eyre::{Context as _, bail, eyre};
 use data_encoding::{BASE64, HEXLOWER, HEXLOWER_PERMISSIVE};
 use futures::{StreamExt as _, TryStreamExt as _};
@@ -38,26 +40,19 @@ pub struct VerifyRequest {
   pub references:  Vec<String>,
 }
 
-fn http_client() -> &'static reqwest::Client {
-  static CLIENT: std::sync::OnceLock<reqwest::Client> =
-    std::sync::OnceLock::new();
-  CLIENT.get_or_init(|| {
-    reqwest::Client::builder()
-      .connect_timeout(Duration::from_secs(10))
-      .timeout(Duration::from_secs(30))
-      .build()
-      .expect("build upload-verify HTTP client")
-  })
-}
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+  circus_http::transfer()
+    .read_timeout(Duration::from_mins(1))
+    .build()
+    .expect("build upload-verify HTTP client")
+});
 
 pub async fn verify(req: VerifyRequest) -> color_eyre::Result<UploadedNar> {
-  let response = http_client()
+  let response = HTTP
     .get(&req.get_url)
-    .send()
+    .send_checked()
     .await
-    .with_context(|| format!("GET {}", redact_url_query(&req.get_url)))?
-    .error_for_status()
-    .context("uploaded NAR GET returned error")?;
+    .context("fetch the uploaded NAR")?;
   let stream = response.bytes_stream();
   let stream = stream.map_err(std::io::Error::other);
   let raw = StreamReader::new(stream);
@@ -312,13 +307,6 @@ impl AsyncRead for HashingReader {
     }
     result
   }
-}
-
-fn redact_url_query(url: &str) -> String {
-  url.find('?').map_or_else(
-    || url.to_owned(),
-    |pos| format!("{}?<redacted>", &url[..pos]),
-  )
 }
 
 fn hash_matches(text: &str, computed: &[u8]) -> color_eyre::Result<bool> {

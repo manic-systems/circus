@@ -655,7 +655,7 @@ pub(super) async fn cache_gc(
     crate::routes::cache::uploaded_nar_presigner(&state.config)
   {
     use futures::StreamExt as _;
-    let client = reqwest::Client::new();
+    let client = state.http_client.clone();
     // Collected first: a stream borrowing `deleted` makes this handler's
     // future fail axum's higher-ranked `Handler` bound.
     #[expect(clippy::needless_collect, reason = "see comment above")]

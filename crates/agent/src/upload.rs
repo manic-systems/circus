@@ -34,6 +34,7 @@ use async_compression::{
   Level,
   tokio::bufread::{GzipEncoder, XzEncoder, ZstdEncoder},
 };
+use circus_http::RequestExt as _;
 use circus_proto::{nar_info, runner};
 use color_eyre::eyre::{Context as _, bail, eyre};
 use data_encoding::HEXLOWER;
@@ -122,10 +123,7 @@ pub async fn upload_all(
     },
   };
 
-  let http = reqwest::Client::builder()
-    .pool_max_idle_per_host(2)
-    .build()
-    .context("build reqwest client")?;
+  let http = circus_http::transfer().pool_max_idle_per_host(2).build()?;
 
   for (meta, slot) in metadata.iter().zip(presigned.iter()) {
     if !slot.error.is_empty() {
@@ -151,7 +149,7 @@ pub async fn upload_all(
         }
       },
       Err(e) => {
-        failures.push((meta.store_path.clone(), format!("upload: {e}")));
+        failures.push((meta.store_path.clone(), format!("upload: {e:#}")));
       },
     }
   }
@@ -294,18 +292,12 @@ async fn upload_one(
   let stream = ReaderStream::with_capacity(spool, 64 * 1024);
   let body = reqwest::Body::wrap_stream(stream);
 
-  let resp = http
+  http
     .put(&slot.nar_url)
     .header(reqwest::header::CONTENT_LENGTH, file_size)
     .body(body)
-    .send()
-    .await
-    .with_context(|| format!("PUT {}", slot.nar_url))?;
-  let status = resp.status();
-  if !status.is_success() {
-    let text = resp.text().await.unwrap_or_default();
-    bail!("S3 PUT returned {status}: {text}");
-  }
+    .send_checked()
+    .await?;
 
   // Finalise the rolling hash. `Mutex::into_inner` only works on the
   // unwrapped value; we take(...) to move it out from behind the Arc.

@@ -8,6 +8,7 @@ use std::{
   time::{Duration, Instant},
 };
 
+use circus_logs::ErrorChain;
 use circus_proto::{log_sink, nix_log};
 use nix::sys::statvfs::statvfs;
 use tokio::{
@@ -290,17 +291,6 @@ where
   Ok(Realised { result, outputs })
 }
 
-fn error_chain(error: &dyn std::error::Error) -> String {
-  let mut text = error.to_string();
-  let mut source = error.source();
-  while let Some(cause) = source {
-    text.push_str(": ");
-    text.push_str(&cause.to_string());
-    source = cause.source();
-  }
-  text
-}
-
 enum Event {
   Line(Option<Result<String, String>>),
   Finished(Result<Result<Realised, DaemonError>, JoinError>),
@@ -353,7 +343,7 @@ fn joined(
   result: Result<Result<Realised, DaemonError>, JoinError>,
 ) -> Result<Realised, String> {
   match result {
-    Ok(realised) => realised.map_err(|e| error_chain(&e)),
+    Ok(realised) => realised.map_err(|e| ErrorChain(&e).to_string()),
     Err(e) => Err(format!("nix-daemon session ended: {e}")),
   }
 }
