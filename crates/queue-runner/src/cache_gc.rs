@@ -1,13 +1,8 @@
-use std::{future::pending, sync::Arc, time::Duration};
+use std::{future::pending, time::Duration};
 
 use circus_common::{PgPool, repo::narinfo_cache};
 use circus_config::{CacheGcConfig, CacheUploadConfig};
-use circus_http::RequestExt as _;
-use futures::{StreamExt as _, stream};
 use jiff::{SignedDuration, Timestamp};
-
-const DELETE_CONCURRENCY: usize = 8;
-const DELETE_URL_LIFETIME: Duration = Duration::from_mins(5);
 
 pub async fn run(
   config: CacheGcConfig,
@@ -29,7 +24,6 @@ pub async fn run(
     );
     return pending().await;
   };
-  let presigner = Arc::new(presigner);
   let client = match circus_http::api().build() {
     Ok(client) => client,
     Err(error) => {
@@ -52,7 +46,7 @@ pub async fn run(
 
 async fn run_cycle(
   config: &CacheGcConfig,
-  presigner: &Arc<circus_s3::Presigner>,
+  presigner: &circus_s3::Presigner,
   client: &reqwest::Client,
   pool: &PgPool,
 ) -> circus_common::Result<()> {
@@ -70,8 +64,7 @@ async fn run_cycle(
     return Ok(());
   }
 
-  let deleted =
-    delete_objects(client.clone(), Arc::clone(presigner), candidates).await;
+  let deleted = delete_objects(client, presigner, candidates).await;
   let reclaimed = deleted.iter().fold(0_i64, |total, candidate| {
     total.saturating_add(candidate.bytes)
   });
@@ -91,42 +84,32 @@ async fn run_cycle(
 }
 
 async fn delete_objects(
-  client: reqwest::Client,
-  presigner: Arc<circus_s3::Presigner>,
+  client: &reqwest::Client,
+  presigner: &circus_s3::Presigner,
   candidates: Vec<narinfo_cache::CacheGcCandidate>,
 ) -> Vec<narinfo_cache::CacheGcCandidate> {
-  stream::iter(candidates.into_iter().map(|candidate| {
-    delete_object(client.clone(), Arc::clone(&presigner), candidate)
-  }))
-  .buffer_unordered(DELETE_CONCURRENCY)
-  .filter_map(std::future::ready)
-  .collect()
-  .await
-}
+  let objects = candidates
+    .into_iter()
+    .map(|candidate| {
+      let key = candidate.url.clone();
+      (candidate, key)
+    })
+    .collect();
 
-async fn delete_object(
-  client: reqwest::Client,
-  presigner: Arc<circus_s3::Presigner>,
-  candidate: narinfo_cache::CacheGcCandidate,
-) -> Option<narinfo_cache::CacheGcCandidate> {
-  let url = presigner.presign_at(
-    "DELETE",
-    &candidate.url,
-    DELETE_URL_LIFETIME,
-    jiff::Timestamp::now(),
-  );
-  match client.delete(url).send_checked().await {
-    Ok(_) => Some(candidate),
-    Err(error) if error.status() == Some(reqwest::StatusCode::NOT_FOUND) => {
-      Some(candidate)
-    },
-    Err(error) => {
+  presigner
+    .delete_all(client, objects)
+    .await
+    .into_iter()
+    .filter_map(|(candidate, result)| {
+      let Err(error) = result else {
+        return Some(candidate);
+      };
       tracing::warn!(
         store_path = %candidate.store_path,
         error = %circus_logs::ErrorChain(&error),
         "Failed to delete cache object"
       );
       None
-    },
-  }
+    })
+    .collect()
 }

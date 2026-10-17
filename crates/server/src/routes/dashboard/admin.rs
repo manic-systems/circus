@@ -654,51 +654,21 @@ pub(super) async fn cache_gc(
   if let Some(presigner) =
     crate::routes::cache::uploaded_nar_presigner(&state.config)
   {
-    use futures::StreamExt as _;
-    let client = state.http_client.clone();
-    // Collected first: a stream borrowing `deleted` makes this handler's
-    // future fail axum's higher-ranked `Handler` bound.
-    #[expect(clippy::needless_collect, reason = "see comment above")]
-    let requests: Vec<(String, String)> = deleted
+    let objects = deleted
       .iter()
-      .map(|nar| {
-        (
-          nar.store_path.clone(),
-          presigner.presign_at(
-            "DELETE",
-            &nar.url,
-            std::time::Duration::from_mins(5),
-            jiff::Timestamp::now(),
-          ),
-        )
-      })
+      .map(|nar| (nar.store_path.clone(), nar.url.clone()))
       .collect();
-    let mut results =
-      futures::stream::iter(requests.into_iter().map(|(store_path, url)| {
-        let client = client.clone();
-        async move { (store_path, client.delete(&url).send().await) }
-      }))
-      .buffer_unordered(8);
-    while let Some((store_path, result)) = results.next().await {
-      match result {
-        Ok(resp)
-          if resp.status().is_success()
-            || resp.status() == reqwest::StatusCode::NOT_FOUND => {},
-        Ok(resp) => {
-          object_failures += 1;
-          tracing::warn!(
-            store_path = %store_path,
-            status = %resp.status(),
-            "Failed to delete cache object"
-          );
-        },
-        Err(e) => {
-          object_failures += 1;
-          tracing::warn!(
-            store_path = %store_path,
-            "Failed to delete cache object: {e}"
-          );
-        },
+
+    for (store_path, result) in
+      presigner.delete_all(&state.http_client, objects).await
+    {
+      if let Err(error) = result {
+        object_failures += 1;
+        tracing::warn!(
+          store_path = %store_path,
+          error = %circus_logs::ErrorChain(&error),
+          "Failed to delete cache object"
+        );
       }
     }
   }

@@ -12,10 +12,13 @@
 use std::time::Duration;
 
 use circus_config::S3CacheConfig;
+use circus_http::RequestExt as _;
 use data_encoding::HEXLOWER;
+use futures::{StreamExt as _, stream};
 use hmac::{Hmac, KeyInit as _, Mac};
 use jiff::Timestamp;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use reqwest::StatusCode;
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
@@ -338,6 +341,35 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
       HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
+  }
+}
+
+const DELETE_CONCURRENCY: usize = 8;
+const DELETE_URL_LIFETIME: Duration = Duration::from_mins(5);
+
+impl Presigner {
+  /// Deletes the object at each key. A missing object counts as deleted.
+  pub async fn delete_all<T>(
+    &self,
+    client: &reqwest::Client,
+    objects: Vec<(T, String)>,
+  ) -> Vec<(T, Result<(), circus_http::Error>)> {
+    stream::iter(objects.into_iter().map(|(tag, key)| {
+      let url =
+        self.presign_at("DELETE", &key, DELETE_URL_LIFETIME, Timestamp::now());
+
+      async move {
+        let result = match client.delete(url).send_checked().await {
+          Ok(_) => Ok(()),
+          Err(error) if error.status() == Some(StatusCode::NOT_FOUND) => Ok(()),
+          Err(error) => Err(error),
+        };
+        (tag, result)
+      }
+    }))
+    .buffer_unordered(DELETE_CONCURRENCY)
+    .collect()
+    .await
   }
 }
 
