@@ -1207,6 +1207,7 @@ pub(super) async fn notifications_create(
     notification_type,
     &parsed,
     state.config.server.webhook_secret_encryption_key.as_deref(),
+    circus_notification::Origin::Project,
   )
   .map_err(|e| {
     (StatusCode::BAD_REQUEST, format!("Invalid config: {e}")).into_response()
