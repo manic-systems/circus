@@ -679,6 +679,7 @@ dependencies = [
  "circus-binary-cache",
  "circus-codegen",
  "circus-config",
+ "circus-http",
  "circus-logs",
  "circus-migrations",
  "circus-nix",
@@ -755,6 +756,18 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "circus-http"
+version = "0.14.0"
+dependencies = [
+ "circus-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
