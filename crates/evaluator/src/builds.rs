@@ -192,6 +192,8 @@ async fn http_substituters(memory_limit: MemoryLimit) -> Vec<String> {
       String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+        // Query parameters are store settings like `priority`.
+        .map(|url| url.split_once('?').map_or(url, |(base, _)| base))
         .map(|url| url.trim_end_matches('/').to_owned())
         .collect()
     },
@@ -219,7 +221,7 @@ async fn substitutable(
     return Vec::new();
   }
 
-  let client = match reqwest::Client::builder()
+  let client = match circus_http::api()
     .connect_timeout(Duration::from_secs(5))
     .timeout(Duration::from_secs(10))
     .build()

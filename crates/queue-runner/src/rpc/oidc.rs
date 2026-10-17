@@ -9,6 +9,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use circus_config::RpcOidcConfig;
+use circus_http::{RequestExt as _, ResponseExt as _};
 use color_eyre::eyre::{Context as _, bail, eyre};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
@@ -87,11 +88,7 @@ impl OidcVerifier {
   ///
   /// Returns an error if the HTTP client cannot be built.
   pub fn new(cfg: &RpcOidcConfig) -> color_eyre::Result<Self> {
-    let http = reqwest::Client::builder()
-      .connect_timeout(Duration::from_secs(10))
-      .timeout(Duration::from_secs(20))
-      .build()
-      .context("build OIDC http client")?;
+    let http = circus_http::api().build()?;
     Ok(Self {
       http,
       issuer: cfg.issuer.trim_end_matches('/').to_owned(),
@@ -210,14 +207,11 @@ impl OidcVerifier {
     let set: JwkSet = self
       .http
       .get(&uri)
-      .send()
+      .send_checked()
+      .await?
+      .json_capped(circus_http::JSON_LIMIT)
       .await
-      .context("fetch JWKS")?
-      .error_for_status()
-      .context("JWKS endpoint returned error")?
-      .json()
-      .await
-      .context("parse JWKS")?;
+      .context("fetch JWKS")?;
     let keys = set
       .keys
       .into_iter()
@@ -242,14 +236,11 @@ impl OidcVerifier {
     let disc: OidcDiscovery = self
       .http
       .get(&url)
-      .send()
+      .send_checked()
+      .await?
+      .json_capped(circus_http::JSON_LIMIT)
       .await
-      .context("fetch OIDC discovery")?
-      .error_for_status()
-      .context("OIDC discovery returned error")?
-      .json()
-      .await
-      .context("parse OIDC discovery")?;
+      .context("fetch OIDC discovery")?;
 
     // Pin jwks_uri to the issuer origin
     if !same_origin(&self.issuer, &disc.jwks_uri) {

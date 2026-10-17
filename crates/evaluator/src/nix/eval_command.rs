@@ -1,7 +1,8 @@
-use std::time::Duration;
+use std::{fmt::Display, time::Duration};
 
 use circus_common::{CiError, error::Result};
 use circus_config::EvaluatorConfig;
+use circus_logs::ErrorChain;
 use futures::StreamExt as _;
 use tokio::{process::Command, sync::watch};
 use tokio_util::sync::CancellationToken;
@@ -158,9 +159,8 @@ pub(super) async fn run_eval(
     progress.send_replace(EvalProgress { done: 0, total: 1 });
 
     while let Some(next) = events.next().await {
-      let event = next.map_err(|error| {
-        evix_eval_failure(description, &error_chain(&error))
-      })?;
+      let event = next
+        .map_err(|error| evix_eval_failure(description, ErrorChain(&error)))?;
       progress.send_modify(|counts| {
         counts.done += 1;
         if let evix::Event::AttrSet { attrs, .. } = &event {
@@ -261,9 +261,9 @@ async fn open_session(
     attempt.workers = workers;
     match evix::Session::open(attempt).await {
       Ok(session) => return Ok(session),
-      Err(error) if is_resource_exhaustion(&error_chain(&error)) => {
+      Err(error) if is_resource_exhaustion(&ErrorChain(&error).to_string()) => {
         let Some(retry_workers) = retry_workers(workers) else {
-          return Err(evix_eval_failure(description, &error_chain(&error)));
+          return Err(evix_eval_failure(description, ErrorChain(&error)));
         };
         tracing::warn!(
           evaluation = description,
@@ -275,7 +275,7 @@ async fn open_session(
         workers = retry_workers;
       },
       Err(error) => {
-        return Err(evix_eval_failure(description, &error_chain(&error)));
+        return Err(evix_eval_failure(description, ErrorChain(&error)));
       },
     }
   }
@@ -294,27 +294,8 @@ const fn retry_workers(workers: usize) -> Option<usize> {
   }
 }
 
-fn evix_eval_failure(description: &str, details: &str) -> CiError {
+fn evix_eval_failure(description: &str, details: impl Display) -> CiError {
   CiError::NixEval(format!("{description} evix evaluation failed: {details}"))
-}
-
-/// Render an error and its full `source()` chain as a single `: `-separated
-/// line.
-///
-/// evix's `Error` stores the underlying cause behind `source()` while its
-/// `Display` prints only the outermost message, so formatting with `{e}` or
-/// `{e:#}` drops the actual Nix failure (e.g. the missing-attribute or
-/// restricted-eval message behind a `fragment attr` context).
-pub fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
-  use std::fmt::Write as _;
-
-  let mut message = error.to_string();
-  let mut source = error.source();
-  while let Some(cause) = source {
-    let _ = write!(message, ": {cause}");
-    source = cause.source();
-  }
-  message
 }
 
 #[cfg(test)]
@@ -375,43 +356,6 @@ mod policy_tests {
     assert_eq!(retry_workers(4), Some(2));
     assert_eq!(retry_workers(2), Some(1));
     assert_eq!(retry_workers(1), None);
-  }
-
-  #[test]
-  fn error_chain_includes_hidden_sources() {
-    #[derive(Debug)]
-    struct Layered {
-      message: &'static str,
-      source:  Option<Box<Self>>,
-    }
-
-    impl std::fmt::Display for Layered {
-      fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.message)
-      }
-    }
-
-    impl std::error::Error for Layered {
-      fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self
-          .source
-          .as_ref()
-          .map(|s| s.as_ref() as &(dyn std::error::Error + 'static))
-      }
-    }
-
-    let err = Layered {
-      message: r#"fragment attr "packages""#,
-      source:  Some(Box::new(Layered {
-        message: "Key not found: packages",
-        source:  None,
-      })),
-    };
-
-    assert_eq!(
-      error_chain(&err),
-      r#"fragment attr "packages": Key not found: packages"#
-    );
   }
 
   #[test]

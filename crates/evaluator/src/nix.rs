@@ -15,7 +15,6 @@ mod flake_ref;
 mod tack;
 
 use eval_command::NixEvalPolicy;
-pub use eval_command::error_chain;
 use flake_ref::SourceFlakeRef;
 
 fn evix_item_timeout_seconds(timeout: Duration) -> u64 {

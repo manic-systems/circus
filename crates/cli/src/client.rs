@@ -1,3 +1,4 @@
+use circus_http::RequestExt as _;
 use color_eyre::{
   Result,
   eyre::{Context, bail},
@@ -20,7 +21,7 @@ impl ApiClient {
     let base_url = reqwest::Url::parse(&normalized)
       .with_context(|| format!("invalid Circus URL: {base_url}"))?;
     Ok(Self {
-      client: reqwest::Client::new(),
+      client: circus_http::transfer().build()?,
       base_url,
       api_key,
     })
@@ -87,10 +88,7 @@ impl ApiClient {
       request = request.json(&body);
     }
 
-    let response = request
-      .send()
-      .await
-      .with_context(|| format!("request failed: {method} {url}"))?;
+    let response = request.send_redacted().await?;
     let status = response.status();
     let text = response
       .text()

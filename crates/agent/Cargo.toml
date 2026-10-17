@@ -11,6 +11,7 @@ name = "circus-agent"
 path = "src/main.rs"
 
 [dependencies]
+circus-http.workspace  = true
 circus-logs.workspace  = true
 circus-proto.workspace = true
 

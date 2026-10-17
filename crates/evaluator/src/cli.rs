@@ -49,7 +49,7 @@ where
     return evix::run_worker().map_err(|e| {
       color_eyre::eyre::eyre!(
         "evix worker failed: {}",
-        crate::nix::error_chain(&e)
+        circus_logs::ErrorChain(&e)
       )
     });
   }

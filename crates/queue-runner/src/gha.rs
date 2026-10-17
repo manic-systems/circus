@@ -6,6 +6,7 @@ use std::{
 
 use circus_common::{PgPool, repo};
 use circus_config::{EphemeralPoolConfig, GithubActionsPoolConfig};
+use circus_http::RequestExt as _;
 use color_eyre::eyre::{Context as _, bail};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -14,8 +15,6 @@ use crate::{
   dispatch::{supports_required_features, trusted_build_github_repository},
   rpc::AgentPool,
 };
-
-const GITHUB_API_VERSION: &str = "2026-03-10";
 
 pub struct Autoscaler {
   cfg:            EphemeralPoolConfig,
@@ -73,12 +72,7 @@ impl Autoscaler {
     shutdown_token: CancellationToken,
   ) -> color_eyre::Result<Self> {
     let token = load_token(&cfg.github_actions).await?;
-    let http = reqwest::Client::builder()
-      .user_agent("circus-queue-runner")
-      .connect_timeout(Duration::from_secs(10))
-      .timeout(Duration::from_secs(30))
-      .build()
-      .context("build GitHub Actions autoscaler HTTP client")?;
+    let http = circus_http::api().build()?;
     Ok(Self {
       cfg,
       token,
@@ -296,21 +290,16 @@ impl Autoscaler {
         agent_name:         self.cfg.name.clone(),
       },
     };
-    let response = self
+    self
       .http
       .post(url)
       .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-      .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+      .header("X-GitHub-Api-Version", circus_http::GITHUB_API_VERSION)
       .bearer_auth(&self.token)
       .json(&body)
-      .send()
+      .send_checked()
       .await
       .context("dispatch GitHub Actions builder workflow")?;
-    let status = response.status();
-    if status != reqwest::StatusCode::NO_CONTENT {
-      let text = response.text().await.unwrap_or_default();
-      bail!("GitHub workflow dispatch returned {status}: {text}");
-    }
     tracing::info!(
       pool = %self.cfg.name,
       repository = %gha.workflow_repository,
@@ -360,7 +349,7 @@ mod tests {
 
   fn test_http_client() -> reqwest::Client {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::new()
+    circus_http::api().build().expect("build test HTTP client")
   }
 
   #[tokio::test]
