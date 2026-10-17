@@ -890,10 +890,13 @@ name = "circus-s3"
 version = "0.14.0"
 dependencies = [
  "circus-config",
+ "circus-http",
  "data-encoding",
+ "futures",
  "hmac 0.13.0",
  "jiff",
  "percent-encoding",
+ "reqwest",
  "sha2 0.11.0",
  "url",
 ]

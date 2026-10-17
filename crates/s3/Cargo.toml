@@ -4,14 +4,17 @@ version.workspace    = true
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
-description          = "S3 signing helpers for Circus"
+description          = "S3 signing and object helpers for Circus"
 
 [dependencies]
 circus-config.workspace    = true
+circus-http.workspace      = true
 data-encoding.workspace    = true
+futures.workspace          = true
 hmac.workspace             = true
 jiff.workspace             = true
 percent-encoding.workspace = true
+reqwest.workspace          = true
 sha2.workspace             = true
 url.workspace              = true
 
