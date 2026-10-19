@@ -8,6 +8,7 @@ use circus_types::{
   InputType,
   NotificationType,
   ProjectRole,
+  net::AllowedHost,
 };
 use data_encoding::BASE64;
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,7 @@ pub struct Config {
   pub gc:            GcConfig,
   pub logs:          LogConfig,
   pub notifications: NotificationsConfig,
+  pub outbound:      OutboundConfig,
   pub cache:         CacheConfig,
   pub signing:       SigningConfig,
   #[serde(default)]
@@ -37,6 +39,15 @@ pub struct Config {
   pub oauth:         OAuthConfig,
   #[serde(default)]
   pub nix:           NixConfig,
+}
+
+/// Outbound HTTP to URLs that projects configure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OutboundConfig {
+  /// Internal hosts and ranges that repository and notification URLs may
+  /// still reach.
+  pub allow_internal: Vec<AllowedHost>,
 }
 
 /// Nix-specific settings, primarily for non-standard Nix installations.

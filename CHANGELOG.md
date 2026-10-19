@@ -21,6 +21,8 @@ correct existing behaviour, "Changed" for updates to existing behaviour, and
 - Builds are queued while their evaluation is still running, in batches as jobs
   are discovered. An evaluation that fails or times out keeps the builds it
   already queued, but its aggregate jobs are not created.
+- Project URLs, email channels included, can no longer reach internal addresses.
+  Allowlist them in `[outbound] allow_internal`.
 
 ### Fixed
 

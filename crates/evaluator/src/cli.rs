@@ -58,6 +58,7 @@ where
 
   let cli = Cli::parse_from(args);
   let config = Config::load(cli.config.as_deref())?;
+  circus_http::guard::allow_internal(&config.outbound.allow_internal)?;
 
   // evix workers re-execute this binary and inherit its environment. Set the
   // limit before the runtime creates threads and before any workers spawn.

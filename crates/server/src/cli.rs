@@ -115,6 +115,7 @@ where
 
   let mut config = Config::load(cli.config.as_deref())?;
   circus_common::init_tracing(&config.tracing);
+  circus_http::guard::allow_internal(&config.outbound.allow_internal)?;
 
   let host = cli.host.unwrap_or_else(|| config.server.host.clone());
   let port = cli.port.unwrap_or(config.server.port);

@@ -1,6 +1,12 @@
 //! Address ranges for telling internal hosts from public ones.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::{
+  fmt::{self, Display, Formatter},
+  net::{IpAddr, Ipv4Addr, Ipv6Addr},
+  str::FromStr,
+};
+
+use serde::{Deserialize, Serialize};
 
 /// Special-purpose ranges from the IANA registries.
 const INTERNAL: [IpRange; 19] = [
@@ -67,6 +73,49 @@ impl IpRange {
   }
 }
 
+const fn address_width(addr: IpAddr) -> u32 {
+  match addr {
+    IpAddr::V4(_) => 32,
+    IpAddr::V6(_) => 128,
+  }
+}
+
+impl FromStr for IpRange {
+  type Err = InvalidHost;
+
+  fn from_str(raw: &str) -> Result<Self, Self::Err> {
+    let invalid = || InvalidHost(raw.to_owned());
+    let (addr, len) = match raw.split_once('/') {
+      Some((addr, len)) => (addr, Some(len)),
+      None => (raw, None),
+    };
+    let addr: IpAddr = addr.parse().map_err(|_| invalid())?;
+    let width = address_width(addr);
+    let len = match len {
+      Some(len) => {
+        len
+          .parse()
+          .ok()
+          .filter(|len| *len <= width)
+          .ok_or_else(invalid)?
+      },
+      None => width,
+    };
+
+    Ok(Self { addr, len })
+  }
+}
+
+impl Display for IpRange {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    if self.len == address_width(self.addr) {
+      write!(f, "{}", self.addr)
+    } else {
+      write!(f, "{}/{}", self.addr, self.len)
+    }
+  }
+}
+
 /// Whether `ip` is loopback, private, link-local or otherwise not public,
 /// including IPv4 addresses inside compatible, mapped, NAT64 and 6to4 IPv6
 /// addresses.
@@ -97,13 +146,74 @@ pub fn normalize_host(raw_host: &str) -> String {
     .to_ascii_lowercase()
 }
 
+/// An internal host that project URLs may reach anyway.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum AllowedHost {
+  Name(String),
+  Range(IpRange),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct InvalidHost(String);
+
+impl Display for InvalidHost {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    write!(f, "'{}' is not a hostname, address or CIDR range", self.0)
+  }
+}
+
+impl std::error::Error for InvalidHost {}
+
+impl FromStr for AllowedHost {
+  type Err = InvalidHost;
+
+  fn from_str(raw: &str) -> Result<Self, Self::Err> {
+    if raw.contains('/') || raw.parse::<IpAddr>().is_ok() {
+      return raw.parse().map(Self::Range);
+    }
+
+    let name = normalize_host(raw);
+
+    if name.is_empty() || name.contains(|c: char| c.is_whitespace() || c == ':')
+    {
+      return Err(InvalidHost(raw.to_owned()));
+    }
+
+    Ok(Self::Name(name))
+  }
+}
+
+impl TryFrom<String> for AllowedHost {
+  type Error = InvalidHost;
+
+  fn try_from(raw: String) -> Result<Self, Self::Error> {
+    raw.parse()
+  }
+}
+
+impl Display for AllowedHost {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Name(name) => f.write_str(name),
+      Self::Range(range) => range.fmt(f),
+    }
+  }
+}
+
+impl From<AllowedHost> for String {
+  fn from(host: AllowedHost) -> Self {
+    host.to_string()
+  }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "fine in tests")]
 mod tests {
   use super::*;
 
   #[test]
-  fn internal_ranges() {
+  fn internal_ranges_and_allowed_hosts() {
     for (ip, internal) in [
       ("10.0.0.1", true),
       ("11.0.0.1", false),
@@ -130,5 +240,24 @@ mod tests {
     ] {
       assert_eq!(is_internal_ip(ip.parse().unwrap()), internal, "{ip}");
     }
+
+    for (raw, shown) in [
+      ("Git.LAN.", Some("git.lan")),
+      ("10.0.0.0/8", Some("10.0.0.0/8")),
+      ("10.1.2.3/32", Some("10.1.2.3")),
+      ("fd00::/8", Some("fd00::/8")),
+      ("0.0.0.0/0", Some("0.0.0.0/0")),
+      ("10.0.0.0/33", None),
+      ("git.lan:3000", None),
+      ("", None),
+    ] {
+      let parsed = raw.parse::<AllowedHost>().ok().map(|host| host.to_string());
+      assert_eq!(parsed.as_deref(), shown, "{raw}");
+    }
+
+    let range: IpRange = "10.0.0.0/7".parse().unwrap();
+    assert!(range.contains("11.255.0.1".parse().unwrap()));
+    assert!(!range.contains("12.0.0.0".parse().unwrap()));
+    assert!(!range.contains("::1".parse().unwrap()));
   }
 }

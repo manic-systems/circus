@@ -90,6 +90,7 @@ where
 
   let config = Config::load(cli.config.as_deref())?;
   circus_common::init_tracing(&config.tracing);
+  circus_http::guard::allow_internal(&config.outbound.allow_internal)?;
 
   tracing::info!("Starting CI Queue Runner");
 
