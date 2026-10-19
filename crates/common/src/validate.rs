@@ -47,10 +47,10 @@ fn validate_repository_url(url: &str) -> Result<(), String> {
   if let Some(host) = extract_host_from_url(url)
     && is_internal_host(&host)
   {
-    return Err(
-      "repository_url must not target internal or metadata addresses"
-        .to_string(),
-    );
+    return Err(format!(
+      "repository_url host {host} is internal, list it in \
+       [outbound].allow_internal to allow it"
+    ));
   }
   Ok(())
 }
@@ -88,9 +88,10 @@ pub fn validate_webhook_url(url: &str) -> Result<(), String> {
   if let Some(host) = extract_host_from_url(url)
     && is_internal_host(&host)
   {
-    return Err(
-      "URL must not target internal or metadata addresses".to_string(),
-    );
+    return Err(format!(
+      "URL host {host} is internal, list it in [outbound].allow_internal to \
+       allow it"
+    ));
   }
   Ok(())
 }

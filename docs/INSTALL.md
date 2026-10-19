@@ -366,6 +366,7 @@ configuration or the Nix store.
 | `declarative`        | `allow_runtime_mutation`                               | `false`                                             | Permit API and dashboard changes to declarative projects                  |
 | `declarative`        | `api_keys`                                             | `[]`                                                | Declarative API key definitions                                           |
 | `declarative`        | `users`                                                | `[]`                                                | Declarative user definitions                                              |
+| `outbound`           | `allow_internal`                                       | `[]`                                                | Internal hosts or CIDR ranges that project URLs may reach                 |
 | `nix`                | `store_dir`                                            | `/nix/store`                                        | Nix store directory                                                       |
 
 <!-- markdownlint-enable MD013 -->

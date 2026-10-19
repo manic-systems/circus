@@ -382,6 +382,7 @@
     inherit (cfg.settings) database;
     evaluator = cfg.settings.evaluator or {};
     notifications = cfg.settings.notifications or {};
+    outbound = cfg.settings.outbound or {};
     tracing = cfg.settings.tracing or {};
     server = notificationSecrets;
   };

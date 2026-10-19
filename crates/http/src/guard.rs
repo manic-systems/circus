@@ -4,16 +4,52 @@ use std::{
   error::Error as StdError,
   io,
   net::{IpAddr, SocketAddr},
+  sync::OnceLock,
 };
 
-use circus_types::net::{is_internal_ip, normalize_host};
+use circus_types::net::{AllowedHost, is_internal_ip, normalize_host};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 
-/// Whether a URL host is internal. Names are not resolved,
-/// [`public_only`](crate::public_only) clients check those.
+static ALLOWED: OnceLock<Vec<AllowedHost>> = OnceLock::new();
+
+#[derive(Debug, thiserror::Error)]
+#[error("the internal host allowlist is already set")]
+pub struct AllowlistAlreadySet;
+
+/// Lets project URLs reach `hosts` for the rest of the process.
+///
+/// # Errors
+///
+/// Fails when an earlier call already set the allowlist.
+pub fn allow_internal(
+  hosts: &[AllowedHost],
+) -> Result<(), AllowlistAlreadySet> {
+  ALLOWED.set(hosts.to_vec()).map_err(|_| AllowlistAlreadySet)
+}
+
+fn allowed_name(host: &str) -> bool {
+  allowed()
+    .any(|allowed| matches!(allowed, AllowedHost::Name(name) if name == host))
+}
+
+fn allowed_ip(ip: IpAddr) -> bool {
+  allowed()
+    .any(|allowed| matches!(allowed, AllowedHost::Range(range) if range.contains(ip)))
+}
+
+fn allowed() -> impl Iterator<Item = &'static AllowedHost> {
+  ALLOWED.get().into_iter().flatten()
+}
+
+/// Whether a URL host is internal and not allowlisted. Names are not
+/// resolved, [`public_only`](crate::public_only) clients check those.
 #[must_use]
 pub fn is_internal_host(raw_host: &str) -> bool {
   let host = normalize_host(raw_host);
+
+  if allowed_name(&host) {
+    return false;
+  }
 
   host.parse::<IpAddr>().map_or_else(
     |_| {
@@ -21,11 +57,12 @@ pub fn is_internal_host(raw_host: &str) -> bool {
         || host.ends_with(".localhost")
         || host.ends_with(".internal")
     },
-    is_internal_ip,
+    |ip| is_internal_ip(ip) && !allowed_ip(ip),
   )
 }
 
-/// The addresses `host` resolves to on `port`, minus internal ones.
+/// The addresses `host` resolves to on `port`, minus internal ones that are
+/// not allowlisted.
 ///
 /// # Errors
 ///
@@ -35,9 +72,10 @@ pub async fn resolve_public(
   port: u16,
 ) -> io::Result<Vec<SocketAddr>> {
   let host = normalize_host(host);
+  let named = allowed_name(&host);
   let public = tokio::net::lookup_host((host.as_str(), port))
     .await?
-    .filter(|addr| !is_internal_ip(addr.ip()))
+    .filter(|addr| named || !is_internal_ip(addr.ip()) || allowed_ip(addr.ip()))
     .collect::<Vec<SocketAddr>>();
 
   if public.is_empty() {

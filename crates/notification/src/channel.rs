@@ -465,7 +465,8 @@ impl StoredChannel for EmailConfig {
   fn validate_stored(&self, origin: Origin) -> CiResult<()> {
     if origin == Origin::Project && is_internal_host(&self.smtp_host) {
       return Err(CiError::Validation(format!(
-        "SMTP host {} is internal",
+        "SMTP host {} is internal, list it in [outbound].allow_internal to \
+         allow it",
         self.smtp_host
       )));
     }
