@@ -27,7 +27,7 @@ jobs:
             clippy: --all-targets
             test: >-
               cargo nextest run --all &&
-              cargo nextest run -p circus-evaluator --test eval_tests --run-ignored ignored-only
+              cargo nextest run --all -E 'binary_id(circus-evaluator::eval_tests)' --run-ignored ignored-only
           - platform: macOS
             os: macos-latest
             clippy: -p circus-agent --all-targets
