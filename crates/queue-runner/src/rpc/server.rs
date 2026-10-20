@@ -1173,8 +1173,6 @@ async fn export_drv_closure(
   drv_path: &str,
   sink: drv_sink::Client,
 ) -> color_eyre::Result<()> {
-  use tokio::io::AsyncReadExt as _;
-
   let closure = crate::dispatch::drv_requisites(drv_path).await?;
   if closure.is_empty() {
     return Err(color_eyre::eyre::eyre!(
@@ -1182,9 +1180,55 @@ async fn export_drv_closure(
     ));
   }
 
+  let chunks = argv_chunks(&closure);
+  let export_res: color_eyre::Result<()> = async {
+    for (idx, paths) in chunks.iter().enumerate() {
+      export_paths(paths, idx + 1 < chunks.len(), &sink).await?;
+    }
+    Ok(())
+  }
+  .await;
+
+  // Always close so the agent reaps its import child, even on a short read.
+  let close_res = sink.close_request().send().promise.await;
+  export_res?;
+  close_res?;
+  Ok(())
+}
+
+/// Split `paths` into runs whose combined argv stays far below `ARG_MAX`,
+/// keeping order so dependencies still come first.
+fn argv_chunks(paths: &[String]) -> Vec<&[String]> {
+  const MAX_ARGV_BYTES: usize = 512 * 1024;
+
+  let mut chunks = Vec::new();
+  let (mut start, mut bytes) = (0, 0);
+  for (pos, path) in paths.iter().enumerate() {
+    if pos > start && bytes + path.len() + 1 > MAX_ARGV_BYTES {
+      chunks.push(&paths[start..pos]);
+      (start, bytes) = (pos, 0);
+    }
+    bytes += path.len() + 1;
+  }
+  chunks.push(&paths[start..]);
+  chunks
+}
+
+/// `strip_trailer` drops the export's end-of-stream marker so the next
+/// export continues the same `nix-store --import` stream.
+#[expect(clippy::future_not_send, reason = "capnp future")]
+async fn export_paths(
+  paths: &[String],
+  strip_trailer: bool,
+  sink: &drv_sink::Client,
+) -> color_eyre::Result<()> {
+  use tokio::io::AsyncReadExt as _;
+
+  const TRAILER: [u8; 8] = [0; 8];
+
   let mut child = tokio::process::Command::new("nix-store")
     .arg("--export")
-    .args(&closure)
+    .args(paths)
     .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::piped())
     .kill_on_drop(true)
@@ -1195,31 +1239,38 @@ async fn export_drv_closure(
     .ok_or_else(|| color_eyre::eyre::eyre!("export stdout missing"))?;
 
   let mut buf = vec![0u8; 1024 * 1024];
-  let mut stream_err = None;
+  let mut held = 0;
   loop {
-    let n = match stdout.read(&mut buf).await {
-      Ok(0) => break,
-      Ok(n) => n,
-      Err(e) => {
-        stream_err =
-          Some(color_eyre::eyre::eyre!("read nix-store --export: {e}"));
-        break;
-      },
-    };
-    let mut req = sink.write_request();
-    req.get().set_chunk(&buf[..n]);
-    if let Err(e) = req.send().promise.await {
-      stream_err = Some(color_eyre::eyre::eyre!("stream drv closure: {e}"));
+    let n = stdout
+      .read(&mut buf[held..])
+      .await
+      .map_err(|e| color_eyre::eyre::eyre!("read nix-store --export: {e}"))?;
+    if n == 0 {
       break;
     }
+    let len = held + n;
+    let send = if strip_trailer {
+      len.saturating_sub(TRAILER.len())
+    } else {
+      len
+    };
+    if send > 0 {
+      let mut req = sink.write_request();
+      req.get().set_chunk(&buf[..send]);
+      req
+        .send()
+        .promise
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("stream drv closure: {e}"))?;
+    }
+    buf.copy_within(send..len, 0);
+    held = len - send;
   }
-
-  // Always close so the agent reaps its import child, even on a short read.
-  let close_res = sink.close_request().send().promise.await;
-  if let Some(e) = stream_err {
-    return Err(e);
+  if strip_trailer && buf[..held] != TRAILER {
+    return Err(color_eyre::eyre::eyre!(
+      "nix-store --export stream lacks its end marker"
+    ));
   }
-  close_res?;
 
   let status = child.wait().await?;
   if !status.success() {
