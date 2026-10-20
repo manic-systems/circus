@@ -328,6 +328,13 @@ impl SortDirection {
 /// user-facing notifications (commit statuses, webhooks, ...).
 pub const DEPENDENCY_JOB_PREFIX: &str = "drv:";
 
+/// Whether a builder advertising `systems` can build for `system`. Every Nix
+/// runs `builtin` derivations, so builders never advertise it.
+#[must_use]
+pub fn builds_system(systems: &[String], system: &str) -> bool {
+  system == "builtin" || systems.iter().any(|s| s == system)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[expect(
   clippy::struct_excessive_bools,

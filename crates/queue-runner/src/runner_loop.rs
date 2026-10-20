@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use circus_common::{
   PgPool,
   error::Result as CiResult,
-  models::{Build, BuildStatus, JobsetState},
-  repo,
+  models::{Build, BuildStatus, JobsetState, builds_system},
+  repo::{self, builds::BuildVenue},
 };
 use circus_config::{HotConfig, NotificationsConfig};
 use tokio::{
@@ -401,8 +401,26 @@ pub async fn run(
       String,
       Option<String>,
     > = std::collections::HashMap::new();
+    let agents = worker_pool.agent_pool().snapshot_all();
+    let venues = agents
+      .iter()
+      .map(|agent| {
+        BuildVenue {
+          systems:            &agent.systems,
+          supported_features: &agent.supported_features,
+          mandatory_features: &agent.mandatory_features,
+          runs_systemless:    false,
+        }
+      })
+      .chain(worker_pool.runner_caps().venue())
+      .collect::<Vec<_>>();
+    let unsupported_before =
+      unsupported_timeout.map(|timeout| jiff::Timestamp::now() - timeout);
+
     match repo::builds::list_pending(
       &pool,
+      &venues,
+      unsupported_before,
       capacity.fetch_limit,
       capacity.schedulable_capacity,
     )
@@ -633,7 +651,7 @@ pub async fn run(
             // on the runner host.
             let has_agent = build.system.as_ref().is_some_and(|system| {
               worker_pool.agent_pool().snapshot_all().iter().any(|agent| {
-                agent.systems.iter().any(|s| s == system)
+                builds_system(&agent.systems, system)
                   && agent.supports_features(build.scheduling_features())
               })
             });

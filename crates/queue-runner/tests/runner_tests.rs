@@ -422,11 +422,19 @@ async fn test_fair_share_scheduling() {
   .await
   .expect("create lo build 2");
 
+  let runner = RunnerCaps::new(true, vec!["x86_64-linux".into()], vec![]);
+
   // With no running builds, hi-share jobset (200) should come first due to
   // higher share fraction (200/300 > 100/300)
-  let pending = circus_common::repo::builds::list_pending(&pool, 10, 4)
-    .await
-    .expect("list pending cold start");
+  let pending = circus_common::repo::builds::list_pending(
+    &pool,
+    &[runner.venue().expect("runner enabled")],
+    None,
+    10,
+    4,
+  )
+  .await
+  .expect("list pending cold start");
   assert!(
     pending.len() >= 4,
     "expected at least 4 pending builds, got {}",
@@ -457,10 +465,15 @@ async fn test_fair_share_scheduling() {
 
   // Re-query: lo-share jobset should now be prioritized because it is
   // underserved (0 running vs its fair share)
-  let pending2 = circus_common::repo::builds::list_pending(&pool, 10, 4)
-    .await
-    .expect("list pending after running");
-
+  let pending2 = circus_common::repo::builds::list_pending(
+    &pool,
+    &[runner.venue().expect("runner enabled")],
+    None,
+    10,
+    4,
+  )
+  .await
+  .expect("list pending after running");
   assert!(
     !pending2.is_empty(),
     "expected pending builds from lo-share jobset"

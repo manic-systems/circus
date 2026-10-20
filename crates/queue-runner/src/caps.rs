@@ -1,6 +1,8 @@
 //! What the runner host itself can execute, gating the local-build fallback
 //! the same way agent `supported_features` gate dispatch.
 
+use circus_common::{models::builds_system, repo::builds::BuildVenue};
+
 #[derive(Debug)]
 pub struct RunnerCaps {
   enabled:  bool,
@@ -85,11 +87,26 @@ impl RunnerCaps {
     self.enabled
   }
 
+  /// The runner host as a [`list_pending`] venue, if local builds are on.
+  ///
+  /// [`list_pending`]: circus_common::repo::builds::list_pending
+  #[must_use]
+  pub fn venue(&self) -> Option<BuildVenue<'_>> {
+    self.enabled.then(|| {
+      BuildVenue {
+        systems:            &self.systems,
+        supported_features: &self.features,
+        mandatory_features: &[],
+        runs_systemless:    true,
+      }
+    })
+  }
+
   /// Whether the runner host can run a build for `system` demanding `features`.
   #[must_use]
   pub fn supports(&self, system: Option<&str>, features: &[String]) -> bool {
     self.enabled
-      && system.is_none_or(|s| self.systems.iter().any(|x| x == s))
+      && system.is_none_or(|s| builds_system(&self.systems, s))
       && features.iter().all(|f| self.features.contains(f))
   }
 }

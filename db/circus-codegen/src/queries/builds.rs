@@ -50,8 +50,10 @@ pub struct ListForJobsetEvaluationsParams<T1: crate::ArraySql<Item = uuid::Uuid>
     pub jobset_id: uuid::Uuid,
     pub evaluation_ids: T1,
 }
-#[derive(Clone, Copy, Debug)]
-pub struct ListPendingParams {
+#[derive(Debug)]
+pub struct ListPendingParams<T1: crate::JsonSql> {
+    pub venues: T1,
+    pub unsupported_before: Option<jiff::Timestamp>,
     pub schedulable_capacity: i32,
     pub limit: i64,
 }
@@ -1609,7 +1611,7 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::ArraySql<Item = uuid::Uuid>>
 pub struct ListPendingStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_pending() -> ListPendingStmt {
     ListPendingStmt(
-        "WITH eligible_pending AS ( SELECT b.* FROM builds b WHERE b.status = 'pending' AND NOT EXISTS ( SELECT 1 FROM build_dependencies bd JOIN builds dep ON dep.id = bd.dependency_build_id WHERE bd.build_id = b.id AND dep.status != 'succeeded' ) AND NOT EXISTS ( SELECT 1 FROM builds active WHERE active.drv_path = b.drv_path AND active.status = 'running' ) ), running_counts AS ( SELECT e.jobset_id, COUNT(*) AS running FROM builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE b.status = 'running' GROUP BY e.jobset_id ), active_shares AS ( SELECT j.id AS jobset_id, j.scheduling_shares, COALESCE(rc.running, 0) AS running, SUM(j.scheduling_shares) OVER () AS total_shares FROM jobsets j JOIN evaluations e2 ON e2.jobset_id = j.id JOIN eligible_pending b2 ON b2.evaluation_id = e2.id LEFT JOIN running_counts rc ON rc.jobset_id = j.id WHERE j.scheduling_shares > 0 GROUP BY j.id, j.scheduling_shares, rc.running ) SELECT b.* FROM eligible_pending b JOIN evaluations e ON b.evaluation_id = e.id JOIN active_shares ash ON ash.jobset_id = e.jobset_id ORDER BY b.priority DESC, cardinality(COALESCE(b.effective_features, b.required_features)) DESC, (ash.scheduling_shares::float / GREATEST(ash.total_shares, 1) - ash.running::float / GREATEST($1, 1)) DESC, b.created_at ASC, b.id ASC LIMIT $2",
+        "WITH venues AS MATERIALIZED ( SELECT * FROM jsonb_to_recordset($1::jsonb) AS v( systems text[], supported_features text[], mandatory_features text[], runs_systemless bool ) ), eligible_pending AS ( SELECT b.* FROM builds b WHERE b.status = 'pending' AND ( b.is_aggregate OR b.created_at < $2::timestamptz OR EXISTS ( SELECT 1 FROM venues v WHERE ( b.system = 'builtin' OR b.system = ANY(v.systems) OR (b.system IS NULL AND v.runs_systemless) ) AND COALESCE(b.effective_features, b.required_features) <@ v.supported_features AND v.mandatory_features <@ COALESCE(b.effective_features, b.required_features) ) ) AND NOT EXISTS ( SELECT 1 FROM build_dependencies bd JOIN builds dep ON dep.id = bd.dependency_build_id WHERE bd.build_id = b.id AND dep.status != 'succeeded' ) AND NOT EXISTS ( SELECT 1 FROM builds active WHERE active.drv_path = b.drv_path AND active.status = 'running' ) ), running_counts AS ( SELECT e.jobset_id, COUNT(*) AS running FROM builds b JOIN evaluations e ON b.evaluation_id = e.id WHERE b.status = 'running' GROUP BY e.jobset_id ), active_shares AS ( SELECT j.id AS jobset_id, j.scheduling_shares, COALESCE(rc.running, 0) AS running, SUM(j.scheduling_shares) OVER () AS total_shares FROM jobsets j JOIN evaluations e2 ON e2.jobset_id = j.id JOIN eligible_pending b2 ON b2.evaluation_id = e2.id LEFT JOIN running_counts rc ON rc.jobset_id = j.id WHERE j.scheduling_shares > 0 GROUP BY j.id, j.scheduling_shares, rc.running ) SELECT b.* FROM eligible_pending b JOIN evaluations e ON b.evaluation_id = e.id JOIN active_shares ash ON ash.jobset_id = e.jobset_id ORDER BY b.priority DESC, cardinality(COALESCE(b.effective_features, b.required_features)) DESC, (ash.scheduling_shares::float / GREATEST(ash.total_shares, 1) - ash.running::float / GREATEST($3, 1)) DESC, b.created_at ASC, b.id ASC LIMIT $4",
         None,
     )
 }
@@ -1621,15 +1623,17 @@ impl ListPendingStmt {
         self.1 = Some(client.prepare(self.0).await?);
         Ok(self)
     }
-    pub fn bind<'c, 'a, 's, C: GenericClient>(
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::JsonSql>(
         &'s self,
         client: &'c C,
+        venues: &'a T1,
+        unsupported_before: &'a Option<jiff::Timestamp>,
         schedulable_capacity: &'a i32,
         limit: &'a i64,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 4> {
         BuildRowQuery {
             client,
-            params: [schedulable_capacity, limit],
+            params: [venues, unsupported_before, schedulable_capacity, limit],
             query: self.0,
             cached: self.1.as_ref(),
             extractor:
@@ -1675,22 +1679,28 @@ impl ListPendingStmt {
         }
     }
 }
-impl<'c, 'a, 's, C: GenericClient>
+impl<'c, 'a, 's, C: GenericClient, T1: crate::JsonSql>
     crate::client::async_::Params<
         'c,
         'a,
         's,
-        ListPendingParams,
-        BuildRowQuery<'c, 'a, 's, C, BuildRow, 2>,
+        ListPendingParams<T1>,
+        BuildRowQuery<'c, 'a, 's, C, BuildRow, 4>,
         C,
     > for ListPendingStmt
 {
     fn params(
         &'s self,
         client: &'c C,
-        params: &'a ListPendingParams,
-    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 2> {
-        self.bind(client, &params.schedulable_capacity, &params.limit)
+        params: &'a ListPendingParams<T1>,
+    ) -> BuildRowQuery<'c, 'a, 's, C, BuildRow, 4> {
+        self.bind(
+            client,
+            &params.venues,
+            &params.unsupported_before,
+            &params.schedulable_capacity,
+            &params.limit,
+        )
     }
 }
 pub struct StartStmt(&'static str, Option<tokio_postgres::Statement>);

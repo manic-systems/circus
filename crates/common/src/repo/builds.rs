@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use circus_codegen::queries::builds as q;
 use jiff::Timestamp;
 use serde::Serialize;
+use tokio_postgres::types::Json;
 use uuid::Uuid;
 
 use crate::{
@@ -272,7 +273,19 @@ pub async fn list_for_jobset_evaluations(
   rows.into_iter().map(Build::try_from).collect()
 }
 
-/// List pending builds, prioritizing constrained jobs before fungible ones so
+/// A builder the queue runner can hand work to right now, as seen by
+/// [`list_pending`].
+#[derive(Debug, Serialize)]
+pub struct BuildVenue<'a> {
+  pub systems:            &'a [String],
+  pub supported_features: &'a [String],
+  pub mandatory_features: &'a [String],
+  /// Builds without a system run only on the runner host.
+  pub runs_systemless:    bool,
+}
+
+/// List pending builds some venue can take, plus any older than
+/// `unsupported_before`, prioritizing constrained jobs before fungible ones so
 /// scarce builder capabilities are reserved for the work that needs them.
 ///
 /// `schedulable_capacity` is the fair-share denominator, so it needs to
@@ -283,12 +296,20 @@ pub async fn list_for_jobset_evaluations(
 /// Returns an error if the database query fails.
 pub async fn list_pending(
   pool: &PgPool,
+  venues: &[BuildVenue<'_>],
+  unsupported_before: Option<Timestamp>,
   limit: i64,
   schedulable_capacity: i32,
 ) -> Result<Vec<Build>> {
   let client = pool.get().await?;
   let rows = q::list_pending()
-    .bind(&client, &schedulable_capacity, &limit)
+    .bind(
+      &client,
+      &Json(venues),
+      &unsupported_before,
+      &schedulable_capacity,
+      &limit,
+    )
     .all()
     .await?;
   rows.into_iter().map(Build::try_from).collect()
