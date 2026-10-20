@@ -929,8 +929,6 @@ async fn export_outputs_to_sink(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
   )]
-  use tokio::io::AsyncReadExt as _;
-
   // Import needs references registered first, so ship the whole closure.
   let closure = query_requisites(output_paths, rootless).await?;
   if closure.is_empty() {
@@ -972,10 +970,66 @@ async fn export_outputs_to_sink(
   };
   let target = own_sink.as_ref().map_or(sink, |own| &own.sink);
 
+  let chunks = argv_chunks(&wanted);
+  let export_res: color_eyre::Result<()> = async {
+    for (idx, paths) in chunks.iter().enumerate() {
+      export_chunk(paths, idx + 1 < chunks.len(), target, rootless).await?;
+    }
+    Ok(())
+  }
+  .await;
+  if let Some(own) = own_sink {
+    own.disconnect().await;
+  }
+
+  // Always close so the runner reaps its import child, even on a short read.
+  // The session sink shares that child, so this works if the own connection
+  // died mid-stream.
+  let close_res = sink.close_request().send().promise.await;
+  export_res?;
+  close_res
+    .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
+  Ok(())
+}
+
+/// Split `paths` into runs whose combined argv stays far below `ARG_MAX`,
+/// keeping order so dependencies still come first.
+fn argv_chunks(paths: &[String]) -> Vec<&[String]> {
+  const MAX_ARGV_BYTES: usize = 512 * 1024;
+
+  let mut chunks = Vec::new();
+  let (mut start, mut bytes) = (0, 0);
+  for (pos, path) in paths.iter().enumerate() {
+    if pos > start && bytes + path.len() + 1 > MAX_ARGV_BYTES {
+      chunks.push(&paths[start..pos]);
+      (start, bytes) = (pos, 0);
+    }
+    bytes += path.len() + 1;
+  }
+  chunks.push(&paths[start..]);
+  chunks
+}
+
+/// `strip_trailer` drops the export's end-of-stream marker so the next
+/// export continues the same `nix-store --import` stream.
+async fn export_chunk(
+  paths: &[String],
+  strip_trailer: bool,
+  target: &output_sink::Client,
+  rootless: bool,
+) -> color_eyre::Result<()> {
+  #![expect(
+    clippy::future_not_send,
+    reason = "capnp futures are not Send; agent uses a single-threaded runtime"
+  )]
+  use tokio::io::AsyncReadExt as _;
+
+  const TRAILER: [u8; 8] = [0; 8];
+
   let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
   cmd
     .arg("--export")
-    .args(&wanted)
+    .args(paths)
     .stdout(std::process::Stdio::piped())
     .kill_on_drop(true);
   let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
@@ -986,40 +1040,41 @@ async fn export_outputs_to_sink(
     .ok_or_else(|| eyre!("export stdout missing"))?;
 
   let mut buf = vec![0u8; 1024 * 1024];
-  let mut stream_err = None;
+  let mut held = 0;
   loop {
-    let n = match stdout.read(&mut buf).await {
-      Ok(0) => break,
-      Ok(n) => n,
-      Err(e) => {
-        stream_err = Some(eyre!("read nix-store --export: {e}"));
-        break;
-      },
-    };
-    let mut req = target.write_request();
-    req.get().set_chunk(&buf[..n]);
-    if let Err(e) = req.send().promise.await {
-      stream_err = Some(eyre!("stream output closure: {e}"));
+    let n = stdout
+      .read(&mut buf[held..])
+      .await
+      .map_err(|e| eyre!("read nix-store --export: {e}"))?;
+    if n == 0 {
       break;
     }
+    let len = held + n;
+    let send = if strip_trailer {
+      len.saturating_sub(TRAILER.len())
+    } else {
+      len
+    };
+    if send > 0 {
+      let mut req = target.write_request();
+      req.get().set_chunk(&buf[..send]);
+      req
+        .send()
+        .promise
+        .await
+        .map_err(|e| eyre!("stream output closure: {e}"))?;
+    }
+    buf.copy_within(send..len, 0);
+    held = len - send;
   }
-  if let Some(own) = own_sink {
-    own.disconnect().await;
+  if strip_trailer && buf[..held] != TRAILER {
+    bail!("nix-store --export stream lacks its end marker");
   }
 
-  // Always close so the runner reaps its import child, even on a short read.
-  // The session sink shares that child, so this works if the own connection
-  // died mid-stream.
-  let close_res = sink.close_request().send().promise.await;
-  if let Some(e) = stream_err {
-    return Err(e);
-  }
   let status = child.wait().await?;
   if !status.success() {
     bail!("nix-store --export exited with {status}");
   }
-  close_res
-    .map_err(|e| eyre!("runner failed to import output closure: {e}"))?;
   Ok(())
 }
 
@@ -1074,26 +1129,27 @@ async fn open_own_sink(
 }
 
 async fn nar_size(paths: &[String], rootless: bool) -> color_eyre::Result<u64> {
-  let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
-  cmd
-    .arg("--query")
-    .arg("--size")
-    .args(paths)
-    .stdout(std::process::Stdio::piped());
-  let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
-  let out = cmd.output().await.context("nix-store --query --size")?;
-  if !out.status.success() {
-    bail!("nix-store --query --size exited with {}", out.status);
-  }
-  String::from_utf8_lossy(&out.stdout)
-    .lines()
-    .map(|line| {
-      line
+  let mut total = 0;
+  for chunk in argv_chunks(paths) {
+    let mut cmd = crate::sandbox::nix_command(rootless, NixTool::NixStore)?;
+    cmd
+      .arg("--query")
+      .arg("--size")
+      .args(chunk)
+      .stdout(std::process::Stdio::piped());
+    let mut cmd = crate::sandbox::wrap_command(rootless, cmd)?;
+    let out = cmd.output().await.context("nix-store --query --size")?;
+    if !out.status.success() {
+      bail!("nix-store --query --size exited with {}", out.status);
+    }
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+      total += line
         .trim()
         .parse::<u64>()
-        .with_context(|| format!("bad nar size {line:?}"))
-    })
-    .sum()
+        .with_context(|| format!("bad nar size {line:?}"))?;
+    }
+  }
+  Ok(total)
 }
 
 async fn runner_missing_paths(
