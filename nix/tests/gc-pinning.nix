@@ -91,14 +91,14 @@ in
       ).strip()
 
       eval_id = machine.succeed(
-          "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tA -c "
-          f"\"INSERT INTO evaluations (jobset_id, commit_hash, status) VALUES ('{jobset_id}', 'abc123', 'completed') RETURNING id\" | head -1"
+          "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -qtA -c "
+          f"\"INSERT INTO evaluations (jobset_id, commit_hash, status) VALUES ('{jobset_id}', 'abc123', 'completed') RETURNING id\""
       ).strip()
 
       build_id = machine.succeed(
-          "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -tA -c "
+          "setpriv --reuid=circus --regid=circus --init-groups psql -U circus -d circus -qtA -c "
           f"\"INSERT INTO builds (evaluation_id, job_name, drv_path, status, system) "
-          f"VALUES ('{eval_id}', 'hello', '/nix/store/fake.drv', 'succeeded', 'x86_64-linux') RETURNING id\" | head -1"
+          f"VALUES ('{eval_id}', 'hello', '/nix/store/fake.drv', 'succeeded', 'x86_64-linux') RETURNING id\""
       ).strip()
 
       with subtest("Build starts with keep=false"):
