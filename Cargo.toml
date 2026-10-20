@@ -60,7 +60,7 @@ futures-core = "0.3.34"
 futures-sink = "0.3.34"
 futures-util = { version = "0.3.34", features = [ "sink" ] }
 getrandom = "0.4.3"
-gix = { version = "0.88.0", default-features = false, features = [
+gix = { version = "0.89.0", default-features = false, features = [
   "blob-diff",
   "blocking-http-transport-reqwest",
   "revision",
@@ -91,7 +91,7 @@ parking_lot = "0.12.5"
 percent-encoding = "2.3.2"
 pin-project-lite = "0.2.17"
 proptest = "1.11.0"
-proptest-derive = "0.8.0"
+proptest-derive = "0.9.0"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = [
   "json",
