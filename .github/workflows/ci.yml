@@ -32,7 +32,7 @@ jobs:
             os: macos-latest
             clippy: -p circus-agent --all-targets
             test: cargo nextest run -p circus-agent
-    uses: manic-systems/workflows/.github/workflows/rust-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/rust-checks.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       os: ${{ matrix.os }}
       flake-check: false
@@ -45,7 +45,7 @@ jobs:
 
   formatting:
     name: Formatting
-    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       flake-check: false
       build: true
@@ -53,7 +53,7 @@ jobs:
 
   codegen:
     name: Codegen Up To Date
-    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       flake-check: false
       build: true
@@ -61,7 +61,7 @@ jobs:
 
   deny:
     name: Dependency Audit
-    uses: manic-systems/workflows/.github/workflows/rust-audit.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/rust-audit.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       install-nix: true
       policy-command: nix build .#checks.x86_64-linux.cargo-deny --no-link -L
@@ -69,7 +69,7 @@ jobs:
 
   agent-macos:
     name: Build Agent Package (macOS)
-    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       os: macos-latest
       flake-check: false
@@ -105,7 +105,7 @@ jobs:
     permissions:
       actions: write
       contents: read
-    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       timeout-minutes: 90
       flake-check: false
@@ -148,7 +148,7 @@ jobs:
       fail-fast: false
       matrix:
         check: ${{ fromJSON(needs.vm-tests.outputs.checks) }}
-    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/nix-checks.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
     with:
       timeout-minutes: 90
       extra-nix-config: |
@@ -169,7 +169,7 @@ jobs:
 
   actions:
     name: Actions Lint
-    uses: manic-systems/workflows/.github/workflows/actions-lint.yml@cbe0792d849aef0dbad4d2bde960b110761ed905 # v2.1.1
+    uses: manic-systems/workflows/.github/workflows/actions-lint.yml@d93951cf50722594dc1d64602eb9453dc7da2fb6 # v2.3.0
 
   required:
     name: Required Checks
