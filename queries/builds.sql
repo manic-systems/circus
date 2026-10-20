@@ -48,11 +48,35 @@ JOIN evaluations e ON b.evaluation_id = e.id
 WHERE e.jobset_id = :jobset_id AND b.evaluation_id = ANY(:evaluation_ids)
 ORDER BY b.job_name ASC, e.evaluation_time DESC;
 
---! list_pending : BuildRow
-WITH eligible_pending AS (
+--! list_pending (unsupported_before?) : BuildRow
+WITH venues AS MATERIALIZED (
+  SELECT *
+  FROM jsonb_to_recordset(:venues::jsonb) AS v(
+    systems text[],
+    supported_features text[],
+    mandatory_features text[],
+    runs_systemless bool
+  )
+),
+eligible_pending AS (
   SELECT b.*
   FROM builds b
   WHERE b.status = 'pending'
+    AND (
+      b.is_aggregate
+      OR b.created_at < :unsupported_before::timestamptz
+      OR EXISTS (
+        SELECT 1
+        FROM venues v
+        WHERE (
+            b.system = 'builtin'
+            OR b.system = ANY(v.systems)
+            OR (b.system IS NULL AND v.runs_systemless)
+          )
+          AND COALESCE(b.effective_features, b.required_features) <@ v.supported_features
+          AND v.mandatory_features <@ COALESCE(b.effective_features, b.required_features)
+      )
+    )
     AND NOT EXISTS (
       SELECT 1
       FROM build_dependencies bd

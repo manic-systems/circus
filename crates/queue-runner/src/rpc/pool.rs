@@ -22,6 +22,7 @@ use std::{
   time::Instant,
 };
 
+use circus_common::models::builds_system;
 use parking_lot::RwLock;
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -440,7 +441,7 @@ impl AgentPool {
       guard
         .values()
         .filter(|m| {
-          m.systems.iter().any(|s| s == system)
+          builds_system(&m.systems, system)
             && m.current_jobs.load(Ordering::Relaxed) < m.max_jobs
         })
         .map(Arc::clone)
@@ -489,7 +490,7 @@ impl AgentPool {
       .inner
       .read()
       .values()
-      .any(|m| m.systems.iter().any(|s| s == system))
+      .any(|m| builds_system(&m.systems, system))
   }
 
   /// Total advertised build slots across connected agents.

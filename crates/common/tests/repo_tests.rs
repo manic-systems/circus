@@ -190,6 +190,24 @@ async fn create_test_build(
   .expect("create build")
 }
 
+/// `list_pending` as seen by a runner host that builds `x86_64-linux`.
+async fn list_pending_x86(
+  pool: &circus_common::PgPool,
+  limit: i64,
+  schedulable_capacity: i32,
+) -> Vec<Build> {
+  let systems = ["x86_64-linux".to_owned()];
+  let venue = repo::builds::BuildVenue {
+    systems:            &systems,
+    supported_features: &[],
+    mandatory_features: &[],
+    runs_systemless:    true,
+  };
+  repo::builds::list_pending(pool, &[venue], None, limit, schedulable_capacity)
+    .await
+    .expect("list pending")
+}
+
 #[tokio::test]
 async fn composite_operations_work_with_one_pool_connection() {
   let Some(pool) = get_pool_with_size(1).await else {
@@ -958,9 +976,7 @@ async fn test_evaluation_and_build_lifecycle() {
   assert_eq!(build.system.as_deref(), Some("x86_64-linux"));
 
   // List pending
-  let pending = repo::builds::list_pending(&pool, 10, 4)
-    .await
-    .expect("list pending");
+  let pending = list_pending_x86(&pool, 10, 4).await;
   assert!(pending.iter().any(|b| b.id == build.id));
 
   // Start build
@@ -1274,9 +1290,7 @@ async fn test_start_blocks_duplicate_running_drv_path() {
     .expect("start first build");
   assert!(claimed_first.is_some());
 
-  let pending = repo::builds::list_pending(&pool, 10, 4)
-    .await
-    .expect("list pending");
+  let pending = list_pending_x86(&pool, 10, 4).await;
   assert!(!pending.iter().any(|build| build.id == second.id));
 
   let claimed_second = repo::builds::start(&pool, second.id)
@@ -1677,12 +1691,40 @@ async fn test_list_pending_prioritizes_dependency_ready_builds() {
     .expect("bump blocked parent priority");
   assert!(bumped.is_some());
 
-  let pending = repo::builds::list_pending(&pool, 1, 1)
-    .await
-    .expect("list pending");
+  let pending = list_pending_x86(&pool, 1, 1).await;
 
   assert_eq!(pending.len(), 1);
   assert_eq!(pending[0].id, dependency.id);
+
+  let _ = repo::projects::delete(&pool, project.id).await;
+}
+
+#[tokio::test]
+async fn test_list_pending_skips_builds_no_venue_can_serve() {
+  let Some(pool) = get_pool().await else {
+    return;
+  };
+
+  let project = create_test_project(&pool, "unserved-backlog").await;
+  let jobset = create_test_jobset(&pool, project.id).await;
+  let eval = create_test_eval(&pool, jobset.id).await;
+
+  for index in 0..520 {
+    let drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+    let job = format!("riscv-{index}");
+    create_test_build(&pool, eval.id, &job, &drv, Some("riscv64-linux")).await;
+  }
+
+  let drv = format!("/nix/store/{}.drv", uuid::Uuid::new_v4().simple());
+  let native =
+    create_test_build(&pool, eval.id, "native", &drv, Some("x86_64-linux"))
+      .await;
+
+  let pending = list_pending_x86(&pool, 512, 1).await;
+  assert_eq!(
+    pending.iter().map(|build| build.id).collect::<Vec<_>>(),
+    vec![native.id]
+  );
 
   let _ = repo::projects::delete(&pool, project.id).await;
 }
