@@ -213,9 +213,10 @@ ORDER BY priority DESC, created_at ASC
 LIMIT 512;
 
 --! pending_feature_demand
-SELECT DISTINCT unnest(COALESCE(effective_features, required_features))
-FROM builds
-WHERE status = 'pending' AND system = :system;
+SELECT feature, COUNT(*) AS builds
+FROM builds, unnest(COALESCE(effective_features, required_features)) AS feature
+WHERE status = 'pending' AND system = :system
+GROUP BY feature;
 
 --! bump_priority : BuildRow
 UPDATE builds

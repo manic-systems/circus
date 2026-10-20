@@ -2,7 +2,7 @@
 
 use std::{
   cmp::Ordering,
-  collections::HashSet,
+  collections::{HashMap, HashSet},
   path::Path,
   sync::Arc,
   time::{Duration, Instant},
@@ -426,7 +426,8 @@ async fn select_and_reserve_agent(
 
   // Capability-preserving order: prefer builders that waste the fewest
   // currently-contended capabilities on this build, so a versatile builder is
-  // kept free for the queued work that actually needs it.
+  // kept free for the queued work that actually needs it. A feature is
+  // contended only while its free slots can't cover the builds waiting on it.
   let demand = repo::builds::pending_feature_demand(&ctx.pool, system)
     .await
     .unwrap_or_else(|e| {
@@ -434,8 +435,22 @@ async fn select_and_reserve_agent(
         "pending_feature_demand failed, falling back to load-only ordering: \
          {e}"
       );
-      HashSet::new()
+      HashMap::new()
     });
+  let demand = demand
+    .into_iter()
+    .filter(|(feature, pending)| {
+      let free = eligible
+        .iter()
+        .filter(|(_, snap)| snap.supported_features.contains(feature))
+        .map(|(_, snap)| {
+          i64::from(snap.max_jobs.saturating_sub(snap.current_jobs))
+        })
+        .sum::<i64>();
+      free <= *pending
+    })
+    .map(|(feature, _)| feature)
+    .collect::<HashSet<_>>();
 
   // A build back in the queue already failed or vanished on that agent.
   let previous = build.agent_machine_id;
