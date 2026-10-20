@@ -525,7 +525,7 @@ pub async fn list_pending_for_systems(
   rows.into_iter().map(Build::try_from).collect()
 }
 
-/// The set of system features any pending build for `system` requires.
+/// How many pending builds for `system` require each system feature.
 ///
 /// This is used by capability-preserving scheduling to decide which builder
 /// capabilities are currently contended, so a versatile builder is not handed
@@ -537,13 +537,18 @@ pub async fn list_pending_for_systems(
 pub async fn pending_feature_demand(
   pool: &PgPool,
   system: &str,
-) -> Result<HashSet<String>> {
+) -> Result<HashMap<String, i64>> {
   let client = pool.get().await?;
   let rows = q::pending_feature_demand()
     .bind(&client, &system)
     .all()
     .await?;
-  Ok(rows.into_iter().collect())
+  Ok(
+    rows
+      .into_iter()
+      .map(|row| (row.feature, row.builds))
+      .collect(),
+  )
 }
 
 /// Atomically increment a pending build's priority by `delta`. The row is
