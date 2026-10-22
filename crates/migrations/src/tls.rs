@@ -150,10 +150,17 @@ fn tls_connector(
 fn root_store(
   root_cert: Option<&PathBuf>,
 ) -> color_eyre::Result<rustls::RootCertStore> {
-  let Some(path) = root_cert else {
-    return Ok(webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect());
-  };
   let mut roots = rustls::RootCertStore::empty();
+  let Some(path) = root_cert else {
+    let native = rustls_native_certs::load_native_certs();
+
+    for error in &native.errors {
+      tracing::warn!(%error, "skipping unparseable system certificate");
+    }
+
+    roots.add_parsable_certificates(native.certs);
+    return Ok(roots);
+  };
   for cert in CertificateDer::pem_file_iter(path)
     .with_context(|| format!("reading sslrootcert {}", path.display()))?
   {
