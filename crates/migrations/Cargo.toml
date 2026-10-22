@@ -11,6 +11,7 @@ circus-codegen.workspace        = true
 color-eyre.workspace            = true
 crc.workspace                   = true
 rustls.workspace                = true
+rustls-native-certs.workspace   = true
 sha2.workspace                  = true
 tokio.workspace                 = true
 tokio-postgres.workspace        = true
@@ -18,7 +19,6 @@ tokio-postgres-rustls.workspace = true
 tracing.workspace               = true
 url.workspace                   = true
 urlencoding.workspace           = true
-webpki-roots.workspace          = true
 
 [lints]
 workspace = true
