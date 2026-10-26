@@ -59,7 +59,7 @@ futures-core = "0.3.34"
 futures-sink = "0.3.34"
 futures-util = { version = "0.3.34", features = [ "sink" ] }
 getrandom = "0.4.3"
-gix = { version = "0.88.0", default-features = false, features = [
+gix = { version = "0.89.0", default-features = false, features = [
   "blob-diff",
   "blocking-http-transport-reqwest",
   "revision",
@@ -89,7 +89,7 @@ parking_lot = "0.12.5"
 percent-encoding = "2.3.2"
 pin-project-lite = "0.2.17"
 proptest = "1.11.0"
-proptest-derive = "0.8.0"
+proptest-derive = "0.9.0"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = [
   "json",
@@ -97,7 +97,7 @@ reqwest = { version = "0.13.5", default-features = false, features = [
   "stream",
 ] }
 ring = "0.17.14"
-rstest = "0.27.0"
+rstest = "0.28.0"
 rustls = { version = "0.23.45", default-features = false, features = [ "ring", "std", "tls12" ] }
 rustls-native-certs = "0.8.4"
 serde = { version = "1.0.229", features = [ "derive" ] }
@@ -129,7 +129,7 @@ topcoat = { version = "0.10.0", default-features = false, features = [
   "view",
 ] }
 tower = "0.5.3"
-tower-http = { version = "0.6.11", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
+tower-http = { version = "0.7.1", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter", "json" ] }
 url = "2.5.8"
@@ -137,7 +137,7 @@ urlencoding = "2.1.3"
 utoipa = "6.0.0"
 uuid = { version = "1.27.0", features = [ "v4", "serde" ] }
 walkdir = "2.5.0"
-x509-cert = { version = "0.2.5", default-features = false }
+x509-cert = { version = "0.3.0", default-features = false }
 zerocopy = { version = "0.8.60", features = [ "derive" ] }
 zeroize = "1.9.0"
 
