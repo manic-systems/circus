@@ -518,17 +518,18 @@ fn extract_peer_cert_identity(
 
 /// The first SAN DNS name, else the subject CN.
 fn parse_cert_name(der: &[u8]) -> Option<String> {
-  let tbs = Certificate::from_der(der).ok()?.tbs_certificate;
+  let certificate = Certificate::from_der(der).ok()?;
+  let tbs = certificate.tbs_certificate();
 
   // x509-cert's GeneralName fails the whole SAN on an x400Address or a
   // non-ASCII rfc822Name, so match the dNSName tag on raw entries.
   let dns_tag = Tag::ContextSpecific {
     constructed: false,
-    number:      TagNumber::N2,
+    number:      TagNumber(2),
   };
   let dns = tbs
-    .extensions
-    .iter()
+    .extensions()
+    .into_iter()
     .flatten()
     .filter(|ext| ext.extn_id == ID_CE_SUBJECT_ALT_NAME)
     .filter_map(|ext| {
@@ -542,10 +543,8 @@ fn parse_cert_name(der: &[u8]) -> Option<String> {
   }
 
   tbs
-    .subject
-    .0
+    .subject()
     .iter()
-    .flat_map(|rdn| rdn.0.iter())
     .filter(|attr| attr.oid == CN)
     .find_map(|attr| {
       let value = &attr.value;

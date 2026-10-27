@@ -312,7 +312,10 @@ mod policy_tests {
 
   #[test]
   fn no_options_when_permissive() {
-    assert!(policy(false, true).nix_options().is_empty());
+    assert_eq!(
+      policy(false, true).nix_options(),
+      Vec::<(String, String)>::new()
+    );
   }
 
   #[test]

@@ -7,18 +7,19 @@ repository.workspace = true
 description          = "Database migrations for Circus"
 
 [dependencies]
-circus-codegen.workspace        = true
-crc.workspace                   = true
-misstep.workspace               = true
-rustls.workspace                = true
-rustls-native-certs.workspace   = true
-sha2.workspace                  = true
-tokio.workspace                 = true
-tokio-postgres.workspace        = true
-tokio-postgres-rustls.workspace = true
-tracing.workspace               = true
-url.workspace                   = true
-urlencoding.workspace           = true
+circus-codegen.workspace      = true
+crc.workspace                 = true
+misstep.workspace             = true
+rustls.workspace              = true
+rustls-native-certs.workspace = true
+sha2.workspace                = true
+tokio.workspace               = true
+tokio-postgres.workspace      = true
+tokio-rustls.workspace        = true
+tracing.workspace             = true
+url.workspace                 = true
+urlencoding.workspace         = true
+x509-cert.workspace           = true
 
 [lints]
 workspace = true

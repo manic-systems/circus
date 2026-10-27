@@ -563,7 +563,7 @@ mod tests {
 
   #[test]
   fn intermediate_paths_for_recurse_markers() {
-    assert!(intermediate_paths("hello").is_empty());
+    assert_eq!(intermediate_paths("hello"), Vec::<String>::new());
     assert_eq!(intermediate_paths("a.b"), vec!["a".to_string()]);
     assert_eq!(intermediate_paths("a.b.c"), vec![
       "a".to_string(),

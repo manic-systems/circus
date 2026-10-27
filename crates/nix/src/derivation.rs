@@ -262,7 +262,7 @@ mod tests {
     });
 
     assert_eq!(drv_required_features(&drv), vec!["kvm", "nixos-test"]);
-    assert!(union_required_features(&drv).is_empty());
+    assert_eq!(union_required_features(&drv), Vec::<String>::new());
   }
 
   #[test]

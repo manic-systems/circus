@@ -839,7 +839,7 @@ async fn test_get_cancelled_among() {
   let empty = circus_common::repo::builds::get_cancelled_among(&pool, &[])
     .await
     .expect("empty query");
-  assert!(empty.is_empty());
+  assert_eq!(empty, Vec::<uuid::Uuid>::new());
 
   // Query with only non-cancelled builds returns empty
   let none_cancelled =
@@ -849,7 +849,7 @@ async fn test_get_cancelled_among() {
     ])
     .await
     .expect("no cancelled");
-  assert!(none_cancelled.is_empty());
+  assert_eq!(none_cancelled, Vec::<uuid::Uuid>::new());
 
   let deleted = uuid::Uuid::new_v4();
   let gone = circus_common::repo::builds::get_cancelled_among(&pool, &[

@@ -224,7 +224,7 @@ async fn test_password_hashing() {
 
   // Hash password
   let hash = hash_password(password).expect("hash password");
-  assert!(!hash.is_empty());
+  assert_ne!(hash, "");
   assert_ne!(hash, password);
 
   // Verify correct password
