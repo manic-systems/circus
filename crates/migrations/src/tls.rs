@@ -1,13 +1,19 @@
 //! TLS configuration shared by migrations and the application pool.
 
 use std::{
+  convert::Infallible,
+  future::Future,
+  io,
   net::IpAddr,
   path::PathBuf,
+  pin::Pin,
   sync::{Arc, Once},
+  task::{Context, Poll},
 };
 
 use misstep::{ResultExt as _, bail};
 use rustls::{
+  ClientConfig,
   DigitallySignedStruct,
   SignatureScheme,
   client::danger::{
@@ -19,9 +25,29 @@ use rustls::{
   pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject as _},
   server::ParsedCertificate,
 };
-use tokio_postgres::NoTls;
-use tokio_postgres_rustls::MakeRustlsConnect;
+use sha2::{Digest as _, Sha256, Sha384, Sha512};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_postgres::{
+  NoTls,
+  tls::{ChannelBinding, MakeTlsConnect, TlsConnect},
+};
+use tokio_rustls::{TlsConnector, client::TlsStream};
 use url::Url;
+use x509_cert::{
+  Certificate,
+  der::{
+    Decode as _,
+    oid::db::rfc5912::{
+      ECDSA_WITH_SHA_256,
+      ECDSA_WITH_SHA_384,
+      ECDSA_WITH_SHA_512,
+      SHA_1_WITH_RSA_ENCRYPTION,
+      SHA_256_WITH_RSA_ENCRYPTION,
+      SHA_384_WITH_RSA_ENCRYPTION,
+      SHA_512_WITH_RSA_ENCRYPTION,
+    },
+  },
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TlsMode {
@@ -34,7 +60,7 @@ enum TlsMode {
 /// `tls` is `None` for plaintext.
 pub struct DatabaseTarget {
   pub url: String,
-  pub tls: Option<MakeRustlsConnect>,
+  pub tls: Option<DatabaseTls>,
 }
 
 /// Without `sslmode`, remote hosts default to `verify-full`.
@@ -109,10 +135,7 @@ fn is_local_host(host: &str) -> bool {
       .is_ok_and(|ip| ip.is_loopback())
 }
 
-fn tls_connector(
-  mode: TlsMode,
-  roots: rustls::RootCertStore,
-) -> MakeRustlsConnect {
+fn tls_connector(mode: TlsMode, roots: rustls::RootCertStore) -> DatabaseTls {
   static TLS_PROVIDER: Once = Once::new();
 
   let provider = rustls::crypto::ring::default_provider();
@@ -144,7 +167,7 @@ fn tls_connector(
         .with_no_client_auth()
     },
   };
-  MakeRustlsConnect::new(config)
+  DatabaseTls(Arc::new(config))
 }
 
 fn root_store(
@@ -209,6 +232,124 @@ fn spawn_connection(
       tracing::error!(?err, "postgres connection task ended with error");
     }
   });
+}
+
+/// `tokio_postgres` TLS over rustls.
+#[derive(Clone)]
+pub struct DatabaseTls(Arc<ClientConfig>);
+
+impl<S> MakeTlsConnect<S> for DatabaseTls
+where
+  S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+  type Error = Infallible;
+  type Stream = DatabaseTlsStream<S>;
+  type TlsConnect = DatabaseTlsHandshake;
+
+  fn make_tls_connect(
+    &mut self,
+    hostname: &str,
+  ) -> std::result::Result<DatabaseTlsHandshake, Infallible> {
+    Ok(DatabaseTlsHandshake {
+      hostname:  hostname.to_owned(),
+      connector: TlsConnector::from(Arc::clone(&self.0)),
+    })
+  }
+}
+
+pub struct DatabaseTlsHandshake {
+  hostname:  String,
+  connector: TlsConnector,
+}
+
+impl<S> TlsConnect<S> for DatabaseTlsHandshake
+where
+  S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+  type Error = io::Error;
+  type Future =
+    Pin<Box<dyn Future<Output = io::Result<DatabaseTlsStream<S>>> + Send>>;
+  type Stream = DatabaseTlsStream<S>;
+
+  fn connect(self, stream: S) -> Self::Future {
+    Box::pin(async move {
+      let server_name = ServerName::try_from(self.hostname)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+      self
+        .connector
+        .connect(server_name, stream)
+        .await
+        .map(DatabaseTlsStream)
+    })
+  }
+}
+
+pub struct DatabaseTlsStream<S>(TlsStream<S>);
+
+impl<S> tokio_postgres::tls::TlsStream for DatabaseTlsStream<S>
+where
+  S: AsyncRead + AsyncWrite + Unpin,
+{
+  /// RFC 5929 `tls-server-end-point` hashes the certificate with its
+  /// signature digest, upgrading SHA-1 to SHA-256. Ed25519 and RSA-PSS have
+  /// no fixed digest, so they get no binding.
+  fn channel_binding(&self) -> ChannelBinding {
+    let (_, session) = self.0.get_ref();
+    let Some(der) = session.peer_certificates().and_then(<[_]>::first) else {
+      return ChannelBinding::none();
+    };
+    let Ok(certificate) = Certificate::from_der(der) else {
+      return ChannelBinding::none();
+    };
+
+    let digest = match certificate.signature_algorithm().oid {
+      SHA_1_WITH_RSA_ENCRYPTION
+      | SHA_256_WITH_RSA_ENCRYPTION
+      | ECDSA_WITH_SHA_256 => Sha256::digest(der).to_vec(),
+      SHA_384_WITH_RSA_ENCRYPTION | ECDSA_WITH_SHA_384 => {
+        Sha384::digest(der).to_vec()
+      },
+      SHA_512_WITH_RSA_ENCRYPTION | ECDSA_WITH_SHA_512 => {
+        Sha512::digest(der).to_vec()
+      },
+      _ => return ChannelBinding::none(),
+    };
+    ChannelBinding::tls_server_end_point(digest)
+  }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for DatabaseTlsStream<S> {
+  fn poll_read(
+    mut self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &mut ReadBuf<'_>,
+  ) -> Poll<io::Result<()>> {
+    Pin::new(&mut self.0).poll_read(cx, buf)
+  }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for DatabaseTlsStream<S> {
+  fn poll_write(
+    mut self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &[u8],
+  ) -> Poll<io::Result<usize>> {
+    Pin::new(&mut self.0).poll_write(cx, buf)
+  }
+
+  fn poll_flush(
+    mut self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+  ) -> Poll<io::Result<()>> {
+    Pin::new(&mut self.0).poll_flush(cx)
+  }
+
+  fn poll_shutdown(
+    mut self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+  ) -> Poll<io::Result<()>> {
+    Pin::new(&mut self.0).poll_shutdown(cx)
+  }
 }
 
 /// Encrypted but unverified, matching what libpq does for `require`, `prefer`,

@@ -1749,7 +1749,7 @@ mod tests {
     assert_eq!(dep_row.build_id, Some(build.id));
     assert_eq!(dep_row.project_id, Some(project.id));
     assert_eq!(dep_row.nar_hash, dep_nar_hash);
-    assert!(dep_row.references.is_empty());
+    assert_eq!(dep_row.references, Vec::<String>::new());
     assert!(dep_row.sig.as_deref().is_some_and(|sig| {
       sig.starts_with("circus-test-1:") && sig.len() > "circus-test-1:".len()
     }));

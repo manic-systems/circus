@@ -282,11 +282,11 @@ mod tests {
 
   #[test]
   fn unknown_lock_yields_no_uris() {
-    assert!(
+    assert_eq!(
       Lockfile::parse("{}")
         .expect("valid empty JSON object")
-        .allowed_uris()
-        .is_empty()
+        .allowed_uris(),
+      Vec::<String>::new()
     );
     assert!(Lockfile::parse("not json").is_err());
   }

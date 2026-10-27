@@ -220,10 +220,7 @@ fn checkout(repo: &Repository, commit: ObjectId) -> Result<()> {
       repo.git_dir().display()
     ))
   })?;
-  let tree = repo
-    .find_commit(commit)?
-    .tree_id()
-    .map_err(gix::Error::from)?;
+  let tree = repo.find_commit(commit)?.tree_id()?;
   let mut index = repo.index_from_tree(&tree)?;
 
   if let Some(previous) = repo.try_index()? {
@@ -232,7 +229,8 @@ fn checkout(repo: &Repository, commit: ObjectId) -> Result<()> {
       if index.entry_by_path(path).is_some() {
         continue;
       }
-      match std::fs::remove_file(workdir.join(gix::path::from_bstr(path))) {
+      let relative = gix::path::from_bstr(path)?;
+      match std::fs::remove_file(workdir.join(relative)) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
           return Err(error.into());
         },
@@ -253,11 +251,8 @@ fn checkout(repo: &Repository, commit: ObjectId) -> Result<()> {
     &Discard,
     &AtomicBool::new(false),
     options,
-  )
-  .map_err(gix::Error::from)?;
-  index
-    .write(gix::index::write::Options::default())
-    .map_err(gix::Error::from)?;
+  )?;
+  index.write(gix::index::write::Options::default())?;
 
   repo.edit_reference(RefEdit {
     change: Change::Update {
@@ -425,8 +420,7 @@ fn contains_commit(
   tip: ObjectId,
   commit: &str,
 ) -> Result<bool> {
-  let commit =
-    ObjectId::from_hex(commit.as_bytes()).map_err(gix::Error::from)?;
+  let commit = ObjectId::from_hex(commit.as_bytes())?;
   if commit == tip {
     return Ok(true);
   }
@@ -436,8 +430,7 @@ fn contains_commit(
     return Ok(false);
   }
   let mut graph = repo.revision_graph(None);
-  let bases = gix::revision::plumbing::merge_base(tip, &[commit], &mut graph)
-    .map_err(gix::Error::from)?;
+  let bases = gix::revision::plumbing::merge_base(tip, &[commit], &mut graph)?;
   Ok(bases.is_some_and(|bases| bases.contains(&commit)))
 }
 
@@ -454,7 +447,7 @@ pub fn history_contains(
   commit: &str,
 ) -> Result<bool> {
   let repo = open(repo_path)?;
-  let tip = ObjectId::from_hex(tip.as_bytes()).map_err(gix::Error::from)?;
+  let tip = ObjectId::from_hex(tip.as_bytes())?;
   contains_commit(&repo, tip, commit)
 }
 
@@ -468,7 +461,7 @@ pub fn history_contains(
 pub fn commit_subject(repo_path: &Path, hash: &str) -> Result<String> {
   let repo = open(repo_path)?;
   let commit = repo.find_commit(parse_commit(&repo, hash)?)?;
-  let message = commit.message().map_err(gix::Error::from)?;
+  let message = commit.message()?;
   Ok(message.summary().to_str_lossy().into_owned())
 }
 

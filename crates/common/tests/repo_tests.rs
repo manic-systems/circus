@@ -421,7 +421,7 @@ async fn test_project_crud() {
 
   // Create
   let project = create_test_project(&pool, "crud").await;
-  assert!(!project.name.is_empty());
+  assert_ne!(project.name, "");
   assert_eq!(project.description.as_deref(), Some("Test project"));
 
   // Get

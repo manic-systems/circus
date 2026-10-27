@@ -68,7 +68,7 @@ fn test_clone_or_fetch_clones_new_repo() {
   );
   let (repo_path, hash): (std::path::PathBuf, String) = result.unwrap();
   assert!(repo_path.exists());
-  assert!(!hash.is_empty());
+  assert_ne!(hash, "");
   assert_eq!(hash.len(), 40); // full SHA-1
 }
 

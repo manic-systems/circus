@@ -1,19 +1,22 @@
-use std::path::Path;
+use std::{num::NonZeroUsize, path::Path};
 
 use circus_common::{
   PgPool,
-  error::Result,
+  error::{CiError, Result},
   models::{PackageChange, PackageChangeKind},
   repo,
 };
-use dix_diff::{
-  Diff,
+use dix::{
   DiffStatus,
-  Package,
-  PackageSnapshot,
+  PackageDiff,
+  Size,
+  StorePath,
+  StorePathInfo,
+  StoreSnapshot,
+  Version,
   VersionAmount,
   VersionDiff,
-  diff_snapshots,
+  diff_store_snapshots,
 };
 use uuid::Uuid;
 
@@ -64,40 +67,40 @@ async fn record_package_changes(
     return Ok(());
   };
 
-  let changes =
-    diff_snapshots(&snapshot(&previous_closure), &snapshot(closure))
-      .into_iter()
-      .map(package_change)
-      .collect::<Vec<PackageChange>>();
+  let report =
+    diff_store_snapshots(&snapshot(&previous_closure)?, &snapshot(closure)?);
+  let changes = report
+    .diffs
+    .into_iter()
+    .filter_map(package_change)
+    .collect::<Vec<PackageChange>>();
   repo::build_closure_diffs::upsert(pool, build_id, previous, &changes).await
 }
 
-fn snapshot(closure: &[ClosurePathInfo]) -> PackageSnapshot {
-  PackageSnapshot::new(
-    closure
-      .iter()
-      .filter_map(|info| package(&info.store_path))
-      .collect::<Vec<Package>>(),
-  )
+fn snapshot(closure: &[ClosurePathInfo]) -> Result<StoreSnapshot> {
+  let closure = closure
+    .iter()
+    .map(|info| {
+      let path = StorePath::try_from(info.store_path.clone())
+        .map_err(|error| CiError::Internal(error.to_string()))?;
+      Ok(StorePathInfo {
+        path,
+        nar_size: Size::from_bytes(info.nar_size),
+      })
+    })
+    .collect::<Result<Vec<StorePathInfo>>>()?;
+
+  Ok(StoreSnapshot {
+    closure,
+    selected: Vec::new(),
+  })
 }
 
-/// Split a store path the way `builtins.parseDrvName` does, where the version
-/// starts at the first dash followed by a digit. Unversioned paths such as
-/// flake sources are skipped, since only their count could change.
-fn package(store_path: &str) -> Option<Package> {
-  let (_hash, name) = store_path.rsplit('/').next()?.split_once('-')?;
-  let split = name.match_indices('-').find(|(index, _)| {
-    name[index + 1..]
-      .chars()
-      .next()
-      .is_some_and(|first| first.is_ascii_digit())
-  });
-  let (index, _) = split?;
-  Some(Package::new(&name[..index], &name[index + 1..]))
-}
-
-fn package_change(diff: Diff) -> PackageChange {
-  let kind = match diff.status {
+/// Size-only diffs and unversioned paths such as flake sources are skipped,
+/// since only their size or count could change.
+fn package_change(diff: PackageDiff) -> Option<PackageChange> {
+  let change = diff.change?;
+  let kind = match change.status {
     DiffStatus::Upgraded => PackageChangeKind::Upgraded,
     DiffStatus::Downgraded => PackageChangeKind::Downgraded,
     DiffStatus::Added => PackageChangeKind::Added,
@@ -108,40 +111,45 @@ fn package_change(diff: Diff) -> PackageChange {
 
   let mut old = Vec::new();
   let mut new = Vec::new();
-  for version in diff.versions {
+  for version in change.versions {
     match version {
-      VersionDiff::Removed(removed) => old.push(counted(&removed)),
-      VersionDiff::Added(added) => new.push(counted(&added)),
+      VersionDiff::Removed(removed) => old.push(versioned(&removed)?),
+      VersionDiff::Added(added) => new.push(versioned(&added)?),
       VersionDiff::Changed {
         old: before,
         new: after,
       } => {
-        old.push(counted(&before));
-        new.push(counted(&after));
+        old.push(versioned(&before)?);
+        new.push(versioned(&after)?);
       },
       VersionDiff::AmountChanged {
         version,
         old_amount,
         new_amount,
       } => {
-        old.push(counted(&VersionAmount::new(version.clone(), old_amount)));
-        new.push(counted(&VersionAmount::new(version, new_amount)));
+        let version = version?;
+        old.push(counted(&version, old_amount));
+        new.push(counted(&version, new_amount));
       },
     }
   }
 
-  PackageChange {
+  Some(PackageChange {
     name: diff.name,
     kind,
     old,
     new,
-  }
+  })
 }
 
-fn counted(amount: &VersionAmount) -> String {
-  match amount.amount.get() {
-    1 => amount.version.to_string(),
-    count => format!("{} ×{count}", amount.version),
+fn versioned(amount: &VersionAmount) -> Option<String> {
+  Some(counted(amount.version.as_ref()?, amount.amount))
+}
+
+fn counted(version: &Version, amount: NonZeroUsize) -> String {
+  match amount.get() {
+    1 => version.to_string(),
+    count => format!("{version} ×{count}"),
   }
 }
 

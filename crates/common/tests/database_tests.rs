@@ -31,9 +31,9 @@ async fn test_database_connection() -> misstep::Result<()> {
 
   // Test connection info
   let info = db.get_connection_info().await?;
-  assert!(!info.database.is_empty());
-  assert!(!info.user.is_empty());
-  assert!(!info.version.is_empty());
+  assert_ne!(info.database, "");
+  assert_ne!(info.user, "");
+  assert_ne!(info.version, "");
 
   // Test pool stats
   let stats = db.get_pool_stats();
@@ -97,9 +97,9 @@ async fn test_connection_info() -> misstep::Result<()> {
 
   let info = db.get_connection_info().await?;
 
-  assert!(!info.database.is_empty());
-  assert!(!info.user.is_empty());
-  assert!(!info.version.is_empty());
+  assert_ne!(info.database, "");
+  assert_ne!(info.user, "");
+  assert_ne!(info.version, "");
   assert!(info.version.contains("PostgreSQL"));
 
   db.close();

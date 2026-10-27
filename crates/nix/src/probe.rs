@@ -238,7 +238,7 @@ mod tests {
   #[test]
   fn test_extract_systems_empty_object() {
     let val = json!({});
-    assert!(extract_systems(&val).is_empty());
+    assert_eq!(extract_systems(&val), Vec::<String>::new());
   }
 
   #[test]
@@ -256,10 +256,10 @@ mod tests {
   #[test]
   fn test_extract_systems_non_object_value() {
     let val = json!("string");
-    assert!(extract_systems(&val).is_empty());
+    assert_eq!(extract_systems(&val), Vec::<String>::new());
 
     let val = json!(null);
-    assert!(extract_systems(&val).is_empty());
+    assert_eq!(extract_systems(&val), Vec::<String>::new());
   }
 
   #[test]

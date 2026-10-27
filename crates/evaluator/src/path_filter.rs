@@ -14,7 +14,7 @@ fn matching_path_changed(
 ) -> gix::Result<bool> {
   let repo = gix::open(repo_path)?;
   let tree = |hash: &str| -> gix::Result<_> {
-    let id = ObjectId::from_hex(hash.as_bytes()).map_err(gix::Error::from)?;
+    let id = ObjectId::from_hex(hash.as_bytes())?;
     repo.find_commit(id)?.tree()
   };
   let base_tree = tree(base_commit)?;
@@ -32,10 +32,8 @@ fn matching_path_changed(
     .map(|pattern| {
       gix::pathspec::parse(pattern.as_bytes(), Defaults::default())
     })
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(gix::Error::from)?;
-  let mut search = Search::from_specs(patterns, None, Path::new(""))
-    .map_err(gix::Error::from)?;
+    .collect::<Result<Vec<_>, _>>()?;
+  let mut search = Search::from_specs(patterns, None, Path::new(""))?;
 
   // Without rename tracking a move reports both paths, matching libgit2's
   // default and gating on a filter that only names the source.

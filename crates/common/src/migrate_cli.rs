@@ -186,13 +186,13 @@ mod tests {
   #[test]
   fn cli_rejects_missing_subcommand() {
     let err = Commands::try_parse_from([]).unwrap_err();
-    assert!(!err.to_string().is_empty());
+    assert_ne!(err.to_string(), "");
   }
 
   #[test]
   fn cli_rejects_up_without_url() {
     let err = Commands::try_parse_from(["up"]).unwrap_err();
-    assert!(!err.to_string().is_empty());
+    assert_ne!(err.to_string(), "");
   }
 
   #[test]

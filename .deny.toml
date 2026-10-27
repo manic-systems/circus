@@ -34,6 +34,12 @@ exceptions = [
   ], crate = "cognos" },
   { allow = [
     "EUPL-1.2",
+  ], crate = "flub" },
+  { allow = [
+    "EUPL-1.2",
+  ], crate = "flub-derive" },
+  { allow = [
+    "EUPL-1.2",
   ], crate = "misstep" },
   { allow = [
     "EUPL-1.2",
@@ -46,7 +52,7 @@ exceptions = [
   ], crate = "pound-derive-impl" },
   { allow = [
     "GPL-3.0-only",
-  ], crate = "dix-diff" },
+  ], crate = "dix" },
 ]
 
 [licenses.private]

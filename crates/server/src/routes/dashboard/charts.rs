@@ -98,7 +98,7 @@ impl Scale {
       Self::Seconds if value < 60.0 => format!("{value:.0}s"),
       Self::Seconds if value < 3600.0 => {
         let minutes = (value / 60.0).floor();
-        let seconds = value - minutes * 60.0;
+        let seconds = minutes.mul_add(-60.0, value);
         if seconds >= 1.0 {
           format!("{minutes:.0}m {seconds:.0}s")
         } else {
@@ -565,7 +565,7 @@ pub async fn donut(label: &str, slices: Vec<Slice>) -> Result<impl View> {
     } else {
       0.0
     };
-    let end = start + share * TAU;
+    let end = f64::mul_add(share, TAU, start);
     // An arc whose end meets its start draws nothing, so a full ring is split.
     let paths = if share > 0.999 {
       vec![

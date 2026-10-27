@@ -96,6 +96,7 @@ enum ActivityKind {
   PostBuildHook,
   BuildWaiting,
   FetchTree,
+  FetchToStore,
 }
 
 impl ActivityKind {
@@ -115,6 +116,7 @@ impl ActivityKind {
       Self::PostBuildHook => "post-build hook",
       Self::BuildWaiting => "waiting",
       Self::FetchTree => "fetch tree",
+      Self::FetchToStore => "fetch to store",
     }
   }
 }
@@ -136,6 +138,7 @@ impl From<Activities> for ActivityKind {
       Activities::PostBuildHook => Self::PostBuildHook,
       Activities::BuildWaiting => Self::BuildWaiting,
       Activities::FetchTree => Self::FetchTree,
+      Activities::FetchToStore => Self::FetchToStore,
     }
   }
 }
