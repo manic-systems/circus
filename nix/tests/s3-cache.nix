@@ -14,7 +14,7 @@ in {
     ];
     _module.args.self = self;
 
-    environment.systemPackages = with pkgs; [garage_2 minio-client];
+    environment.systemPackages = with pkgs; [garage_2];
 
     # Add Garage for S3-compatible storage
     services.garage = {
@@ -72,15 +72,16 @@ in {
     machine.wait_for_unit("garage.service")
     machine.wait_for_open_port(3901)
 
-    # Configure MinIO client and create bucket
+    # Create the bucket
     machine.succeed("garage layout assign -z test -c 1G $(garage node id | cut -d@ -f1)")
     machine.succeed("garage layout apply --version 1")
     machine.succeed("garage bucket create circus-cache")
     machine.succeed("garage key import --yes -n circus-key GKcircus 0000000000000000")
     machine.succeed("garage bucket allow circus-cache --key circus-key --read --write")
     machine.succeed("garage bucket website circus-cache --allow")
-    machine.succeed("mc alias set local http://127.0.0.1:3900 GKcircus 0000000000000000")
-    machine.succeed("echo StoreDir: /nix/store > nix-cache-info && mc cp nix-cache-info local/circus-cache/nix-cache-info")
+    s3 = "curl -sf --aws-sigv4 aws:amz:garage:s3 --user GKcircus:0000000000000000"
+    bucket = "http://127.0.0.1:3900/circus-cache"
+    machine.succeed(f"echo StoreDir: /nix/store | {s3} -T - {bucket}/nix-cache-info")
 
     machine.wait_for_unit("circus-server.service")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:3000/health", timeout=30)
@@ -187,7 +188,7 @@ in {
     # Verify the build output was uploaded to S3
     with subtest("Build output was uploaded to S3 cache"):
         # List objects in the S3 bucket
-        bucket_contents = machine.succeed("mc ls --recursive local/circus-cache/")
+        bucket_contents = machine.succeed(f"{s3} '{bucket}?list-type=2'")
 
         # Should have the .narinfo file and the .nar file
         assert ".narinfo" in bucket_contents, f"Expected .narinfo file in bucket, got: {bucket_contents}"
