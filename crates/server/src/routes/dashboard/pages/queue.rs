@@ -60,6 +60,15 @@ pub(in crate::routes::dashboard) async fn load(
     .map(|s| (s.machine_id, s.name))
     .collect::<HashMap<Uuid, String>>();
 
+  let running_ids = running.iter().map(|build| build.id).collect::<Vec<Uuid>>();
+  let expected =
+    circus_common::repo::builds::expected_durations(&state.pool, &running_ids)
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!("Failed to estimate running build durations: {error}");
+        HashMap::new()
+      });
+
   let mut context_by_eval: HashMap<Uuid, (Uuid, String, Uuid, String)> =
     HashMap::new();
   for b in running.iter().chain(pending.iter()) {
@@ -121,6 +130,10 @@ pub(in crate::routes::dashboard) async fn load(
           .unwrap_or_default(),
         elapsed,
         started_epoch: b.started_at.map(jiff::Timestamp::as_second),
+        eta_epoch: b
+          .started_at
+          .zip(expected.get(&b.id))
+          .map(|(started, secs)| started.as_second() + secs),
         priority: b.priority,
         builder_name,
         queue_pos: 0,
@@ -145,6 +158,7 @@ pub(in crate::routes::dashboard) async fn load(
         started_at: String::new(),
         elapsed: String::new(),
         started_epoch: None,
+        eta_epoch: None,
         priority: b.priority,
         builder_name: None,
         queue_pos: (idx + 1) as i64,

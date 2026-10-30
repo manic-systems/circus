@@ -461,3 +461,38 @@ JOIN builds b ON b.evaluation_id = e.id
   AND b.status NOT IN ('pending', 'running')
 ORDER BY e.evaluation_time DESC
 LIMIT :limit;
+
+--! expected_durations : (build_id, expected_secs)
+SELECT
+  cur.id AS build_id,
+  (percentile_cont(0.5) WITHIN GROUP (ORDER BY past.secs))::bigint AS expected_secs
+FROM builds cur
+JOIN evaluations ce ON ce.id = cur.evaluation_id
+CROSS JOIN LATERAL (
+  SELECT EXTRACT(EPOCH FROM b.completed_at - b.started_at) AS secs
+  FROM (
+    SELECT id, evaluation_time
+    FROM evaluations
+    WHERE jobset_id = ce.jobset_id
+    ORDER BY evaluation_time DESC
+    LIMIT 200
+  ) e
+  JOIN builds b ON b.evaluation_id = e.id AND b.job_name = cur.job_name
+  WHERE b.status = 'succeeded'
+    AND b.started_at IS NOT NULL
+    AND b.completed_at IS NOT NULL
+    AND b.system IS NOT DISTINCT FROM cur.system
+    AND b.id <> cur.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM builds earlier
+      WHERE earlier.drv_path = b.drv_path
+        AND earlier.status = 'succeeded'
+        AND earlier.completed_at < b.started_at
+    )
+  ORDER BY e.evaluation_time DESC
+  LIMIT 10
+) past
+WHERE cur.id = ANY(:ids)
+GROUP BY cur.id
+HAVING percentile_cont(0.5) WITHIN GROUP (ORDER BY past.secs) >= 1;
