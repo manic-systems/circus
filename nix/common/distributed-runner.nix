@@ -73,6 +73,7 @@ in {
           allow_plaintext = true;
           max_connections = 64;
           heartbeat_ttl_secs = 30;
+          api_base_url = "http://runner:3000";
           auth_tokens = map (name: {
             machine_id = "00000000-0000-4000-8000-${builtins.substring 0 12 (builtins.hashString "sha256" name)}";
             inherit name;

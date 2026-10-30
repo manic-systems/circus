@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::{
   config::{Agent, AgentConfig, EphemeralConfig, TracingConfig},
+  local_effect::{self, EffectRunArgs},
   sandbox,
   session,
 };
@@ -24,6 +25,9 @@ use crate::{
 #[derive(Parse)]
 #[pound(name = "circus-agent")]
 struct Cli {
+  #[pound(subcommand)]
+  command: Option<Command>,
+
   /// Config file. Defaults to /etc/circus-agent.toml when it exists.
   #[pound(short, long, env = "CIRCUS_AGENT_CONFIG", value_name = "FILE")]
   config: Option<PathBuf>,
@@ -74,6 +78,24 @@ struct Cli {
   work_dir: Option<PathBuf>,
 }
 
+#[derive(Parse)]
+enum Command {
+  /// Work with post-build Effects locally.
+  Effect {
+    #[pound(subcommand)]
+    command: EffectCommand,
+  },
+}
+
+#[derive(Parse)]
+enum EffectCommand {
+  /// Realise an effect's inputs and run it on this machine.
+  Run {
+    #[pound(flatten)]
+    args: EffectRunArgs,
+  },
+}
+
 /// Run the Circus agent CLI.
 ///
 /// # Errors
@@ -114,6 +136,18 @@ where
 
   let args = circus_config::cli_args(args)?;
   let cli = Cli::parse_from(args.iter().map(String::as_str));
+  if let Some(Command::Effect {
+    command: EffectCommand::Run { args },
+  }) = cli.command
+  {
+    init_tracing(&TracingConfig::default());
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()?;
+    let local = tokio::task::LocalSet::new();
+    let code = rt.block_on(local.run_until(local_effect::run(args)))?;
+    std::process::exit(code);
+  }
   let mut cfg = load_config(&cli)?;
   init_tracing(&cfg.tracing);
 
@@ -122,6 +156,10 @@ where
     cfg.agent.ephemeral = Some(EphemeralConfig::default());
   }
   let ephemeral = cfg.agent.ephemeral.is_some();
+  if !ephemeral && let Some(effects) = &cfg.agent.effects {
+    crate::effect::validate_runtime(effects, cfg.agent.rootless)?;
+  }
+  session::validate_effect_transport(&cfg.agent)?;
   tracing::info!(name = %cfg.agent.name, ephemeral, "circus-agent starting");
   let joining = !cfg.agent.join_token.is_empty();
   if joining && ephemeral {
@@ -292,6 +330,7 @@ fn inline_config(cli: &Cli) -> Result<AgentConfig> {
       tls: None,
       rootless: false,
       rootless_data_dir: None,
+      effects: None,
       ephemeral: None,
     },
     tracing: TracingConfig::default(),

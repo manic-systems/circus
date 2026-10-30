@@ -14,6 +14,7 @@ path = "src/main.rs"
 circus-config.workspace = true
 circus-http.workspace   = true
 circus-logs.workspace   = true
+circus-nix.workspace    = true
 circus-proto.workspace  = true
 
 async-compression.workspace   = true

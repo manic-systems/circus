@@ -174,6 +174,9 @@ impl Autoscaler {
     let mut trusted_cache: HashMap<uuid::Uuid, Option<Option<String>>> =
       HashMap::new();
     for build in builds {
+      if build.kind.is_effect() {
+        continue;
+      }
       if !supports_required_features(
         build.scheduling_features(),
         &self.cfg.supported_features,

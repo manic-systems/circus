@@ -31,6 +31,7 @@ misstep.workspace           = true
 parking_lot.workspace       = true
 pound.workspace             = true
 reqwest.workspace           = true
+ring.workspace              = true
 rustls.workspace            = true
 serde.workspace             = true
 serde_json.workspace        = true

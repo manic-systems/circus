@@ -35,6 +35,7 @@ const PUBLIC_DOCUMENTED_MODULES: &[&str] = &[
   "badges",
   "cache",
   "channel_manifests",
+  "current_task",
   "health",
   "ldap",
   "metrics",

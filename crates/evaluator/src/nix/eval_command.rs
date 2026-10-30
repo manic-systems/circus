@@ -189,6 +189,7 @@ pub(super) async fn run_eval(
       job_count,
       error_count,
       errors,
+      schedules: None,
     })
   };
 

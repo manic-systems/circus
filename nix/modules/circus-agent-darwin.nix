@@ -25,10 +25,13 @@
     if config.nix.enable
     then "${config.nix.package}/bin"
     else "/nix/var/nix/profiles/default/bin";
-  configTemplate = settingsFormat.generate "circus-agent.toml" (recursiveUpdate cfg.settings {
-    agent.${tokenKey} = "@CIRCUS_AGENT_AUTH_TOKEN@";
-    tracing.show_timestamps = false;
-  });
+  configTemplate = settingsFormat.generate "circus-agent.toml" (recursiveUpdate cfg.settings (recursiveUpdate {
+      agent.${tokenKey} = "@CIRCUS_AGENT_AUTH_TOKEN@";
+      tracing.show_timestamps = false;
+    }
+    (lib.optionalAttrs (cfg.effectsSecretsFile != null) {
+      agent.effects.secrets_file = cfg.effectsSecretsFile;
+    })));
   runtimeConfig = "${toString cfg.settings.agent.work_dir}/circus-agent.runtime.toml";
 
   startScript = pkgs.writeShellScript "circus-agent-start" ''

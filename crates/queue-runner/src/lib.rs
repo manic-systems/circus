@@ -7,6 +7,7 @@ pub mod context;
 pub mod dispatch;
 pub mod features;
 pub mod gha;
+pub mod github_app;
 pub mod helpers;
 pub mod rpc;
 pub mod runner_loop;

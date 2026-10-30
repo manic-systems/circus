@@ -31,6 +31,7 @@ pub(in crate::routes::dashboard) async fn load(
       Some("running"),
       filter.system.as_deref(),
       filter.job_name.as_deref(),
+      Some("build"),
       100,
       0,
     )

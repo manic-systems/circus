@@ -64,7 +64,9 @@ async fn build_badge(
     circus_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
       .await?;
 
-  let build = builds.iter().find(|b| b.job_name == job_name);
+  let build = builds
+    .iter()
+    .find(|b| !b.kind.is_effect() && b.job_name == job_name);
 
   let (label, color) = build.map_or(("not found", "#9f9f9f"), |b| {
     match b.status {
@@ -129,7 +131,9 @@ async fn latest_build(
     circus_common::repo::builds::list_for_evaluation(&state.pool, eval.id)
       .await?;
 
-  let build = builds.iter().find(|b| b.job_name == job_name);
+  let build = builds
+    .iter()
+    .find(|b| !b.kind.is_effect() && b.job_name == job_name);
   build.map_or_else(
     || Ok((StatusCode::NOT_FOUND, "Build not found").into_response()),
     |b| Ok(axum::Json(b.clone()).into_response()),

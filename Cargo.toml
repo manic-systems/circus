@@ -37,6 +37,7 @@ async-compression = { version = "0.4.51", default-features = false, features = [
   "xz",
   "gzip",
 ] }
+async-stream = "0.3.6"
 axum = "0.8.9"
 blake3 = "1.8.7"
 bstr = "1.13.1"
@@ -81,6 +82,7 @@ nix = { version = "0.31.3", default-features = false, features = [
   "fs",
   "user",
   "process",
+  "signal",
 ] }
 parking_lot = "0.12.5"
 percent-encoding = "2.3.2"

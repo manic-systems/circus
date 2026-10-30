@@ -309,15 +309,25 @@ pub async fn overview(
   let build_stats = circus_common::repo::builds::get_stats(&state.pool)
     .await
     .map_err(ApiError)?;
-  let recent_raw = circus_common::repo::builds::list_recent(&state.pool, 40)
-    .await
-    .map_err(ApiError)?;
+  let recent_raw = circus_common::repo::builds::list_filtered(
+    &state.pool,
+    None,
+    None,
+    None,
+    None,
+    Some("build"),
+    40,
+    0,
+  )
+  .await
+  .map_err(ApiError)?;
   let failed_raw = circus_common::repo::builds::list_filtered(
     &state.pool,
     None,
     Some("failed"),
     None,
     None,
+    Some("build"),
     12,
     0,
   )
@@ -376,9 +386,18 @@ pub async fn overview(
 ///
 /// Returns an error when build or build-context queries fail.
 pub async fn recent_builds(state: &AppState) -> Result<Vec<OperatorBuild>> {
-  let builds = circus_common::repo::builds::list_recent(&state.pool, 40)
-    .await
-    .map_err(ApiError)?;
+  let builds = circus_common::repo::builds::list_filtered(
+    &state.pool,
+    None,
+    None,
+    None,
+    None,
+    Some("build"),
+    40,
+    0,
+  )
+  .await
+  .map_err(ApiError)?;
   let context_by_eval = context_for_builds(state, builds.iter()).await?;
   Ok(
     builds
@@ -402,6 +421,7 @@ pub async fn failures(state: &AppState) -> Result<Vec<OperatorBuild>> {
     Some("failed"),
     None,
     None,
+    Some("build"),
     50,
     0,
   )

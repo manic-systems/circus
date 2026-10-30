@@ -139,6 +139,7 @@ pub(super) struct BuildView {
   pub(super) id:            Uuid,
   pub(super) id_short:      String,
   pub(super) job_name:      String,
+  pub(super) kind_label:    String,
   pub(super) project_id:    Option<Uuid>,
   pub(super) project_name:  String,
   pub(super) jobset_id:     Option<Uuid>,
@@ -212,6 +213,32 @@ pub(super) struct EvalView {
 pub(super) struct EvalProgressView {
   pub(super) count:   String,
   pub(super) percent: i64,
+}
+
+pub(super) struct ClosureView {
+  pub(super) size:   String,
+  pub(super) exact:  String,
+  pub(super) change: Option<ClosureChangeView>,
+}
+
+pub(super) struct ClosureChangeView {
+  pub(super) text:         String,
+  pub(super) class:        &'static str,
+  pub(super) build_id:     Uuid,
+  pub(super) commit_short: String,
+}
+
+pub(super) struct PackageChangesView {
+  pub(super) against_build_id: Uuid,
+  pub(super) against_short:    String,
+  pub(super) changes:          Vec<PackageChangeView>,
+}
+
+pub(super) struct PackageChangeView {
+  pub(super) name: String,
+  pub(super) kind: &'static str,
+  pub(super) old:  String,
+  pub(super) new:  String,
 }
 
 pub(super) struct BrokeInView {
@@ -468,6 +495,7 @@ impl From<&operator::OperatorBuild> for BuildView {
       id:            b.id,
       id_short:      short_uuid(b.id),
       job_name:      b.job_name.clone(),
+      kind_label:    "Build".to_string(),
       project_id:    b.project_id,
       project_name:  b.project_name.clone(),
       jobset_id:     b.jobset_id,
@@ -853,6 +881,11 @@ impl From<&Build> for BuildView {
       id:            b.id,
       id_short:      short_uuid(b.id),
       job_name:      b.job_name.clone(),
+      kind_label:    if b.kind.is_effect() {
+        "Effect".to_string()
+      } else {
+        "Build".to_string()
+      },
       project_id:    None,
       project_name:  String::new(),
       jobset_id:     None,

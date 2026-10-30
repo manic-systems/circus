@@ -8,6 +8,7 @@
 //! - [`config`]  CLI + on-disk TOML
 //! - [`session`] capnp-rpc bootstrap, register, heartbeat loop
 //! - [`build`]   one-shot nix build runner + log streaming
+//! - [`effect`]  post-build effect execution and local secret resolution
 //! - [`psi`]     /proc/pressure parser
 //! - [`tls`]     rustls connector builder
 
@@ -16,6 +17,9 @@ pub mod cli;
 pub mod config;
 mod daemon;
 pub mod drv_sink;
+pub mod effect;
+pub mod local_effect;
+mod process;
 pub mod psi;
 pub mod sandbox;
 pub mod session;

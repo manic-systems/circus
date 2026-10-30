@@ -26,11 +26,11 @@ use crate::{
 };
 
 /// Keep log writes below the 1MiB wire cap without sending one RPC per line.
-const MAX_LOG_BATCH_BYTES: usize = 256 * 1024;
-const MAX_LOG_BATCH_LINES: usize = 4096;
+pub(crate) const MAX_LOG_BATCH_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_LOG_BATCH_LINES: usize = 4096;
 
 /// Backpressure the child pipe instead of buffering logs without bound.
-const LOG_CHANNEL_CAPACITY: usize = 1024;
+pub(crate) const LOG_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Clone, Copy)]
 pub struct Tunables {
@@ -893,7 +893,7 @@ fn lower_free_space(
     .min_by_key(|(_, free)| *free)
 }
 
-fn remaining_silent(
+pub(crate) fn remaining_silent(
   max_silent: &Duration,
   last_output: Instant,
 ) -> Option<Duration> {
@@ -907,7 +907,7 @@ fn remaining_silent(
   )
 }
 
-async fn sleep_opt(d: Option<Duration>) {
+pub(crate) async fn sleep_opt(d: Option<Duration>) {
   match d {
     Some(d) => tokio::time::sleep(d).await,
     None => std::future::pending().await,
@@ -916,7 +916,7 @@ async fn sleep_opt(d: Option<Duration>) {
 
 /// Nix reports a builder killed by a signal only as message text, so a build
 /// that fails while the kernel OOM killer fires is taken to be its victim.
-fn kernel_oom_kills() -> Option<u64> {
+pub(crate) fn kernel_oom_kills() -> Option<u64> {
   std::fs::read_to_string("/proc/vmstat")
     .ok()?
     .lines()
@@ -924,7 +924,7 @@ fn kernel_oom_kills() -> Option<u64> {
 }
 
 /// Join the last few nix messages into a capped error summary.
-fn summarize_failure(msgs: &VecDeque<String>) -> String {
+pub(crate) fn summarize_failure(msgs: &VecDeque<String>) -> String {
   const MAX: usize = 4096;
   let mut tail = msgs
     .iter()
@@ -940,7 +940,7 @@ fn summarize_failure(msgs: &VecDeque<String>) -> String {
   }
 }
 
-async fn forward_chunk(
+pub(crate) async fn forward_chunk(
   sink: &log_sink::Client,
   chunk: &[u8],
 ) -> Result<(), capnp::Error> {
@@ -954,7 +954,9 @@ async fn forward_chunk(
   Ok(())
 }
 
-async fn close_log(sink: &log_sink::Client) -> Result<(), capnp::Error> {
+pub(crate) async fn close_log(
+  sink: &log_sink::Client,
+) -> Result<(), capnp::Error> {
   #![expect(
     clippy::future_not_send,
     reason = "capnp futures are not Send; agent uses a single-threaded runtime"
