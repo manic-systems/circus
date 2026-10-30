@@ -13,6 +13,8 @@ use topcoat::{
   view::{View, component, view},
 };
 
+use super::pages::format_elapsed;
+
 /// A result code from a redirect's query, ignoring codes a stale link carries.
 pub fn result_code<T: DeserializeOwned>(code: Option<&str>) -> Option<T> {
   code.and_then(|code| {
@@ -95,4 +97,15 @@ pub async fn copy_button(text: &str) -> Result<impl View> {
       "Copy"
     </button>
   })
+}
+
+/// How long a running build has left against its usual duration.
+pub fn eta_text(until: i64) -> String {
+  let left = until - Timestamp::now().as_second();
+
+  if left > 0 {
+    format!("~{} left", format_elapsed(left))
+  } else {
+    "over usual time".to_owned()
+  }
 }

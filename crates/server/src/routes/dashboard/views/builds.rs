@@ -17,12 +17,14 @@ use uuid::Uuid;
 
 use super::super::{
   build_log::{BuildLogView, parse_build_log},
+  components::eta_text,
   layout::{document, shard_viewer, viewer},
   live::{BuildsChanged, Wake},
   pages::{
     dashboard_system_filters,
     derivation_name,
     elapsed_since,
+    format_elapsed,
     is_failed_status,
   },
   shared::{
@@ -959,6 +961,8 @@ struct Overview {
   details:       BuildView,
   builder_label: String,
   broke_in:      Option<BrokeInView>,
+  /// The usual duration, and when a running build should finish.
+  expected:      Option<(String, Option<i64>)>,
 }
 
 async fn load_overview(state: &AppState, id: Uuid) -> Option<Overview> {
@@ -997,10 +1001,27 @@ async fn load_overview(state: &AppState, id: Uuid) -> Option<Overview> {
     None => "local".to_owned(),
   };
 
+  let expected_secs = if build.status.is_finished() {
+    None
+  } else {
+    circus_common::repo::builds::expected_durations(&state.pool, &[id])
+      .await
+      .unwrap_or_else(|error| {
+        tracing::warn!(build_id = %id, "Failed to estimate the build's duration: {error}");
+        HashMap::new()
+      })
+      .remove(&id)
+  };
+  let expected = expected_secs.map(|secs| {
+    let eta = build.started_at.map(|started| started.as_second() + secs);
+    (format_elapsed(secs), eta)
+  });
+
   Some(Overview {
     details: build_view(&build),
     builder_label,
     broke_in,
+    expected,
   })
 }
 
@@ -1039,6 +1060,7 @@ async fn build_overview(overview: &Overview) -> Result<impl View> {
     details,
     builder_label,
     broke_in,
+    expected,
   } = overview;
   let signed = if details.signed { "Yes" } else { "No" };
 
@@ -1066,6 +1088,14 @@ async fn build_overview(overview: &Overview) -> Result<impl View> {
             (Some(started), false) => meta_item(label: "Duration", (elapsed_since(started))),
             (None, false) => meta_item(label: "Duration", (details.duration.as_str())),
             (None, true) => {},
+          }
+          if let Some((usual, eta)) = expected {
+            meta_item(label: "Usually takes",
+              (usual.clone())
+              if let Some(until) = eta {
+                <span class="eta">(eta_text(*until))</span>
+              }
+            )
           }
           meta_item(label: "Priority", (details.priority))
           meta_item(label: "Signed", (signed))
