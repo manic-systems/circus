@@ -41,15 +41,36 @@ pub struct FlakeMetadata {
   pub url:         Option<String>,
 }
 
-/// Maximum output size we'll parse from `nix flake show --json` (10 MB).
+/// Maximum output size we'll parse from a Nix probe response (10 MB).
 const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024;
 const FLAKE_PROBE_TIMEOUT: Duration = Duration::from_mins(1);
+
+const OUTPUT_TYPES: &[(&str, &str, &str, u8)] = &[
+  ("hydraJobs", "derivation", "CI Jobs (hydraJobs)", 10),
+  ("checks", "derivation", "Checks", 7),
+  ("packages", "derivation", "Packages", 6),
+  ("devShells", "derivation", "Development Shells", 3),
+  (
+    "nixosConfigurations",
+    "configuration",
+    "NixOS Configurations",
+    4,
+  ),
+  ("nixosModules", "module", "NixOS Modules", 2),
+  ("overlays", "overlay", "Overlays", 1),
+  (
+    "legacyPackages",
+    "derivation",
+    "Legacy Packages (nixpkgs-style)",
+    5,
+  ),
+];
 
 /// Probe a flake repository to discover its outputs and suggest jobsets.
 ///
 /// # Errors
 ///
-/// Returns error if nix flake show command fails or times out.
+/// Returns error if Nix cannot inspect the flake or the command times out.
 pub async fn probe_flake(
   repo_url: &str,
   revision: Option<&str>,
@@ -63,35 +84,42 @@ pub async fn probe_flake(
     |rev| parsed_ref.with_revision(rev),
   );
 
-  let output = tokio::time::timeout(FLAKE_PROBE_TIMEOUT, async {
-    tokio::process::Command::new("nix")
-      .args([
-        "--extra-experimental-features",
-        "nix-command flakes",
-        "flake",
-        "show",
-        "--json",
-        "--no-write-lock-file",
-        &full_ref,
-      ])
-      .kill_on_drop(true)
-      .output()
-      .await
-  })
+  tokio::time::timeout(
+    FLAKE_PROBE_TIMEOUT,
+    probe_flake_outputs(repo_url, &full_ref),
+  )
   .await
   .map_err(|_| {
     Error::Timeout(format!(
       "Flake probe timed out after {FLAKE_PROBE_TIMEOUT:?}"
     ))
   })?
-  .map_err(|e| Error::Eval(format!("Failed to run nix flake show: {e}")))?;
+}
 
-  if !output.status.success() {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Check for common non-flake case
-    if stderr.contains("does not provide attribute")
-      || stderr.contains("has no 'flake.nix'")
-    {
+async fn probe_flake_outputs(
+  repo_url: &str,
+  full_ref: &str,
+) -> Result<FlakeProbeResult> {
+  let metadata_output = tokio::process::Command::new("nix")
+    .args([
+      "--extra-experimental-features",
+      "nix-command flakes",
+      "flake",
+      "metadata",
+      "--json",
+      "--no-write-lock-file",
+      full_ref,
+    ])
+    .kill_on_drop(true)
+    .output()
+    .await
+    .map_err(|e| {
+      Error::Eval(format!("Failed to run nix flake metadata: {e}"))
+    })?;
+
+  if !metadata_output.status.success() {
+    let stderr = String::from_utf8_lossy(&metadata_output.stderr);
+    if is_missing_flake(&stderr) {
       return Ok(FlakeProbeResult {
         is_flake:          false,
         outputs:           Vec::new(),
@@ -102,115 +130,162 @@ pub async fn probe_flake(
         ),
       });
     }
-    tracing::warn!(stderr = %stderr, "nix flake probe failed");
-    return Err(Error::Eval(
-      "Repository not accessible or not a flake".to_string(),
+    return Err(probe_command_error(
+      "nix flake metadata",
+      &metadata_output.stderr,
     ));
   }
 
-  if output.stdout.len() > MAX_OUTPUT_SIZE {
-    tracing::warn!(
-      "Flake show output exceeds {}MB, parsing top-level only",
+  if metadata_output.stdout.len() > MAX_OUTPUT_SIZE {
+    return Err(Error::Eval(format!(
+      "Nix flake metadata exceeds {} MB",
       MAX_OUTPUT_SIZE / (1024 * 1024)
-    );
+    )));
   }
 
-  let stdout = &output.stdout[..output.stdout.len().min(MAX_OUTPUT_SIZE)];
-  let raw: serde_json::Value = serde_json::from_slice(stdout).map_err(|e| {
-    Error::Eval(format!("Failed to parse flake show output: {e}"))
-  })?;
-
-  let Some(top) = raw.as_object() else {
-    return Err(Error::Eval(
-      "Unexpected flake show output format".to_string(),
-    ));
-  };
+  let metadata: serde_json::Value =
+    serde_json::from_slice(&metadata_output.stdout).map_err(|e| {
+      Error::Eval(format!("Failed to parse flake metadata output: {e}"))
+    })?;
 
   let mut outputs = Vec::new();
   let mut suggested_jobsets = Vec::new();
 
-  let output_types: &[(&str, &str, &str, u8)] = &[
-    ("hydraJobs", "derivation", "CI Jobs (hydraJobs)", 10),
-    ("checks", "derivation", "Checks", 7),
-    ("packages", "derivation", "Packages", 6),
-    ("devShells", "derivation", "Development Shells", 3),
-    (
-      "nixosConfigurations",
-      "configuration",
-      "NixOS Configurations",
-      4,
-    ),
-    ("nixosModules", "module", "NixOS Modules", 2),
-    ("overlays", "overlay", "Overlays", 1),
-    (
-      "legacyPackages",
-      "derivation",
-      "Legacy Packages (nixpkgs-style)",
-      5,
-    ),
-  ];
+  for &(key, output_type, description, priority) in OUTPUT_TYPES {
+    let Some(names) = eval_output_names(full_ref, key).await? else {
+      continue;
+    };
+    let systems = extract_system_names(names);
 
-  for &(key, output_type, description, priority) in output_types {
-    if let Some(val) = top.get(key) {
-      let systems = extract_systems(val);
-      outputs.push(FlakeOutput {
-        path:        key.to_string(),
-        output_type: output_type.to_string(),
-        systems:     systems.clone(),
-      });
+    outputs.push(FlakeOutput {
+      path:        key.to_string(),
+      output_type: output_type.to_string(),
+      systems:     systems.clone(),
+    });
 
-      let nix_expression = match key {
-        "hydraJobs" => "hydraJobs".to_string(),
-        "checks" => "checks".to_string(),
-        "packages" => "packages".to_string(),
-        "devShells" => "devShells".to_string(),
-        "legacyPackages" => "legacyPackages".to_string(),
-        _ => continue,
-      };
+    let nix_expression = match key {
+      "hydraJobs" => "hydraJobs",
+      "checks" => "checks",
+      "packages" => "packages",
+      "devShells" => "devShells",
+      "legacyPackages" => "legacyPackages",
+      _ => continue,
+    };
 
-      suggested_jobsets.push(SuggestedJobset {
-        name: key.to_string(),
-        nix_expression,
-        description: description.to_string(),
-        priority,
-        systems,
-      });
-    }
+    suggested_jobsets.push(SuggestedJobset {
+      name: key.to_string(),
+      nix_expression: nix_expression.to_string(),
+      description: description.to_string(),
+      priority,
+      systems,
+    });
   }
 
   suggested_jobsets.sort_by_key(|j| std::cmp::Reverse(j.priority));
-
-  let metadata = FlakeMetadata {
-    description: top
-      .get("description")
-      .and_then(|v| v.as_str())
-      .map(std::string::ToString::to_string),
-    url:         Some(repo_url.to_string()),
-  };
 
   Ok(FlakeProbeResult {
     is_flake: true,
     outputs,
     suggested_jobsets,
-    metadata,
+    metadata: FlakeMetadata {
+      description: metadata
+        .get("description")
+        .and_then(|value| value.as_str())
+        .map(std::string::ToString::to_string),
+      url:         Some(repo_url.to_string()),
+    },
     error: None,
   })
 }
 
-/// Extract system names from a flake output value (e.g.,
-/// `packages.x86_64-linux`).
-pub(crate) fn extract_systems(val: &serde_json::Value) -> Vec<String> {
-  let mut systems = Vec::new();
-  if let Some(obj) = val.as_object() {
-    for key in obj.keys() {
-      if key.contains('-') && (key.contains("linux") || key.contains("darwin"))
-      {
-        systems.push(key.clone());
-      }
+async fn eval_output_names(
+  full_ref: &str,
+  output_name: &str,
+) -> Result<Option<Vec<String>>> {
+  let output_ref = format!("{full_ref}#{output_name}");
+  let output = tokio::process::Command::new("nix")
+    .args([
+      "--extra-experimental-features",
+      "nix-command flakes",
+      "eval",
+      "--json",
+      "--no-write-lock-file",
+      &output_ref,
+      "--apply",
+      "builtins.attrNames",
+    ])
+    .kill_on_drop(true)
+    .output()
+    .await
+    .map_err(|e| {
+      Error::Eval(format!("Failed to inspect flake output {output_name}: {e}"))
+    })?;
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if is_missing_output(&stderr) {
+      return Ok(None);
     }
+    return Err(probe_command_error(
+      &format!("nix eval {output_name}"),
+      &output.stderr,
+    ));
   }
+
+  if output.stdout.len() > MAX_OUTPUT_SIZE {
+    return Err(Error::Eval(format!(
+      "Nix flake output {output_name} exceeds {} MB",
+      MAX_OUTPUT_SIZE / (1024 * 1024)
+    )));
+  }
+
+  serde_json::from_slice(&output.stdout)
+    .map(Some)
+    .map_err(|e| {
+      Error::Eval(format!("Failed to parse flake output {output_name}: {e}"))
+    })
+}
+
+fn is_missing_output(stderr: &str) -> bool {
+  stderr.contains("does not provide attribute")
+    || stderr.contains("has no attribute")
+    || (stderr.contains("attribute") && stderr.contains("missing"))
+}
+
+fn is_missing_flake(stderr: &str) -> bool {
+  stderr.contains("has no 'flake.nix'")
+    || stderr.contains("does not contain a 'flake.nix'")
+}
+
+fn probe_command_error(command: &str, stderr: &[u8]) -> Error {
+  let stderr = String::from_utf8_lossy(stderr);
+  tracing::warn!(command, stderr = %stderr, "nix flake probe failed");
+  let detail = stderr
+    .lines()
+    .rev()
+    .find(|line| !line.trim().is_empty())
+    .map_or("unknown Nix error", str::trim);
+  Error::Eval(format!("{command} failed: {detail}"))
+}
+
+fn extract_system_names(names: Vec<String>) -> Vec<String> {
+  let mut systems = names
+    .into_iter()
+    .filter(|key| {
+      key.contains('-') && (key.contains("linux") || key.contains("darwin"))
+    })
+    .collect::<Vec<_>>();
   systems.sort();
   systems
+}
+
+/// Extract system names from a flake output value (e.g.,
+/// `packages.x86_64-linux`).
+#[cfg(test)]
+pub(crate) fn extract_systems(val: &serde_json::Value) -> Vec<String> {
+  val.as_object().map_or_else(Vec::new, |top| {
+    extract_system_names(top.keys().cloned().collect())
+  })
 }
 
 #[cfg(test)]
