@@ -82,7 +82,7 @@ nix = { version = "0.31.3", default-features = false, features = [
   "user",
   "process",
 ] }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 percent-encoding = "2.3.2"
 pin-project-lite = "0.2.17"
 pound = "0.6.1"
@@ -104,7 +104,7 @@ sha1 = "0.11.0"
 sha2 = "0.11.1"
 socket2 = "0.6.5"
 subtle = "2.6.1"
-sysinfo = { version = "0.39.6", default-features = false, features = [ "system" ] }
+sysinfo = { version = "0.40.1", default-features = false, features = [ "system" ] }
 tar = "0.4.46"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
@@ -125,7 +125,7 @@ topcoat = { version = "0.11.0", default-features = false, features = [
   "view",
 ] }
 tower = "0.5.3"
-tower-http = { version = "0.6.11", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
+tower-http = { version = "0.7.1", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter", "json" ] }
 url = "2.5.8"
