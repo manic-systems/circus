@@ -393,6 +393,23 @@
 
   logDirectory = cfg.settings.logs.log_dir;
   evaluatorDirectory = cfg.settings.evaluator.work_dir;
+
+  evaluatorSsh = cfg.evaluator.ssh;
+  evaluatorSshEnabled = evaluatorSsh.privateKeyFile != null || evaluatorSsh.encryptedPrivateKeyFile != null;
+  evaluatorCredentials =
+    evaluatorFiles.credentials
+    ++ optional (evaluatorSsh.privateKeyFile != null) "ssh-private-key:${evaluatorSsh.privateKeyFile}"
+    ++ optional (evaluatorSsh.knownHostsFile != null) "ssh-known-hosts:${evaluatorSsh.knownHostsFile}";
+  evaluatorSshConfig = pkgs.writeText "circus-evaluator-ssh-config" ''
+    Host *
+      IdentityFile ''${CREDENTIALS_DIRECTORY}/ssh-private-key
+      IdentityAgent none
+      IdentitiesOnly yes
+      UserKnownHostsFile ''${CREDENTIALS_DIRECTORY}/ssh-known-hosts
+      GlobalKnownHostsFile /dev/null
+      StrictHostKeyChecking yes
+      BatchMode yes
+  '';
 in {
   options.services.circus = {
     enable = mkEnableOption "circus system";
@@ -449,8 +466,54 @@ in {
     };
 
     server.enable = mkEnableOption "circus server (REST API)";
-    evaluator.enable = mkEnableOption "circus evaluator (Git polling and nix evaluation)";
     queueRunner.enable = mkEnableOption "circus queue runner (build dispatch)";
+    evaluator = {
+      enable = mkEnableOption "circus evaluator (Git polling and nix evaluation)";
+      ssh = {
+        privateKeyFile = mkOption {
+          type = nullOr str;
+          default = null;
+          example = "/run/secrets/circus-ssh-key";
+          description = ''
+            Runtime path to an unencrypted SSH private key for repository
+            fetches, passed to the evaluator through systemd credentials.
+
+            ::: {.tip}
+            Use a string path to keep the key out of the Nix store. This
+            option is **mutually exclusive** with {option}`encryptedPrivateKeyFile`
+            and requires {option}`knownHostsFile`.
+            :::
+          '';
+        };
+
+        encryptedPrivateKeyFile = mkOption {
+          type = nullOr path;
+          default = null;
+          example = "/etc/credstore.encrypted/circus-ssh-key";
+          description = ''
+            Path to an SSH private key, encrypted with `systemd-creds encrypt
+            --name=ssh-private-key`.
+
+            The credential passed to this option is loaded with `LoadCredentialEncrypted`
+            and decrypted by Systemd at service startup. The encryption **must** be
+            compatible with the target machine's host key or TPM.
+
+            Mutually exclusive with {option}`privateKeyFile`, requires {option}`knownHostsFile`
+            to be set.
+          '';
+        };
+
+        knownHostsFile = mkOption {
+          type = nullOr path;
+          default = null;
+          example = "/run/secrets/circus-ssh-known-hosts";
+          description = ''
+            Path to verified SSH `known_hosts entries`, loaded through Systemd
+            credentials. Required with either private key option.
+          '';
+        };
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -486,6 +549,14 @@ in {
         in
           !(cfg.server.enable && signing.enabled && signing.key_file != null) || signing.public_key != null;
         message = "services.circus.settings.signing.public_key must be set, since the server no longer reads signing.key_file.";
+      }
+      {
+        assertion = evaluatorSsh.privateKeyFile == null || evaluatorSsh.encryptedPrivateKeyFile == null;
+        message = "Set only one of services.circus.evaluator.ssh.privateKeyFile and encryptedPrivateKeyFile.";
+      }
+      {
+        assertion = evaluatorSshEnabled == (evaluatorSsh.knownHostsFile != null);
+        message = "services.circus.evaluator.ssh requires knownHostsFile together with exactly one private key file.";
       }
     ];
 
@@ -649,8 +720,11 @@ in {
             WorkingDirectory = evaluatorDirectory;
             ReadWritePaths = [evaluatorDirectory];
             UMask = "0077";
-            LoadCredential = evaluatorFiles.credentials;
-            BindReadOnlyPaths = optional (evaluatorFiles.credentials != []) "%d:/run/circus-credentials";
+            LoadCredential = evaluatorCredentials;
+            LoadCredentialEncrypted = optional (evaluatorSsh.encryptedPrivateKeyFile != null) "ssh-private-key:${evaluatorSsh.encryptedPrivateKeyFile}";
+            BindReadOnlyPaths =
+              optional (evaluatorFiles.credentials != []) "%d:/run/circus-credentials"
+              ++ optional evaluatorSshEnabled "${evaluatorSshConfig}:/etc/ssh/ssh_config";
             # A single Nix evaluator can keep more than systemd's default
             # soft limit of 1024 files open while traversing a large flake.
             LimitNOFILE = 65536;

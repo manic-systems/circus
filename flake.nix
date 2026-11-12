@@ -242,6 +242,7 @@
         e2e = callTest ./nix/tests/e2e.nix;
         declarative = callTest ./nix/tests/declarative.nix;
         gc-pinning = callTest ./nix/tests/gc-pinning.nix;
+        evaluator-ssh = callTest ./nix/tests/evaluator-ssh.nix;
         channel-tarball = callTest ./nix/tests/channel-tarball.nix;
         distributed = callTest ./nix/tests/distributed.nix;
         agent-dispatch = callTest ./nix/tests/agent-dispatch.nix;
