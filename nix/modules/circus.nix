@@ -594,7 +594,7 @@ in {
           after = ["network.target"] ++ optional cfg.database.createLocally "postgresql.target";
           requires = optional cfg.database.createLocally "postgresql.target";
 
-          path = with pkgs; [nix zstd];
+          path = [config.nix.package pkgs.zstd];
 
           serviceConfig = {
             ExecStartPre = "${getExe' cfg.migratePackage "circusctl"} migrate up ${cfg.settings.database.url}";
@@ -632,10 +632,10 @@ in {
           after = ["network.target"] ++ optional cfg.server.enable "circus-server.service" ++ optional cfg.database.createLocally "postgresql.target";
           requires = optional cfg.server.enable "circus-server.service" ++ optional cfg.database.createLocally "postgresql.target";
 
-          path = with pkgs; [
-            nix
-            git
-            openssh
+          path = [
+            config.nix.package
+            pkgs.git
+            pkgs.openssh
           ];
 
           serviceConfig = {
@@ -675,9 +675,9 @@ in {
           after = ["network.target"] ++ optional cfg.server.enable "circus-server.service" ++ optional cfg.database.createLocally "postgresql.target";
           requires = optional cfg.server.enable "circus-server.service" ++ optional cfg.database.createLocally "postgresql.target";
 
-          path = with pkgs; [
-            nix
-            openssh
+          path = [
+            config.nix.package
+            pkgs.openssh
           ];
 
           serviceConfig = {
