@@ -385,6 +385,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "caress"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8769b95e8254ef7093e5b44e11dc1f43a5550c1944079298f0a47955bd30b12"
+dependencies = [
+ "pound",
+]
+
+[[package]]
 name = "cc"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -539,6 +548,7 @@ dependencies = [
 name = "circus-cli"
 version = "0.14.0"
 dependencies = [
+ "caress",
  "circus-common",
  "circus-config",
  "circus-http",

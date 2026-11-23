@@ -14,3 +14,4 @@ mod commands;
 mod output;
 
 pub use app::{run, run_from};
+pub use commands::Cli;

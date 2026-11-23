@@ -291,6 +291,20 @@ $ export CIRCUS_API_KEY=<admin-api-key>
 > Add `--json` to most `circusctl` commands when machine-readable output is
 > needed.
 
+### Shell Completions
+
+The `circus-cli` Nix package installs `circusctl` completions for Bash, Zsh,
+Fish and Nushell. To set completions up by hand, source the script `circusctl`
+prints.
+
+| Shell  | Setup                                                              |
+| ------ | ------------------------------------------------------------------ |
+| bash   | `source <(COMPLETE=bash circusctl)`                                |
+| zsh    | `COMPLETE=zsh circusctl > ~/.zfunc/_circusctl`, with it in `fpath` |
+| fish   | `COMPLETE=fish circusctl \| source`                                |
+| nu     | `COMPLETE=nu circusctl \| save circusctl.nu`, then `source` it     |
+| elvish | `eval (env COMPLETE=elvish circusctl \| slurp)`                    |
+
 ### Health and System Status
 
 The admin CLI can be used to query various status fields:

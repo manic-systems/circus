@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// CLI for Circus servers
 #[derive(Parse)]
 #[pound(name = "circusctl", help_if_empty)]
-pub(super) struct Cli {
+pub struct Cli {
   /// Server base URL.
   #[pound(long, global, env = "CIRCUS_URL", default = "http://localhost:3000")]
   pub(super) url: Url,
