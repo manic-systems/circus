@@ -11,6 +11,7 @@ name = "circusctl"
 path = "src/main.rs"
 
 [dependencies]
+caress.workspace        = true
 circus-common.workspace = true
 circus-config.workspace = true
 circus-http.workspace   = true
