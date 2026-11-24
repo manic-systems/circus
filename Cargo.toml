@@ -41,9 +41,9 @@ axum = "0.8.9"
 blake3 = "1.8.7"
 bstr = "1.13.1"
 bytes = "1.12.1"
-capnp = "0.27.3"
-capnp-rpc = "0.27.2"
-capnpc = "0.27.0"
+capnp = "0.28.0"
+capnp-rpc = "0.28.0"
+capnpc = "0.28.1"
 crc = "3.4.0"
 dashmap = "6.2.1"
 data-encoding = "2.11.1"
@@ -64,7 +64,7 @@ gix = { version = "0.90.0", default-features = false, features = [
 ] }
 hex-literal = "1.1.0"
 hmac = "0.13.0"
-jiff = { version = "0.2.38", features = [ "serde" ] }
+jiff = { version = "1.0.0", features = [ "serde" ] }
 lettre = { version = "0.11.23", default-features = false, features = [
   "tokio1-rustls",
   "ring",
@@ -75,14 +75,14 @@ lettre = { version = "0.11.23", default-features = false, features = [
 libc = "0.2.191"
 md5 = "0.8.1"
 misstep = { version = "0.4.1", features = [ "backtrace", "color", "panic-hook", "pretty" ] }
-nix = { version = "0.31.3", default-features = false, features = [
+nix = { version = "0.32.0", default-features = false, features = [
   "sched",
   "mount",
   "fs",
   "user",
   "process",
 ] }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 percent-encoding = "2.3.2"
 pin-project-lite = "0.2.17"
 pound = "0.6.1"
@@ -104,18 +104,18 @@ sha1 = "0.11.0"
 sha2 = "0.11.1"
 socket2 = "0.6.5"
 subtle = "2.6.1"
-sysinfo = { version = "0.39.6", default-features = false, features = [ "system" ] }
+sysinfo = { version = "0.40.4", default-features = false, features = [ "system" ] }
 tar = "0.4.46"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = [ "full" ] }
 tokio-postgres = { version = "0.7.18", features = [ "with-jiff-0_2", "with-uuid-1", "with-serde_json-1" ] }
-tokio-rusqlite = "0.8.0"
+tokio-rusqlite = "0.9.0"
 tokio-rustls = { version = "0.26.6", default-features = false, features = [ "ring", "tls12" ] }
 tokio-test = "0.4.6"
 tokio-util = { version = "0.7.20", features = [ "io", "compat" ] }
 toml = "1.1.8"
-topcoat = { version = "0.11.0", default-features = false, features = [
+topcoat = { version = "0.12.1", default-features = false, features = [
   "asset",
   "discover",
   "router",
@@ -125,7 +125,7 @@ topcoat = { version = "0.11.0", default-features = false, features = [
   "view",
 ] }
 tower = "0.5.3"
-tower-http = { version = "0.6.11", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
+tower-http = { version = "0.7.1", features = [ "cors", "trace", "limit", "fs", "set-header" ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter", "json" ] }
 url = "2.5.8"
